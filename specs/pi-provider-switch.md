@@ -7,10 +7,10 @@ spec-id: pi-provider-switch
 status: supplement
 spec-category: runtime-subsystem
 spec-shape: requirements-first
-version: 1.0
+version: 1.1
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-07-08
+last-updated: 2026-08-01
 supplement-of: pi-harness
 depends-on:
   - pi-harness
@@ -351,10 +351,23 @@ The wire-format triple + credentials come atomically from the profile and are NE
 split. When NO profile is present, model resolution is byte-identical to today (C6).
 
 ### 7.3 Claim-time wiring
-Two sites carry this hop. The resolver call goes in
-`internal/daemon/workloop_runplan.go` `resolveRunPlanHarness`. The tuple is then
-seated in the `shared.LaunchCtx` literal in `internal/daemon/workloop.go`
-`beadRunOne`.
+The resolver call goes in `internal/daemon/workloop_runplan.go`
+`resolveRunPlanHarness`. The tuple is then seated in a `shared.LaunchCtx` literal,
+and there is one such literal PER DISPATCH SHAPE.
+
+**Every launch context an agent is built from MUST carry the tuple** (v1.1, hk-yo9g6).
+Two seat it today:
+
+- `internal/daemon/workloop.go` `beadRunOne` — the single-mode launch context.
+- `internal/daemon/dot_cascade_core.go` `dispatchDotAgenticNode` — the graph node's
+  launch context, which is the production default and carries nearly all traffic.
+
+The earlier text said "two sites carry this hop" and then named the resolver and ONE
+seating site. A reader who satisfied it literally seated the tuple in single mode
+only, which is what happened: a graph run set none of the five fields and fell back
+to the harness-global provider, so a bead's profile never applied in practice. The
+rule is now stated as a property of every launch context rather than as a list of
+files, because the list grows.
 
 After `resolveHarnessAgentTypeQuiet` and `ResolveModelPreference` in
 `resolveRunPlanHarness`:
@@ -390,8 +403,8 @@ exactly-one test; false for both 0 and >1 labels ⇒ coalesce to `profile.Model`
 locked observable precedence is unchanged: `model:` overrides ONLY the profile's model
 field; the wire-format triple + credentials stay atomic from the profile.
 
-In the `shared.LaunchCtx` literal in `internal/daemon/workloop.go` `beadRunOne`, seat
-the five tuple fields beside `model`/`effort`:
+In EACH `shared.LaunchCtx` literal named above, seat the five tuple fields beside
+`model`/`effort`:
 ```go
 model:      resolvedModel,   // now possibly profile.Model (see precedence)
 effort:     resolvedEffort,
@@ -678,3 +691,11 @@ surface and pushes validation onto the claim path. The named-profile registry ma
 provider+base_url+api atomic by construction, binds credential to provider as one
 validated unit, and validates once at config load (respecting depguard) while the
 bead carries a single opaque name.
+
+---
+
+## 14. Revision history
+
+| Date | Version | Author | Summary |
+|---|---|---|---|
+| 2026-08-01 | 1.1 | agent (hk-yo9g6) | **§7.3 restated: the provider tuple is a property of EVERY launch context, not of a named file.** The v1.0 text said "two sites carry this hop" and then named the resolver plus one seating site, `beadRunOne`. A reader who satisfied it literally seated the tuple in single mode only, and that is what happened: `dispatchDotAgenticNode` — the graph node, which is the production default and carries nearly all traffic — set none of the five fields, `runAgentLaunch` supplied none of them, and a graph run fell back to the harness-global provider, so a bead's `profile:<name>` label never applied in practice. §7.3 now states the obligation as a property and lists the two seating sites as evidence rather than as the rule. No requirement is added and no locked decision changes: C3's obligation was always "the tuple reaches the agent", and this records where that has to happen when the daemon grew a second dispatch shape. |

@@ -31,6 +31,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/workflow"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
@@ -54,6 +55,7 @@ func newDotSubWorkflowRunner(
 	iterationCount *int,
 	claudeSessionID *string,
 	resolvedModel, resolvedEffort string,
+	piProfile projectconfig.PiProfileConfig, // hk-yo9g6: the per-bead Pi provider tuple
 	extraContext, baseBranch string,
 	run *core.Run,
 	cycles *core.CycleCounter,
@@ -81,6 +83,7 @@ func newDotSubWorkflowRunner(
 		claudeSessionID:    claudeSessionID,
 		resolvedModel:      resolvedModel,
 		resolvedEffort:     resolvedEffort,
+		piProfile:          piProfile,
 		extraContext:       extraContext,
 		baseBranch:         baseBranch,
 		run:                run,
@@ -131,6 +134,7 @@ type dotSubWorkflowRunner struct {
 	claudeSessionID *string
 	resolvedModel   string
 	resolvedEffort  string
+	piProfile       projectconfig.PiProfileConfig
 	extraContext    string
 	baseBranch      string
 	run             *core.Run
@@ -352,6 +356,7 @@ func dispatchSubWorkflowExpandedNode(
 			r.claudeSessionID,
 			r.resolvedModel,
 			r.resolvedEffort,
+			r.piProfile,
 			r.extraContext,
 			r.baseBranch,
 			"",                  // reviewerHarnessOverride: none

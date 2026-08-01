@@ -82,6 +82,7 @@ import (
 	"github.com/gregberns/harmonik/internal/harness/codex"
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/runlaunch"
 	"github.com/gregberns/harmonik/internal/runloop"
 	tunnelpkg "github.com/gregberns/harmonik/internal/transport/tunnel"
@@ -121,6 +122,9 @@ func driveDotWorkflow(
 	graph *dot.Graph,
 	resolvedModel string,
 	resolvedEffort string,
+	// piProfile is the per-bead Pi provider tuple resolved at claim time from a
+	// `profile:<name>` label. Zero for every non-Pi bead (hk-yo9g6).
+	piProfile projectconfig.PiProfileConfig,
 	extraContext string,
 	baseBranch string,
 	runner tmux.CommandRunner, // remote-substrate: SSHRunner for remote runs; nil for local (NFR7)
@@ -821,7 +825,7 @@ func driveDotWorkflow(
 			nodeOutcome, nodeErr := dispatchDotAgenticNode(ctx, env, ports, handles, runID, beadID, beadRecord,
 				beadTitle, beadDescription, activeRepo, wtPath, parentSHA, daemonSocket, node,
 				isReviewer, iterationCount, &claudeSessionID,
-				resolvedModel, resolvedEffort, extraContext, baseBranch,
+				resolvedModel, resolvedEffort, piProfile, extraContext, baseBranch,
 				lastImplementerReviewerHarness, runner,
 				workerBinaryPath, workerSessionName, workerSessionCwd,
 				isConsolidate)
@@ -961,7 +965,7 @@ func driveDotWorkflow(
 				env, ports, handles, runID, beadID, beadRecord, beadTitle, beadDescription,
 				activeRepo, wtPath, parentSHA, daemonSocket,
 				&iterationCount, &claudeSessionID, resolvedModel, resolvedEffort,
-				extraContext, baseBranch, run, cycles, graph,
+				piProfile, extraContext, baseBranch, run, cycles, graph,
 				runner,            // remote-substrate: thread the run's runner into nested dispatch
 				workerBinaryPath,  // hk-538l: worker harmonik path for remote sub-workflow node hooks
 				workerSessionName, // hk-538l: worker tmux session for remote sub-workflow spawn
@@ -1135,6 +1139,9 @@ func dispatchDotAgenticNode(
 	claudeSessionID *string,
 	resolvedModel string,
 	resolvedEffort string,
+	// piProfile is the per-bead Pi provider tuple, zero for a non-Pi bead
+	// (hk-yo9g6).
+	piProfile projectconfig.PiProfileConfig,
 	extraContext string,
 	baseBranch string,
 	reviewerHarnessOverride core.AgentType, // T14 hk-iv748: reviewer_harness from implementer node; empty = DEFAULT (same as implementer)
@@ -1306,9 +1313,20 @@ func dispatchDotAgenticNode(
 		NodePrompt:        node.Prompt,
 		Model:             nodeModel,
 		Effort:            nodeEffort,
-		WorktreeRootPath:  workspace.WorktreeRootPath(env.ProjectDir, workspace.NoWorktreeRootOverride()),
-		ExtraContext:      nodeExtraContext,
-		BaseBranch:        baseBranch,
+		// The per-bead Pi provider tuple. It is read only on the pi path, and a
+		// non-Pi bead resolves the zero tuple, so setting it unconditionally is
+		// the same shape the single-mode launch context uses. The graph set none
+		// of these and nothing downstream supplied them, so a graph run fell back
+		// to the harness-global provider and the bead's profile never applied
+		// (hk-yo9g6).
+		Provider:         piProfile.Provider,
+		APIKeyEnv:        piProfile.APIKeyEnv,
+		APIKeyFile:       piProfile.APIKeyFile,
+		BaseURL:          piProfile.BaseURL,
+		API:              piProfile.API,
+		WorktreeRootPath: workspace.WorktreeRootPath(env.ProjectDir, workspace.NoWorktreeRootOverride()),
+		ExtraContext:     nodeExtraContext,
+		BaseBranch:       baseBranch,
 	}
 
 	// Resolve the per-node spec builder. The pre-built launch-spec builder

@@ -26,6 +26,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
 
@@ -142,6 +143,7 @@ func swMakeRunner(t *testing.T, bus *recordingBusDaemon, projectDir string, pare
 		&sessID,
 		"",
 		"",
+		projectconfig.PiProfileConfig{}, // piProfile: non-Pi bead
 		"",
 		"main",
 		run,

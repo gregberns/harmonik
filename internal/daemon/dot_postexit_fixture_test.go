@@ -23,7 +23,10 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/handler"
+	"github.com/gregberns/harmonik/internal/harness/shared"
 	tmuxPkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/runloop"
 )
@@ -159,6 +162,24 @@ type dotFixtureOpts struct {
 	// BeforeRun runs against the freshly built project dir, after its git repo
 	// exists and before the work loop starts.
 	BeforeRun func(t *testing.T, projectDir string)
+
+	// BeadLabels are the bead's labels. `profile:<name>` is how a bead selects a
+	// Pi provider profile.
+	BeadLabels []string
+
+	// ProjectCfg is the decoded project config the run resolves against.
+	ProjectCfg projectconfig.ProjectConfig
+
+	// DefaultHarness is the daemon-level harness default (tier 4).
+	DefaultHarness core.AgentType
+
+	// LaunchSpecBuilder replaces the run's launch-spec port. Nil keeps the
+	// production one.
+	LaunchSpecBuilder func(context.Context, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error)
+
+	// WorkflowMode is the per-item mode. Empty runs the bead in dot mode, which
+	// is what this fixture exists for.
+	WorkflowMode core.WorkflowMode
 }
 
 // dotFixtureResult is what the caller asserts on.
@@ -174,6 +195,7 @@ type dotFixtureResult struct {
 type dotFixtureLedger struct {
 	*stubBeadLedger
 	description string
+	labels      []string
 }
 
 func (l *dotFixtureLedger) ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord, error) {
@@ -182,6 +204,7 @@ func (l *dotFixtureLedger) ShowBead(ctx context.Context, id core.BeadID) (core.B
 		return rec, err
 	}
 	rec.Description = l.description
+	rec.Labels = l.labels
 	return rec, nil
 }
 
@@ -265,6 +288,11 @@ func runDotFixtureBead(t *testing.T, beadID core.BeadID, opts dotFixtureOpts) do
 		handlerScript = dotFixtureCommittingHandler(t, beadID)
 	}
 
+	mode := opts.WorkflowMode
+	if mode == "" {
+		mode = core.WorkflowModeDot
+	}
+
 	now := time.Now()
 	q := &queue.Queue{
 		SchemaVersion: 1,
@@ -278,7 +306,7 @@ func runDotFixtureBead(t *testing.T, beadID core.BeadID, opts dotFixtureOpts) do
 			Items: []queue.Item{{
 				BeadID:       beadID,
 				Status:       queue.ItemStatusPending,
-				WorkflowMode: string(core.WorkflowModeDot),
+				WorkflowMode: string(mode),
 			}},
 			CreatedAt: now,
 		}},
@@ -286,21 +314,24 @@ func runDotFixtureBead(t *testing.T, beadID core.BeadID, opts dotFixtureOpts) do
 
 	qs := daemon.ExportedNewQueueStore()
 	qs.SetQueue(q)
-	ledger := &dotFixtureLedger{stubBeadLedger: &stubBeadLedger{}, description: opts.BeadDescription}
+	ledger := &dotFixtureLedger{stubBeadLedger: &stubBeadLedger{}, description: opts.BeadDescription, labels: opts.BeadLabels}
 	bus := &stubEventCollector{}
 
 	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
-		BrAdapter:     ledger,
-		AllowedRepos:  opts.AllowedRepos,
-		Bus:           bus,
-		ProjectDir:    projectDir,
-		HandlerBinary: "/bin/sh",
-		HandlerArgs:   []string{handlerScript},
-		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
-		QueueStore:    qs,
-		HookStore:     hookStore,
-		RunRegistry:   opts.RunRegistry,
-		Runner:        opts.Runner,
+		BrAdapter:         ledger,
+		AllowedRepos:      opts.AllowedRepos,
+		ProjectCfg:        opts.ProjectCfg,
+		DefaultHarness:    opts.DefaultHarness,
+		LaunchSpecBuilder: opts.LaunchSpecBuilder,
+		Bus:               bus,
+		ProjectDir:        projectDir,
+		HandlerBinary:     "/bin/sh",
+		HandlerArgs:       []string{handlerScript},
+		IntentLogDir:      filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		QueueStore:        qs,
+		HookStore:         hookStore,
+		RunRegistry:       opts.RunRegistry,
+		Runner:            opts.Runner,
 		// No claude adapter: the shell implementer never relays agent_ready, so
 		// the readiness gate is bypassed and the run proceeds on the process exit
 		// (hk-ngw3d).

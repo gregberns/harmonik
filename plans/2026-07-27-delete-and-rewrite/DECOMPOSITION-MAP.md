@@ -1614,6 +1614,17 @@ no longer offers that mode — the flag help in `cmd/harmonik/main.go` now reads
 `core-loop-matrix.sh` already carries a comment working around the same default. The first thing a live
 pass needs is not new code. It is a default that names a mode that exists.
 
+> **✅ DISCHARGED 2026-07-31, and this paragraph has been false ever since. Verified 2026-08-01 at
+> `9bb93ae9e`.** `grep -n 'SCRATCH_WORKFLOW_MODE' scripts/scratch-daemon.sh` returns two hits and both
+> read `dot` — the usage block and `local workflow_mode="${SCRATCH_WORKFLOW_MODE:-dot}"`. It was fixed
+> at `e7941bffd`, *"test: default scratch daemons to dot mode"*.
+> `scripts/core-loop-matrix.sh` defaults to `dot` too:
+> `export SCRATCH_WORKFLOW_MODE="${SCRATCH_WORKFLOW_MODE:-dot}"`. **The apparatus is not blocked on its
+> default, so "the first thing a live pass needs" is now a live pass.** The paragraph is left standing
+> rather than deleted because the Step 10 lane inherited this claim from it, restated it as its own
+> measurement, and had it caught in review — which is the cost of a stale sentence in this file, made
+> visible. See `STEP-10-COMPOSITION-ROOT.md` §8.2.
+
 **Why here and not at the end.** Putting the live pass last repeats the mistake `NEXT_STEPS.md` §5.1
 documents: an oracle that is built and never run reports nothing, and a tier nobody runs is
 indistinguishable from a tier that passes. Steps 10–15 change the composition root, the queue's writers
@@ -1633,6 +1644,29 @@ check and not a per-commit one.
 launchd agent is loaded. Nothing gates it off in code. Turning it back on is a command, not a project.
 
 ### Step 10 — the composition root (~800 lines, MEDIUM risk — a design, not a move)
+
+**Mapped 2026-08-01. Read [`STEP-10-COMPOSITION-ROOT.md`](STEP-10-COMPOSITION-ROOT.md) before
+starting** — it is the measured map and the design, and it corrects this section on three points:
+
+- **⚠ WITHDRAWN: "an 81-field bundle threaded through every run".** The sentence is still below, under
+  "Why it blocks done", and it is left visible because this file exists to stop stale claims being read
+  as oracles, so it should show one being caught. **The bundle is not threaded through a run.**
+  `beadRunOne` takes `runloop.RunEnv`, `runloop.RunPorts` and `runloop.SharedHandles` and no
+  `workLoopDeps`. `dot_cascade_core.go` references the bundle **zero** times. Only three functions in
+  `workloop.go` name it, one of them the constructor. The bundle is threaded through the **dispatch
+  loop** — `runWorkLoop` in `scheduler.go`, 1,280 lines. **This is a dispatch-loop step, and a lane
+  that plans it against the withdrawn sentence looks in the wrong file.** The run half is already done:
+  `internal/runloop` is declared and depguard-fenced, and it is the exemplar to copy rather than a
+  question to re-answer.
+- **The write-site count below is 25 + 3 and the honest figure is 26 + 3.** The grep in the fourth
+  bullet uses `[a-zA-Z]+`, which does not match a digit, so it never reaches the `=` on
+  `deps.sentinelPhase2Classes` in `seedGovernorDeps`. Re-run it with `[a-zA-Z0-9]+`.
+- **The 770-line span is 83 lines of code, 608 of doc comment and 79 blank.** The span is a fair
+  measure of how much prose the type needs to be safe. It is not a cost estimate for moving it.
+
+The precondition table below re-runs exactly, every row, and its conclusion holds. The design document
+adds that the field *name* sets churned four times across the window and that one change was an
+addition after the program began, so the bundle is still accreting.
 
 **Re-measured 2026-08-01 at `95dff0bf5`. The field count held. The line span did not, and the
 step's stated precondition is refuted below.**
@@ -1686,7 +1720,9 @@ successor to that instruction, and the reason it was deferred rather than droppe
 > started and that the completed steps do not produce. **Either this step starts on its own terms, or
 > it needs a real precondition. It does not have one today.** Re-run the table before acting on it.
 
-**Why it blocks done:** `PRINCIPLES.md` §4 asks for consumer-owned ports. An 81-field bundle threaded
+**Why it blocks done:** `PRINCIPLES.md` §4 asks for consumer-owned ports. ⚠ *The next clause says
+"threaded through every run". That is WITHDRAWN — see the head of this entry. Read "threaded through
+the dispatch loop". The conclusion is unaffected.* An 81-field bundle threaded
 through every run means no unit of the core has a declared dependency set, and validity is temporal —
 which boot phase are we in — rather than something the compiler checks. It also blocks §6's "switching
 one back on is a one-line change", because a subsystem's handle is a nullable field on a shared bundle

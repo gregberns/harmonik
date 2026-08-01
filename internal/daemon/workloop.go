@@ -3239,14 +3239,18 @@ func maybeEmitEpicCompleted(ctx context.Context, ports runloop.RunPorts, handles
 
 	for _, e := range parentRecord.Edges {
 		if e.EdgeKind == core.EdgeKindParentChild && e.ToBeadID == parentID {
-			if e.EndpointStatus != core.CoarseStatusClosed {
-				// AC-3: at least one child still open → zero emit.
+			// Terminal, not merely closed. A tombstoned child is finished — it
+			// will never close, so testing Closed alone let one tombstone
+			// suppress epic_completed for its parent forever and silently stop
+			// the lane waiting on it.
+			if !e.EndpointStatus.IsTerminal() {
+				// AC-3: at least one child is not terminal → zero emit.
 				return
 			}
 		}
 	}
 
-	// All children are closed (or there are none — edge case: epic with no
+	// Every child is terminal (or there are none — edge case: epic with no
 	// children recorded yet; we emit to avoid silent gaps, consistent with AC-1).
 
 	// Step 3: claim under emittedEpicsMu BEFORE emit (at-most-once guard AC-1).

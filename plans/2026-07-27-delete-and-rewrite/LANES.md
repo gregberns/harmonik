@@ -203,6 +203,16 @@ the one line.
 5. `hk-l39bq`, the merge-race scenario failure. **Its own bead text forbids fixing it from the
    acceptance-check lane.** Bravo must not take it.
 
+### What alpha hands to bravo
+
+1. **`hk-terminal-status-literals-aynz5` — the last undischarged site of step 19.**
+   `internal/lifecycle/activerun_em031a.go` builds the terminal set as string literals,
+   `[]string{"closed", "tombstone"}`, and hands it to `ListBeadsByStatus`. **Step 19 is not fully
+   closed without it**, and alpha cannot reach it: `internal/lifecycle` and `internal/core` are both
+   bravo's. It is not a straight swap to `IsTerminal()` — that is a predicate over one status and this
+   site needs the set enumerated for a query, so it wants a `core.TerminalCoarseStatuses()` accessor
+   with both derived from one list.
+
 **Bravo must not touch** `internal/daemon/**`, `internal/runlease/**`, `internal/runloop/**`,
 `internal/transport/tunnel/**`, `internal/harness/shared/**`, `specs/run-state-machine.md`,
 `specs/execution-model.md`, `DECOMPOSITION-MAP.md`, the `fmt` / `check-*` / `tools` recipes in
@@ -475,13 +485,14 @@ measurement again.
 
 ## 7. Order
 
-1. **Alpha: the `epic_completed` fix.** `maybeEmitEpicCompleted` in `workloop.go`, plus a test that
-   tombstones one child of a two-child epic. It is three lines and no other lane can reach it.
-   **This is a deliberate exception to `CHARTER.md` §4's "we are not fixing bugs", and it is claimed
-   as one rather than left to look like the program's priority.** The grounds: the step that consists
-   of this fix is already scheduled, the rest of that step has landed, and the defect silently stops a
-   lane rather than producing a visible failure. A defect found from here on is still recorded, not
-   chased.
+1. ~~**Alpha: the `epic_completed` fix.**~~ **DONE 2026-08-01.** `maybeEmitEpicCompleted` in
+   `workloop.go` now tests `IsTerminal()`, with two short-mode tests that are red without the fix, and
+   `specs/event-model.md` §8.13.1's emission rule amended to match. It was claimed as a deliberate
+   exception to `CHARTER.md` §4's "we are not fixing bugs" rather than left to look like the program's
+   priority, on the grounds that the step consisting of this fix was already scheduled, the rest of
+   that step had landed, and the defect silently stopped a lane rather than producing a visible
+   failure. **The exception is spent. A defect found from here on is recorded, not chased** — the one
+   found while doing this is `hk-terminal-status-literals-aynz5`, handed to bravo above.
 2. **Bravo: rebase onto the shared tip**, then take §3 in order. Items 1 to 6 need no design.
 3. **Alpha: step 7 piece 1 and the fifteen ungated capability ports.** The step map says these are not
    blocked on the guard decision and to start them now, ordered by harm.

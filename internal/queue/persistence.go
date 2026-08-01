@@ -237,18 +237,48 @@ func Load(_ context.Context, projectDir, name string) (*Queue, error) {
 // Spec ref: specs/queue-model.md §8.4 QM-053.
 // Spec ref: specs/queue-model.md §3.3 QM-003.
 func CompleteAndUnlink(ctx context.Context, projectDir string, q *Queue) error {
-	// Step 1: transition status to completed and persist (QM-053 steps 1+2).
-	q.Status = QueueStatusCompleted
-	if err := Persist(ctx, projectDir, q); err != nil {
-		return fmt.Errorf("queue: CompleteAndUnlink: persist completed status: %w", err)
+	return CompleteAndUnlinkResult(ctx, projectDir, q).Err()
+}
+
+// TerminalResult distinguishes a failed terminal write from cleanup that failed
+// after the terminal state became durable.
+type TerminalResult struct {
+	Committed  bool
+	CommitErr  error
+	CleanupErr error
+}
+
+// Err returns the terminal write error before any post-commit cleanup error.
+func (r TerminalResult) Err() error {
+	if r.CommitErr != nil {
+		return r.CommitErr
+	}
+	return r.CleanupErr
+}
+
+// CompleteAndUnlinkResult performs completion on a detached candidate. The
+// supplied queue changes only after the completed candidate persists.
+func CompleteAndUnlinkResult(ctx context.Context, projectDir string, q *Queue) TerminalResult {
+	if q == nil {
+		return TerminalResult{CommitErr: errors.New("queue: CompleteAndUnlink: nil queue")}
+	}
+	candidate := *q
+	if err := CompleteQueue(&candidate); err != nil {
+		return TerminalResult{CommitErr: fmt.Errorf("queue: CompleteAndUnlink: transition completed status: %w", err)}
+	}
+	if err := Persist(ctx, projectDir, &candidate); err != nil {
+		return TerminalResult{CommitErr: fmt.Errorf("queue: CompleteAndUnlink: persist completed status: %w", err)}
+	}
+	if err := InstallCommittedQueueStatus(q, &candidate); err != nil {
+		return TerminalResult{CommitErr: err}
 	}
 
 	// Step 2: unlink the per-queue file and fsync parent dir (QM-053 step 3 / QM-003).
 	name := NormaliseQueueName(q.Name)
 	if err := Unlink(ctx, projectDir, name); err != nil {
-		return fmt.Errorf("queue: CompleteAndUnlink: unlink: %w", err)
+		return TerminalResult{Committed: true, CleanupErr: fmt.Errorf("queue: CompleteAndUnlink: unlink: %w", err)}
 	}
-	return nil
+	return TerminalResult{Committed: true}
 }
 
 // CancelQueueOnShutdown transitions q to QueueStatusCancelled, persists it, and
@@ -269,36 +299,48 @@ func CompleteAndUnlink(ctx context.Context, projectDir string, q *Queue) error {
 //
 // Spec ref: specs/queue-model.md §8 (shutdown drain, hk-ppt32).
 func CancelQueueOnShutdown(ctx context.Context, projectDir string, q *Queue) error {
+	return CancelQueueOnShutdownResult(ctx, projectDir, q, time.Now()).Err()
+}
+
+// CancelQueueOnShutdownResult persists a cancelled candidate before it changes
+// the supplied queue or renames the canonical file.
+func CancelQueueOnShutdownResult(ctx context.Context, projectDir string, q *Queue, archiveTime time.Time) TerminalResult {
 	if q == nil {
-		return nil
+		return TerminalResult{}
 	}
-	q.Status = QueueStatusCancelled
-	if err := Persist(ctx, projectDir, q); err != nil {
-		return fmt.Errorf("queue: CancelQueueOnShutdown: persist: %w", err)
+	candidate := *q
+	if err := CancelQueue(&candidate); err != nil {
+		return TerminalResult{CommitErr: fmt.Errorf("queue: CancelQueueOnShutdown: transition cancelled status: %w", err)}
+	}
+	if err := Persist(ctx, projectDir, &candidate); err != nil {
+		return TerminalResult{CommitErr: fmt.Errorf("queue: CancelQueueOnShutdown: persist: %w", err)}
+	}
+	if err := InstallCommittedQueueStatus(q, &candidate); err != nil {
+		return TerminalResult{CommitErr: err}
 	}
 	// Rename per-queue file → <name>.json.cancelled-<ts> so Load() returns nil
 	// on the next harmonik run invocation (QM-027 guard bypassed cleanly).
 	name := NormaliseQueueName(q.Name)
 	src := queuePath(projectDir, name)
-	ts := time.Now().UTC().Format("20060102150405")
+	ts := archiveTime.UTC().Format("20060102150405")
 	dst := src + ".cancelled-" + ts
 	if err := os.Rename(src, dst); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("queue: CancelQueueOnShutdown: rename to %q: %w", dst, err)
+		return TerminalResult{Committed: true, CleanupErr: fmt.Errorf("queue: CancelQueueOnShutdown: rename to %q: %w", dst, err)}
 	}
 	// fsync parent directory so the rename is durable.
 	qDir := queuesDir(projectDir)
 	//nolint:gosec // G304: qDir is the daemon-internal .harmonik/queues directory
 	dir, err := os.Open(qDir)
 	if err != nil {
-		return fmt.Errorf("queue: CancelQueueOnShutdown: open parent dir %q: %w", qDir, err)
+		return TerminalResult{Committed: true, CleanupErr: fmt.Errorf("queue: CancelQueueOnShutdown: open parent dir %q: %w", qDir, err)}
 	}
 	if syncErr := dir.Sync(); syncErr != nil {
-		return fmt.Errorf("queue: CancelQueueOnShutdown: fsync parent dir %q: %w", qDir, errors.Join(syncErr, dir.Close()))
+		return TerminalResult{Committed: true, CleanupErr: fmt.Errorf("queue: CancelQueueOnShutdown: fsync parent dir %q: %w", qDir, errors.Join(syncErr, dir.Close()))}
 	}
 	if err := dir.Close(); err != nil {
-		return fmt.Errorf("queue: CancelQueueOnShutdown: close parent dir %q: %w", qDir, err)
+		return TerminalResult{Committed: true, CleanupErr: fmt.Errorf("queue: CancelQueueOnShutdown: close parent dir %q: %w", qDir, err)}
 	}
-	return nil
+	return TerminalResult{Committed: true}
 }
 
 // ArchiveFailedQueue renames .harmonik/queues/<name>.json to

@@ -167,7 +167,7 @@ func CompleteQueue(q *Queue) error {
 	if q == nil {
 		return fmt.Errorf("queue: complete queue: nil queue")
 	}
-	if q.Status != QueueStatusActive {
+	if q.Status != QueueStatusActive && q.Status != QueueStatusCompleted {
 		return fmt.Errorf("queue: complete queue: status %q is not active", q.Status)
 	}
 	if len(q.Groups) == 0 {
@@ -178,7 +178,9 @@ func CompleteQueue(q *Queue) error {
 			return fmt.Errorf("queue: complete queue: group %d has status %q", group.GroupIndex, group.Status)
 		}
 	}
-	q.Status = QueueStatusCompleted
+	if q.Status == QueueStatusActive {
+		q.Status = QueueStatusCompleted
+	}
 	return nil
 }
 
@@ -191,6 +193,16 @@ func CancelQueue(q *Queue) error {
 		return fmt.Errorf("queue: cancel queue: status %q is not active", q.Status)
 	}
 	q.Status = QueueStatusCancelled
+	return nil
+}
+
+// InstallCommittedQueueStatus copies a durable candidate status into its live
+// caller-owned queue after the write succeeds.
+func InstallCommittedQueueStatus(destination, candidate *Queue) error {
+	if destination == nil || candidate == nil {
+		return fmt.Errorf("queue: install committed queue status: nil queue")
+	}
+	destination.Status = candidate.Status
 	return nil
 }
 

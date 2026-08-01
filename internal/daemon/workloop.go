@@ -1381,9 +1381,10 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	//
 	// remoteBeadCtx is nil for local runs; non-nil for remote runs.
 	//
-	// rs-tunnel-spawn: tunnelCmd holds the long-lived `ssh -N -R` reverse-tunnel
-	// process for this remote run; it is torn down in the run-completion defer
-	// (next to ReleaseSlot). workerHookSock is the per-run worker-side reverse-
+	// rs-tunnel-spawn: the long-lived `ssh -N -R` reverse-tunnel process for this
+	// remote run is held on the run's scope, which kills it. It is a local at the
+	// spawn site rather than a field here, because nothing outside that site ever
+	// read it. workerHookSock is the per-run worker-side reverse-
 	// tunnel TCP endpoint the tunnel binds (tcp://127.0.0.1:<port>); the
 	// env-override bead (2) injects it as HARMONIK_DAEMON_SOCKET so the
 	// worker-side agent's hook relay dials the tunnel rather than box A's
@@ -1396,7 +1397,6 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	type remoteBeadCtx struct {
 		worker         workers.Worker
 		sshRunner      tmuxpkg.CommandRunner
-		tunnelCmd      *exec.Cmd
 		workerHookSock string
 	}
 	var rbc *remoteBeadCtx
@@ -1521,7 +1521,10 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		// hk-cnp17: free the reserved port when this run ends, so a later
 		// run may reuse it (the reservation prevents two concurrent runs
 		// from being handed the same worker-side hint port).
-		defer tunnelpkg.ReleasePort(tunnelPort)
+		runScope.Hold(runlease.TunnelPort, func() error {
+			tunnelpkg.ReleasePort(tunnelPort)
+			return nil
+		})
 
 		if mkErr := tunnelpkg.EnsureWorkerHarmonikDir(ctx, rbc.sshRunner, rbc.worker.RepoPath); mkErr != nil {
 			fmt.Fprintf(os.Stderr,
@@ -1556,22 +1559,28 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 			tunnelHost = rbc.worker.Host
 		}
 		tunnelArgs := tunnelpkg.BuildArgs(tunnelPort, daemonHookSock, tunnelHost, tunnelOpts)
-		rbc.tunnelCmd = tunnelpkg.ReverseTunnelRunner(ctx, "ssh", tunnelArgs...)
-		if startErr := rbc.tunnelCmd.Start(); startErr != nil {
+		tunnelCmd := tunnelpkg.ReverseTunnelRunner(ctx, "ssh", tunnelArgs...)
+		if startErr := tunnelCmd.Start(); startErr != nil {
 			// Non-fatal: a failed tunnel start means the worker-side agent's hooks
 			// will not reach box A, but the readiness gate (bead 3) is the
-			// authority that fails the run. Log and clear tunnelCmd so the
-			// teardown defer is a no-op.
+			// authority that fails the run. Nothing is held: a start that failed
+			// left no process to kill.
 			fmt.Fprintf(os.Stderr, "daemon: workloop: reverse-tunnel start bead %s run %s: %v\n",
 				beadID, runID.String(), startErr)
-			rbc.tunnelCmd = nil
+		} else {
+			// A successful Start leaves a live process, so the lease needs no test
+			// for whether there is one. That is the whole reason the hold is in this
+			// arm rather than below the branch.
+			runScope.Hold(runlease.TunnelProcess, func() error {
+				// Neither call's error is actionable and both are expected: Wait
+				// reports the signal the Kill just sent. The lease is what makes the
+				// pair run once, which the bare defer here relied on having a single
+				// caller for.
+				_ = tunnelCmd.Process.Kill() //nolint:errcheck // best-effort kill of a tunnel that is ending either way (pre-RT8 idiom)
+				_ = tunnelCmd.Wait()         //nolint:errcheck // reaps the killed process; the error is the signal we sent
+				return nil
+			})
 		}
-		defer func() {
-			if rbc.tunnelCmd != nil && rbc.tunnelCmd.Process != nil {
-				_ = rbc.tunnelCmd.Process.Kill()
-				_ = rbc.tunnelCmd.Wait()
-			}
-		}()
 
 		// gap #7 bead 3: tunnel readiness gate. The worker-side implementer
 		// agent can fire its first agent_ready hook BEFORE the `ssh -N -R`
@@ -1585,8 +1594,8 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		// the SSHRunner, as the worker user) before any Launch — an
 		// existence-only check would false-green a non-connectable endpoint
 		// (hk-ege6). On timeout or failure, do NOT launch: refuse and return —
-		// the deferred tunnel teardown (above) and ReleaseSlot run on the way
-		// out, so the `ssh -N` process does not leak. The gate runs ONLY here,
+		// the run's scope closes on the way out and kills the tunnel it holds, so
+		// the `ssh -N` process does not leak. The gate runs ONLY here,
 		// inside the remote branch (NFR7: local runs never construct a tunnel
 		// and never reach it).
 		if waitErr := tunnelpkg.WaitWorkerSocketLive(ctx, rbc.sshRunner, rbc.workerHookSock, tunnelpkg.WorkerSocketReadyTimeout); waitErr != nil {

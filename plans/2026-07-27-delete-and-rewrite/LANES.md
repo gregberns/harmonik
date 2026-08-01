@@ -5,10 +5,14 @@
 [`DECOMPOSITION-MAP.md`](DECOMPOSITION-MAP.md) holds the ordered steps this file assigns.
 
 This file says which work runs beside the core lane without breaking it, and in what order. It is not
-a new plan. It is an ownership table over the plan that exists.
+a new plan. It is an ownership table over the plan that exists. The graph research in
+[`../2026-08-01-graph-guided-decomposition/README.md`](../2026-08-01-graph-guided-decomposition/README.md)
+adds the contract-first waves below.
 
-**Two lanes are staffed, and no third will be staffed.** A lane named `charlie` existed for one
-evening and is retired. Its finished work is merged. Its unfinished charter is bravo's.
+**Two lanes are staffed, and no third will be staffed.** Alpha owns daemon contracts and final
+composition. Bravo is the only parallel lane. It owns the package work that a stable alpha contract
+makes independent. A lane named `charlie` existed for one evening and is retired. Its finished work
+is merged. Its unfinished charter is bravo's.
 
 **But three more branches sit in the lane namespace, and one of them is a live collision risk.**
 Measured 2026-08-01: `work/cq-mig-01` (44 commits ahead, 256 behind, last commit 2026-07-26),
@@ -59,15 +63,16 @@ shared branch. Alpha commits here directly and merges the other lane into it.
 
 **Owns** `internal/daemon/**`, `internal/runlease/**`, `internal/runloop/**`,
 `internal/transport/tunnel/**`, `internal/harness/shared/**`, `specs/run-state-machine.md`,
-`specs/execution-model.md`, and `DECOMPOSITION-MAP.md`.
+`specs/execution-model.md`, and `DECOMPOSITION-MAP.md`. Alpha also owns each extraction contract,
+the daemon construction change, and deletion of the old daemon adapter.
 
 **Works** step 7 piece 1 and the capability ports, then step 8, then steps 10 and 12. See §4 for why
 that order is not the order the map states.
 
 ### Lane `bravo` — the queue's writer, and the duplication outside the core
 
-**Worktree `/Users/gb/github/harmonik-wt/bravo`, branch `work/bravo`.** Its first assignment (step 9,
-make the acceptance check honest) is complete and merged. Its second assignment is below.
+**Worktree `/Users/gb/github/harmonik-wt/bravo`, branch `work/bravo`.** The initial step 9 work landed
+and merged. Its acceptance condition remains open. Item 1 below closes that condition.
 
 **Charter:** everything the "one writer for the queue" idea can honestly reach from outside
 `internal/daemon`, plus the consolidation the map's own measurements already placed outside alpha's
@@ -79,6 +84,16 @@ package.
 carried over from step 9 — `scripts/scratch-daemon.sh`, `scripts/core-loop-matrix.sh`,
 `.github/workflows/scenario.yml`, `test/twins/**`, `test/scenario/**`,
 `docs/scratch-daemon-runbook.md`, and the twin and `test-scenario` recipes in `Makefile`.
+
+**Owns after an alpha contract lands** `internal/substrate/tmuxhost/**`,
+`internal/transport/localsocket/**`, `internal/notify/**`, `internal/comms/cursor/**`, and the new
+comms and decisions handler package. Bravo creates each new package and moves its focused tests.
+Bravo keeps its public contract narrow. Alpha owns the final daemon cutover. These paths are reserved
+now. They are not work that can start early.
+
+**Owns the command construction changes** in `cmd/harmonik/main.go` and `cmd/harmonik/run.go` for the
+tmux and socket waves. Alpha owns the daemon adapter cutover. Alpha alone creates each neutral
+contract package before it hands the package to bravo.
 
 Measured 2026-08-01, that is **404 production files and 90,457 production lines across 14 packages**,
 against alpha's 96 files and 43,380 lines in one. **Bravo is the larger lane by volume.**
@@ -137,7 +152,8 @@ rule on sharing the machine applies to it.
    CLI subcommand — a short-lived hook-client process, not the daemon's shutdown path. So this is an
    unbounded wait in a hook client, not a shutdown stall. About 10 lines, and it is the one piece of
    "time as a port" that is free today.
-5. **Delete `eventbus.RunDrainer`.** Zero production probe sites. Doc-comment references only.
+5. **Keep `eventbus.RunDrainer` for now.** The probe misses `busImpl.DrainRun` behavior and its three
+   focused tests. Delete it only with an explicit behavior disposition and replacement or removed tests.
 6. **Add `--model` to the two captain argv builders** in `cmd/harmonik/captain.go` and
    `cmd/harmonik/captain_respawn.go`. About 24 lines. **Do not attempt the four-way argv
    unification** — the freeze gates forbid sibling harness imports, so its only legal home is
@@ -217,6 +233,36 @@ the one line.
 `internal/transport/tunnel/**`, `internal/harness/shared/**`, `specs/run-state-machine.md`,
 `specs/execution-model.md`, `DECOMPOSITION-MAP.md`, the `fmt` / `check-*` / `tools` recipes in
 `Makefile`, and any `scripts/*gate*.sh` it did not itself author.
+
+### Contract-first extraction waves
+
+Package ownership stops a compile-unit collision. It must not trap every outer subsystem inside the
+daemon package. The way out is a three-part handoff. Alpha defines and tests a narrow boundary. Bravo
+builds the new package against that boundary. Alpha changes construction and removes the daemon code.
+
+The comms handler, small leaves, and local socket are outside the charter core. They use spare bravo
+capacity. They never delay the queue transition or the tmux host extraction.
+
+| Wave | Alpha serial work | Bravo parallel work | Final handoff and evidence |
+| --- | --- | --- | --- |
+| Cursor, then comms handler | Create a daemon-free cursor and handler contract. Replace `SetRecvDeps`. Test it with a fake. | Move and test the cursor store first. Then move the comms and decisions handler. | Alpha wires the adapter. `go list -deps` must show no daemon dependency. Run focused tests and the composition test. |
+| Tmux host | Add a narrow `.golangci.yml` depguard allow-list and a direct daemon deny. Replace concrete assertions in `workloop.go`, `dot_cascade_core.go`, `agentlaunch.go`, and `crewstart.go`. Define tested interfaces and a factory. | Create `internal/substrate/tmuxhost`. Move the tmux host, paste injection, and focused tests. Change constructors in `cmd/harmonik/main.go` and `cmd/harmonik/run.go`. | Alpha removes the daemon adapter. Prove the package has no daemon dependency. Run focused and scenario tests. |
+| Notification stream | Keep the run path stable during the cutover. | Move the event consumer and its focused tests. | Alpha changes its construction site. Run the focused and composition tests. |
+| Local socket | Add a narrow `.golangci.yml` depguard allow-list and a direct daemon deny. Create a daemon-free API package with every DTO and consumer-owned handler interface. Test a fake handler for all operations. | Create `internal/transport/localsocket`. Move the listener and router adapter. Update command state and dashboard models. | Alpha removes the daemon listener adapter. Prove no daemon dependency. Preserve wire-byte and real-socket scenarios. |
+
+The tmux host includes `tmuxsubstrate.go` and `pasteinject.go`. They share per-run state, pane work,
+command choice, and watchdog behavior. Do not split them from each other. The local socket wave keeps
+byte-level wire tests and real socket scenarios. `cmd/harmonik` imports the state and dashboard models,
+so that migration belongs to the same wave.
+
+The comms handler has about 404 lines and no run-machine connection. It is the only current daemon
+candidate that can run beside alpha's `beadRunOne` boundary work. It depends on the cursor store and
+the shared live cursor. Bravo moves the cursor first. Alpha provides the daemon-free contract before
+bravo moves either package.
+
+The queue spend meter, stale watcher, quiesce arbiter, state projection, and dashboard projection stay
+put. They still require daemon concrete state. Moving them now would export internals instead of making
+a boundary. The run machine also stays whole until alpha shrinks `workLoopDeps` behind owned ports.
 
 ---
 
@@ -507,13 +553,29 @@ measurement again.
 2. **Bravo: rebase onto the shared tip**, then take §3 in order. Items 1 to 6 need no design.
 3. **Alpha: step 7 piece 1 and the fifteen ungated capability ports.** The step map says these are not
    blocked on the guard decision and to start them now, ordered by harm.
-4. **The operator answers the guard question** — machine or caller. It gates step 7's second half and
-   all of step 8, and the map schedules it one step late. §8 states it in full.
-5. **Bravo: the queue transition API**, once items 1 to 6 are landed and the kerf work has an agreed
-   scope.
-6. **Alpha: step 12**, which is not blocked on step 10 and was believed to be.
-7. **Alpha: step 10**, after steps 7 and 8 have settled `beadRunOne`. That is the real argument for
-   deferring it. "Steps 2 to 6 will discharge it" was not.
+4. **Bravo: the queue transition API**, once items 1 to 6 are landed and the kerf work has an agreed
+   scope. This remains bravo's core priority.
+5. **Alpha: define the tmux-host capability contract.** This is a small serial seam. It must replace
+   daemon concrete assertions and unexported capability methods before bravo starts the package move.
+   Alpha also adds the new package's narrow depguard rule and direct daemon deny.
+6. **Bravo: build the tmux host package.** It owns the implementation and focused tests. Alpha keeps
+   the daemon package clean while this work runs.
+7. **Alpha: cut the daemon over to the tmux host.** This is the only daemon edit in the wave. Re-run
+   the graph after the cutover before dividing the per-run path.
+8. **Alpha: step 12**, which is not blocked on step 10 and was believed to be.
+9. **Parallel capacity only: alpha may define the cursor and comms contracts.** Replace `SetRecvDeps`
+   with constructor configuration. Define the shared cursor without a daemon import. Do not delay item
+   4 for this work.
+10. **Parallel capacity only: bravo may extract the cursor store, then the comms handler, then the
+    notification stream.** Each new package must pass its no-daemon dependency check. This wave must
+    not delay a ready queue or tmux task.
+11. **Alpha: freeze the local-socket contract when the core no longer needs the lane.** Bravo can then
+   build the transport package while alpha works on a separate daemon seam. Alpha also adds the new
+   package's narrow depguard rule and direct daemon deny.
+12. **Bravo: build the local-socket package as parallel capacity.** Alpha then performs the one
+    composition-root cutover.
+13. **Alpha: step 10**, after steps 7 and 8 have settled `beadRunOne`. That is the real argument for
+    deferring it. "Steps 2 to 6 will discharge it" was not.
 
 ---
 

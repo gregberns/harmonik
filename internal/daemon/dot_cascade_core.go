@@ -1370,7 +1370,22 @@ func dispatchDotAgenticNode(
 	if reviewerHarnessIsClaude && handles.ReviewerSubstrate != nil {
 		baseSubstrate = handles.ReviewerSubstrate
 	}
-	preHeadSHA, _ := resolveDotWorktreeHEAD(ctx, runner, wtPath)
+	// The baseline this whole node is measured against. An unreadable worktree is
+	// a daemon-side error, and the node refuses here the same way the post-exit
+	// probe below already refuses (hk-o4sgg).
+	//
+	// Dropping this error did not leave the node with no baseline. It left the
+	// node with an EMPTY one, and three things read it: the no-advance guard,
+	// which can then never fire because a real SHA is never the empty string, so
+	// a node that did no work returns SUCCESS; the trailer amend leg, which gates
+	// on a non-empty parent, so a commit lands untrailered and is then mislabelled
+	// as no-change; and the quit-on-commit watchdog below, whose detector is
+	// "HEAD != baseline" and so fires on its FIRST poll, killing the agent seconds
+	// after the brief is delivered.
+	preHeadSHA, preHeadErr := resolveDotWorktreeHEAD(ctx, runner, wtPath)
+	if preHeadErr != nil {
+		return core.Outcome{}, fmt.Errorf("resolve HEAD before node %q: %w", node.ID, preHeadErr)
+	}
 
 	// hk-c73fs: emit reviewer_launched (§8.1a.2) for reviewer nodes before
 	// launch, matching the builtin review-loop path. After the 06-08 DOT-default

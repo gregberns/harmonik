@@ -23,6 +23,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
+	tmuxPkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
@@ -132,6 +133,11 @@ type dotFixtureOpts struct {
 	// HandlerScript is the /bin/sh script the implementer node runs. Empty
 	// installs dotFixtureCommittingHandler — an agent that commits real work.
 	HandlerScript string
+
+	// Runner is the CommandRunner the DOT path routes its git probes and its
+	// workspace writes through (the Config.Runner seam). Nil keeps every probe
+	// bare-local.
+	Runner tmuxPkg.CommandRunner
 }
 
 // dotFixtureResult is what the caller asserts on.
@@ -188,6 +194,13 @@ func dotFixtureHandlerScript(t *testing.T, name, body string) string {
 	return scriptPath
 }
 
+// dotFixtureNoCommitHandler writes a /bin/sh implementer that does nothing and
+// exits 0 — the shape of an agent that produced no work.
+func dotFixtureNoCommitHandler(t *testing.T) string {
+	t.Helper()
+	return dotFixtureHandlerScript(t, "dot-fixture-nowork.sh", "exit 0\n")
+}
+
 // runDotFixtureBead drives ONE bead through the real work loop in DOT mode and
 // returns when the bead reaches a terminal transition (closed or reopened).
 func runDotFixtureBead(t *testing.T, beadID core.BeadID, opts dotFixtureOpts) dotFixtureResult {
@@ -238,6 +251,7 @@ func runDotFixtureBead(t *testing.T, beadID core.BeadID, opts dotFixtureOpts) do
 		IntentLogDir:  filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		QueueStore:    qs,
 		HookStore:     dotFixtureHookStore{Outcome: json.RawMessage(opts.HookOutcome)},
+		Runner:        opts.Runner,
 		// No claude adapter: the shell implementer never relays agent_ready, so
 		// the readiness gate is bypassed and the run proceeds on the process exit
 		// (hk-ngw3d).

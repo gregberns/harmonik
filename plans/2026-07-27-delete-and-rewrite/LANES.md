@@ -121,6 +121,25 @@ an unmerged branch**, so the work was invisible from the main checkout. It is me
 
 ## 3. Bravo's work, in order
 
+> **STATUS 2026-08-01 — ITEMS 1 TO 7 ARE DONE AND MERGED. This list is history, not a queue.**
+> Item 7, the queue status-transition API, merged at `8d275e9f4` in five commits: `6eddb4914`,
+> `c91173fe4`, `ba56996d5`, `6fac57083`, `724c3ed5b`. `go build`, `go vet` and the full
+> `internal/daemon` short suite are green at that tip, which is the §5 import-graph check and not
+> optional after a bravo merge.
+>
+> **`724c3ed5b` also discharges decomposition step 19's last site.** `core.TerminalCoarseStatuses()`
+> is now the single terminal-status source, `IsTerminal` derives from it, and
+> `internal/lifecycle/activerun_em031a.go` queries it instead of repeating the string literals. That
+> closes `hk-terminal-status-literals-aynz5`, the hand-off recorded below under "What alpha hands to
+> bravo".
+>
+> **Two things came in WITH that merge and are not finished.** (1) `scripts/queue-status-writer-ratchet.sh`
+> passes but **is referenced nowhere in the `Makefile`**, so it runs in no check tier — a ratchet
+> nobody runs is indistinguishable from one that passes, which is item 8's own standing rule turned on
+> itself. (2) Three of the five commits carry `"verdict":"PASS"` from a Codex reviewer, and schema v1
+> defines only `APPROVE`, `REQUEST_CHANGES` and `BLOCK`. Filed as `hk-wq7hm`; the commits are genuinely
+> reviewed and do not need rewriting.
+
 Zero-design correctness first. Mechanical consolidation second. Design last. Every item below was
 measured at `462679b68`, and **no item edits a file in `internal/daemon`.** Item 1 reads one test file
 there and runs that package's scenario bundle. That is a read and a test run, not an edit, and §5's

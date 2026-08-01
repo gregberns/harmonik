@@ -668,6 +668,7 @@ check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint
 	scripts/workersbootwire-freeze-gate.sh
 	scripts/runloop-emitter-gate.sh
 	scripts/workloop-scheduler-freeze-gate.sh
+	scripts/queue-status-writer-ratchet.sh
 	@# `|| exit 1` is load-bearing. Without it the recipe line's status comes from
 	@# the trailing `if`, so a refusal from the script is discarded and the gate
 	@# goes green while the diagnostic scrolls past on stderr.
@@ -739,6 +740,7 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	scripts/workersbootwire-freeze-gate.sh
 	scripts/runloop-emitter-gate.sh
 	scripts/workloop-scheduler-freeze-gate.sh
+	scripts/queue-status-writer-ratchet.sh
 	# PROVEN-GREEN recipe = all THREE knobs together (isolated proof: run
 	# 28969662856, supervise green at 37.2s; daemon pkg green at ~930s):
 	#   -p=1          serialize PACKAGES to kill cross-package -race saturation

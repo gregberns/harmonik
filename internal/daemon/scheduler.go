@@ -24,6 +24,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -673,15 +674,32 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				// Two-level capacity gate + cross-queue round-robin (NQ-B1).
 				//
 				// Prior to named queues this block read the single "main" queue via
-				// lq.Queue(). It now scans EVERY loaded queue: it bootstraps each
-				// queue's first pending group (hk-veoht), re-evaluates deferred items
-				// per active group (hk-nbjht), then selectNextQueue picks the next
+				// lq.Queue(). It now scans EVERY loaded queue: it re-evaluates deferred
+				// items per active group (hk-nbjht), bootstraps each queue's first
+				// pending group (hk-veoht), then selectNextQueue picks the next
 				// (queue, group, item) honouring each queue's per-queue Workers cap and
 				// the name-ordered round-robin cursor. The global ceiling was already
 				// checked at Step 2; selectNextQueue enforces only the per-queue cap so
 				// the two compose per QM-062.
 				//
 				// Spec ref: specs/queue-model.md §9.3 QM-062, §9.7 QM-066, §9.8 QM-067.
+
+				// §2.8 deferred-item re-evaluation across every active queue's active
+				// group: an item whose blockers all resolved goes back to pending
+				// (hk-nbjht).
+				//
+				// It runs BEFORE the store lock, not inside it. The write now goes
+				// through the QueueStore transaction domain, and Transact takes the
+				// store write lock itself. A Go mutex is not reentrant, so calling it
+				// from inside a LockForMutation hold deadlocks the whole dispatch loop.
+				// reserveQueueItem below already runs outside the hold for the same
+				// reason.
+				//
+				// hk-gf59k S2-F-S2-2: the return value says whether any item is STILL
+				// deferred after the pass, so the idle path can use a bounded poll
+				// rather than an indefinite wait (see hasDeferredItems use below).
+				hasDeferredItems := reevaluateDeferredQueues(ctx, deps)
+
 				lq := deps.queueStore.LockForMutation()
 
 				// Bootstrap any queue whose first group is still pending. A
@@ -723,42 +741,6 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 						_ = deps.bus.Emit(ctx, core.EventType(evt.Type), raw) //nolint:errcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
 					}
 					continue
-				}
-
-				// §2.8 deferred-item re-evaluation across every active queue's active
-				// group: transition any deferred-for-ledger-dep item whose blockers all
-				// resolved back to pending (hk-nbjht). Mutates groups in place under the
-				// write lock; persists the owning queue when any flip occurred.
-				//
-				// hk-gf59k S2-F-S2-2: also track whether any items remain deferred after
-				// re-evaluation so the idle path can use a bounded poll rather than an
-				// indefinite wait (see hasDeferredItems use below).
-				hasDeferredItems := false
-				for _, name := range lq.LockedAllQueueNames() {
-					q := lq.LockedQueueByName(name)
-					if q == nil || q.Status != queue.QueueStatusActive {
-						continue
-					}
-					for gi := range q.Groups {
-						if q.Groups[gi].Status != queue.GroupStatusActive {
-							continue
-						}
-						if undeferred, reErr := queue.ReevaluateDeferred(ctx, &q.Groups[gi], deps.queueLedger); reErr != nil {
-							fmt.Fprintf(os.Stderr, "daemon: workloop: ReevaluateDeferred queueID=%s groupIndex=%d: %v\n",
-								q.QueueID, q.Groups[gi].GroupIndex, reErr)
-						} else if len(undeferred) > 0 {
-							if persistErr := queue.Persist(ctx, deps.projectDir, q); persistErr != nil {
-								fmt.Fprintf(os.Stderr, "daemon: workloop: Persist after ReevaluateDeferred queueID=%s: %v\n",
-									q.QueueID, persistErr)
-							}
-						}
-						for _, item := range q.Groups[gi].Items {
-							if item.Status == queue.ItemStatusDeferredForLedgerDep {
-								hasDeferredItems = true
-							}
-						}
-						break // only the first active group per queue
-					}
 				}
 
 				// Round-robin selection across all queues honouring per-queue Workers
@@ -1865,6 +1847,146 @@ func activateFirstPendingGroupLocked(ctx context.Context, deps workLoopDeps, lq 
 	// write lock (EV-002a emit-after-persist-and-unlock idiom, matching
 	// evaluateGroupAdvanceWithOutcome).
 	return true, events
+}
+
+// reevaluateDeferredQueues runs the §2.8 deferred-item pass over every loaded
+// queue and commits each un-deferral through the QueueStore transaction domain.
+// It reports whether any item is still deferred once the pass ends.
+//
+// The caller MUST NOT hold the store lock. Transact takes that lock itself, and
+// a Go mutex is not reentrant, so a call from inside a LockForMutation hold
+// deadlocks the dispatch loop.
+//
+// A queue with nothing deferred opens no transaction. That keeps the write rate
+// where it was: the loop reaches this on every tick, and the queue file is
+// rewritten only when an item actually flips.
+//
+// Spec ref: specs/queue-model.md §2.8; §3.1 QM-001.
+// Bead ref: hk-nbjht, hk-gf59k.
+func reevaluateDeferredQueues(ctx context.Context, deps workLoopDeps) bool {
+	if deps.queueStore == nil {
+		return false
+	}
+	anyDeferred := false
+	for name, loaded := range deps.queueStore.AllQueues() {
+		observed := loaded
+		// A nil ledger has no blocker facts to offer, so the pass reads the
+		// queue and changes nothing (see workLoopDeps.queueLedger).
+		if deps.queueLedger != nil && hasDeferredItem(loaded) {
+			// Keep the state we already read when nothing was committed.
+			// Reading a failed transaction as "no deferred items left" would
+			// send the idle path to an indefinite wait on a queue that still
+			// has work waiting on a blocker.
+			if post := commitDeferredReevaluation(ctx, deps, name); post != nil {
+				observed = post
+			}
+		}
+		if hasDeferredItem(observed) {
+			anyDeferred = true
+		}
+	}
+	return anyDeferred
+}
+
+// commitDeferredReevaluation re-evaluates one queue's deferred items inside a
+// single store transaction and returns the queue state that is now durable. It
+// returns nil when nothing was committed, which leaves the caller reading the
+// state it already had.
+//
+// Every branch continues the tick. A queue that cannot be re-evaluated or
+// written must not stop the loop dispatching the other queues, and §2.8 makes
+// the next tick run this pass again.
+func commitDeferredReevaluation(ctx context.Context, deps workLoopDeps, name string) *queue.Queue {
+	snapshot := deps.queueStore.Snapshot(name)
+	if snapshot.Queue == nil {
+		return nil
+	}
+	result := deps.queueStore.Transact(ctx, queuewiring.TransactionRequest{
+		Snapshot:      snapshot,
+		ProjectDir:    deps.projectDir,
+		OperationKind: queue.OperationMaintenance,
+		Mutate: func(q *queue.Queue) error {
+			g := firstActiveGroup(q)
+			if g == nil {
+				// The group advanced between the read and the write. Change
+				// nothing: the transaction then collapses as a no-op and
+				// touches no file.
+				return nil
+			}
+			_, err := queue.ReevaluateDeferred(ctx, g, deps.queueLedger)
+			return err
+		},
+	})
+
+	switch {
+	case result.Committed():
+		return result.Snapshot.Queue
+
+	case errors.Is(result.Err, queuewiring.ErrQueueQuarantined):
+		// An earlier write to this queue failed and the store now refuses it.
+		// Report it as the write failure it is, not as a retryable miss.
+		//
+		// reportQueueWriteError takes the reservation result shape but reads only
+		// the outcome and the error, and it reports at most once per queue. Its
+		// stderr line says "Dispatch abandoned; no bead was claimed", which is the
+		// reservation caller's wording — on this path no dispatch was attempted at
+		// all. The sentence stays because it is shared with that caller, because it
+		// is a stderr diagnostic and not a contract, and because the operator action
+		// it names is the same either way: the queue refuses writes, the daemon is
+		// degraded, and it needs a restart.
+		//
+		// No test asserts this wording. The reservation tests assert the emitted
+		// infrastructure_unavailable and daemon_degraded events and the
+		// once-per-queue dedupe. Do not read this comment as a reason the string is
+		// expensive to change.
+		reportQueueWriteError(ctx, deps, name, reservationResult{Outcome: result.Outcome, Err: result.Err})
+		return nil
+
+	case result.Outcome == queue.OutcomeRejected:
+		// No file was touched. Either the ledger could not answer, or the
+		// snapshot went stale under us. Both clear on a later tick.
+		fmt.Fprintf(os.Stderr, "daemon: workloop: re-evaluate deferred items queue=%q: %v\n", name, result.Err)
+		return nil
+
+	default:
+		// The write failed or its result is unknown. QM-001 requires three
+		// responses; the store has refused further writes to this name, and
+		// this adds the event and the degraded transition, at most once.
+		reportQueueWriteError(ctx, deps, name, reservationResult{Outcome: result.Outcome, Err: result.Err})
+		return nil
+	}
+}
+
+// firstActiveGroup returns the first active group of an active queue, or nil
+// when there is none. The pointer aliases q, so callers may mutate through it.
+//
+// The dispatcher works one active group per queue, so a later group is not this
+// tick's concern.
+func firstActiveGroup(q *queue.Queue) *queue.Group {
+	if q == nil || q.Status != queue.QueueStatusActive {
+		return nil
+	}
+	for gi := range q.Groups {
+		if q.Groups[gi].Status == queue.GroupStatusActive {
+			return &q.Groups[gi]
+		}
+	}
+	return nil
+}
+
+// hasDeferredItem reports whether q's first active group still holds an item
+// waiting on a ledger blocker.
+func hasDeferredItem(q *queue.Queue) bool {
+	g := firstActiveGroup(q)
+	if g == nil {
+		return false
+	}
+	for i := range g.Items {
+		if g.Items[i].Status == queue.ItemStatusDeferredForLedgerDep {
+			return true
+		}
+	}
+	return false
 }
 
 // markQueueItemFailureReason stamps LastFailureReason on one queue item without

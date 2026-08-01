@@ -27,41 +27,12 @@ package keeper_test
 //   corpus/5/hard-ceiling-overrides-hold → TestWatcher_HardCeilingOverridesHold
 //   corpus/5/warn-fires-under-hold       → TestWatcher_WarnFiresUnderHold
 //
-// ─── GAPS.  Four slots in this tier have no test left to register. ─────────
+//   floor/pct-inert-warn-1m            → TestWatcher_LargeWindow_NoWarnBelowWarnPct
+//   corpus/3/hkvpnp-no-truncate         → TestActLoop_HKVPNP_DoesNotTruncateNonEmptyHandoffOnTimeout
+//   corpus/3/hkvpnp-no-refire           → TestActLoop_HKVPNP_DoesNotRefireSecondNonceAfterTimeout
+//   corpus/4/b3-restall-fake-tmux       → TestWatcher_B3_ReStall_FiresViaReResolvedTarget
 //
-//   floor/pct-inert-warn-1m
-//       Owned by TestWatcher_LargeWindow_NoWarnBelowWarnPct.  Deleted by
-//       ec66da798.  Unguarded: nothing proves the 200k absolute warn gate stays
-//       inert on a 1M-context window until warn_pct is reached.
-//
-//   corpus/3/hkvpnp-no-truncate
-//       Owned by TestActLoop_HKVPNP_DoesNotTruncateNonEmptyHandoffOnTimeout.
-//       Deleted by ec66da798.  Unguarded: nothing proves a non-empty handoff
-//       survives a failed nonce confirmation instead of being wiped to 0 lines.
-//
-//   corpus/3/hkvpnp-no-refire
-//       Owned by TestActLoop_HKVPNP_DoesNotRefireSecondNonceAfterTimeout.
-//       Deleted by ec66da798.  Unguarded: nothing proves the cycle stops after
-//       a handoff timeout instead of firing a second nonce at the same session.
-//
-//   corpus/4/b3-restall-fake-tmux
-//       Owned by TestWatcher_B3_ReStall_FiresViaReResolvedTarget.  Deleted by
-//       ec66da798.  Corpus item #4 keeps its real-tmux leg in
-//       conformance_keeper_integration_test.go, so the scenario is not fully
-//       dark.  Its fake-tmux leg is, and that leg is the one that runs without
-//       tmux on PATH.
-//
-// Corpus item #3 now has NO leg at any tier.  It is the largest hole in the
-// corpus.
-//
-// None of the four is registered as a t.Skip.  A skip passes, and a passing
-// slot that asserts nothing is the exact failure this file was restored to end.
-// Read the gaps as real lost coverage.  Register each slot again when a test
-// owns it.
-//
-// White-box floor items (package keeper): see conformance_keeper_test.go, which
-// carries a fifth gap of its own and the history of why both files went
-// missing.
+// White-box floor items (package keeper): see conformance_keeper_test.go.
 // Integration items (real tmux):          see conformance_keeper_integration_test.go.
 // Binary-upgrade migration (cmd-level):   see cmd/harmonik/conformance_keeper_migration_test.go.
 //
@@ -71,15 +42,9 @@ package keeper_test
 import "testing"
 
 // TestKeeperConformanceCorpus covers the black-box acceptance corpus floor items
-// plus corpus items #1 (resolve seam) and #5 (hold invariants).  Corpus item #3
-// and the fake-tmux leg of item #4 have no test to register — see the gap list
-// in the file header.
+// plus corpus items #1, #3, #4, and #5.
 func TestKeeperConformanceCorpus(t *testing.T) {
-	t.Log("keeper acceptance corpus, black-box tier: 6 slots registered, 4 GAPS.")
-	t.Log("GAP floor/pct-inert-warn-1m — TestWatcher_LargeWindow_NoWarnBelowWarnPct, deleted by ec66da798.")
-	t.Log("GAP corpus/3/hkvpnp-no-truncate — TestActLoop_HKVPNP_DoesNotTruncateNonEmptyHandoffOnTimeout, deleted by ec66da798.")
-	t.Log("GAP corpus/3/hkvpnp-no-refire — TestActLoop_HKVPNP_DoesNotRefireSecondNonceAfterTimeout, deleted by ec66da798.")
-	t.Log("GAP corpus/4/b3-restall-fake-tmux — TestWatcher_B3_ReStall_FiresViaReResolvedTarget, deleted by ec66da798. The real-tmux leg survives under -tags=integration.")
+	t.Log("keeper acceptance corpus, black-box tier: 10 slots registered.")
 
 	// ── Supporting floor (keep green) ────────────────────────────────────────
 
@@ -91,11 +56,15 @@ func TestKeeperConformanceCorpus(t *testing.T) {
 	// (SID-independent failsafe).
 	t.Run("floor/hard-ceiling-sid-independent",
 		TestHardCeiling_FiresAbove280K_DespiteForeignSession)
+	t.Run("floor/pct-inert-warn-1m", TestWatcher_LargeWindow_NoWarnBelowWarnPct)
 
 	// ── Corpus item #1 — restart-now does NOT abort no_tmux_target (B4) ─────
 	// Resolution seam: ResolveTmuxTarget returns the correct pane for a
 	// crew-named session ("harmonik-<hash>-crew-<name>:agent").
 	t.Run("corpus/1/resolve-tmux-b4", TestResolveTmuxTarget_CrewNaming_B4)
+	t.Run("corpus/3/hkvpnp-no-truncate", TestActLoop_HKVPNP_DoesNotTruncateNonEmptyHandoffOnTimeout)
+	t.Run("corpus/3/hkvpnp-no-refire", TestActLoop_HKVPNP_DoesNotRefireSecondNonceAfterTimeout)
+	t.Run("corpus/4/b3-restall-fake-tmux", TestWatcher_B3_ReStall_FiresViaReResolvedTarget)
 
 	// ── Corpus item #5 — hold invariants ─────────────────────────────────────
 	// A .hold.<sessionID> marker from session A is unreachable as soon as the

@@ -49,6 +49,7 @@ func newDotSubWorkflowRunner(
 	beadID core.BeadID,
 	beadRecord core.BeadRecord,
 	beadTitle, beadDescription string,
+	activeRepo string, // hk-pq3ex: the repo this bead's work lands in; env.ProjectDir for a local bead
 	wtPath, parentSHA, daemonSocket string,
 	iterationCount *int,
 	claudeSessionID *string,
@@ -72,6 +73,7 @@ func newDotSubWorkflowRunner(
 		beadRecord:         beadRecord,
 		beadTitle:          beadTitle,
 		beadDescription:    beadDescription,
+		activeRepo:         activeRepo,
 		wtPath:             wtPath,
 		parentSHA:          parentSHA,
 		daemonSocket:       daemonSocket,
@@ -121,6 +123,7 @@ type dotSubWorkflowRunner struct {
 	beadRecord      core.BeadRecord
 	beadTitle       string
 	beadDescription string
+	activeRepo      string
 	wtPath          string
 	parentSHA       string
 	daemonSocket    string
@@ -339,6 +342,7 @@ func dispatchSubWorkflowExpandedNode(
 			r.beadRecord,
 			r.beadTitle,
 			r.beadDescription,
+			r.activeRepo,
 			r.wtPath,
 			r.parentSHA,
 			r.daemonSocket,

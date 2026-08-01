@@ -147,6 +147,18 @@ type dotFixtureOpts struct {
 	// RunRegistry lets a test read the in-flight RunHandle while the run is
 	// still live. Nil creates a fresh one inside the deps.
 	RunRegistry *daemon.RunRegistry
+
+	// BeadDescription is the bead body the ledger reports. A `## Branching`
+	// block in it is how a bead declares a cross-repo target_repo.
+	BeadDescription string
+
+	// AllowedRepos is the cross-repo dispatch safelist. A target_repo outside it
+	// is refused before the run starts.
+	AllowedRepos []string
+
+	// BeforeRun runs against the freshly built project dir, after its git repo
+	// exists and before the work loop starts.
+	BeforeRun func(t *testing.T, projectDir string)
 }
 
 // dotFixtureResult is what the caller asserts on.
@@ -154,6 +166,23 @@ type dotFixtureResult struct {
 	ProjectDir string
 	Ledger     *stubBeadLedger
 	Bus        *stubEventCollector
+}
+
+// dotFixtureLedger is stubBeadLedger with a bead body. The body is what carries
+// a `## Branching` block, and that block is how a bead declares the target_repo
+// a cross-repo run lands in.
+type dotFixtureLedger struct {
+	*stubBeadLedger
+	description string
+}
+
+func (l *dotFixtureLedger) ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord, error) {
+	rec, err := l.stubBeadLedger.ShowBead(ctx, id)
+	if err != nil {
+		return rec, err
+	}
+	rec.Description = l.description
+	return rec, nil
 }
 
 // dotFixtureCommittingHandler writes a /bin/sh implementer that commits a file
@@ -227,6 +256,10 @@ func runDotFixtureBead(t *testing.T, beadID core.BeadID, opts dotFixtureOpts) do
 		hookStore = opts.HookStore
 	}
 
+	if opts.BeforeRun != nil {
+		opts.BeforeRun(t, projectDir)
+	}
+
 	handlerScript := opts.HandlerScript
 	if handlerScript == "" {
 		handlerScript = dotFixtureCommittingHandler(t, beadID)
@@ -253,11 +286,12 @@ func runDotFixtureBead(t *testing.T, beadID core.BeadID, opts dotFixtureOpts) do
 
 	qs := daemon.ExportedNewQueueStore()
 	qs.SetQueue(q)
-	ledger := &stubBeadLedger{}
+	ledger := &dotFixtureLedger{stubBeadLedger: &stubBeadLedger{}, description: opts.BeadDescription}
 	bus := &stubEventCollector{}
 
 	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
 		BrAdapter:     ledger,
+		AllowedRepos:  opts.AllowedRepos,
 		Bus:           bus,
 		ProjectDir:    projectDir,
 		HandlerBinary: "/bin/sh",
@@ -293,5 +327,5 @@ func runDotFixtureBead(t *testing.T, beadID core.BeadID, opts dotFixtureOpts) do
 	cancel()
 	<-loopDone
 
-	return dotFixtureResult{ProjectDir: projectDir, Ledger: ledger, Bus: bus}
+	return dotFixtureResult{ProjectDir: projectDir, Ledger: ledger.stubBeadLedger, Bus: bus}
 }

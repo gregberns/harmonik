@@ -1979,7 +1979,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		// type (non-agentic synthesize-success, agentic substrate-dispatch,
 		// gate/sub-workflow out-of-scope error).
 		dotResult := driveDotWorkflow(ctx, env, rp, handles, runID, beadID, beadRecord, beadRecord.Title, beadRecord.Description,
-			wtPath, headSHA, graph, resolvedModel, resolvedEffort, dotExtraContext, baseBranch, dotRunner,
+			activeRepo, wtPath, headSHA, graph, resolvedModel, resolvedEffort, dotExtraContext, baseBranch, dotRunner,
 			dotWorkerBinary, dotWorkerHookSock, dotWorkerSession, dotWorkerCwd)
 
 		// ── RT9: the DOT terminal rides the Run tail (RSM-020) ────────────────

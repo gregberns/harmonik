@@ -58,7 +58,7 @@ func ExportedDriveDotWorkflow(
 	graph *dot.Graph,
 ) DotWorkflowResultExported {
 	env, rp, handles := runBundlesFromDeps(deps, runID)
-	r := driveDotWorkflow(ctx, env, rp, handles, runID, beadID, core.BeadRecord{}, "", "", wtPath, parentSHA, graph, "", "", "", "", nil, "", "", "", "")
+	r := driveDotWorkflow(ctx, env, rp, handles, runID, beadID, core.BeadRecord{}, "", "", env.ProjectDir, wtPath, parentSHA, graph, "", "", "", "", nil, "", "", "", "")
 	return DotWorkflowResultExported{
 		Success:        r.success,
 		TerminalNodeID: r.terminalNodeID,
@@ -85,7 +85,7 @@ func ExportedDriveDotWorkflowFull(
 	extraContext string,
 ) DotWorkflowResultExported {
 	env, rp, handles := runBundlesFromDeps(deps, runID)
-	r := driveDotWorkflow(ctx, env, rp, handles, runID, beadID, core.BeadRecord{}, beadTitle, beadDescription, wtPath, parentSHA, graph, "", "", extraContext, "", nil, "", "", "", "")
+	r := driveDotWorkflow(ctx, env, rp, handles, runID, beadID, core.BeadRecord{}, beadTitle, beadDescription, env.ProjectDir, wtPath, parentSHA, graph, "", "", extraContext, "", nil, "", "", "", "")
 	return DotWorkflowResultExported{
 		Success:        r.success,
 		TerminalNodeID: r.terminalNodeID,
@@ -155,7 +155,7 @@ func ExportedDriveDotWorkflowWithRunner(
 	runner tmuxPkg.CommandRunner,
 ) DotWorkflowResultExported {
 	env, rp, handles := runBundlesFromDeps(deps, runID)
-	r := driveDotWorkflow(ctx, env, rp, handles, runID, beadID, core.BeadRecord{}, beadTitle, beadDescription, wtPath, parentSHA, graph, "", "", "", "", runner, "", "", "", "")
+	r := driveDotWorkflow(ctx, env, rp, handles, runID, beadID, core.BeadRecord{}, beadTitle, beadDescription, env.ProjectDir, wtPath, parentSHA, graph, "", "", "", "", runner, "", "", "", "")
 	return DotWorkflowResultExported{
 		Success:        r.success,
 		TerminalNodeID: r.terminalNodeID,
@@ -181,7 +181,7 @@ func ExportedDriveDotWorkflowWithModelEffort(
 	resolvedEffort string,
 ) DotWorkflowResultExported {
 	env, rp, handles := runBundlesFromDeps(deps, runID)
-	r := driveDotWorkflow(ctx, env, rp, handles, runID, beadID, core.BeadRecord{}, beadTitle, beadDescription, wtPath, parentSHA, graph, resolvedModel, resolvedEffort, "", "", nil, "", "", "", "")
+	r := driveDotWorkflow(ctx, env, rp, handles, runID, beadID, core.BeadRecord{}, beadTitle, beadDescription, env.ProjectDir, wtPath, parentSHA, graph, resolvedModel, resolvedEffort, "", "", nil, "", "", "", "")
 	return DotWorkflowResultExported{
 		Success:        r.success,
 		TerminalNodeID: r.terminalNodeID,

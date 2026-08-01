@@ -110,6 +110,12 @@ func driveDotWorkflow(
 	beadRecord core.BeadRecord,
 	beadTitle string,
 	beadDescription string,
+	// activeRepo is the repository this run's worktree lives in and whose main
+	// branch its work lands on. It is env.ProjectDir for a local bead and the
+	// bead's target_repo for a cross-repo one. Every git question about "where
+	// does this bead's work belong" MUST be asked of this and not of
+	// env.ProjectDir, which stays the harmonik project root (hk-pq3ex).
+	activeRepo string,
 	wtPath string,
 	parentSHA string,
 	graph *dot.Graph,
@@ -813,7 +819,7 @@ func driveDotWorkflow(
 			// computing it here avoids a second call.
 			_, isConsolidate := isConsolidateJoinNode(graph, nodesByID, currentNodeID)
 			nodeOutcome, nodeErr := dispatchDotAgenticNode(ctx, env, ports, handles, runID, beadID, beadRecord,
-				beadTitle, beadDescription, wtPath, parentSHA, daemonSocket, node,
+				beadTitle, beadDescription, activeRepo, wtPath, parentSHA, daemonSocket, node,
 				isReviewer, iterationCount, &claudeSessionID,
 				resolvedModel, resolvedEffort, extraContext, baseBranch,
 				lastImplementerReviewerHarness, runner,
@@ -953,7 +959,7 @@ func driveDotWorkflow(
 			// Per SW-007, we build a dotSubWorkflowRunner and call Run.
 			swRunner := newDotSubWorkflowRunner(
 				env, ports, handles, runID, beadID, beadRecord, beadTitle, beadDescription,
-				wtPath, parentSHA, daemonSocket,
+				activeRepo, wtPath, parentSHA, daemonSocket,
 				&iterationCount, &claudeSessionID, resolvedModel, resolvedEffort,
 				extraContext, baseBranch, run, cycles, graph,
 				runner,            // remote-substrate: thread the run's runner into nested dispatch
@@ -1117,6 +1123,9 @@ func dispatchDotAgenticNode(
 	beadRecord core.BeadRecord,
 	beadTitle string,
 	beadDescription string,
+	// activeRepo is the repository this bead's work lands in — env.ProjectDir
+	// for a local bead, the bead's target_repo for a cross-repo one (hk-pq3ex).
+	activeRepo string,
 	wtPath string,
 	parentSHA string,
 	daemonSocket string,
@@ -1679,7 +1688,13 @@ func dispatchDotAgenticNode(
 		// Mirror the builtin noChange-subsumed check (workloop.go:1831-1848,
 		// hk-trjef): if the bead's work already landed in main, close-subsumed
 		// rather than hard-fail. Bead: hk-9v5yo.
-		if shared.MainHistoryHasRefsTrailer(ctx, env.ProjectDir, beadID) {
+		// activeRepo, NOT env.ProjectDir. A cross-repo bead's work lands on the
+		// TARGET repo's main, so asking the harmonik project root whether this
+		// bead is already there answers a question about the wrong repository:
+		// subsumption could never fire and a subsumed cross-repo bead hard-failed
+		// at iteration 1 (hk-pq3ex). The single-mode guard has always used
+		// activeRepo here.
+		if shared.MainHistoryHasRefsTrailer(ctx, activeRepo, beadID) {
 			return core.Outcome{}, errDotNoChangeSubsumed
 		}
 		if iterationCount < 2 {

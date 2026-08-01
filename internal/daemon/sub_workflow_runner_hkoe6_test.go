@@ -134,6 +134,7 @@ func swMakeRunner(t *testing.T, bus *recordingBusDaemon, projectDir string, pare
 		core.BeadRecord{},
 		"test-title",
 		"test-description",
+		"/tmp/repo", // activeRepo
 		"/tmp/wt",
 		"deadbeef",
 		"",

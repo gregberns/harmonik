@@ -2420,15 +2420,23 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 			// by the defer registered below, which fires on every exit path.
 			emitImplPresence(lctx, emit, beadID, core.AgentPresenceStatusOnline, core.AgentPresenceReasonJoin)
 		},
-		// hk-o85ye: SITE-SPECIFIC. Unlike the DOT paths, whose teardown is
-		// unconditional, single-mode must NOT kill an independent-session run on
-		// daemon shutdown: that session outlives SIGKILL and the next boot's
-		// adoption pass monitors it, which is why the shutdown branch below returns
-		// without ReopenBead. Killing here would strand the bead in_progress with no
-		// live session to adopt. The abort edge, the teardown and the post-wait
-		// window kill all carry the identical guard.
-		SkipAbortKill: func() bool { return useIndepSession && ctx.Err() != nil },
-		SkipTeardown:  func() bool { return useIndepSession && ctx.Err() != nil },
+		// The launch's own resources — its hook session and its agent session —
+		// hang in a scope nested inside this run's, because a graph run takes one
+		// of each per node while it holds one worktree for the whole run
+		// (RSM-038). Nesting is also what makes the session die before the
+		// worktree is removed, without either site knowing about the other.
+		RunScope: runScope,
+		// The launch reads the run's exit facts through this, rather than through
+		// the two skip predicates that used to sit here. Those were the last
+		// per-site predicates: the abort kill and the teardown each carried their
+		// own copy of `useIndepSession && ctx.Err() != nil`, so a wrong spelling
+		// at one was invisible to the other. Both now read the one answer
+		// runlease.Decide gives (RSM-037).
+		//
+		// It is wrapped rather than passed directly because runExit is a VARIABLE
+		// this run re-points once the post-launch facts exist. Passing its current
+		// value would freeze the launch on whatever the run knew at this line.
+		RunExit: func() runlease.Exit { return runExit() },
 		// hk-5z1f0: agent_ready has resolved (or was skipped) — the cold-start
 		// window is over, so give the token back rather than holding it for the
 		// whole run body. The scope's close still covers the paths that never

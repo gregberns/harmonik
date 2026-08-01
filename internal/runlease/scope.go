@@ -31,8 +31,11 @@ type Scope struct {
 }
 
 // Hold adds a lease on r to the scope and returns it. The caller may give the
-// resource back early through the returned lease — the hook session and the
-// spawn slot both do — and the scope then has nothing left to do for it.
+// resource back early through the returned lease, and the scope then has nothing
+// left to do for it. Two do: the cold-start token comes back on the readiness
+// edge through [Lease.Release], because it is the run's own bookkeeping and no
+// disposition keeps it, and the hook session comes back at the end of a launch
+// through [Lease.Give], because the survive disposition does keep that one.
 //
 // A nil release means the resource needs no call to give it back; see [Hold].
 func (s *Scope) Hold(r Resource, release func() error) *Lease {

@@ -84,6 +84,23 @@ func (l *Lease) spend() func() error {
 	return release
 }
 
+// Give hands the resource back if disposition d releases it, and disarms the
+// lease if d keeps it. It is what a release site calls when the resource comes
+// back EARLY, before the scope that holds it closes — the hook session is given
+// back at the end of a launch, and the launch may still be part of a run that
+// keeps it.
+//
+// [Lease.Release] is the other call, and the difference is the whole point:
+// Release gives the resource back unconditionally, so a site that used it here
+// would defeat the survive disposition. Reach for Give wherever the run's answer
+// applies, and for Release only where the resource is this caller's alone —
+// the cold-start token, which the readiness edge always gives back.
+//
+// Like Release, Give acts at most once across every caller and every repeat: a
+// lease the scope already closed, or an earlier Give already answered for, does
+// nothing and reports nothing.
+func (l *Lease) Give(d Disposition) Report { return l.give(d) }
+
 // give implements held. A lease the disposition keeps is disarmed rather than
 // left armed, so no later caller can give back what the run decided to leave
 // standing.

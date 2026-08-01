@@ -177,6 +177,34 @@ lines), which took 162 lines off the file and 161 off `beadRunOne`.
 > re-counted. Treat the whole column as of its own date, and re-run the commands below before
 > quoting any cell.
 
+> **⚠ Re-measured in full 2026-08-01 at `95dff0bf5`. This supersedes the 07-31 note above, which is
+> itself now stale.** Six of the nine cells moved. Every command is the one shown under the table.
+>
+> | Cell | Table says | 2026-08-01 |
+> |---|---:|---:|
+> | Total lines | 3,227 | **3,366** |
+> | Comment lines | 1,672 (52%) | **1,793 (53%)** |
+> | Commits | 384, last 2026-07-30 | **399, last 2026-08-01** |
+> | Commits by month | May 108, Jun 140, Jul 136 | **May 108, Jun 140, Jul 145, Aug 6** |
+> | `hk-…` bead refs | 130 | 130 — unchanged |
+> | `//nolint` | 6 | **8** |
+> | `workLoopDeps` struct | 81 fields, 744 lines, 78% comment | **81 fields, 770 lines, 79% comment** |
+> | Top-level functions | 21 | 21 — unchanged |
+> | `beadRunOne` | 1,603 = 50% | **1,704 = 51%** |
+>
+> The `workLoopDeps` comment share is `sed -n '111,880p' internal/daemon/workloop.go |
+> grep -cE '^\s*(//|/\*|\*)'` — 608 of 770. The field count is `go/ast`: parse the file, find the
+> `workLoopDeps` `TypeSpec`, sum `len(Field.Names)` over `StructType.Fields.List`.
+>
+> **Prefer the field count to the line span.** The span is 743, 744 and 770 on three different days
+> in one week, and this file is under active edit, so it will be wrong again. The field count has
+> held at 81 for the whole program (see Step 10 below). A field count is a stable number. A line
+> span is not.
+>
+> **On the 743-versus-744 disagreement between this row and Step 10 below:** it was a date artifact,
+> not an error. The declaration measured 743 lines on 2026-07-28 and 744 on 2026-07-30. Both were
+> true when written. It is 770 now, and both figures are superseded.
+
 | Measure | `workloop.go` @ HEAD | before Step 5 | as first written |
 |---|---:|---:|---:|
 | Total lines | **3,227** | 3,389 | 6,656 |
@@ -1606,6 +1634,23 @@ launchd agent is loaded. Nothing gates it off in code. Turning it back on is a c
 
 ### Step 10 — the composition root (~800 lines, MEDIUM risk — a design, not a move)
 
+**Re-measured 2026-08-01 at `95dff0bf5`. The field count held. The line span did not, and the
+step's stated precondition is refuted below.**
+
+- `workLoopDeps` holds **81 fields** — unchanged. Method: parse `internal/daemon/workloop.go` with
+  `go/ast`, find the `workLoopDeps` `TypeSpec`, sum `len(Field.Names)` over `StructType.Fields.List`.
+- The declaration spans **770 lines**, not 743, of a file that is now **3,366** lines, not 3,227.
+  Same `go/ast` pass, reading the `TypeSpec` start and end positions.
+- `bootState` in `internal/daemon/bootstate.go` holds **22 fields** — unchanged, same method. A
+  2026-07-31 handoff claimed 28. That claim is wrong. The struct has 22 named fields and no embedded
+  field.
+- The four-stage assembly is unchanged: **25 post-construction field writes** in `bootworkloop.go`
+  and **3** in `scheduler.go`. Method: `grep -rnE '^\s*deps\.[a-zA-Z]+ *= ' internal/daemon/*.go`
+  with `_test.go` files removed.
+
+**Quote the field count, not the span.** The span read 743 on 07-28, 744 on 07-30 and 770 on 08-01.
+The field count read 81 on all three days. See the §1a note for the same warning.
+
 `workLoopDeps` holds **81 fields**, and its declaration alone spans **743 of `workloop.go`'s 3,227
 lines** — more than a fifth of the file is one type. It is assembled in four stages across
 `bootworkloop.go` (`buildWorkLoopDeps`, `seedGovernorDeps`, `injectWorkLoopDeps`,
@@ -1617,6 +1662,29 @@ nil-deref at boot.
 **Why here:** §3's "What must NOT move" defers this in so many words — *"Replace it when steps 2–6 have
 made most of its fields locally owned, not before."* Steps 2–6 are that work. This step is the licensed
 successor to that instruction, and the reason it was deferred rather than dropped.
+
+> **⚠ That precondition is not met, and waiting for it is waiting for nothing. Measured 2026-08-01.**
+> The completed steps moved **zero** fields off the bundle. Field count by date, each read with the
+> same `go/ast` pass over `git show <commit>:internal/daemon/workloop.go`:
+>
+> | Date | Commit | Fields | Span |
+> |---|---|---:|---:|
+> | 2026-07-19 | `37651569f` | 82 | 748 |
+> | 2026-07-24 | `a479ddff7` | 81 | 743 |
+> | 2026-07-27 | `92d81fd60` | 81 | 743 |
+> | 2026-07-28 | `8ccc7a03e` | 81 | 743 |
+> | 2026-07-29 | `b3d6e8cc3` | 80 | 735 |
+> | 2026-07-30 | `89782676d` | 81 | 744 |
+> | 2026-07-31 | `8a84ad4ab` | 81 | 770 |
+> | 2026-08-01 | `95dff0bf5` | 81 | 770 |
+>
+> Steps 2 and 5 landed inside that window, and Step 7 landed half of itself. The net movement is one
+> field, from 82 to 81, and it went off on 07-24 before either step landed. The dip to 80 on 07-29
+> came back the next day.
+>
+> So "wait for steps 2–6 to make most of the fields locally owned" describes an outcome that has not
+> started and that the completed steps do not produce. **Either this step starts on its own terms, or
+> it needs a real precondition. It does not have one today.** Re-run the table before acting on it.
 
 **Why it blocks done:** `PRINCIPLES.md` §4 asks for consumer-owned ports. An 81-field bundle threaded
 through every run means no unit of the core has a declared dependency set, and validity is temporal —
@@ -1640,6 +1708,72 @@ those sites in `scheduler.go` alone. `queuewiring.QueueStore.LockForMutation` ha
 sites in 6 files. A real state machine exists — `AdvanceGroup` in `internal/queue/state.go` — but it is
 one writer among many rather than **the** writer.
 
+> **⚠ Re-measured 2026-08-01 at `95dff0bf5`. Four of the five counts above are wrong, and the file
+> list is short by one. Where this note and the paragraph above disagree, this note is the later
+> reading.** Method for the assignment sites:
+> `grep -rnE --include='*.go' '\.Status[[:space:]]*(=[^=]|\+=)' . --exclude='*_test.go'`, then keep
+> only the hits whose target resolves to `queue.Item`, `queue.Group` or `queue.Queue`.
+>
+> - **30 assignment sites, not 27.** Nine files, and **four** packages, not five.
+>   `internal/daemon/scheduler.go` 9, `internal/lifecycle/startup_pl005_qm002.go` 7,
+>   `internal/daemon/scheduler_reservation.go` 3, `internal/queue/resume.go` 3,
+>   `internal/daemon/perqueuespendmeter_tigaf11.go` 2, **`internal/queue/persistence.go` 2**,
+>   `internal/queuewiring/operatorevents.go` 2, `internal/queue/rpc.go` 1,
+>   `internal/queue/state.go` 1. One raw grep hit in `scheduler.go` is a comment and is excluded.
+> - **The file list above omits `internal/queue/persistence.go`.** It holds two writes, both
+>   immediately before a `Persist` call — `CompleteAndUnlink` sets `QueueStatusCompleted` and
+>   `CancelQueueOnShutdown` sets `QueueStatusCancelled`. A writer API that does not admit those two
+>   sites cannot claim to be the single writer.
+> - **`queue.Persist` in `scheduler.go` is 6 sites, not 7.**
+>   `grep -c 'queue\.Persist(' internal/daemon/scheduler.go` → 6. The nine-file, five-package figure
+>   holds only if `internal/daemon/scenariotest/concurrent_merge.go` counts as production. Strictly
+>   excluding that fixture it is 8 files in 4 packages. Counting intra-package unqualified calls too
+>   it is 11 files in 6 packages.
+> - **`LockForMutation` is 15 call sites, not 18.**
+>   `grep -rn '\.LockForMutation()' internal cmd --include='*.go' | grep -v _test |
+>   grep -vE ':[[:space:]]*//' | wc -l` → 15. **The comment strip is load-bearing**: without it the
+>   count is 16, because `internal/queuewiring/store.go` carries a `// lq := qs.LockForMutation()`
+>   usage example. Six files, so the file count holds. Adding the two `LockForMutationView()` callers
+>   in `internal/queue/rpc.go` reaches 17, still not 18.
+>
+> **And there is a whole class of site this step does not name: composite-literal construction.**
+> **15 production sites** build an `Item{}`, `Group{}` or `Queue{}` literal with `Status:` set at
+> construction — `internal/queue/rpc.go` 6, `cmd/harmonik/run.go` 3, `internal/queue/append.go` 3,
+> `cmd/harmonik/run_via_daemon.go` 1, `internal/daemon/crewstart.go` 1,
+> `internal/queue/validation.go` 1.
+>
+> **The exclusion rule is the whole content of this number, so state it or nobody reproduces 15.**
+> Sweep candidates with
+> `grep -rnE -A6 '(queue\.)?\b(Item|Group|Queue)\{' internal cmd --include='*.go' | grep -v _test |
+> grep -E 'Status:'`, which returns 17. Then keep only literals whose type is exactly `queue.Item`,
+> `queue.Group` or `queue.Queue`, or the unqualified `Item`, `Group`, `Queue` inside package `queue`.
+> **Five look-alike types match the pattern and are not queue values.** `QueueSubmitResponse` in
+> `internal/queue/rpc.go`, `wireGroup` in `cmd/harmonik/run_via_daemon.go` — it carries a
+> `queue.GroupStatusPending` constant but is a local JSON wire struct — `StateQueue` in
+> `internal/daemon/statedisk.go` and `internal/daemon/stategather.go`, `PausedQueue` in
+> `internal/daemon/draindetect.go`, and `QueueItemFact`. Those last four read `q.Status` into a
+> report type rather than constructing a queue value. Two real sites also set `Status` from a local
+> variable rather than a constant, so a constant-matching grep drops them: `newItems[i] = Item{…}` in
+> `internal/queue/append.go` and `items[j] = Item{…}` in `internal/queue/rpc.go`.
+>
+> A further 3 sit in the test fixture
+> `internal/daemon/scenariotest/concurrent_merge.go`, which is the difference between 15 and 18.
+> Six of the 15 are in `internal/queue/rpc.go`, the submit path a single-writer design has to route
+> through. Two of them set `Status` from a local variable rather than a constant, so a
+> constant-matching grep misses them. **Any writer API this step lands must admit these sites, or
+> the queue gains a second construction-time writer the moment the first assignment site closes.**
+>
+> **⚠ Say whether `internal/daemon/scenariotest` is in, or nobody reproduces either figure.** It is a
+> test-fixture package — its helpers take `*testing.T` and all four files import `testing` — but its
+> filenames carry no `_test` suffix, so it passes every `_test.go` filter and counts as production.
+> It is the sole difference between 15 and 18 composite-literal sites and between 8 and 9 files for
+> `queue.Persist`. It is also a **sub-package** of `internal/daemon`, so the scope flag decides it
+> too: `find internal/daemon -maxdepth 1` excludes it and a recursive `find` includes it. That is why
+> the Step 15 file count reads 96 and a recursive count of the same tree reads 104 — the eight extra
+> files are `scenariotest`, `bootconfig` and `router`. `scripts/runloop-emitter-gate.sh` scans
+> recursively on purpose, and says so. State the depth and the fixture decision beside any count over
+> this package.
+
 **Why here:** the charter names both halves of this directly. §6's done criteria include "one explicit
 state machine with a single writer", and §4 says the queue is the centre and contested effort goes
 there. Step 4 landed the reservation transaction; it did not make the store the sole writer.
@@ -1653,6 +1787,107 @@ nothing in the product can leave.
 getting this wrong is a lost status write that still compiles.
 
 ### Step 12 — finish the partition (~600 lines, LOW risk — mostly a move)
+
+> **⚠ THE STEP 10 EDGE IS TOO COARSE, NOT ABSENT. Split this step. Verified 2026-08-01 at
+> `95dff0bf5`, corrected the same day after review.**
+>
+> **⚠⚠ An earlier version of this note said "THIS STEP DOES NOT DEPEND ON STEP 10" and "Step 12 can
+> start today". That was wrong for two of the nine consumers, and it was wrong in the direction that
+> costs most — a false "you may start". It is withdrawn. What follows replaces it.** The error is
+> recorded rather than deleted because this document exists to stop exactly this failure, and it
+> reproduced the failure inside the fix: the deref table below was gathered correctly and then read
+> against the wrong function boundaries.
+>
+> The edge exists because gating a consumer leaves its field nil, and a nil field consumed by a later
+> boot phase is a nil-deref at boot. That reasoning is sound, and **for two of the nine it applies
+> exactly as written.**
+>
+> **Six of the nine are clear of `workLoopDeps` and can be gated on their own.**
+> `HandlerPausePolicyGoroutine`, `DaemonSpendMeter`, `PerQueueSpendMeter`,
+> `QueueOperatorEventConsumer`, `ReviewGateAnomalyWatcher` and `CatBL2Handler` are local variables.
+> Each is constructed, subscribed and dropped inside one function, so gating them is an
+> `if enabled { ... }` wrap with no downstream consumer to protect. None appears as a `workLoopDeps`
+> field and none is assigned onto a `workLoopDeps` value. Method: read the 81-field declaration, then
+> check every `deps.<field> =` write in `internal/daemon` — 25 in `bootworkloop.go`, 3 in
+> `scheduler.go`, plus the `newWorkLoopDeps` literal.
+>
+> **The other three are `bootState` fields, and being off `workLoopDeps` is not the same as being
+> clear of it.** The test that matters is not "is it a field of the bundle". It is "does gating it
+> force an edit inside a function Step 10 rewrites". Their production deref sites, checked against
+> the function spans in `internal/daemon/bootworkloop.go`
+> (`buildWorkLoopDeps` 59-95, `seedGovernorDeps` 96-130, `injectWorkLoopDeps` 152-242,
+> `startBackgroundLoops` 243-300, `wireStaleWatcherReapSeams` 319-351) and in
+> `internal/daemon/bootstate.go` (`wireSpendAndQueueConsumers` 146-215,
+> `wireWatchersAndObservers` 216-328):
+>
+> | Field | Deref site | File | Enclosing function | Step 10 rewrites it? |
+> |---|---|---|---|---|
+> | `subscribeHub` | `Subscribe(bus)` | `bootstate.go` | `wireSpendAndQueueConsumers` | no — subsumed |
+> | `subscribeHub` | `SetCommsCursorStore` | `bootsocket.go` | socket bind path | no |
+> | `subscribeHub` | the `Subscribe:` op-table entry | `bootsocket.go` | socket op table | no |
+> | `staleWatcher` | `Subscribe()` | `bootstate.go` | `wireWatchersAndObservers` | no — subsumed |
+> | `staleWatcher` | `StartWatcher` | `bootstate.go` | `emitStartupEvents` | no |
+> | `staleWatcher` | `SetForceReap` | `bootworkloop.go` | `wireStaleWatcherReapSeams` | **takes `deps`** |
+> | `staleWatcher` | `SetRunProcessDead` | `bootworkloop.go` | `wireStaleWatcherReapSeams` | **takes `deps`** |
+> | `quiesceArbiter` | `Subscribe(bus)` | `bootstate.go` | `wireWatchersAndObservers` | no — subsumed |
+> | `quiesceArbiter` | `SetDrain` | `bootsocket.go` | socket bind path | no |
+> | `quiesceArbiter` | the `SleepWake:` op-table entry | `bootsocket.go` | socket op table | no |
+> | `quiesceArbiter` | `SetScheduleStore` | `bootworkloop.go` | **`injectWorkLoopDeps`** | **YES** |
+> | `quiesceArbiter` | `Start` | `bootworkloop.go` | **`startBackgroundLoops`** | **YES** |
+>
+> **On the three `Subscribe` rows.** Each sits on the line straight after its own constructor, so an
+> `if enabled { ... }` wrap around construction subsumes it and no assignment changes. They cost this
+> step nothing. They are listed because **an earlier version of this table called itself the complete
+> deref list and omitted all three** — the same failure that produced the retraction above, at
+> smaller scale. Two of them sit inside `wireWatchersAndObservers`, which this document names as the
+> Step 12 and Step 14 collision site, so they are not neutral for lane planning even though they are
+> neutral for the Step 10 question. **Treat this table as the sites checked to date, not as a proof of
+> completeness.**
+>
+> - **`QuiesceArbiter` is Step 10 work.** `SetScheduleStore` sits inside `injectWorkLoopDeps`,
+>   between the `deps.scheduleWakeC` and `deps.crewHandler` writes. `Start` is the first call in
+>   `startBackgroundLoops` — the function opens with `cfg := bs.cfg`, and `Start` is the statement
+>   after it. Gating the arbiter off makes the field nil, so both sites need a
+>   nil-guard **inside two of the four functions Step 10 rewrites**. Do not gate it in a separate
+>   lane.
+> - **`StaleWatcher` is Step 10 work.** `wireStaleWatcherReapSeams` takes `deps *workLoopDeps` and
+>   hands the watcher a closure that captures it. That is the case §4 of this document already warned
+>   about — *"the bundle is captured by a background watchdog closure, so a partial cleanup produces a
+>   bundle that is neither the old thing nor the new one"*. The earlier note overrode a standing
+>   warning in this same file without addressing it.
+> - **`SubscribeHub` is not cleared, only unrefuted.** Its two derefs are in the socket path and
+>   neither is in a function Step 10 names, so on today's reading it looks separable. But it was
+>   cleared by the same claim that failed for the other two, so **check it on its own before gating
+>   it**, rather than inheriting this note's confidence.
+>
+> The precedent cited below cuts the same way and was misread the first time: `f6408b861` gated the
+> bandwidth tuner and **modified `bootworkloop.go` by +30 lines inside `startBackgroundLoops`**. A
+> gating change reaching the assembly functions is the normal case, not the exception.
+>
+> **What is still true, and it is the useful half:** the gating idiom needs no design work. It is
+> worked out twice already, and six of the nine can take it now.
+>
+> **The pattern is already worked out, twice.** `bandwidthTunerEnabled()` in
+> `internal/daemon/bootsocket.go` is the single reading of the `bandwidth_tuner` switch, and both the
+> producer seam in `wireWatchersAndObservers` and the consumer seam in `startBandwidthTunerIfEnabled`
+> read that same predicate. Producer and consumer can never disagree, so "field is nil" and "deref is
+> reachable" are mutually exclusive by construction — there is no nil check because none is needed.
+> `newCrewIdleReaperIfEnabled` and `newBranchReapWatcherIfEnabled` in the same file show the other
+> idiom: return nil when off, and nil-guard at the named site in `startBackgroundLoops`. That second
+> idiom is the template for the three `bootState` members. Both idioms are in the tree now.
+> **Note where the second idiom puts its nil-guard — inside `startBackgroundLoops`, one of the four
+> functions Step 10 rewrites.** The template itself says this class of change reaches the assembly
+> functions.
+>
+> **This step has two constraints, not one.** `QuiesceArbiter` and `StaleWatcher` are Step 10 work,
+> per the table above. Separately, the whole step collides with Step 14 inside
+> `wireWatchersAndObservers` — see the collision note below.
+>
+> **One addition to the list of nine, so a reader auditing "everything with no switch" is not
+> surprised:** `NotifyStreamConsumer` is a tenth subsystem-ungated consumer at these seams. It is
+> conditional on `cfg.NotifyStream != nil`, that is on the `--notify-stream` flag, so calling it
+> ungated is arguable. `CatBL2Handler` is likewise conditional on `ProjectDir != "" && BrPath != ""`.
+> Of the nine, seven are unconditional. Decide in advance whether the tenth is in scope.
 
 `knownSubsystems` in `internal/projectconfig/subsystems.go` holds **8 names**, and all 8 are wired at
 their construction seams. Against that, `bootState.wireSpendAndQueueConsumers` and
@@ -1680,6 +1915,27 @@ each needs its own decision.
 keys" for any node that is not a mapping, so a YAML alias hides a typo'd key inside the `subsystems:`
 block. That hole is inherited, not new, and it is now on the surface this step widens.
 
+**Collision with Step 14, and it is real. Verified 2026-08-01, and this document did not state it.**
+`bootState.wireWatchersAndObservers` in `internal/daemon/bootstate.go` carries both surfaces. This
+step must wrap `NewStaleWatcher`, `NewReviewGateAnomalyWatcher`, `NewQuiesceArbiter` and
+`NewCatBL2Handler` in a switch. Step 14 must rewrite two substrate capability assertions in the same
+function — `cfg.Substrate.(substrateWithAdapter)`, which produces the `QuiesceArbiterConfig.Adapter`
+argument, and `cfg.Substrate.(substrateDiagnosticHookSetter)`. The `substrateWithAdapter` assertion
+sits **inside** the `QuiesceArbiter` construction block, so the statements this step wraps are the
+statements Step 14 rewrites. Two lanes running these at once conflict on that hunk, and a careless
+merge drops either the switch or the declared capability. Serialize them or give them to one lane.
+
+**A third collision was claimed and it is not real.** A 2026-07-31 handoff put Steps 11 and 12
+together in `internal/daemon/perqueuespendmeter_tigaf11.go`. Step 11's half is there:
+`pauseQueueByBudget` writes `q.Status = queue.QueueStatusPausedByBudget` and
+`unpauseBudgetPausedQueues` writes `q.Status = queue.QueueStatusActive`. Step 12's half is not.
+`PerQueueSpendMeter` is one of the nine, but its switch goes where every other switch goes — at the
+construction seam in `wireSpendAndQueueConsumers` in `bootstate.go`, with the name in
+`internal/projectconfig/subsystems.go`. The precedent commit `f6408b861` gated the bandwidth tuner
+without touching `bandwidthtuner.go` at all. The only shared file is `bootstate.go`, and Step 11
+writes no queue status there. The one real contact is a sentence in this file's header comment that
+paraphrases the transition, which Step 11 will reword as part of its own edit.
+
 ### Step 13 — the event payloads the core actually emits (~340 lines, MEDIUM risk — a design, and it carries a live defect)
 
 **Do this part first. It is 40 lines and it is correctness, not structure. Added 2026-07-30, verified
@@ -1699,6 +1955,50 @@ depends on. The `handler.go` case is the sharper one: `emitHandlerResumedEvent` 
 **discards the typed payload and marshals the untyped struct instead**. The correct payload already
 exists at the write site. Give both sites a `core.Event` envelope with a real event id and schema
 version, and keep their payloads where they are.
+
+> **⚠ Re-measured 2026-08-01 at `95dff0bf5`. Both counts in the paragraph below are wrong. Where
+> this note and that paragraph disagree, this note is the later reading.**
+>
+> - **`internal/core` registers 178 event types, not 181.** Method:
+>   `grep -rhoE '\bmustRegister\("[a-z0-9_.]+"' internal/core/eventreg_hqwn59.go
+>   internal/core/eventreg_wkzlc.go internal/core/pertypecompat_hqwn38.go | sort -u | wc -l`. All 178
+>   are distinct. The 181 comes from a looser grep that also catches the `RegisterEventTypeAtVersion`
+>   call inside `RegisterEventType` itself and two doc-comment lines in `pertypecompat_hqwn38.go`.
+> - **Five more types are registered outside `internal/core`**, all in `internal/workers` via
+>   `core.RegisterEventType` in `breach.go`, `telemetry.go`, `health.go`, `offline.go` and
+>   `tunnelfailed.go`. So the program-wide total is **183**. Say which number you mean.
+> - **The "29 bare `map[string]…` payload sites" is a grep artifact, and the real figure is 7.** The
+>   29 reproduces exactly with
+>   `grep -rEn 'json\.Marshal\(map\[string\]' --include='*.go' internal cmd | grep -v _test.go`.
+>   **27 of the 29 are false positives.** 11 in `internal/hookrelay/hookrelay.go` build the
+>   hook-relay wire-protocol body, which the daemon re-types into
+>   `core.AgentRateLimitStatusPayload`, `core.AgentReadyPayload` and
+>   `handler.ExportedOutcomeEmittedPayload` before anything reaches the bus. 14 across
+>   `cmd/harmonik` are JSON-RPC request bodies for the unix socket. One is a codex JSON-RPC params
+>   map. One is `internal/testhelpers/jsonlfixture.go`, a fixture builder that survives the
+>   `_test.go` filter only because of its filename. The same grep also **misses five of the seven
+>   real sites**, because they bind the map to a variable or wrap it in a helper. The two sets
+>   overlap in only two members.
+> - **The seven genuine untyped event payloads**, with the emitting symbol:
+>
+>   | Symbol | File | Event type |
+>   |---|---|---|
+>   | `(*movementGovernor).onHalt` | `internal/daemon/movementgovernor.go` | `liveness_halt` |
+>   | `emitStaleOpenBeadDetected` | `internal/daemon/eagerfill_em063.go` | `stale_open_bead_detected` |
+>   | `buildWatcherFailedPayload` | `internal/handlercontract/watcher_hc011.go` | `agent_failed` — reached from six `*Watcher` call sites |
+>   | `stepIdleRestartTick` | `internal/keeper/step.go` | `session_keeper_idle_crew` |
+>   | `appendDecisionRequired` | `internal/sentinel/trip_ev043b.go` | `decision_required` |
+>   | `appendDecisionAcknowledged` | `internal/sentinel/trip_ev043b.go` | `decision_acknowledged` |
+>   | `appendLegitimateHaltAck` | `internal/sentinel/trip_ev043b.go` | `decision_acknowledged` |
+>
+>   The three `trip_ev043b.go` sites append straight to `events.jsonl` through the local
+>   `appendEventLine`. They never reach the bus.
+> - **Five of the seven shadow a payload type that already exists** — `AgentFailedPayload`,
+>   `SessionKeeperIdleCrewPayload`, `DecisionRequiredPayload`, `DecisionAcknowledgedPayload`. Only
+>   `liveness_halt` and `stale_open_bead_detected` have no registry entry at all. That split is the
+>   useful one: five are a one-line swap to the struct sitting beside them, two need a type first.
+> - **A 2026-07-31 handoff put this at 6.** It is 7. The missing one is `stepIdleRestartTick`, which
+>   hides behind `mustMarshalPayload(...)` and so matches no `json.Marshal(map[string]` grep.
 
 `internal/core` registers **181 event types** with typed payloads, and `daemon.startWithHooks` refuses
 to boot if `scanRegisteredPayloadsForSecretFields` finds a secret in one. But **25 `…Payload` structs
@@ -1737,6 +2037,57 @@ capability interfaces** — `substrateWithAdapter`, `substrateWithSessionName`, 
 `runSessionSpawner` — resolved at **21 production type-assertion sites** across eleven files. The event
 bus has the same shape at smaller scale: `EventBus` plus four extension interfaces probed at 6 sites.
 
+> **⚠ Re-measured 2026-08-01 at `95dff0bf5`. The 16 interfaces are right. The site count is not.
+> Where this note and the paragraph above disagree, this note is the later reading.**
+>
+> - **32 production type-assertion sites across 12 files, not 21 across eleven.** Method, runnable as
+>   written:
+>
+>   ```
+>   grep -rnE '\.\((substrateWithAdapter|substrateWithSessionName|substrateWithKeepalive|substrateWithSpawnCap|substrateWithSpawnCapSetter|substrateSpawnReadier|substrateDiagnosticHookSetter|paneTargeter|paneCaptureAdapter|pasteInjecter|sessionCreator|sessionEnsurer|runnerSwapper|crewSessionSpawner|crewSessionStopper|runSessionSpawner)\)' \
+>     internal cmd --include='*.go' | grep -v _test | wc -l
+>   ```
+>
+>   All 32 are comma-ok single-type assertions. There is not one type switch.
+> - **The 11 missing sites are inside `internal/daemon/tmuxsubstrate.go` itself**, and 32 − 11 = 21
+>   with 12 − 1 = 11 files, so the earlier count reached 21 by dropping the declaring file. Those 11
+>   are the substrate interrogating its own `adapter` field, its own returned handles and its own
+>   parameters: `s.adapter.(sessionEnsurer)` twice, `adapter.(sessionEnsurer)` once on a local
+>   parameter, `remoteAdapter.(sessionEnsurer)` once, `s.adapter.(sessionCreator)` twice,
+>   `sess.(paneTargeter)` three times, plus `p.inner.adapter.(runnerSwapper)` and
+>   `p.pasteAdapter().(paneCaptureAdapter)`. **These are the sharpest evidence for this step, not a
+>   rounding error.** The implementation cannot name its own capabilities either.
+> - Per file: `tmuxsubstrate.go` 11, `crewstart.go` 5, `workloop.go` 3, `bootreconcile.go` 2,
+>   `bootsocket.go` 2, `bootstate.go` 2, `bootworkloop.go` 2, and one each in `daemon.go`,
+>   `dot_cascade_core.go`, `dot_gate.go`, `pasteinject.go`, `scheduler.go`. All 12 are in package
+>   `daemon`. The interfaces are unexported, so nothing outside can hold one.
+> - **The event-bus figure is 5 sites across 2 files, not 6.** The four extension interfaces are
+>   `RunDrainer`, `CommsMessageEmitter`, `CommsPresenceEmitter` and `TypedEmitter`, all declared in
+>   `internal/eventbus/eventbus.go`. `internal/daemon/commshandler_nbrmf.go` holds 3 and
+>   `internal/daemon/bootstate.go` holds 2. **`RunDrainer` has zero production probes.** Three test
+>   files in `internal/eventbus` do assert it — `busimpl_test.go`,
+>   `busimpl_drainrun_race_test.go` and `busimpl_drainrun_reentrant_test.go` — so the interface is
+>   exercised, just never probed in production. A grep that does not strip `//` lines also picks up
+>   the usage example in each interface's own doc comment in `eventbus.go`, which adds four phantoms
+>   and inflates the total to 9.
+> - **The 16 interfaces are unchanged.** All 16 named above are still declared in
+>   `tmuxsubstrate.go`, and it declares no others. `crewKeeperEventBus` in
+>   `internal/daemon/crewstart.go` is a separate narrow interface and is not part of this set.
+>
+> **Collision with Step 10, and this document did not state it.**
+> `bootState.injectWorkLoopDeps` in `internal/daemon/bootworkloop.go` holds both surfaces in the
+> **same `if` block**. Step 10 rewrites that function's `workLoopDeps` field writes. This step
+> rewrites `cfg.Substrate.(substrateSpawnReadier)` → `prober.ProbeSpawnReady(ctx)`, whose only
+> purpose is to produce `deps.spawnSubstrateReadyCh`. The assertion opens the block and the field
+> write closes it, with a goroutine launch between them — near, but not one statement. One lane
+> deletes or relocates the field write the other lane is converting to a declared capability.
+> **The second site in this file is `wireStaleWatcherReapSeams`**, which carries a
+> `cfg.Substrate.(substrateWithAdapter)` assertion and which this document names nowhere else.
+> `buildWorkLoopDeps` is **not** a site — it mentions neither `Substrate` nor any assertion. A lane
+> told to serialize on `buildWorkLoopDeps` looks in the wrong place and misses a real site.
+> Serialize Steps 10 and 14, or give them to one lane. This step also collides with Step 12 inside
+> `wireWatchersAndObservers` — see the note under Step 12.
+
 **Read the contrast, or this gets mis-applied.** The 13 one-method `Emit` interfaces re-declared across
 `eventbus`, `lifecycle`, `handlercontract`, `queue`, `brcli` and `daemon` are **not** a tangle — that is
 `PRINCIPLES.md` §4 working as designed, and `runloop.EmitterPort` is the documented idiom. The
@@ -1758,6 +2109,11 @@ are the only thing keeping a non-tmux path alive.
 production figures read 42,438 in 95 files at `15bfdc154` earlier the same day. The 183 test files
 figure is older still, from 2026-07-29. Note the direction: this package is the one the program
 exists to shrink, and it grew. It also has a fan-out of **52 internal packages**.
+
+> **The 96 is a `-maxdepth 1` count, so it excludes the three sub-packages.** A recursive count of
+> the same tree reads 104. The eight extra files are `bootconfig`, `router` and `scenariotest`, and
+> `scenariotest` is a test fixture that no `_test.go` filter catches. See the caveat under Step 11.
+> This step moves the sub-packages too, so cost it against 104, not 96.
 It holds the scheduler, the run driver, the tmux substrate, the paste-inject watchdogs, the DOT
 cascade, the boot composition root — *and* comms, crew, dashboard, decisions, subscribe, quiesce,
 handler-pause, spend metering and the schedule tick.
@@ -1794,6 +2150,31 @@ Reproduce the set with `ls scripts/*gate*.sh` and `grep -c 'internal/daemon' scr
 **`scenario-gate.sh` is NOT in the count.** All six of its `internal/daemon` references are inside
 `#` comment lines, so the split makes its comments lie but does not break it. Fix the comments, do
 not rewrite the script.
+
+**Two of these gates change how an earlier step must be executed, and this document did not say so.**
+Both read 2026-08-01 at `95dff0bf5`. Both are green today (`bash scripts/<name>.sh`, exit 0).
+
+- **`scripts/workloop-scheduler-freeze-gate.sh` sets a FLOOR, not a ceiling.**
+  `RUNWORKLOOP_MIN_CODE_LINES=200`, and check (5) fails when `runWorkLoop` in
+  `internal/daemon/scheduler.go` falls **below** 200 code lines, with blank and comment lines not
+  counted. The floor exists to stop the loop body moving back into `workloop.go` behind a
+  pass-through. It has the side effect that **hollowing out `runWorkLoop` far enough turns this gate
+  red even when the change is correct.** `runWorkLoop` measures 739 code lines today
+  (`awk '/^func runWorkLoop/,/^}/' internal/daemon/scheduler.go | grep -vcE '^\s*(//|$)'`). The
+  script's own comment records 796 on 2026-07-29. So there is room to shed about three quarters of
+  it before the gate fires. Any step that shrinks the scheduler loop past that point must move the
+  floor in the same commit and say why. The script says this itself in its failure message. Do not
+  discover it at the end of a step.
+- **`scripts/runloop-emitter-gate.sh` budgets an unlisted non-test file in `internal/daemon` at zero
+  — but zero of ONE thing, not zero in general.** `budget_for` returns `exact 0` for any path not in
+  its two tables, and the scan is recursive over `find internal/daemon -type f -name '*.go' !
+  -name '*_test.go'`, so sub-packages are covered too. What it counts is
+  `FIELD_RE='deps\.bus'`: raw bus-field reads that should have gone through
+  `(*workLoopDeps).emitterPort()`. The loop does `[ "$got" -eq 0 ] && continue`, so **a new
+  production file in `internal/daemon` trips this gate only if it reads `deps.bus` directly.** A new
+  file that emits through `EmitterPort`, or that does not emit at all, passes. A 2026-07-31 handoff
+  stated this as "any new production file there trips it". That is too strong, and believing it
+  would make an author avoid adding a file for no reason.
 
 **Why the greps exist, and why they cannot simply be deleted.** `.golangci.yml` is 1,166 lines and
 **1,016 of them — 87% — are the depguard block** (lines 146 to 1161). That block repeats the same
@@ -1864,7 +2245,40 @@ steps and keep the numbers they were proposed under. The rest are recorded as ca
 "Candidate work beyond Step 16" below, under those same numbers. **A missing number in this section
 is a candidate, not a lost step.**
 
-### Step 19 — one terminal predicate (~15 lines, LOW risk, and it is a live behavior fix)
+### Step 19 — one terminal predicate — ✅ **LANDED, with one site still open.** Confirmed 2026-08-01.
+
+> **Both halves shipped, and this document said the whole step was outstanding. One site is still
+> open, so do not read this step as fully discharged.** Verified at `95dff0bf5`.
+>
+> - **The predicate exists.** `func (s CoarseStatus) IsTerminal() bool` is in
+>   `internal/core/coarsestatus.go` and returns `Closed || Tombstone`. Landed in `8a84ad4ab`
+>   ("refactor: centralize coarse terminal status", 2026-07-31), which also converted
+>   `internal/daemon/scheduler.go`, `internal/lifecycle/activerun_em031a.go` and
+>   `internal/lifecycle/startup_pl005_qm002.go`. Method:
+>   `grep -rn 'IsTerminal()' internal cmd` with `_test.go` removed, plus
+>   `git merge-base --is-ancestor 8a84ad4ab HEAD`.
+> - **The behavior fix shipped too.** `maybeEmitEpicCompleted` in `internal/daemon/workloop.go` now
+>   tests `!e.EndpointStatus.IsTerminal()`, so a tombstoned child no longer suppresses
+>   `epic_completed` for its parent. Landed in `f7fbc7649` ("daemon: a tombstoned child no longer
+>   stops the epic it belongs to", 2026-08-01), also an ancestor of HEAD.
+> - **A seventh site now routes through the predicate as well** — `internal/daemon/stalewatch.go`.
+> - **⚠ One site is still open, and it is a real drift hazard. Bead
+>   `hk-terminal-status-literals-aynz5` holds it.**
+>   `terminalStatuses := []string{"closed", "tombstone"}` in
+>   `internal/lifecycle/activerun_em031a.go` is the argument list for
+>   `querier.ListBeadsByStatus(ctx, string)`, so it is an enumeration and not a predicate, and
+>   `IsTerminal()` cannot replace it as written. **That makes it a harder fix, not a finished one.**
+>   `IsTerminal()` hardcodes `Closed || Tombstone` in its own body and this branch scan hardcodes the
+>   same two names in another package, so the terminal set now has two copies and no shared source.
+>   Add a third terminal status and the predicate learns it while the branch scan silently keeps
+>   excluding the wrong set — a wrong exclusion set at runtime, with nothing red at compile time. The
+>   bead asks for an accessor such as `core.TerminalCoarseStatuses()` with the predicate and the
+>   enumeration both derived from one list. **An earlier reading of this file called the site
+>   correctly left alone. That was too generous and it is withdrawn here.**
+> - **On the four-outside / two-inside split:** the table below already had it right — four sites in
+>   `internal/lifecycle` and two in `internal/daemon`. The "five agree, one does not" line above the
+>   table is about which test each site applies, not about which package it lives in. A 2026-07-31
+>   handoff read it as a location claim and reported it as an error. It was not one.
 
 `core.CoarseStatus` has no `IsTerminal()` method, so **six production sites re-derive the test.
 Five agree that terminal means `closed` or `tombstone`. One does not.**
@@ -1890,6 +2304,26 @@ also touches. **How you know it worked:** a test that tombstones one child of a 
 asserts that `epic_completed` still fires.
 
 ### Step 27a — one `daemon.Config` constructor with a required-field check (~120 lines, MEDIUM risk)
+
+> **⚠ Re-checked 2026-08-01 at `95dff0bf5`. Every number in this step reproduces. The framing in the
+> first sentence does not.**
+>
+> - `daemon.Config` still has **40 fields** (`go/ast` over `internal/daemon/daemon.go`).
+>   `cmd/harmonik/main.go` still sets **21** and `cmd/harmonik/run.go` still sets **17**.
+> - **`harmonik run` still does not boot.** `run.go` sets no `WorkflowModeDefault` anywhere
+>   (`grep -n WorkflowModeDefault cmd/harmonik/run.go` returns nothing), it calls
+>   `daemon.Start(runCtx, cfg)`, and `resolveBootConfig` in `internal/daemon/daemon.go` calls
+>   `bootconfig.ValidateWorkflowMode`, which rejects the empty value by name in
+>   `internal/daemon/bootconfig/bootconfig.go`.
+> - **So "that is the second composition root" is wrong as written, and this step's own body already
+>   says so four paragraphs down.** There is one live composition root, not two. The dead one is a
+>   dead verb. That does not retire the step — a constructor with a required-field check is still
+>   worth having, and it still has to admit the two out-of-scope assembly sites named below. It does
+>   change the argument for it. The reason to do this is not "two roots disagree". It is "one root
+>   has 40 fields and no constructor, and the verb beside it has been shipping broken because nothing
+>   checks at construction". Brief it that way.
+> - **A 2026-07-31 handoff reported the dead-verb finding as new.** It is not. This step recorded it
+>   when it was written. Only the opening framing needed correcting.
 
 Step 10 replaces the 81-field `workLoopDeps` and the 22-field `bootState`. It does not name
 `daemon.Config`, and that is the second composition root.
@@ -1935,13 +2369,21 @@ use.
 | 9 | Repair the scratch-daemon default and make a live pass the per-step acceptance check | ~2 days | low | nothing | neither — it is the oracle |
 | 10 | Replace the 81-field `workLoopDeps` and the 22-field `bootState` with constructed units | ~800 lines | medium | steps 2–6 | **design** |
 | 11 | Make the queue store the only writer of queue status | ~400 lines | medium | step 4 | **design** |
-| 12 | Give the nine ungated bus consumers and the six unswitched subsystems their own switches | ~600 lines | low | step 10 | move, with 2 decisions |
+| 12 | Give the nine ungated bus consumers and the six unswitched subsystems their own switches | ~600 lines | low | **split** — six consumers depend on nothing, `QuiesceArbiter` and `StaleWatcher` are step 10 work, `SubscribeHub` unchecked. See Step 12 | move, with 2 decisions |
 | 13 | Fix the two hand-rolled `events.jsonl` envelopes, then one definition per event payload | ~340 lines | medium | nothing | fix, then **design** + a spec amendment |
 | 14 | Replace 16 substrate capability assertions with a declared contract | ~250 lines | medium | step 10 | **design** |
 | 15 | Split `internal/daemon`, and retire the 16 gate scripts the split breaks | large | low for the move | steps 10, 12 | move + a linter trade |
 | 16 | The keeper — separable from crew, outside the charter's core set | ~11,500 lines | medium | nothing technical | move + design |
-| 19 | One `IsTerminal()` on `core.CoarseStatus`, and stop a tombstoned child suppressing `epic_completed` | ~15 lines | low | nothing | move + a behavior fix |
+| 19 | One `IsTerminal()` on `core.CoarseStatus`, and stop a tombstoned child suppressing `epic_completed` | — | — | — | ✅ **LANDED** `8a84ad4ab` + `f7fbc7649`, **one site open** — bead `hk-terminal-status-literals-aynz5` |
 | 27a | One `daemon.Config` constructor with a required-field check | ~120 lines | medium | step 10 | **design** |
+
+> **⚠ Two rows in this table were corrected 2026-08-01. Read the step entries, not the row.**
+> Step 12's edge on Step 10 is too coarse, not absent. **Six of the nine consumers it gates are clear
+> and can start. `QuiesceArbiter` and `StaleWatcher` are Step 10 work** — their derefs sit inside
+> `injectWorkLoopDeps`, `startBackgroundLoops` and `wireStaleWatcherReapSeams`. `SubscribeHub` looks
+> separable and has not been checked on its own. Step 12 also collides with Step 14 inside
+> `wireWatchersAndObservers`, and Steps 10 and 14 collide inside `injectWorkLoopDeps`. Neither
+> collision was in this table. Step 19 has landed except for one open site.
 
 **Honest read on how much is left:** steps 9–15 are on the order of 2,400 lines of production change
 over a 42,000-line package, and three of the seven are designs rather than transcriptions. The line

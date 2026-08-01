@@ -369,8 +369,19 @@ The 14 gates cost about 40 seconds. A warm `go build ./...` costs about 2.5 seco
   conflict** — the invariant breaks with nothing red. Alpha does not edit either path.
 - **Do not use `.claude/worktrees/`.** That belongs to the agent tool.
 - **A `cd` into a worktree persists across shell calls here.** Use absolute paths and `git -C`.
-- **A worktree handed to a subagent may be cut from the wrong commit.** Three independent agents hit
-  this in one session. Tell every worktree agent to verify its base commit before it reads anything.
+- **Do not let the agent tool cut the worktree. Cut it yourself.** Four independent agents have now
+  been handed a stale base. The fourth was measured on 2026-08-01: the tool placed it at
+  `dc2217527`, dated 2026-07-21 — **571 commits behind the tip, and 27 commits off the mainline**, so
+  it was not merely behind. The commit it was told to build on existed in the repo, so this is not a
+  missing fetch. Four hits is not four coincidences; the creation step resolves some cached or
+  default ref rather than the current branch tip.
+  **What works:** `git worktree add -b work/<name> /Users/gb/github/harmonik-wt/<name> <sha>` from the
+  main checkout, then hand the agent the PATH and tell it the worktree already exists. That also
+  keeps it out of `.claude/worktrees/`, which is off-limits by the rule above.
+  **Keep telling every worktree agent to verify its base commit before it reads anything**, and to
+  stop rather than rebase if the base is wrong. That instruction is what caught this one, at the cost
+  of eight tool calls instead of a wasted pass — and a rebase across 571 commits is exactly the
+  hard-to-reverse move a subagent should never make unasked.
 
 ### Two lanes and one machine
 

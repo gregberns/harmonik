@@ -71,10 +71,43 @@ run_subject printf '?   \tgithub.com/x/y\t[no test files]\n' './internal/y/'
 run_subject printf '?   \tgithub.com/x/y/sub\t[no test files]\nok  \tgithub.com/x/y\t1.0s\n' './internal/y/...'
 [ "$code" = "0" ] || fail "no-test-files under a ... wildcard must pass, got exit $code"
 
-# CLAIM: the empty-filter marker still fails under a wildcard. The wildcard
-# excuses a package without tests, never a filter that matched none.
-run_subject printf 'ok  \tgithub.com/x/y\t1.0s [no tests to run]\n' './internal/y/...'
-[ "$code" = "1" ] || fail "an empty -run match under a ... wildcard must fail, got exit $code"
+# CLAIM: THE PARTIAL SUBTREE MATCH IS GREEN. This is the case whose absence let
+# a false red ship. `./internal/daemon/...` is four packages. A filter aimed at
+# a test in internal/daemon leaves the siblings printing `[no tests to run]`
+# while the run is healthy. The first version of this guard failed on ANY
+# occurrence of that marker, which made `make test-e2e-real-claude` and `make
+# capture-claude-fixtures` permanently red on a credentialed box. The case that
+# used to sit here asserted that wrong behaviour and pinned the defect in place.
+run_subject printf 'ok  \tgithub.com/x/daemon\t9.0s\nok  \tgithub.com/x/daemon/bootconfig\t0.2s [no tests to run]\nok  \tgithub.com/x/daemon/router\t0.4s [no tests to run]\n' -run TestFoo './internal/daemon/...'
+[ "$code" = "0" ] || fail "a partial match under a ... wildcard must PASS, got exit $code"
+
+# CLAIM: the same subtree fails when NOT ONE package ran. This is the real
+# test-e2e-real-claude-reviewloop shape: the named test exists nowhere, so every
+# package in the subtree reports.
+run_subject printf 'ok  \tgithub.com/x/daemon\t0.3s [no tests to run]\nok  \tgithub.com/x/daemon/bootconfig\t0.2s [no tests to run]\nok  \tgithub.com/x/daemon/router\t0.4s [no tests to run]\n' -run TestGone './internal/daemon/...'
+[ "$code" = "1" ] || fail "a subtree where no package ran must fail, got exit $code"
+
+# CLAIM: a one-package subtree fails when that sole package reports. This is the
+# real test-codex-live shape — ./internal/codextest/... is one package and it has
+# no TestL3_ at all. Every package reported, so the rule above still catches it.
+run_subject printf 'ok  \tgithub.com/x/y\t1.0s [no tests to run]\n' -run TestL3_ './internal/y/...'
+[ "$code" = "1" ] || fail "a sole subtree package that reports must fail, got exit $code"
+
+# CLAIM: the two markers are counted together against the package count, not
+# separately. A subtree with one of each still passes while a third package runs.
+run_subject printf 'ok  \tgithub.com/x/y\t1.0s\n?   \tgithub.com/x/y/a\t[no test files]\nok  \tgithub.com/x/y/b\t0.1s [no tests to run]\n' './internal/y/...'
+[ "$code" = "0" ] || fail "a mixed-marker subtree with one live package must pass, got exit $code"
+
+# CLAIM: a subtree that matched no package at all fails. Nothing ran, and no
+# marker can say so because there is no package line to read.
+run_subject printf 'no packages matched\n' './internal/nope/...'
+[ "$code" = "1" ] || fail "a subtree matching no package must fail, got exit $code"
+
+# CLAIM: the markers are read from go's own summary lines, never from a test's
+# own output. Four of the wrapped recipes pass -v, so a test that prints the
+# marker string would otherwise redden its target.
+run_subject printf '=== RUN   TestFoo\n    foo_test.go:9: saw [no tests to run] in the child\n--- PASS: TestFoo (0.00s)\nok  \tgithub.com/x/y\t1.0s\n' -v -run TestFoo './internal/y/'
+[ "$code" = "0" ] || fail "a marker inside test output must not fail the target, got exit $code"
 
 # CLAIM: a `...` inside a -run PATTERN is not a package wildcard. Reading it as
 # one would switch the no-test-files check off without a word, which is the same
@@ -83,8 +116,10 @@ run_subject printf '?   \tgithub.com/x/y\t[no test files]\n' -run 'TestFoo.*Bar'
 [ "$code" = "1" ] || fail "a ... in a -run pattern must not excuse a package with no tests, got exit $code"
 
 # CLAIM: a flag value is never read as a package. -run and its pattern are one
-# unit, and a flag on its own says nothing about the package list.
-run_subject printf '?   \tgithub.com/x/y/sub\t[no test files]\n' -count=1 -run 'TestFoo' './internal/y/...'
+# unit, and a flag on its own says nothing about the package list. The live
+# package here is what makes the subtree healthy — without it every package
+# reported and the run would fail for the right reason, proving nothing.
+run_subject printf '?   \tgithub.com/x/y/sub\t[no test files]\nok  \tgithub.com/x/y\t1.0s\n' -count=1 -run 'TestFoo' './internal/y/...'
 [ "$code" = "0" ] || fail "a real ... package arg must still excuse no-test-files, got exit $code"
 
 # CLAIM: the command's output reaches the caller. A gate whose output the guard
@@ -94,6 +129,18 @@ case "$captured" in
 *"github.com/x/y"*) : ;;
 *) fail "the wrapped command's output must stream through, got: $captured" ;;
 esac
+
+# CLAIM: a streamed line that starts with "ok" is not a package. go separates
+# the summary fields with a tab and test output does not. Counting a stray line
+# as a package raises the package count without raising the marker count, which
+# reads as "one package ran" and passes an empty subtree.
+run_subject printf 'ok  fake line from a subprocess\nok  \tgithub.com/x/y\t1.0s [no tests to run]\n' './internal/y/...'
+[ "$code" = "1" ] || fail "a tab-less line must not count as a package, got exit $code"
+
+# CLAIM: a run with no package line at all fails, whether or not a wildcard is
+# present. Nothing ran, and no marker can say so.
+run_subject printf 'some unrelated chatter\n' './internal/y/'
+[ "$code" = "1" ] || fail "a named-package run with no package line must fail, got exit $code"
 
 # CLAIM: no arguments is a usage error, not a pass.
 run_subject

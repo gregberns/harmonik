@@ -630,7 +630,7 @@ check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint
 	go vet ./...
 	go build ./...
 	$(MAKE) vet-tagged
-	$(TOOLS_DIR)/golangci-lint run --new-from-rev=HEAD~1
+	$(TOOLS_DIR)/golangci-lint run --allow-parallel-runners --new-from-rev=HEAD~1
 	scripts/transport-freeze-gate.sh
 	scripts/queuewiring-freeze-gate.sh
 	scripts/crewrun-freeze-gate.sh
@@ -672,7 +672,7 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	go vet ./...
 	go build ./...
 	$(MAKE) vet-tagged
-	$(TOOLS_DIR)/golangci-lint run --new-from-rev=origin/main
+	$(TOOLS_DIR)/golangci-lint run --allow-parallel-runners --new-from-rev=origin/main
 	scripts/transport-freeze-gate.sh
 	scripts/queuewiring-freeze-gate.sh
 	scripts/crewrun-freeze-gate.sh

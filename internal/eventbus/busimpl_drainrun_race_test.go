@@ -64,13 +64,13 @@ func TestBusImpl_DrainRunConcurrentEmitNoWaitGroupMisuse(t *testing.T) {
 	payload := []byte(`{"k":"v"}`)
 
 	// One runID, hammered from two goroutines: a continuous emitter (each emit
-	// does runWG.Add(1) then the async goroutine Done()s, so the counter
-	// oscillates through 0) racing a continuous DrainRun (runWG.Wait()). This is
-	// the run-teardown-while-still-emitting window. Without the seal fix, an
+	// adds a tracked per-run dispatch and its async goroutine completes, so the
+	// counter oscillates through 0) racing a continuous DrainRun. This is
+	// the run-teardown-while-still-emitting window. With a WaitGroup, an
 	// Add(1) eventually lands when the counter is 0 with a waiter registered →
 	// "fatal error: sync: WaitGroup misuse: Add called concurrently with Wait",
-	// aborting the test binary. With the fix, the first DrainRun seals the run
-	// and later emits skip per-run tracking, so no Add ever races a Wait.
+	// aborting the test binary. The counter-and-condition implementation tracks
+	// every emission without an Add/Wait race.
 	id, err := uuid.NewV7()
 	if err != nil {
 		t.Fatalf("uuid.NewV7: %v", err)

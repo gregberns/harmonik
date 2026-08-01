@@ -33,11 +33,9 @@ type RunDrainer interface {
 	// DrainRun blocks until all in-flight asynchronous and observer dispatches
 	// for runID complete, or ctx is cancelled.
 	//
-	// CONTRACT: DrainRun permanently SEALS the run — after it is called for a
-	// runID, later EmitWithRunID calls for that run are no longer tracked for
-	// per-run quiescence (they still count toward the global Drain). Call it
-	// ONLY at terminal run teardown; never mid-run expecting drain to resume.
-	// The seal is what closes the Add-concurrent-with-Wait WaitGroup race.
+	// DrainRun does not seal the run. A re-entrant EmitWithRunID from an in-flight
+	// asynchronous or observer handler is included before DrainRun returns. A
+	// caller must prevent new unrelated emissions after terminal teardown begins.
 	DrainRun(ctx context.Context, runID core.RunID) error
 }
 

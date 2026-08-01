@@ -233,11 +233,13 @@ In order. Each is one commit, each independently reviewable.
    a doomed tunnel.
 3. ✅ **Landed 2026-07-31.** Bound the independent-session and crew-session constructors the way
    the shared-window path is bounded.
-4. Migrate the per-run resources onto the scope, innermost first, one commit each. Landed so far,
-   innermost outward: the cold-start token, the run record, the worktree.
-4a. Carry the "this run captured agent output into its worktree" fact out of the graph cascade, so
-   the evidence disposition is true in both modes. §2's correction says why this is a commit of its
-   own and not a consequence of step 4.
+4. ✅ **Landed 2026-07-31.** The per-run set is on the scope, innermost outward: the cold-start
+   token, the run record, the worktree, the tunnel process, the tunnel port, the worker slot and
+   the local in-flight count. One commit each. Two mutable flags and every per-site skip predicate
+   are gone; the run reads one disposition.
+4a. ✅ **Landed 2026-07-31.** The evidence fact is recorded at the LAUNCH, which is the one step
+   both workflow modes pass through, so a failed graph-mode run keeps its captured output. It was
+   NOT a consequence of step 4 — see §2's correction.
 5. Give the per-launch set its own nested scope, and collapse the duplicated tunnel refusal
    reporting into the one reporter the run plan already has.
 6. ✅ **Landed 2026-07-31, and moved AHEAD of steps 4 and 5 on purpose.** Close the two test holes.

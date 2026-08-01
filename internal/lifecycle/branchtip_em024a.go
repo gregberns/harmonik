@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/gitprobe"
 )
 
 // ErrBranchTipRewound is returned by CheckBranchTipMonotonicity when the
@@ -93,28 +93,18 @@ func WritePersistedTip(projectDir string, runID core.RunID, tipSHA string) error
 // descendant of ancestor — i.e., ancestor is in the ancestry chain of
 // descendant — using `git merge-base --is-ancestor`.
 //
-// Returns true when the check succeeds, false when it fails (non-zero exit,
-// meaning "not an ancestor"), and an error on git invocation failure.
+// Returns true when the check succeeds, false when ancestor is not reachable,
+// and an error on a git invocation failure.
 //
 // Spec ref: execution-model.md §4.5 EM-024a — "verify that the new tip SHA
 // is a fast-forward descendant of the persisted prior tip SHA (the prior tip
 // is in the ancestor chain of the new tip)."
 func IsFastForwardDescendant(ctx context.Context, repoDir, ancestor, descendant string) (bool, error) {
-	cmd := exec.CommandContext(ctx, "git",
-		"-C", repoDir,
-		"merge-base", "--is-ancestor", ancestor, descendant,
-	)
-	err := cmd.Run()
-	if err == nil {
-		return true, nil
+	isAncestor, err := gitprobe.IsAncestor(ctx, repoDir, ancestor, descendant)
+	if err != nil {
+		return false, fmt.Errorf("lifecycle: IsFastForwardDescendant: %w", err)
 	}
-	// Exit status 1 means "not an ancestor" — a normal, non-error result.
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-		return false, nil
-	}
-	// Any other error (2, signal, exec failure) is an infrastructure problem.
-	return false, fmt.Errorf("lifecycle: IsFastForwardDescendant: git merge-base: %w", err)
+	return isAncestor, nil
 }
 
 // CheckBranchTipMonotonicity is the EM-024a sensor. It reads the persisted

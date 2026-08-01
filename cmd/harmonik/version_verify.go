@@ -50,6 +50,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/gregberns/harmonik/internal/gitprobe"
 )
 
 // Result statuses reported by `harmonik version --binary`. They are stable
@@ -177,24 +179,6 @@ func gitObjectExists(ctx context.Context, repoDir, spec string) (bool, error) {
 	return true, nil
 }
 
-// gitIsAncestor reports whether ancestor is reachable from descendant.
-// `git merge-base --is-ancestor` exits 0 for yes and 1 for no; any other exit
-// status is a real failure and is returned as an error.
-func gitIsAncestor(ctx context.Context, repoDir, ancestor, descendant string) (bool, error) {
-	cmd := exec.CommandContext(ctx, "git", "-C", repoDir, "merge-base", "--is-ancestor", ancestor, descendant)
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	err := cmd.Run()
-	if err == nil {
-		return true, nil
-	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-		return false, nil
-	}
-	return false, fmt.Errorf("git merge-base --is-ancestor %s %s: %w", ancestor, descendant, err)
-}
-
 // gitIsRepo reports whether repoDir is inside a git working tree.
 func gitIsRepo(ctx context.Context, repoDir string) bool {
 	cmd := exec.CommandContext(ctx, "git", "-C", repoDir, "rev-parse", "--git-dir")
@@ -269,7 +253,7 @@ func classifyContainment(ctx context.Context, stamp binaryStamp, repoDir, target
 		res.ExitCode = verifyExitIndeterminate
 		return res, nil
 	}
-	isAncestor, err := gitIsAncestor(ctx, repoDir, target, stamp.Revision)
+	isAncestor, err := gitprobe.IsAncestor(ctx, repoDir, target, stamp.Revision)
 	if err != nil {
 		return res, err
 	}

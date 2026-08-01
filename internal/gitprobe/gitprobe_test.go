@@ -139,6 +139,56 @@ func TestResolveWorktreeHEAD_NotARepo(t *testing.T) {
 	}
 }
 
+func TestIsAncestor(t *testing.T) {
+	t.Parallel()
+	repoPath, headSHA := initGitRepo(t)
+	treeCmd := exec.CommandContext(t.Context(), "git", "write-tree")
+	treeCmd.Dir = repoPath
+	treeOut, err := treeCmd.Output()
+	if err != nil {
+		t.Fatalf("git write-tree: %v", err)
+	}
+	//nolint:gosec // G204: tree ID comes from git write-tree in this test-only repository.
+	orphanCmd := exec.CommandContext(t.Context(), "git", "commit-tree", strings.TrimSpace(string(treeOut)), "-m", "unrelated")
+	orphanCmd.Dir = repoPath
+	orphanOut, err := orphanCmd.Output()
+	if err != nil {
+		t.Fatalf("git commit-tree: %v", err)
+	}
+	orphanSHA := strings.TrimSpace(string(orphanOut))
+
+	cases := []struct {
+		name       string
+		ancestor   string
+		descendant string
+		want       bool
+	}{
+		{name: "self", ancestor: headSHA, descendant: headSHA, want: true},
+		{name: "not_ancestor", ancestor: headSHA, descendant: orphanSHA, want: false},
+		{name: "git_failure", ancestor: "0000000000000000000000000000000000000000", descendant: headSHA},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := gitprobe.IsAncestor(t.Context(), repoPath, tc.ancestor, tc.descendant)
+			if tc.name == "git_failure" {
+				if err == nil {
+					t.Fatal("IsAncestor with a missing commit returned nil error")
+				}
+				if got {
+					t.Error("IsAncestor with a missing commit = true, want false")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("IsAncestor: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("IsAncestor = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestRunnerIsLocalFS is the classification the remote path depends on: only a
 // nil runner and LocalRunner name box-A paths that os.Stat can read. Any other
 // transport points at a worktree on another machine, where a box-A stat would

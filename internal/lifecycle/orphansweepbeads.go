@@ -140,6 +140,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/gitprobe"
 )
 
 // InFlightBeadLedger is the read surface of the BI adapter consumed by
@@ -307,7 +308,13 @@ func (s GitMergeCommitScanner) HasMergeCommitForBead(ctx context.Context, beadID
 			// Trailer + real diff matched. Before reporting the change present,
 			// confirm it has not been reverted/superseded — a bare historical
 			// trailer match is NOT sufficient to auto-close (H3).
-			if !s.changeStillPresent(ctx, hash, branch) {
+			stillPresent, presentErr := s.changeStillPresent(ctx, hash, branch)
+			if presentErr != nil {
+				// A failed ancestry probe is not evidence that the change is gone.
+				// Keep the scanner's documented conservative outer result.
+				return false, nil //nolint:nilerr // intentional: scan failure is non-fatal
+			}
+			if !stillPresent {
 				// This trailer-bearing commit was reverted; keep scanning in case
 				// another commit re-landed the same bead's work.
 				continue
@@ -387,15 +394,16 @@ func isDocsPath(path string) bool {
 // commit. A bare historical trailer match is NOT sufficient to auto-close a bead
 // (H3): the commit may have been reverted/superseded, leaving the work absent
 // from the current tree.
-func (s GitMergeCommitScanner) changeStillPresent(ctx context.Context, hash, branch string) bool {
+func (s GitMergeCommitScanner) changeStillPresent(ctx context.Context, hash, branch string) (bool, error) {
 	// (1) Confirm the commit is still an ancestor of the branch tip. An amended/
 	// rebased/force-pushed branch could have dropped it; --is-ancestor exits 0
 	// iff hash is reachable from the tip.
-	//nolint:gosec // G204: hash is a %H value from git output; branch is validated (defaulted).
-	if err := exec.CommandContext(ctx, "git", "-C", s.ProjectDir,
-		"merge-base", "--is-ancestor", hash, branch).Run(); err != nil {
-		// Non-zero exit → not an ancestor (or git error) → change not present.
-		return false
+	stillAncestor, err := gitprobe.IsAncestor(ctx, s.ProjectDir, hash, branch)
+	if err != nil {
+		return false, err
+	}
+	if !stillAncestor {
+		return false, nil
 	}
 
 	// (2) Confirm the change has not been reverted by a LATER commit on the
@@ -406,10 +414,10 @@ func (s GitMergeCommitScanner) changeStillPresent(ctx context.Context, hash, bra
 		"--grep", "This reverts commit "+hash, "--format=%H", hash+".."+branch).Output()
 	if revErr == nil && strings.TrimSpace(string(revOut)) != "" {
 		// A later revert of the trailer-bearing commit exists → change superseded.
-		return false
+		return false, nil
 	}
 
-	return true
+	return true, nil
 }
 
 // QueueDispatchedSet is the set of bead IDs that appear in queue.json with

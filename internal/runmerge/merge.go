@@ -522,9 +522,14 @@ func commitAdvanceRef(ctx context.Context, projectDir, runTip, targetBranch stri
 	mainTip := strings.TrimRight(string(freshMainOut), "\n")
 
 	// Step 3: fast-forward check. target MUST be an ancestor of runTip.
-	isAncCmd := exec.CommandContext(ctx, "git", "merge-base", "--is-ancestor", mainTip, runTip) //nolint:gosec // G204: fixed git binary; args are git SHAs, not user input
-	isAncCmd.Dir = projectDir
-	if err := isAncCmd.Run(); err != nil {
+	isAncestor, ancestryErr := gitprobe.IsAncestor(ctx, projectDir, mainTip, runTip)
+	if ancestryErr != nil {
+		return commitAdvanceResult{done: &Outcome{
+			Success: false,
+			Reason:  fmt.Sprintf("non_ff_merge_ancestry_check: %v", ancestryErr),
+		}}
+	}
+	if !isAncestor {
 		// Non-FF: the target advanced concurrently (hk-1u4wp). Re-prepare (rebase
 		// onto the fresh target) and retry — up to maxPushAttempts total.
 		if pushAttempt >= maxPushAttempts {

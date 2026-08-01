@@ -21,6 +21,7 @@ package gitprobe
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -80,6 +81,23 @@ func RevParse(ctx context.Context, repoRoot, ref string) (string, error) {
 		return "", fmt.Errorf("git rev-parse %s: empty output", ref)
 	}
 	return sha, nil
+}
+
+// IsAncestor reports whether ancestor is reachable from descendant.
+// `git merge-base --is-ancestor` exits 0 for yes and 1 for no. Any other
+// result is a git failure and is returned as an error.
+func IsAncestor(ctx context.Context, repoDir, ancestor, descendant string) (bool, error) {
+	cmd := exec.CommandContext(ctx, "git", "-C", repoDir,
+		"merge-base", "--is-ancestor", ancestor, descendant)
+	err := cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, fmt.Errorf("gitprobe: git merge-base --is-ancestor %s %s: %w", ancestor, descendant, err)
 }
 
 // RunnerIsLocalFS reports whether r operates on box A's local filesystem — i.e.

@@ -53,6 +53,7 @@ import (
 	tmuxpkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/runexec"
 	"github.com/gregberns/harmonik/internal/runlaunch"
+	"github.com/gregberns/harmonik/internal/runlease"
 	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/substrate"
 )
@@ -216,16 +217,33 @@ type agentLaunchInput struct {
 	// RunHandle machine set and its comms presence join). nil for sites with none.
 	OnLaunchedExtra func(ctx context.Context, sess handler.Session)
 
-	// SkipAbortKill suppresses the ctx-cancel abort kill. Single-mode passes a
-	// predicate here because an independent-session run MUST survive daemon
-	// shutdown: the session outlives SIGKILL and the next boot's adoption pass
-	// monitors it, so killing on abort would strand the bead in_progress with no
-	// live session to adopt. nil means "always kill on abort".
-	SkipAbortKill func() bool
+	// RunScope is the scope holding the RUN's resources — the worktree, the
+	// tunnel, the worker slot. The launch nests a CHILD of it and puts its own
+	// two resources there, because a graph run takes one hook session and one
+	// agent session per node while it holds one worktree for the whole run
+	// (RSM-038).
+	//
+	// nil gives the launch a scope of its own, with no parent. The two DOT sites
+	// pass nil. Reaching the run's scope from a graph node means threading it
+	// through five functions that already take twenty-odd positional parameters
+	// each, and the only thing a parent adds is a give-back for a launch whose
+	// caller never closed the child — which neither DOT caller can be, because
+	// both register a deferred Cleanup with no return in between.
+	RunScope *runlease.Scope
 
-	// SkipTeardown suppresses the force-teardown half of the teardown pair, for
-	// the same independent-session reason. nil means "always tear down".
-	SkipTeardown func() bool
+	// RunExit reports the run's exit facts, which is what the launch's release
+	// sites ask [runlease.Decide] about. It is a FUNCTION because the facts
+	// change while the launch runs — the daemon may start stopping at any point
+	// — and because the caller re-points its own source once the post-launch
+	// facts exist.
+	//
+	// nil reports the zero exit, which decides reclaim: give everything back.
+	// The two DOT sites pass nil, and that is their correct answer rather than a
+	// stub. A graph run cannot satisfy the survive condition — the
+	// independent-session fact is set only inside single mode's per-run
+	// substrate wiring, and only the work loop passes that — so reclaim is what
+	// those launches did before this field existed and what they do now.
+	RunExit func() runlease.Exit
 
 	// AfterReadyResolved runs once the readiness phase has settled and before
 	// the completion wait — single-mode releases its cold-start spawn semaphore
@@ -255,9 +273,17 @@ type agentLaunchResult struct {
 
 	Dispatch runexec.DispatchState
 
-	// Cleanup stops the CHB-019 heartbeat and force-tears-down the session, in
-	// that order. The caller MUST `defer launch.Cleanup()` immediately after the
-	// call — it is never nil, and it is a no-op when no session was created.
+	// Cleanup stops the CHB-019 heartbeat and then closes the launch's scope,
+	// which gives the agent session and the hook session back under the run's
+	// one disposition. The caller MUST `defer launch.Cleanup()` immediately after
+	// the call — it is never nil, it is idempotent, and it does nothing for a
+	// resource that was never taken.
+	//
+	// The two halves are NOT the same kind of thing, and the difference is
+	// load-bearing. Stopping the heartbeat is a STEP: it always runs, whatever
+	// the run gives back, because the heartbeat belongs to this process and not
+	// to the agent. Closing the scope is the give-back, and that is the half the
+	// disposition answers.
 	//
 	// It is handed back rather than run inside because the heartbeat must keep
 	// beating through the CALLER's post-run phase: it is what holds the stale
@@ -310,8 +336,8 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 	logf := newAgentLaunchLogf(os.Stderr, in.LogPrefix)
 
 	// Cleanup is non-nil from the first return onward so a caller can defer it
-	// unconditionally; it is replaced with the real teardown pair once a session
-	// exists.
+	// unconditionally. It is replaced with the launch scope's close as soon as
+	// that scope exists, which is before the launch takes anything.
 	res := agentLaunchResult{Cleanup: func() {}}
 
 	// ── Resolve the harness once ────────────────────────────────────────────
@@ -528,26 +554,79 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 	}
 	spec.Terminal = in.Terminal
 
-	// ── Hook session ────────────────────────────────────────────────────────
-	// Registered before Launch so an incoming Stop-hook relay is routed to this
-	// run (CHB-025). Closed on every exit below.
-	closeHook := func() {
-		if handles.HookStore != nil {
-			handles.HookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
-		}
+	// ── The launch's resources (RSM-036 … RSM-038) ──────────────────────────
+	//
+	// A launch takes two things a run takes several of: a hook session and an
+	// agent session, one of each per graph node. They therefore live in a scope
+	// of their own, nested inside the run's, and the run's outer resources —
+	// the worktree, the tunnel — outlive every one of these.
+	//
+	// The nest happens HERE rather than at the top of the function because the
+	// per-run substrate wiring above may take a RUN-level resource (single mode
+	// writes the run registry record inside it), and a run resource taken after
+	// the child scope was pushed would be given back before the agent session
+	// dies.
+	launchScope := in.RunScope
+	if launchScope == nil {
+		launchScope = &runlease.Scope{}
 	}
-	if handles.HookStore != nil {
-		handles.HookStore.RegisterHookSession(runID.String(), artifacts.ClaudeSessionID)
+	launchScope = launchScope.Nest()
+
+	// disposition is the ONE answer every release site in this function reads
+	// (RSM-037). It is re-read at each site rather than captured once, because
+	// the daemon can start stopping at any point during a launch and the answer
+	// is only correct at the moment it is asked.
+	disposition := func() runlease.Disposition {
+		if in.RunExit == nil {
+			return runlease.Decide(runlease.Exit{})
+		}
+		return runlease.Decide(in.RunExit())
 	}
 
-	// refuseLaunch records a pre-launch refusal on the result and releases the
-	// hook session. It is this path's analogue of beadRunOne's failRun: the
+	// stopHeartbeat is armed once the heartbeat exists. It is a STEP and not a
+	// give-back: it runs whatever the run's disposition is, because a surviving
+	// agent does not hold this process's heartbeat goroutine.
+	stopHeartbeat := func() {}
+
+	// Cleanup is the caller's handle on this scope. It is installed as soon as
+	// the scope exists, so a launch that refuses before it takes anything still
+	// hands back a call the caller can defer.
+	res.Cleanup = func() {
+		stopHeartbeat()
+		launchScope.Close(disposition())
+	}
+
+	// ── Hook session ────────────────────────────────────────────────────────
+	// Registered before Launch so an incoming Stop-hook relay is routed to this
+	// run (CHB-025). Given back on every exit below — unless the run survives
+	// the daemon, in which case the agent still needs it to report through.
+	//
+	// A launch with no hook store holds a lease born spent: it names the
+	// resource, it can never fire, and no give-back site needs to test whether
+	// there is anything to give (RSM-036).
+	var closeHookSession func() error
+	if handles.HookStore != nil {
+		handles.HookStore.RegisterHookSession(runID.String(), artifacts.ClaudeSessionID)
+		closeHookSession = func() error {
+			handles.HookStore.CloseHookSession(runID.String(), artifacts.ClaudeSessionID)
+			return nil
+		}
+	}
+	hookSession := launchScope.Hold(runlease.HookSession, closeHookSession)
+	// giveBackHookSession hands the hook session back EARLY, before the scope
+	// closes, under the run's one answer. It is [runlease.Lease.Give] and not
+	// Release on purpose: Release gives back unconditionally and would tear down
+	// the reporting channel of an agent this daemon means to leave running.
+	giveBackHookSession := func() { hookSession.Give(disposition()) }
+
+	// refuseLaunch records a pre-launch refusal on the result and gives the hook
+	// session back. It is this path's analogue of beadRunOne's failRun: the
 	// launch reports WHY it refused, and the caller decides what that means
 	// (reopen the bead, fail the node, error the gate). The D2 conformance
 	// sensor (conformance_m4c7_test.go) requires the credential guard to report
 	// through this call and return immediately, with nothing in between.
 	refuseLaunch := func(reason string) {
-		closeHook()
+		giveBackHookSession()
 		logf("%s (refusing launch)", reason)
 		res.Fail = agentLaunchPrelaunchFailed
 		res.FailErr = errors.New(reason)
@@ -604,7 +683,6 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 	// goroutine (runshell.go RunDispatch).
 	var watcher *handlercontract.Watcher
 	var launchErr error
-	var hbDone chan struct{}
 
 	deliver := func(dctx context.Context) {
 		if in.Deliver == nil {
@@ -649,7 +727,7 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 		},
 		OnLaunchFailed: func(lctx context.Context, lErr error) {
 			logf("Launch: %v", lErr)
-			closeHook()
+			giveBackHookSession()
 			// NORMALIZED (was: absent on the cognition-gate path, which set both
 			// classifier errors and emitted neither — so an operator saw no reason
 			// at all for a failed gate launch). Both structural launch-timeout
@@ -726,7 +804,13 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 			if in.HeartbeatViaTap {
 				hbTarget = tap
 			}
-			hbDone = make(chan struct{})
+			hbDone := make(chan struct{})
+			// The once lives with the channel it closes, rather than in the
+			// caller's cleanup, so the stop is idempotent wherever it is called
+			// from. This is what replaces the cleanup's own sync.Once: the other
+			// half of that cleanup is now a scope close, which is idempotent
+			// already.
+			stopHeartbeat = sync.OnceFunc(func() { close(hbDone) })
 			go handler.RunHeartbeatLoop(ctx, artifacts.HandlerSessionID,
 				handler.HeartbeatInterval, hbDone,
 				newDaemonHeartbeatEmitter(hbTarget, runID))
@@ -751,7 +835,7 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 			waitCtx, waitCancel := context.WithTimeout(context.Background(), runlaunch.KillReapTimeout)
 			_ = sess.Wait(waitCtx) //nolint:errcheck,contextcheck // bounded reap off the (possibly cancelled) run ctx; error non-actionable (pre-RT8 idiom)
 			waitCancel()
-			closeHook()
+			giveBackHookSession()
 		},
 		EmitReadyTimeout: func(context.Context) {
 			// NORMALIZED on both axes.
@@ -766,7 +850,12 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 			runlaunch.EmitAgentReadyTimeout(context.Background(), emit, runID, artifacts.ClaudeSessionID, effectiveReadyTimeout) //nolint:contextcheck // Background is deliberate: the emission must survive a reaper-cancelled run ctx
 		},
 		KillAbort: func(context.Context) {
-			if in.SkipAbortKill != nil && in.SkipAbortKill() {
+			// One disposition read, the same one the teardown and the post-wait
+			// window kill make. A run whose agent has a session of its own and
+			// whose daemon is stopping keeps that session: it outlives SIGKILL,
+			// the next boot's adoption pass looks for it, and killing it here
+			// would strand the bead in progress with nothing alive to adopt.
+			if !disposition().Releases(runlease.AgentSession) {
 				return
 			}
 			// Ctx-cancel abort edge: Kill is idempotent and the teardown pair
@@ -785,44 +874,34 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 
 	if launchErr != nil {
 		// No session was created, so there is nothing to tear down and no
-		// heartbeat to stop; OnLaunchFailed already closed the hook session.
+		// heartbeat to stop. OnLaunchFailed already gave the hook session back.
 		res.Fail = agentLaunchErrored
 		res.FailErr = launchErr
 		return res
 	}
 
-	// ── Teardown pair ───────────────────────────────────────────────────────
-	// NORMALIZED ORDER: stop the heartbeat, THEN tear down the session. The
+	// ── The agent session ───────────────────────────────────────────────────
+	// The session exists, so the launch holds it. Its give-back runs at the
+	// scope's close, which the caller reaches through Cleanup — the heartbeat
+	// must keep beating through the caller's post-run phase, and stopping it at
+	// this return would let a DOT node's auto_status `go build` be cancelled
+	// past the five-minute dead-process reap and recorded as a node failure.
+	//
+	// The teardown is the hk-68pvl guard: the caller's worktree cleanup must
+	// never remove the directory while an agent is still live inside it. The
+	// scope's reverse order is what keeps that true — the session lease sits
+	// INSIDE the run scope that holds the worktree, so the session always dies
+	// first.
+	//
+	// NORMALIZED ORDER: stop the heartbeat, THEN tear the session down. The
 	// cognition gate registered these as two defers whose LIFO order inverted
 	// them — tearing the session down while its heartbeat loop was still running
 	// — and carried a comment claiming that inversion as deliberate. It is
 	// superseded here.
-	//
-	// The pair is handed BACK rather than run before this function returns, and
-	// the caller MUST `defer launch.Cleanup()`. Running it here looked tidier and
-	// was wrong: the CHB-019 heartbeat is what holds the stale watcher's
-	// dead-process reap (5 minutes) off the caller's post-run phase, and that
-	// phase can legitimately take longer — a DOT node's auto_status inspection
-	// runs `go build ./...` on the run context. Stopping the heartbeat at this
-	// return would let a cold build past the five-minute mark be cancelled and
-	// recorded as a deterministic node failure.
-	//
-	// Force-teardown is the hk-68pvl guard: the caller's worktree cleanup must
-	// never remove the directory while an agent is still live inside it. Kill is
-	// idempotent, so it is a no-op on the normal exit path, and Cleanup is
-	// once-guarded so a caller that calls it twice is safe.
-	var cleanupOnce sync.Once
-	res.Cleanup = func() { //nolint:contextcheck // the teardown pair takes no ctx (pre-RT8 idiom); ForceTeardownSession reaps on context.Background() so the kill completes even after the run ctx is cancelled
-		cleanupOnce.Do(func() {
-			if hbDone != nil {
-				close(hbDone)
-			}
-			if in.SkipTeardown != nil && in.SkipTeardown() {
-				return
-			}
-			runlaunch.ForceTeardownSession(sess)
-		})
-	}
+	launchScope.Hold(runlease.AgentSession, func() error { //nolint:contextcheck // the give-back takes no ctx (pre-RT8 idiom); ForceTeardownSession reaps on context.Background() so the kill completes even after the run ctx is cancelled
+		runlaunch.ForceTeardownSession(sess)
+		return nil
+	})
 
 	if res.Dispatch.Phase == runexec.DispatchFailed && res.Dispatch.Reason == "agent_ready_timeout" {
 		res.Fail = agentLaunchReadyTimeout
@@ -844,16 +923,17 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 		runID.String(), artifacts.ClaudeSessionID)
 
 	// Substrate path: completion is signalled through the hook store, not a
-	// watcher, so nothing has killed the window yet. SkipTeardown gates it for
-	// the same reason it gates the teardown pair — a session the caller means to
-	// outlive this process must not be killed here either. (In practice the
-	// substrate's killOnce has already been burned by a no-op kill inside the
-	// completion wait on that path, so this guard is belt to that brace; it is
-	// stated explicitly rather than relied upon implicitly.)
-	if watcher == nil && (in.SkipTeardown == nil || !in.SkipTeardown()) {
+	// watcher, so nothing has killed the window yet. The same disposition read
+	// gates it, for the same reason it gates the abort kill and the session's
+	// give-back — a session the run means to outlive this process must not be
+	// killed here either. (In practice the substrate's killOnce has already been
+	// burned by a no-op kill inside the completion wait on that path, so this
+	// guard is belt to that brace. It is stated explicitly rather than relied
+	// upon implicitly.)
+	if watcher == nil && disposition().Releases(runlease.AgentSession) {
 		_ = sess.Kill(context.Background()) //nolint:errcheck,contextcheck // best-effort window kill on a deliberately non-cancellable ctx: the run ctx may already be cancelled and the pane must still die (pre-RT8 idiom)
 	}
 
-	closeHook()
+	giveBackHookSession()
 	return res
 }

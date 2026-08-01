@@ -35,6 +35,14 @@ closed in reverse order — the shape the step proposes — cannot hold them.
 | Tmux session | `spawnWindowVia`, or `SpawnRunSession` | `Cleanup` then `ForceTeardownSession` | yes — two `sync.Once` |
 | Substrate spawn slot | `acquireSpawnSlot` | inside the session's `Kill` | yes, via the kill's `sync.Once` |
 
+> **Corrected 2026-07-31 while migrating the launch: the spawn slot is not per-launch. It is
+> per-LOCAL-SHARED-WINDOW-launch, which is a smaller set, and it excludes every launch whose
+> disposition can be anything but reclaim.** `spawnWindowVia` skips the acquire for a remote spawn
+> outright, and both sibling constructors — the independent run session and the crew session — set
+> `releaseSlot` to a no-op with the comment "outside the daemon spawn-cap". So a run with a session
+> of its own, which is the only run that can survive, never holds a spawn slot. See §7 step 5 for why
+> that is what settles where the slot lives.
+
 **Per-run, but only for a remote single-implementer run:**
 
 | Resource | Acquire | Release | Idempotent today |
@@ -70,6 +78,10 @@ The first three agree on outcome. They do not agree on spelling. One condition i
 different ways — two of the spellings 24 lines apart and the third 600 lines later — and one of
 them carries a further condition the others do not. The hook session and the tunnel are then left
 out entirely, so a surviving agent keeps a session it can no longer report through.
+
+> **Closed 2026-07-31.** All three spellings are gone, and the hook session is no longer left out.
+> Every site named above now reads one `runlease.Decide` of the run's exit facts. The hook session's
+> half of that is a real behaviour change and is described in §8.
 
 > **Corrected 2026-07-31 while pinning this family: there are FIVE sites, not four, and the fifth
 > fires first.** `WaitWithSocketGrace` in `internal/runloop/waitsocketgrace.go` ends its step 1 with
@@ -240,8 +252,46 @@ In order. Each is one commit, each independently reviewable.
 4a. ✅ **Landed 2026-07-31.** The evidence fact is recorded at the LAUNCH, which is the one step
    both workflow modes pass through, so a failed graph-mode run keeps its captured output. It was
    NOT a consequence of step 4 — see §2's correction.
-5. Give the per-launch set its own nested scope, and collapse the duplicated tunnel refusal
-   reporting into the one reporter the run plan already has.
+5. ✅ **Landed 2026-07-31 for the two resources a launch can hold.** The per-launch set is on a
+   scope nested inside the run's, one child per launch: `runAgentLaunch` calls `Scope.Nest` on the
+   run's scope, and the hook session and the agent session hang there. `SkipAbortKill` and
+   `SkipTeardown` are DELETED — the abort kill, the post-wait window kill and the session's
+   give-back all read `Decide(exit).Releases(AgentSession)` instead, and the launch takes the run's
+   exit facts rather than two booleans. The hook session's four give-back sites read the same
+   answer through a new `Lease.Give`, which is `Release` under a disposition. A surviving run now
+   KEEPS its hook session, which is the §8 behaviour change.
+
+   **Only the work loop passes a run scope. The two DOT sites get a scope of their own, and that
+   was a choice.** The run scope IS in reach at the top — `beadRunOne` calls `driveDotWorkflow` with
+   it in the same function — but a graph node's launch is four levels down, through
+   `driveDotWorkflow`, `dispatchDotAgenticNode` / `dispatchDotGateNode`, `buildCognitionGateEval` and
+   `executeCognitionGate`, each already taking twenty to twenty-five positional parameters, plus the
+   `dotSubWorkflowRunner` struct that re-enters two of them. The only thing a parent buys is a
+   give-back for a launch whose caller never closed the child, and neither DOT caller can be that:
+   both register `defer launch.Cleanup()` with no return in between. The single-mode caller CAN be —
+   it returns on a pre-launch refusal before that defer is registered — which is why it passes the
+   run scope and why the nesting is tested there.
+
+   The DOT sites also pass no exit facts, which decides reclaim. That is their correct answer and
+   not a stub: a graph run cannot satisfy the survive condition, because the independent-session
+   fact is set only inside single mode's per-run substrate wiring and only the work loop passes
+   that.
+
+   **The substrate spawn slot stays where it is, and that is a decision, not an omission.** Four
+   things, any one of which is enough. The launch has no handle on it and cannot get one: its whole
+   view of the substrate is `handler.Substrate.SpawnWindow` returning a `handler.SubstrateSession`,
+   and neither names a slot, so putting the slot on the launch's scope means a new method on a
+   contract in `internal/handler` and `runlease` imported into the tmux substrate. Its lifetime is
+   exactly the session's and its release already sits inside the session's `killOnce`, so moving it
+   to the scope would make it come back LATER than the kill or give it two owners. No disposition
+   keeps it — `survivesWithTheRun` says false — so a scope could add nothing but once-ness, which
+   the kill's `sync.Once` and the three error returns in `spawnWindowVia` already give. And per the
+   §1 correction, no run that can survive holds one anyway: a remote spawn skips the acquire and an
+   independent run session is explicitly outside the cap. It is the least broken of the nine and it
+   is left alone.
+
+   Still open in this step: collapse the duplicated tunnel refusal reporting into the one reporter
+   the run plan already has.
 6. ✅ **Landed 2026-07-31, and moved AHEAD of steps 4 and 5 on purpose.** Close the two test holes.
    These are the guard rails for the migration, so pinning them after it would defend nothing. Both
    were closed before any release site moved, and both found things — see §9.
@@ -263,6 +313,22 @@ unwritten, which is what §2 asked for.
 survive set. Today they are torn down regardless, which leaves a surviving agent holding a session it
 can no longer report through. That is a behavior change and it arrives with the migration commit
 that moves those two sites, not before.
+
+> **Landed 2026-07-31 for the hook session.** A surviving run now keeps it. The four give-back sites
+> in `runAgentLaunch` call `Lease.Give` with the run's disposition rather than closing the session
+> outright. `Give` is the exported twin of the scope's own give-back: it releases what the
+> disposition releases and DISARMS what the disposition keeps, so no later caller can hand back what
+> the run decided to leave standing. `Release` is still the right call where the resource is the
+> run's own bookkeeping and no disposition keeps it — the cold-start token on the readiness edge is
+> the one such site.
+>
+> The tunnel keeps its old behaviour, because §2's second correction shows no run can hold both a
+> tunnel and the survive condition. `runlease` keeps it in the survive set for the day one can.
+>
+> `survive_shutdown_gate_test.go` used to pin the OPPOSITE claim, as current behaviour, precisely so
+> this change would read as a deliberate edit. That test is now inverted and has a reclaim-side
+> control beside it, so "the hook session was kept" cannot be satisfied by a give-back that simply
+> stopped working.
 
 **`Decide` is where the polarity lives.** Survival needs BOTH facts — an agent in its own session AND
 a daemon that is stopping — and it wins over evidence when both apply. Eight input combinations, one

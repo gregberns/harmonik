@@ -134,6 +134,131 @@ func TestAnUnreleasedLeaseIsNotYetSpent(t *testing.T) {
 	}
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Give — the early give-back that reads the run's answer
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestGiveHandsBackAResourceTheDispositionReleases(t *testing.T) {
+	t.Parallel()
+
+	// The hook session is given back at the end of an ordinary launch, before
+	// the scope holding it closes.
+	var c counter
+	l := Hold(HookSession, c.release)
+
+	rep := l.Give(Reclaim)
+	if got := c.count(); got != 1 {
+		t.Errorf("Give(reclaim) made %d give-back calls, want 1", got)
+	}
+	if len(rep.Released) != 1 || rep.Released[0] != HookSession {
+		t.Errorf("Give(reclaim) reported Released=%v, want [hook-session]", rep.Released)
+	}
+	if len(rep.Kept) != 0 {
+		t.Errorf("Give(reclaim) reported Kept=%v, want none", rep.Kept)
+	}
+}
+
+func TestGiveKeepsAResourceTheDispositionKeepsAndDisarmsIt(t *testing.T) {
+	t.Parallel()
+
+	// This is the whole reason Give exists. Release would hand the hook session
+	// back here, and the surviving agent would keep a session it can no longer
+	// report through.
+	var c counter
+	l := Hold(HookSession, c.release)
+
+	rep := l.Give(Survive)
+	if got := c.count(); got != 0 {
+		t.Errorf("Give(survive) made %d give-back calls on the hook session, want 0", got)
+	}
+	if len(rep.Kept) != 1 || rep.Kept[0] != HookSession {
+		t.Errorf("Give(survive) reported Kept=%v, want [hook-session]", rep.Kept)
+	}
+	if !l.spent() {
+		t.Error("a kept lease is left armed. A later caller could still give back what the run decided to leave standing")
+	}
+	// Disarmed means disarmed: the scope's own close finds nothing to do.
+	if rep2 := l.Give(Reclaim); len(rep2.Released) != 0 || len(rep2.Kept) != 0 {
+		t.Errorf("a second Give reported %+v, want an empty report", rep2)
+	}
+	if got := c.count(); got != 0 {
+		t.Errorf("a later reclaim gave back a kept resource (%d calls), want 0", got)
+	}
+}
+
+func TestGiveActsAtMostOnceAcrossRepeats(t *testing.T) {
+	t.Parallel()
+
+	var c counter
+	l := Hold(HookSession, c.release)
+
+	first := l.Give(Reclaim)
+	second := l.Give(Reclaim)
+	if got := c.count(); got != 1 {
+		t.Errorf("two Give calls made %d give-back calls, want 1", got)
+	}
+	if len(first.Released) != 1 {
+		t.Errorf("the first Give reported Released=%v, want one resource", first.Released)
+	}
+	if len(second.Released) != 0 {
+		t.Errorf("the second Give reported Released=%v, want none — the lease was already spent", second.Released)
+	}
+}
+
+func TestGiveReportsAFailedGiveBackAndSpendsTheLease(t *testing.T) {
+	t.Parallel()
+
+	wantErr := errors.New("hook store closed")
+	c := counter{err: wantErr}
+	l := Hold(HookSession, c.release)
+
+	rep := l.Give(Reclaim)
+	if !errors.Is(rep.Err(), wantErr) {
+		t.Errorf("Give reported %v, want %v", rep.Err(), wantErr)
+	}
+	if len(rep.Failures) != 1 || rep.Failures[0].Resource != HookSession {
+		t.Errorf("Give reported Failures=%v, want one on the hook session", rep.Failures)
+	}
+	if got := c.count(); got != 1 {
+		t.Errorf("a failed give-back was retried (%d calls), want 1", got)
+	}
+}
+
+func TestGiveOnALeaseWithNothingToCallReportsNothing(t *testing.T) {
+	t.Parallel()
+
+	// A launch with no hook store holds a lease born spent, so the give-back
+	// site needs no test for whether there is anything to give.
+	l := Hold(HookSession, nil)
+
+	for _, d := range []Disposition{Reclaim, Survive, RetainEvidence} {
+		rep := l.Give(d)
+		if len(rep.Released) != 0 || len(rep.Kept) != 0 || len(rep.Failures) != 0 {
+			t.Errorf("Give(%s) on a lease with nothing to call reported %+v, want an empty report", d, rep)
+		}
+	}
+}
+
+func TestAScopeCloseFindsNothingLeftAfterAnEarlyGive(t *testing.T) {
+	t.Parallel()
+
+	// The shape the launch uses: the hook session is held by the scope AND given
+	// back early. The close must not make a second call.
+	var c counter
+	var s Scope
+	l := s.Hold(HookSession, c.release)
+
+	l.Give(Reclaim)
+	rep := s.Close(Reclaim)
+
+	if got := c.count(); got != 1 {
+		t.Errorf("an early Give plus a scope close made %d give-back calls, want 1", got)
+	}
+	if len(rep.Released) != 0 {
+		t.Errorf("the close reported Released=%v, want none — the lease was already spent", rep.Released)
+	}
+}
+
 func TestAGiveBackCallReachesTheWorldOutsideTheLeaseLock(t *testing.T) {
 	t.Parallel()
 

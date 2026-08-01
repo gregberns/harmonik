@@ -16,9 +16,10 @@ package daemon
 // condition — two of them twenty-odd lines apart and the third six hundred lines
 // later. That spread is the reason this file drives the whole function rather
 // than testing a predicate: a test that re-states the condition cannot see a
-// site that states it differently. The sites are moving onto one runlease
-// disposition one at a time, so the file keeps driving the function while some
-// sites have a spelling and some no longer do. The record no longer has one.
+// site that states it differently. Every site has since moved onto one
+// runlease disposition and no site spells the condition for itself any more.
+// The file still drives the whole function, because that is what makes it see a
+// site that goes its own way again.
 //
 // Both half-conditions are covered separately for each site, because a
 // conjunction is exactly where a wrong spelling hides — a site that tested only
@@ -28,31 +29,29 @@ package daemon
 // Survive is what a run ASKS for. See survive_shutdown_recovery_test.go for
 // what it GETS.
 //
-// # The one mutant nothing here kills, and why it is still not redundant
+// # The one mutant nothing here killed, and how it was closed
 //
-// Change SkipAbortKill from `useIndepSession && ctx.Err() != nil` to plain
-// `useIndepSession` and every test in this package still passes. That is an
-// equivalent mutant TODAY, so there is no behaviour to defend and no test is
-// invented for it. Do not read that as the conjunct being redundant. It is not,
-// for two separate reasons, and both matter at the moment this predicate moves
-// onto a runlease disposition.
+// This section used to say: change `SkipAbortKill` from
+// `useIndepSession && ctx.Err() != nil` to plain `useIndepSession` and every
+// test in this package still passes. That was true, and it was an equivalent
+// mutant, because the abort kill is reachable with a LIVE context only through
+// the stall edge in stepDispatchWorking — EvNoChangeTimeout and
+// EvHeartbeatStale — which nothing in production feeds and which the segment
+// loop cannot reach. The reasoning was recorded so that nobody would read the
+// silence as a licence to drop the conjunct.
 //
-// First, the abort kill is reachable with a LIVE context. KillAbort is the
-// non-ReadyTimeout arm of ActKillAgent, and ActKillAgent has three emitters, not
-// one. The third is the stall edge in stepDispatchWorking — EvNoChangeTimeout
-// and EvHeartbeatStale — which by definition fires while the context is live. It
-// is unreachable now for two reasons that are both scheduled to change: nothing
-// in production feeds those two events, and the segment loop halts at
-// DispatchWorking, the only phase where that edge exists. When the
-// reactorization lands, dropping the conjunct silently stops reaping the session
-// of a stalled independent run.
+// The mutant is now unwritable, which is the better answer. `SkipAbortKill` and
+// `SkipTeardown` are gone. There is no per-site predicate left to weaken: the
+// abort kill, the post-wait window kill and the session's give-back all read one
+// `runlease.Decide`, and the conjunction lives inside that one function, where
+// TestSurvivalNeedsBothAnIndependentSessionAndAStoppingDaemon drives all eight
+// input combinations. RSM-037 asked for exactly that — one value decided once
+// and read everywhere — and "redundant at this one site" is no longer a
+// sentence anyone can say about it.
 //
-// Second, and this is the stronger reason: the value is SHARED. RSM-037 requires
-// one disposition decided once for the run and read at every release site. The
-// sibling consumer SkipTeardown demonstrably needs the conjunct — mutate it
-// alone and a test here fails. "Redundant at this one site" is a claim about a
-// per-site predicate, which is the exact shape RSM-037 exists to forbid, so it
-// cannot license dropping the conjunct from the value both sites read.
+// The stall edge is still the reason the conjunct matters. When the
+// reactorization makes that edge reachable, a run whose agent stalls in its own
+// session must still be reaped, and the disposition is what says so.
 //
 // # Why there is no tunnel test here
 //

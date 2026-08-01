@@ -319,7 +319,12 @@ func (bs *bootState) buildCommsAndCrewHandlers() CommsSendHandler {
 		pollCursorStore := NewCursorStore(pollCursorDir)
 		liveCursorStore := NewCursorStore(liveCursorDir)
 		impl.SetRecvDeps(pollCursorStore, liveCursorStore, cfg.JSONLLogPath)
-		bs.subscribeHub.SetCommsCursorStore(liveCursorStore)
+		// Nil when subsystems.subscribe_hub.enabled: false. The shared cursor
+		// only matters to a live tail, and there is no live tail without a hub,
+		// so comms-recv polling keeps its own store and loses nothing.
+		if bs.subscribeHub != nil {
+			bs.subscribeHub.SetCommsCursorStore(liveCursorStore)
+		}
 	}
 
 	// C2 crew-start/stop handler (hk-5tg5o). Wire the keeper probe (hk-qgfme);
@@ -436,19 +441,32 @@ func (bs *bootState) startSocketListener(ctx context.Context, sockPath string, q
 	// the done channel to avoid goroutine leaks; error discarded (same reasoning as
 	// defer ln.Close() discards errors in RunSocketListener).
 	socketDone := make(chan error, 1)
+	handlers := SocketHandlers{
+		Request:   &noopRequestHandler{},
+		HookRelay: bs.hookStore,
+		Queue:     queueHandler,
+		Operator:  bs.opPauseCtrl,
+		Comms:     commsSendHandler,
+		Crew:      bs.crewHandler,
+		SleepWake: bs.quiesceArbiter,
+		State:     stateHandler,
+		Dashboard: dashHandler,
+	}
+	// Assign Subscribe only when the hub exists. A nil *SubscribeHub written into
+	// this INTERFACE field makes a NON-nil interface, so handleSubscribe's
+	// `if sub == nil` refusal would not fire and the op would call a method on a
+	// nil receiver instead. Leaving the field at its zero value keeps the
+	// refusal path reachable.
+	//
+	// Note that this switch is what makes that refusal reachable for the first
+	// time. Four of the six clients of this op do not check the response
+	// envelope, so they mis-report the refusal. See hk-1dwk2 (P1) and the
+	// SubsystemSubscribeHub doc in projectconfig before you set the switch.
+	if bs.subscribeHub != nil {
+		handlers.Subscribe = bs.subscribeHub
+	}
 	go func() {
-		socketDone <- Serve(ctx, sockPath, SocketHandlers{
-			Request:   &noopRequestHandler{},
-			HookRelay: bs.hookStore,
-			Queue:     queueHandler,
-			Subscribe: bs.subscribeHub,
-			Operator:  bs.opPauseCtrl,
-			Comms:     commsSendHandler,
-			Crew:      bs.crewHandler,
-			SleepWake: bs.quiesceArbiter,
-			State:     stateHandler,
-			Dashboard: dashHandler,
-		})
+		socketDone <- Serve(ctx, sockPath, handlers)
 	}()
 	go func() { <-socketDone }() // drain: non-fatal; socket bind error discarded (see comment above)
 }

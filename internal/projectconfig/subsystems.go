@@ -145,6 +145,92 @@ const (
 	// at the composition root instead, so an operator running without remote
 	// workers gets no goroutine at all rather than one that returns immediately.
 	SubsystemWorkerReportLoop SubsystemName = "worker_report_loop"
+
+	// SubsystemHandlerPausePolicy names the HandlerPausePolicyGoroutine, the bus
+	// consumer that calls HandlerPauseController.Pause on a rate-limit or
+	// budget-exhausted event (daemon.wireSpendAndQueueConsumers).
+	//
+	// The CONTROLLER is not this switch and stays in every configuration: it is a
+	// work-loop dependency and the socket `handler resume` op writes to it. Only
+	// the automatic trip goes away. With this off a rate-limit event pauses
+	// nothing, and an operator pauses and resumes by hand.
+	//
+	// SPEC: specs/handler-pause.md HP-012 makes the pause on budget_exhausted a
+	// MUST, and §11a names this policy as the observer. Off is therefore a
+	// declared reduction in conformance, not a defect. The default is on, so no
+	// deployment that does not write this switch is affected.
+	SubsystemHandlerPausePolicy SubsystemName = "handler_pause_policy"
+
+	// SubsystemDaemonSpendMeter names the DaemonSpendMeter, the daemon-wide
+	// per-day run-count and output-byte ceiling (CL-090 / CL-090a).
+	//
+	// Read what OFF means here before you set it: the meter is the only emitter
+	// of budget_exhausted{budget_scope=handler_account}, and that event is what
+	// stops dispatch when the day's ceiling is reached. With this off the daemon
+	// keeps dispatching past HARMONIK_MAX_RUNS_PER_DAY and past the daily USD
+	// proxy. This is a spend control, not a queue control, so it is outside the
+	// core set (CHARTER §3) — but it is a ceiling, and off means no ceiling.
+	//
+	// It pairs with SubsystemHandlerPausePolicy, which is the consumer of the
+	// event this meter emits. Either switch alone breaks the chain.
+	SubsystemDaemonSpendMeter SubsystemName = "daemon_spend_meter"
+
+	// SubsystemReviewGateAnomaly names the ReviewGateAnomalyWatcher, which emits
+	// review_gate_anomaly after N consecutive bead_closed events with no
+	// reviewer_verdict between them.
+	//
+	// It is an alarm and nothing else: it reads the bus and emits one event type.
+	// Nothing in the dispatch path reads its output, so off costs the alarm and
+	// changes no other behaviour.
+	SubsystemReviewGateAnomaly SubsystemName = "review_gate_anomaly"
+
+	// SubsystemLedgerImportRecovery names the Cat-BL2 reactive handler
+	// (daemon.CatBL2Handler), which retries `br sync --import-only` once after a
+	// bead_sync_failed event and then emits bead_ledger_recovered or
+	// bead_ledger_corrupt plus operator_escalation_required.
+	//
+	// Off means a failed ledger import is reported by bead_sync_failed and left
+	// there. There is no retry and no escalation event. The bead ledger itself is
+	// core. This automatic repair pass over it is not.
+	//
+	// SPEC: specs/beads-integration.md BL-MRG-004 makes the route to Cat-BL2 a
+	// MUST. The emit half survives this switch and the routing half does not, so
+	// off is a declared reduction in conformance. The default is on.
+	SubsystemLedgerImportRecovery SubsystemName = "ledger_import_recovery"
+
+	// SubsystemSubscribeHub names the SubscribeHub (daemon.SubscribeHub), the
+	// long-lived wildcard bus observer that fans events out to `subscribe` socket
+	// connections. It is what `harmonik subscribe` and every --follow client read.
+	//
+	// CHARTER §3 puts subscribe outside the core set by name. Off means the
+	// `subscribe` socket op is REFUSED with "SubscribeHandler not registered".
+	// The daemon keeps writing every event to events.jsonl either way, so the
+	// record survives.
+	//
+	// This is the one switch in this group that leaves a nil field on bootState.
+	// Its two consumer sites are both inside the socket-listener subtree, so with
+	// socket_listener already off neither is reached at all.
+	//
+	// SPEC: three clauses make this op a MUST, so off is a declared reduction in
+	// conformance. specs/hitl-decisions.md N5/N8 (a blocked agent MUST wait on an
+	// open subscribe stream), specs/cognition-loop.md CL-060 (consumers MUST use
+	// subscribe and MUST NOT tail events.jsonl outside cold start), and
+	// specs/event-model.md EV-037 (reconnect MUST supply since_event_id).
+	//
+	// READ THIS BEFORE YOU SET IT. The daemon refuses loudly, but only two of the
+	// six clients of this op check the response envelope, so the refusal does not
+	// reach an operator intact. `subscribe --follow` and `comms recv
+	// --follow`/`--wait` report it and exit 1. Plain `harmonik subscribe` copies
+	// the refusal to stdout and exits 0. `harmonik run` through the daemon exits
+	// 1 with no reason. `harmonik smoke` reports it as a timeout. Worst,
+	// `decisions wait` and `raise --wait` return at once with empty output and
+	// exit 0, so a blocked agent reads "no decision" and carries on. That gap is
+	// in cmd/harmonik, it is older than this switch, and this switch is the first
+	// thing that makes it reachable. RECORDED AS hk-1dwk2 (P1), NOT FIXED HERE.
+	// It is rated P1 because hitl-decisions N5/N8 make waiting on an open
+	// subscribe stream a MUST, so a `decisions wait` that returns empty and
+	// succeeds against a refused subscription is a conformance break.
+	SubsystemSubscribeHub SubsystemName = "subscribe_hub"
 )
 
 // knownSubsystems is the closed set of names the `subsystems:` block accepts.
@@ -159,6 +245,11 @@ var knownSubsystems = map[SubsystemName]struct{}{
 	SubsystemBandwidthTuner:          {},
 	SubsystemBranchReaper:            {},
 	SubsystemWorkerReportLoop:        {},
+	SubsystemHandlerPausePolicy:      {},
+	SubsystemDaemonSpendMeter:        {},
+	SubsystemReviewGateAnomaly:       {},
+	SubsystemLedgerImportRecovery:    {},
+	SubsystemSubscribeHub:            {},
 }
 
 // ErrUnknownSubsystem is returned when the subsystems: block names a subsystem

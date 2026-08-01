@@ -126,7 +126,14 @@ test-e2e-real-claude-reviewloop:  ## Run real-Claude review-loop E2E smoke (requ
 # worktree-factory / merge-mutex / phase-aware-twin / Skip* recipe used here.
 .PHONY: test-scenario
 test-scenario: build-all  ## Run scenario tier (-race, -tags=scenario, 10m budget; prereq: build-all)
-	go test -race -tags=scenario -timeout 10m ./test/scenario/... ./internal/daemon/...
+	@scenario_log=$$(mktemp); \
+	status=0; \
+	go test -v -race -tags=scenario -timeout 10m ./test/scenario/... ./internal/daemon/... >"$$scenario_log" 2>&1 || status=$$?; \
+	cat "$$scenario_log"; \
+	printf 'scenario skips: '; \
+	grep -c '^--- SKIP:' "$$scenario_log" || true; \
+	rm -f "$$scenario_log"; \
+	exit $$status
 
 # test-subprocess: WS2.4 non-docker subprocess daemon-boot smoke. Execs the real
 # built harmonik binary as a separate process, waits for the daemon unix socket,

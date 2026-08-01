@@ -14,10 +14,9 @@
 # 8 are stale tests, tracked as hk-97gcz. One is a real defect in the merge path,
 # tracked as hk-co8g8.
 #
-# STILL BROKEN, and do not read a green run as evidence against it: nothing here
-# installs br and nothing declares a twin build, so about half the tier skips, and
-# a skip reads as a pass. See hk-ynohn. A green run on this workflow today would
-# prove much less than it appears to.
+# The runner installs br because three top-level scenarios require the real CLI.
+# The Make recipe builds the twins and reports the runtime skip count. A green run
+# still needs review against that count.
 #
 # Do NOT add this to required status checks until the 8 deterministic failures
 # close. That would wedge every merge. Making the tier visible, which is what
@@ -51,6 +50,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: install br
+        run: |
+          cargo install --git https://github.com/Dicklesworthstone/beads_rust
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       # Do NOT add continue-on-error to this step. It hid the result on every REST
       # surface, not just the run conclusion, which is how 20 straight failures

@@ -214,3 +214,61 @@ func TestRunnerIsLocalFS(t *testing.T) {
 		})
 	}
 }
+
+// TestIsAncestor_ArgvFormIsBare pins the argv FORM, not the result.
+//
+// The merge queue's commit phase is guarded by a change-detector that records
+// each git invocation by its first argument and checks it against an allowlist
+// naming plain verbs (merge-base, rev-parse, update-ref, …). Writing this call
+// as `git -C <dir> merge-base` keeps the behaviour identical and records it as
+// `-C`, which matches no verb. That has happened once: it turned the daemon's
+// RSM-INV-005 test red from three packages away, with a message that never named
+// gitprobe. Worse, the tempting repair — allowlisting `-C` — would collapse every
+// -C-form git call to one token and blind the detector to `git rebase` and
+// `git push` as well, which is the opposite of what it exists to catch.
+//
+// So this asserts the shape the spec asks for: merge-queue-design §2 ends the
+// commit-phase list with "All Dir=projectDir".
+// Not t.Parallel: this installs a PATH shim with t.Setenv, which Go forbids in a
+// parallel test.
+func TestIsAncestor_ArgvFormIsBare(t *testing.T) {
+	repoPath, headSHA := initGitRepo(t)
+
+	// A PATH shim that records argv[1] of every git call, then delegates to the
+	// real git so IsAncestor still returns a true answer.
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Skipf("git not on PATH: %v", err)
+	}
+	shimDir := t.TempDir()
+	logPath := filepath.Join(shimDir, "argv.log")
+	shim := "#!/bin/sh\nprintf '%s\\n' \"$1\" >> " + logPath + "\nexec " + realGit + " \"$@\"\n"
+	//nolint:gosec // G306: test-only shim must be executable.
+	if err := os.WriteFile(filepath.Join(shimDir, "git"), []byte(shim), 0o755); err != nil {
+		t.Fatalf("write git shim: %v", err)
+	}
+	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	if _, err := gitprobe.IsAncestor(t.Context(), repoPath, headSHA, headSHA); err != nil {
+		t.Fatalf("IsAncestor: %v", err)
+	}
+
+	data, err := os.ReadFile(logPath) //nolint:gosec // G304: test-controlled path under t.TempDir().
+	if err != nil {
+		t.Fatalf("read shim log: %v", err)
+	}
+	var sawMergeBase bool
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		switch strings.TrimSpace(line) {
+		case "merge-base":
+			sawMergeBase = true
+		case "-C":
+			t.Error("IsAncestor invoked git with a leading -C; the commit-phase " +
+				"change-detector records that as \"-C\" and it matches no allowlisted verb. " +
+				"Use cmd.Dir instead (merge-queue-design §2, \"All Dir=projectDir\").")
+		}
+	}
+	if !sawMergeBase {
+		t.Errorf("no git call recorded merge-base as its first argument; log was %q", data)
+	}
+}

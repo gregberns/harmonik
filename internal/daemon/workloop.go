@@ -2621,35 +2621,45 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		agType := shared.ArtifactAgentType(artifacts)
 		if h, hErr := handles.HarnessRegistry.ForAgent(agType); hErr == nil &&
 			h.Completion() == handlercontract.CompletionProcessExit {
+			// The two wrappers differ in the message prefix they write and in
+			// nothing else that matters here: both reach the same four primitives
+			// in internal/harness/shared/refstrailer.go and both return the same
+			// shared.RefsOutcome. There is one outcome enum, not a codex one and a
+			// parallel Pi one, and that single enum is what lets ONE detector read
+			// whichever leg ran.
+			var outcome shared.RefsOutcome
+			var ensureErr error
+			label := "ensureCodexRefsTrailer"
 			if agType == core.AgentTypePi {
-				outcome, ensureErr := pi.EnsureRefsTrailer(ctx, runRunner, wtPath, headSHA, beadID)
-				if ensureErr != nil {
-					fmt.Fprintf(os.Stderr, "daemon: workloop: ensurePiRefsTrailer bead %s: %v (falling through to no-commit guard)\n",
-						beadID, ensureErr)
-				} else {
-					fmt.Fprintf(os.Stderr, "daemon: workloop: ensurePiRefsTrailer bead %s: %s\n",
-						beadID, outcome)
-				}
+				label = "ensurePiRefsTrailer"
+				outcome, ensureErr = pi.EnsureRefsTrailer(ctx, runRunner, wtPath, headSHA, beadID)
 			} else {
-				outcome, ensureErr := codex.EnsureRefsTrailer(ctx, runRunner, wtPath, headSHA, beadID)
-				if ensureErr != nil {
-					fmt.Fprintf(os.Stderr, "daemon: workloop: ensureCodexRefsTrailer bead %s: %v (falling through to no-commit guard)\n",
-						beadID, ensureErr)
-				} else {
-					fmt.Fprintf(os.Stderr, "daemon: workloop: ensureCodexRefsTrailer bead %s: %s\n",
-						beadID, outcome)
-					// hk-368i4: a no-change outcome from a phase that finished in
-					// seconds is a no-work run, not a bead that had nothing to do.
-					// Diagnostic only — the run is already failing via the
-					// no-commit guard; this records WHY, which is what was
-					// missing when hk-jcrzn went undetected.
-					if codex.NoWorkSuspected(outcome, implementerPhaseDur, env.CodexNoWorkDurationFloor) {
-						floor := codex.NoWorkFloor(env.CodexNoWorkDurationFloor)
-						fmt.Fprintf(os.Stderr,
-							"daemon: workloop: bead %s: implementer produced NO commit and a clean worktree after only %v (floor %v) — suspected no-work run (hk-368i4)\n",
-							beadID, implementerPhaseDur, floor)
-						codex.EmitImplementerNoWorkSuspected(ctx, emit, runID, beadID, implementerPhaseDur, floor)
-					}
+				outcome, ensureErr = codex.EnsureRefsTrailer(ctx, runRunner, wtPath, headSHA, beadID)
+			}
+			if ensureErr != nil {
+				fmt.Fprintf(os.Stderr, "daemon: workloop: %s bead %s: %v (falling through to no-commit guard)\n",
+					label, beadID, ensureErr)
+			} else {
+				fmt.Fprintf(os.Stderr, "daemon: workloop: %s bead %s: %s\n",
+					label, beadID, outcome)
+				// hk-368i4: a no-change outcome from a phase that finished in
+				// seconds is a no-work run, not a bead that had nothing to do.
+				// Diagnostic only — the run is already failing via the
+				// no-commit guard; this records WHY, which is what was
+				// missing when hk-jcrzn went undetected.
+				//
+				// hk-3ywqv: the detector reads the outcome of whichever leg ran, so
+				// it covers every CompletionProcessExit harness rather than codex
+				// alone. It used to sit inside the codex leg, so a single-mode Pi
+				// run — same clean worktree, same seconds-long phase — produced no
+				// record at all. The detector's home is `codex` only by where it
+				// was first written; its input is the shared enum.
+				if codex.NoWorkSuspected(outcome, implementerPhaseDur, env.CodexNoWorkDurationFloor) {
+					floor := codex.NoWorkFloor(env.CodexNoWorkDurationFloor)
+					fmt.Fprintf(os.Stderr,
+						"daemon: workloop: bead %s: implementer produced NO commit and a clean worktree after only %v (floor %v) — suspected no-work run (hk-368i4)\n",
+						beadID, implementerPhaseDur, floor)
+					codex.EmitImplementerNoWorkSuspected(ctx, emit, runID, beadID, implementerPhaseDur, floor)
 				}
 			}
 		}

@@ -24,6 +24,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/handler"
+	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	tmuxPkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/projectconfig"
@@ -177,6 +178,11 @@ type dotFixtureOpts struct {
 	// production one.
 	LaunchSpecBuilder func(context.Context, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error)
 
+	// HarnessRegistry is how the run looks up a resolved agent type's harness.
+	// Nil leaves it unset, which is what makes the process-exit commit fallback a
+	// no-op for a fixture run — supply one to reach that branch.
+	HarnessRegistry *handlercontract.HarnessRegistry
+
 	// WorkflowMode is the per-item mode. Empty runs the bead in dot mode, which
 	// is what this fixture exists for.
 	WorkflowMode core.WorkflowMode
@@ -323,6 +329,7 @@ func runDotFixtureBead(t *testing.T, beadID core.BeadID, opts dotFixtureOpts) do
 		ProjectCfg:        opts.ProjectCfg,
 		DefaultHarness:    opts.DefaultHarness,
 		LaunchSpecBuilder: opts.LaunchSpecBuilder,
+		HarnessRegistry:   opts.HarnessRegistry,
 		Bus:               bus,
 		ProjectDir:        projectDir,
 		HandlerBinary:     "/bin/sh",

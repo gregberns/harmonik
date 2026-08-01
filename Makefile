@@ -824,27 +824,46 @@ check-full:  ## Tier 3: everything in check + integration + scenario + crash tes
 
 # ---------------------------------------------------------------------------
 # Keeper acceptance corpus — keeper conformance set (hk-urxa3)
-# Named conformance set for the keeper test-validation system.  Runs all
-# 6 corpus scenarios and the supporting floor without a real tmux session.
+# Named conformance set for the keeper test-validation system.  Runs the
+# registered corpus slots without a real tmux session.
 # test-keeper-conformance-full additionally runs the L-twin integration tier
 # (requires tmux on PATH).
 #
-# Corpus map:
-#   floor: band-min / force-act / hard-ceiling SID-independent / pct-inert-warn-1m
-#          live-watcher flock vs corpse / operator-attached warn-only
-#   #1 restart-now does not abort no_tmux_target (B4 fix, L-fake-tmux + L-twin)
-#   #2 session_id survives /clear, rebinds same lane (L-twin only)
-#   #3 unconfirmed handoff not truncated, no second nonce (hk-vpnp)
-#   #4 watch re-stall auto-heals once, no alert storm (B3 fix, L-fake-tmux + L-twin)
-#   #5 hold dies on restart; hard-ceiling overrides hold; WARN fires under hold
-#   #6 binary-upgrade refuse-to-start + config --example restores
+# THE SET IS NOT COMPLETE.  It ran 10 keeper slots and the cmd-level upgrade
+# test when this text was written, and 5 slots have NO test to register.  Do not
+# read a green here as "the corpus holds".  The gap list, with the test that
+# owned each lost slot, lives in the file headers of
+# internal/keeper/conformance_keeper_test.go and conformance_keeperx_test.go.
+# Correct this text when the count changes.
+#
+# Corpus map — REGISTERED (10 keeper slots + 1 cmd-level):
+#   floor: band-min / force-act / hard-ceiling SID-independent
+#          live-watcher flock vs corpse
+#   #1 restart-now does not abort no_tmux_target (B4 fix, L-fake-tmux, 2 slots)
+#   #5 hold dies on restart, hard-ceiling overrides hold, WARN fires under hold
+#   #6 binary-upgrade refuse-to-start + config --example restores (cmd/harmonik)
+#
+# Corpus map — GAP, no test to register (5 slots, all deleted by ec66da798):
+#   floor/operator-attached-warn-only
+#   floor/pct-inert-warn-1m
+#   #3 unconfirmed handoff not truncated, no second nonce (hk-vpnp) — 2 slots,
+#      and item #3 now has no leg at ANY tier
+#   #4 watch re-stall auto-heals once (B3 fix) — the L-fake-tmux leg only.  The
+#      L-twin leg survives under test-keeper-conformance-full.
+#
+# Corpus item #2 (session_id survives /clear, rebinds same lane) is L-twin only.
+# It never ran here.  Use test-keeper-conformance-full.
 # ---------------------------------------------------------------------------
 .PHONY: test-keeper-conformance
-test-keeper-conformance:  ## Keeper acceptance corpus: 6 scenarios + floor, zero real tmux (hk-urxa3)
+test-keeper-conformance:  ## Keeper acceptance corpus: 10 keeper slots + upgrade test, zero real tmux. 5 slots have NO test (hk-urxa3)
+	@# Say the gap on every run. A reader who only sees the exit code reads a
+	@# green here as "the corpus holds", and it does not.
+	@echo "test-keeper-conformance: 10 slots registered, 5 have NO test — corpus #3 entirely, #4's fake-tmux leg, 2 floor scenarios."
+	@echo "  A green here does NOT mean the corpus holds. Gap list: internal/keeper/conformance_keeper*.go headers."
 	scripts/go-test-must-match.sh go test -race -count=1 -run 'TestKeeperConformance' ./internal/keeper/ ./cmd/harmonik/
 
 .PHONY: test-keeper-conformance-full
-test-keeper-conformance-full: test-keeper-conformance  ## Keeper acceptance corpus + L-twin integration tier (requires real tmux)
+test-keeper-conformance-full: test-keeper-conformance  ## The above + the L-twin tier: 3 real-tmux slots, corpus #1/#2/#4 (requires tmux on PATH)
 	scripts/go-test-must-match.sh go test -race -tags=integration -count=1 -run 'TestKeeperConformanceCorpus_Integration' ./internal/keeper/
 
 # ---------------------------------------------------------------------------

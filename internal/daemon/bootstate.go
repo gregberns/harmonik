@@ -15,6 +15,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
 	"github.com/gregberns/harmonik/internal/runlaunch"
@@ -148,22 +149,36 @@ func (bs *bootState) wireSpendAndQueueConsumers() error {
 	bus := bs.bus
 
 	// HandlerPausePolicyGoroutine (hk-37zy8): the first production subscriber.
-	pausePolicy := NewHandlerPausePolicyGoroutine(HandlerPausePolicyConfig{
-		AgentType:  core.AgentTypeClaudeCode,
-		Controller: bs.handlerPauseCtrl,
-		Registry:   bs.sharedRunRegistry,
-	})
-	if subscribeErr := pausePolicy.Subscribe(bus); subscribeErr != nil {
-		return fmt.Errorf("daemon.Start: HandlerPausePolicyGoroutine.Subscribe: %w", subscribeErr)
+	// Gated: with handler_pause_policy off, a rate-limit or budget-exhausted
+	// event trips nothing and an operator pauses by hand. The CONTROLLER is not
+	// gated — it is a work-loop dependency and the socket `handler resume` op
+	// writes to it — so only the automatic trip becomes absent.
+	if cfg.ProjectCfg.Subsystems.Enabled(projectconfig.SubsystemHandlerPausePolicy) {
+		pausePolicy := NewHandlerPausePolicyGoroutine(HandlerPausePolicyConfig{
+			AgentType:  core.AgentTypeClaudeCode,
+			Controller: bs.handlerPauseCtrl,
+			Registry:   bs.sharedRunRegistry,
+		})
+		if subscribeErr := pausePolicy.Subscribe(bus); subscribeErr != nil {
+			return fmt.Errorf("daemon.Start: HandlerPausePolicyGoroutine.Subscribe: %w", subscribeErr)
+		}
+	} else {
+		bs.logSubsystemDisabled(projectconfig.SubsystemHandlerPausePolicy, "handler-pause policy not constructed")
 	}
 
 	// DaemonSpendMeter (hk-k3f8g): daemon-wide run-count + output-bytes ceiling.
-	spendMeter := NewDaemonSpendMeter(bus)
-	if subscribeErr := spendMeter.Subscribe(bus); subscribeErr != nil {
-		return fmt.Errorf("daemon.Start: DaemonSpendMeter.Subscribe: %w", subscribeErr)
-	}
-	if bs.hooks.spendMeterObserver != nil {
-		bs.hooks.spendMeterObserver(spendMeter)
+	// Gated: with daemon_spend_meter off nothing emits budget_exhausted, so the
+	// daily run and byte ceilings do not stop dispatch. Off means no ceiling.
+	if cfg.ProjectCfg.Subsystems.Enabled(projectconfig.SubsystemDaemonSpendMeter) {
+		spendMeter := NewDaemonSpendMeter(bus)
+		if subscribeErr := spendMeter.Subscribe(bus); subscribeErr != nil {
+			return fmt.Errorf("daemon.Start: DaemonSpendMeter.Subscribe: %w", subscribeErr)
+		}
+		if bs.hooks.spendMeterObserver != nil {
+			bs.hooks.spendMeterObserver(spendMeter)
+		}
+	} else {
+		bs.logSubsystemDisabled(projectconfig.SubsystemDaemonSpendMeter, "daemon spend meter not constructed")
 	}
 
 	// PerQueueSpendMeter (NQ-X1, hk-tigaf.11): the stricter per-queue ceiling.
@@ -229,9 +244,15 @@ func (bs *bootState) wireWatchersAndObservers(ctx context.Context) error {
 	}
 
 	// ReviewGateAnomalyWatcher (hk-tnmjy): fires review_gate_anomaly.
-	reviewGateWatcher := NewReviewGateAnomalyWatcher(bus)
-	if subscribeErr := reviewGateWatcher.Subscribe(bus); subscribeErr != nil {
-		return fmt.Errorf("daemon.Start: ReviewGateAnomalyWatcher.Subscribe: %w", subscribeErr)
+	// Gated: it reads the bus and emits one alarm event that no dispatch path
+	// reads, so off costs the alarm and changes nothing else.
+	if cfg.ProjectCfg.Subsystems.Enabled(projectconfig.SubsystemReviewGateAnomaly) {
+		reviewGateWatcher := NewReviewGateAnomalyWatcher(bus)
+		if subscribeErr := reviewGateWatcher.Subscribe(bus); subscribeErr != nil {
+			return fmt.Errorf("daemon.Start: ReviewGateAnomalyWatcher.Subscribe: %w", subscribeErr)
+		}
+	} else {
+		bs.logSubsystemDisabled(projectconfig.SubsystemReviewGateAnomaly, "review-gate anomaly watcher not constructed")
 	}
 
 	// Bandwidth-tuner rate-limit backstop (hk-lqtzq). Two-phase: Subscribe here
@@ -299,7 +320,14 @@ func (bs *bootState) wireWatchersAndObservers(ctx context.Context) error {
 
 	// Cat-BL2 reactive ledger-import-failure handler (§8.BL2, hk-k7va9). Only
 	// wired when ProjectDir + BrPath are set (production pairing).
-	if cfg.ProjectDir != "" && cfg.BrPath != "" {
+	//
+	// The subsystem switch is read BEFORE that pairing, matching the bandwidth
+	// tuner: an operator who wrote the switch is told it took effect, whether or
+	// not the other preconditions would have held anyway. Off means a failed
+	// ledger import is reported and left there — no retry, no escalation event.
+	if !cfg.ProjectCfg.Subsystems.Enabled(projectconfig.SubsystemLedgerImportRecovery) {
+		bs.logSubsystemDisabled(projectconfig.SubsystemLedgerImportRecovery, "bead-ledger import recovery not constructed")
+	} else if cfg.ProjectDir != "" && cfg.BrPath != "" {
 		catBL2Handler := NewCatBL2Handler(CatBL2HandlerConfig{
 			ProjectDir: cfg.ProjectDir,
 			BrPath:     cfg.BrPath,

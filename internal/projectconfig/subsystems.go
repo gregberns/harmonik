@@ -145,6 +145,58 @@ const (
 	// at the composition root instead, so an operator running without remote
 	// workers gets no goroutine at all rather than one that returns immediately.
 	SubsystemWorkerReportLoop SubsystemName = "worker_report_loop"
+
+	// SubsystemHandlerPausePolicy names the HandlerPausePolicyGoroutine, the bus
+	// consumer that calls HandlerPauseController.Pause on a rate-limit or
+	// budget-exhausted event (daemon.wireSpendAndQueueConsumers).
+	//
+	// The CONTROLLER is not this switch and stays in every configuration: it is a
+	// work-loop dependency and the socket `handler resume` op writes to it. Only
+	// the automatic trip goes away. With this off a rate-limit event pauses
+	// nothing, and an operator pauses and resumes by hand.
+	//
+	// SPEC: specs/handler-pause.md HP-012 makes the pause on budget_exhausted a
+	// MUST, and §11a names this policy as the observer. Off is therefore a
+	// declared reduction in conformance, not a defect. The default is on, so no
+	// deployment that does not write this switch is affected.
+	SubsystemHandlerPausePolicy SubsystemName = "handler_pause_policy"
+
+	// SubsystemDaemonSpendMeter names the DaemonSpendMeter, the daemon-wide
+	// per-day run-count and output-byte ceiling (CL-090 / CL-090a).
+	//
+	// Read what OFF means here before you set it: the meter is the only emitter
+	// of budget_exhausted{budget_scope=handler_account}, and that event is what
+	// stops dispatch when the day's ceiling is reached. With this off the daemon
+	// keeps dispatching past HARMONIK_MAX_RUNS_PER_DAY and past the daily USD
+	// proxy. This is a spend control, not a queue control, so it is outside the
+	// core set (CHARTER §3) — but it is a ceiling, and off means no ceiling.
+	//
+	// It pairs with SubsystemHandlerPausePolicy, which is the consumer of the
+	// event this meter emits. Either switch alone breaks the chain.
+	SubsystemDaemonSpendMeter SubsystemName = "daemon_spend_meter"
+
+	// SubsystemReviewGateAnomaly names the ReviewGateAnomalyWatcher, which emits
+	// review_gate_anomaly after N consecutive bead_closed events with no
+	// reviewer_verdict between them.
+	//
+	// It is an alarm and nothing else: it reads the bus and emits one event type.
+	// Nothing in the dispatch path reads its output, so off costs the alarm and
+	// changes no other behaviour.
+	SubsystemReviewGateAnomaly SubsystemName = "review_gate_anomaly"
+
+	// SubsystemLedgerImportRecovery names the Cat-BL2 reactive handler
+	// (daemon.CatBL2Handler), which retries `br sync --import-only` once after a
+	// bead_sync_failed event and then emits bead_ledger_recovered or
+	// bead_ledger_corrupt plus operator_escalation_required.
+	//
+	// Off means a failed ledger import is reported by bead_sync_failed and left
+	// there. There is no retry and no escalation event. The bead ledger itself is
+	// core. This automatic repair pass over it is not.
+	//
+	// SPEC: specs/beads-integration.md BL-MRG-004 makes the route to Cat-BL2 a
+	// MUST. The emit half survives this switch and the routing half does not, so
+	// off is a declared reduction in conformance. The default is on.
+	SubsystemLedgerImportRecovery SubsystemName = "ledger_import_recovery"
 )
 
 // knownSubsystems is the closed set of names the `subsystems:` block accepts.
@@ -159,6 +211,10 @@ var knownSubsystems = map[SubsystemName]struct{}{
 	SubsystemBandwidthTuner:          {},
 	SubsystemBranchReaper:            {},
 	SubsystemWorkerReportLoop:        {},
+	SubsystemHandlerPausePolicy:      {},
+	SubsystemDaemonSpendMeter:        {},
+	SubsystemReviewGateAnomaly:       {},
+	SubsystemLedgerImportRecovery:    {},
 }
 
 // ErrUnknownSubsystem is returned when the subsystems: block names a subsystem

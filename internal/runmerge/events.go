@@ -25,22 +25,6 @@ type mergeRunBranchToMainPayload struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// workingTreeRefreshFailedPayload is the JSON payload for the
-// working_tree_refresh_failed event (§4.12.EM-054).
-type workingTreeRefreshFailedPayload struct {
-	RunID  string `json:"run_id"`
-	BeadID string `json:"bead_id,omitempty"`
-	Error  string `json:"error"`
-}
-
-// mergeBuildFailedPayload is the JSON payload for the merge_build_failed event
-// (hk-o68j3).
-type mergeBuildFailedPayload struct {
-	RunID  string `json:"run_id"`
-	BeadID string `json:"bead_id"`
-	Error  string `json:"error"`
-}
-
 // reportEmitFailure records a failure to publish one of this file's events.
 //
 // Every emitter here is informational and returns no error — the merge they
@@ -83,9 +67,9 @@ func EmitOutcomeEmitted(ctx context.Context, bus handlercontract.EventEmitter, r
 // Spec ref: specs/execution-model.md §4.12 EM-054.
 // Bead: hk-4goy3.
 func emitWorkingTreeRefreshFailed(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, beadID core.BeadID, refreshErr error) {
-	pl := workingTreeRefreshFailedPayload{
-		RunID:  runID.String(),
-		BeadID: string(beadID),
+	pl := core.WorkingTreeRefreshFailedPayload{
+		RunID:  runID,
+		BeadID: beadID,
 		Error:  refreshErr.Error(),
 	}
 	b, err := json.Marshal(pl)
@@ -135,9 +119,9 @@ func emitMergeBuildFailed(ctx context.Context, bus handlercontract.EventEmitter,
 	if len(output) > 0 {
 		errMsg = fmt.Sprintf("%s\n%s", errMsg, strings.TrimRight(string(output), "\n"))
 	}
-	pl := mergeBuildFailedPayload{
-		RunID:  runID.String(),
-		BeadID: string(beadID),
+	pl := core.MergeBuildFailedPayload{
+		RunID:  runID,
+		BeadID: beadID,
 		Error:  errMsg,
 	}
 	b, err := json.Marshal(pl)

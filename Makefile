@@ -112,7 +112,7 @@ smoke-scratch:  ## Run harmonik smoke in a throw-away temp project (never touche
 # Budget: 300s timeout (the agent interaction may take up to 180s).
 .PHONY: test-e2e-real-claude
 test-e2e-real-claude:  ## Run real-Claude E2E smoke (requires credentials + binaries on PATH)
-	go test -tags e2e_real_claude -timeout 300s -v -run TestE2ERealClaudeSingleMode ./internal/daemon/...
+	scripts/go-test-must-match.sh go test -tags e2e_real_claude -timeout 300s -v -run TestE2ERealClaudeSingleMode ./internal/daemon/...
 
 # test-e2e-real-claude-reviewloop: run the real-Claude review-loop E2E smoke test.
 # Requires: claude, tmux, git, br, ntm on PATH; ANTHROPIC_API_KEY or
@@ -120,7 +120,7 @@ test-e2e-real-claude:  ## Run real-Claude E2E smoke (requires credentials + bina
 # Budget: 300s timeout (the two-agent cycle may take up to 240s).
 .PHONY: test-e2e-real-claude-reviewloop
 test-e2e-real-claude-reviewloop:  ## Run real-Claude review-loop E2E smoke (requires credentials + binaries on PATH)
-	go test -tags e2e_real_claude -timeout 300s -v -run TestE2ERealClaudeReviewLoopMode ./internal/daemon/...
+	scripts/go-test-must-match.sh go test -tags e2e_real_claude -timeout 300s -v -run TestE2ERealClaudeReviewLoopMode ./internal/daemon/...
 
 # test-scenario: run the scenario tier with -race and the scenario build tag.
 # Prereq: build-all compiles cmd/harmonik and the twins that daemon scenarios
@@ -151,7 +151,7 @@ test-scenario: build-all  ## Run scenario tier (-race, -tags=scenario, 10m budge
 # Cite: plans/2026-07-13-code-revamp/M6-PLAN.md §WS2.4.
 .PHONY: test-subprocess
 test-subprocess:  ## Run WS2.4 non-docker subprocess boot smoke (-tags=subprocess; needs go+br+git on PATH)
-	go test -tags=subprocess -timeout 5m -count=1 ./cmd/harmonik -run TestSubprocessDaemonBootSmoke
+	scripts/go-test-must-match.sh go test -tags=subprocess -timeout 5m -count=1 ./cmd/harmonik -run TestSubprocessDaemonBootSmoke
 
 # core-loop-lt: WS4-5 FORCED, single-entry LT-leg command. THE assessor's live-verify
 # gate — drives the real task-processing loop on a scratch daemon across the core-loop
@@ -476,7 +476,7 @@ vet-tagged:  ## hk-i1m20: typecheck every build-tagged file (invisible to plain 
 # L3 happy-path = PRE-DEPLOY E2E GATE for the codex-app-server integration.
 .PHONY: test-codex-live
 test-codex-live:  ## Codex-app-server L3 live gate (CODEX_LIVE=1 required; token-capped; hk-oe86p)
-	CODEX_LIVE=1 go test -timeout 180s -count=1 -run TestL3_ ./internal/codextest/...
+	CODEX_LIVE=1 scripts/go-test-must-match.sh go test -timeout 180s -count=1 -run TestL3_ ./internal/codextest/...
 
 # capture-fixtures: deliberate, budget-capped corpus capture.
 # Requires: CODEX_LIVE=1, codex binary on PATH, valid codex auth.
@@ -488,7 +488,7 @@ capture-fixtures:  ## Capture new codex corpus (CODEX_LIVE=1 required; deliberat
 	@echo "capture-fixtures: launching budget-capped codex session via L3 live harness"
 	@echo "  Corpus output: testdata/codex-app-server/corpus/"
 	@echo "  Update testdata/codex-app-server/corpus/CAPTURE-LOG.md after capture."
-	CODEX_LIVE=1 go test -timeout 120s -count=1 -v -run TestL3_ ./internal/codextest/...
+	CODEX_LIVE=1 scripts/go-test-must-match.sh go test -timeout 120s -count=1 -v -run TestL3_ ./internal/codextest/...
 
 # capture-claude-fixtures: real-Claude twin-parity capture (WS3-Claude-A).
 # Requires an AUTH'D, tmux-capable box: claude/tmux/git/br/ntm on PATH + a
@@ -505,7 +505,7 @@ capture-claude-fixtures:  ## Capture real-Claude twin-parity fixtures (e2e_real_
 	env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
 	  HARMONIK_WIRE_CAPTURE_DIR=$(CURDIR)/testdata/twin-parity/claude \
 	  HARMONIK_CAPTURE_COMMIT_SHA=$$(git rev-parse --short HEAD) \
-	  go test -tags e2e_real_claude -timeout 300s -count=1 -v \
+	  scripts/go-test-must-match.sh go test -tags e2e_real_claude -timeout 300s -count=1 -v \
 	    -run TestCaptureClaudeFixtures ./internal/daemon/...
 
 # test-twin-parity-claude: the ROUTINE Claude twin-parity gate (WS3-Claude-D).
@@ -517,7 +517,7 @@ capture-claude-fixtures:  ## Capture real-Claude twin-parity fixtures (e2e_real_
 # (distinct from capture-claude-fixtures, the separate PERIODIC live re-capture).
 .PHONY: test-twin-parity-claude
 test-twin-parity-claude:  ## Routine Claude twin-parity gate (twin-vs-reference-capture; zero-token, deterministic)
-	go test -count=1 -run 'ClaudeParity' ./internal/twinparity/...
+	scripts/go-test-must-match.sh go test -count=1 -run 'ClaudeParity' ./internal/twinparity/...
 
 # test-pi-live: the REAL-BOX-GATED pi oracle (WS3-pi / pi-A). Drives a real
 # `pi --mode json` single-turn, asserts the terminal NDJSON sequence
@@ -527,7 +527,7 @@ test-twin-parity-claude:  ## Routine Claude twin-parity gate (twin-vs-reference-
 # HARMONIK_REQUIRE_PI_LIVE=1 turns a can't-run skip into a Fatalf.
 .PHONY: test-pi-live
 test-pi-live:  ## Real-pi oracle gate (PI_LIVE=1 required; pi provider auth; writes pi twin-parity fixtures)
-	PI_LIVE=1 go test -timeout 180s -count=1 -run TestPiA_ ./internal/harness/pi/...
+	PI_LIVE=1 scripts/go-test-must-match.sh go test -timeout 180s -count=1 -run TestPiA_ ./internal/harness/pi/...
 
 # test-twin-parity-pi: the ROUTINE pi twin-parity gate (WS3-pi / pi-C). Compares
 # the pi twin's NDJSON (committed testdata/twin-parity/pi/happy-path-sample/ndjson
@@ -538,7 +538,7 @@ test-pi-live:  ## Real-pi oracle gate (PI_LIVE=1 required; pi provider auth; wri
 # pi needed (distinct from test-pi-live, the separate REAL-BOX re-capture).
 .PHONY: test-twin-parity-pi
 test-twin-parity-pi:  ## Routine pi twin-parity gate (twin-vs-reference-capture; zero-token, deterministic)
-	go test -count=1 -run 'PiParity' ./internal/twinparity/...
+	scripts/go-test-must-match.sh go test -count=1 -run 'PiParity' ./internal/twinparity/...
 
 # ---------------------------------------------------------------------------
 # Keeper replay test taxonomy (T10; session-restart-substrate)
@@ -560,7 +560,7 @@ test-keeper-l012:  ## Keeper replay L0/L1/L2 gate (KEEPER_LIVE=0; corpus-driven)
 # is a deterministic rebuild, not a token-capped capture.
 .PHONY: test-keeper-live
 test-keeper-live:  ## Keeper L3 live gate (KEEPER_LIVE=1 required; one-cycle tmux smoke)
-	KEEPER_LIVE=1 go test -timeout 180s -count=1 -run TestL3_ ./internal/keepertest/...
+	KEEPER_LIVE=1 scripts/go-test-must-match.sh go test -timeout 180s -count=1 -run TestL3_ ./internal/keepertest/...
 
 # ---------------------------------------------------------------------------
 # Twin-binary targets
@@ -699,6 +699,12 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	@# two checkouts that collide share a cache and the corruption comes back, and
 	@# two wrapped lines that disagree each build cold with nothing to see.
 	scripts/with-lane-gocache-test.sh
+	@# Under a second. Guards the wrapper that every -run-filtered target below
+	@# now goes through. `go test -run <pat>` exits 0 when the pattern matches
+	@# nothing, so a gate wired that way reports green while asserting nothing —
+	@# measured on test-keeper-conformance, which ran zero keeper tests from
+	@# ec66da798 until the corpus registration came back.
+	scripts/go-test-must-match-test.sh
 	$(MAKE) fmt-check
 	@# Every Go step below runs under a GOCACHE private to THIS checkout. The lanes
 	@# used to share one, and a concurrent process invalidating cache facts mid-run
@@ -818,28 +824,47 @@ check-full:  ## Tier 3: everything in check + integration + scenario + crash tes
 
 # ---------------------------------------------------------------------------
 # Keeper acceptance corpus — keeper conformance set (hk-urxa3)
-# Named conformance set for the keeper test-validation system.  Runs all
-# 6 corpus scenarios and the supporting floor without a real tmux session.
+# Named conformance set for the keeper test-validation system.  Runs the
+# registered corpus slots without a real tmux session.
 # test-keeper-conformance-full additionally runs the L-twin integration tier
 # (requires tmux on PATH).
 #
-# Corpus map:
-#   floor: band-min / force-act / hard-ceiling SID-independent / pct-inert-warn-1m
-#          live-watcher flock vs corpse / operator-attached warn-only
-#   #1 restart-now does not abort no_tmux_target (B4 fix, L-fake-tmux + L-twin)
-#   #2 session_id survives /clear, rebinds same lane (L-twin only)
-#   #3 unconfirmed handoff not truncated, no second nonce (hk-vpnp)
-#   #4 watch re-stall auto-heals once, no alert storm (B3 fix, L-fake-tmux + L-twin)
-#   #5 hold dies on restart; hard-ceiling overrides hold; WARN fires under hold
-#   #6 binary-upgrade refuse-to-start + config --example restores
+# THE SET IS NOT COMPLETE.  It ran 10 keeper slots and the cmd-level upgrade
+# test when this text was written, and 5 slots have NO test to register.  Do not
+# read a green here as "the corpus holds".  The gap list, with the test that
+# owned each lost slot, lives in the file headers of
+# internal/keeper/conformance_keeper_test.go and conformance_keeperx_test.go.
+# Correct this text when the count changes.
+#
+# Corpus map — REGISTERED (10 keeper slots + 1 cmd-level):
+#   floor: band-min / force-act / hard-ceiling SID-independent
+#          live-watcher flock vs corpse
+#   #1 restart-now does not abort no_tmux_target (B4 fix, L-fake-tmux, 2 slots)
+#   #5 hold dies on restart, hard-ceiling overrides hold, WARN fires under hold
+#   #6 binary-upgrade refuse-to-start + config --example restores (cmd/harmonik)
+#
+# Corpus map — GAP, no test to register (5 slots, all deleted by ec66da798):
+#   floor/operator-attached-warn-only
+#   floor/pct-inert-warn-1m
+#   #3 unconfirmed handoff not truncated, no second nonce (hk-vpnp) — 2 slots,
+#      and item #3 now has no leg at ANY tier
+#   #4 watch re-stall auto-heals once (B3 fix) — the L-fake-tmux leg only.  The
+#      L-twin leg survives under test-keeper-conformance-full.
+#
+# Corpus item #2 (session_id survives /clear, rebinds same lane) is L-twin only.
+# It never ran here.  Use test-keeper-conformance-full.
 # ---------------------------------------------------------------------------
 .PHONY: test-keeper-conformance
-test-keeper-conformance:  ## Keeper acceptance corpus: 6 scenarios + floor, zero real tmux (hk-urxa3)
-	go test -race -count=1 -run 'TestKeeperConformance' ./internal/keeper/ ./cmd/harmonik/
+test-keeper-conformance:  ## Keeper acceptance corpus: 10 keeper slots + upgrade test, zero real tmux. 5 slots have NO test (hk-urxa3)
+	@# Say the gap on every run. A reader who only sees the exit code reads a
+	@# green here as "the corpus holds", and it does not.
+	@echo "test-keeper-conformance: 10 slots registered, 5 have NO test — corpus #3 entirely, #4's fake-tmux leg, 2 floor scenarios."
+	@echo "  A green here does NOT mean the corpus holds. Gap list: internal/keeper/conformance_keeper*.go headers."
+	scripts/go-test-must-match.sh go test -race -count=1 -run 'TestKeeperConformance' ./internal/keeper/ ./cmd/harmonik/
 
 .PHONY: test-keeper-conformance-full
-test-keeper-conformance-full: test-keeper-conformance  ## Keeper acceptance corpus + L-twin integration tier (requires real tmux)
-	go test -race -tags=integration -count=1 -run 'TestKeeperConformanceCorpus_Integration' ./internal/keeper/
+test-keeper-conformance-full: test-keeper-conformance  ## The above + the L-twin tier: 3 real-tmux slots, corpus #1/#2/#4 (requires tmux on PATH)
+	scripts/go-test-must-match.sh go test -race -tags=integration -count=1 -run 'TestKeeperConformanceCorpus_Integration' ./internal/keeper/
 
 # ---------------------------------------------------------------------------
 # Release validation gate (hk-o4j13)

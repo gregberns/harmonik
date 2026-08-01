@@ -23,6 +23,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // handlerFixtureTempDir creates a temporary directory with the .harmonik/
@@ -643,26 +645,40 @@ func TestHandlerResume_EmitsEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cannot read events.jsonl: %v", err)
 	}
-	if !strings.Contains(string(eventsData), handlerResumedEventType) {
-		t.Errorf("events.jsonl missing %q; content:\n%s", handlerResumedEventType, eventsData)
+	if !strings.Contains(string(eventsData), string(core.EventTypeHandlerResumed)) {
+		t.Errorf("events.jsonl missing %q; content:\n%s", core.EventTypeHandlerResumed, eventsData)
 	}
 
-	// Verify the event parses as a valid handlerResumedEvent.
-	var evt handlerResumedEvent
-	if parseErr := json.Unmarshal(bytes.TrimRight(eventsData, "\n"), &evt); parseErr != nil {
+	// Verify the event parses as a valid shared envelope.
+	var event core.Event
+	if parseErr := json.Unmarshal(bytes.TrimRight(eventsData, "\n"), &event); parseErr != nil {
 		t.Errorf("events.jsonl line is not valid JSON: %v\nraw: %s", parseErr, eventsData)
 	}
-	if evt.EventType != handlerResumedEventType {
-		t.Errorf("event_type = %q, want %q", evt.EventType, handlerResumedEventType)
+	if !event.Valid() {
+		t.Errorf("event envelope is invalid: %+v", event)
 	}
-	if evt.AgentType != "claude-code" {
-		t.Errorf("agent_type = %q, want claude-code", evt.AgentType)
+	if event.Type != string(core.EventTypeHandlerResumed) {
+		t.Errorf("event type = %q, want %q", event.Type, core.EventTypeHandlerResumed)
 	}
-	if evt.By != "operator" {
-		t.Errorf("by = %q, want operator", evt.By)
+	if event.SourceSubsystem != handlerSubsystemID {
+		t.Errorf("event source_subsystem = %q, want %q", event.SourceSubsystem, handlerSubsystemID)
 	}
-	if evt.PausedEpoch != 1 {
-		t.Errorf("paused_epoch = %d, want 1", evt.PausedEpoch)
+
+	var payload core.HandlerResumedPayload
+	if parseErr := json.Unmarshal(event.Payload, &payload); parseErr != nil {
+		t.Errorf("event payload is not valid JSON: %v\nraw: %s", parseErr, event.Payload)
+	}
+	if !payload.Valid() {
+		t.Errorf("handler_resumed payload is invalid: %+v", payload)
+	}
+	if payload.AgentType != "claude-code" {
+		t.Errorf("agent_type = %q, want claude-code", payload.AgentType)
+	}
+	if payload.By != core.HandlerResumedByOperator {
+		t.Errorf("by = %q, want operator", payload.By)
+	}
+	if payload.PausedEpoch != 1 {
+		t.Errorf("paused_epoch = %d, want 1", payload.PausedEpoch)
 	}
 }
 

@@ -49,11 +49,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
 )
@@ -61,6 +64,16 @@ import (
 // handlerStateSchemaVersion is the only schema version the CLI accepts.
 // A higher schema version causes exit 2 (forward-incompatible, mirrors QM-002).
 const handlerStateSchemaVersion = 1
+
+// handlerSubsystemID is the canonical source_subsystem identifier for the
+// handler CLI event writer.
+const handlerSubsystemID = "github.com/gregberns/harmonik/cmd/harmonik"
+
+func init() {
+	if err := core.RegisterSourceSubsystem(handlerSubsystemID); err != nil {
+		log.Fatalf("harmonik: RegisterSourceSubsystem: %v", err)
+	}
+}
 
 // handlerStateFile is the on-disk file written by HandlerPauseController.
 // Sibling to queue.json; atomic-write discipline per WM-026.
@@ -268,21 +281,6 @@ const resumeExitUnknownType = 2
 
 // resumeExitAlreadyLive is exit 3 — handler is already live (not paused).
 const resumeExitAlreadyLive = 3
-
-// handlerResumedEventType is the event type per specs/event-model.md §8.11.2.
-const handlerResumedEventType = "handler_resumed"
-
-// handlerResumedEvent is the JSONL envelope written to events.jsonl on success.
-// Fields per event-model.md §8.11.2: agent_type, by, prior_cause, paused_epoch.
-// PriorCause reuses core.HandlerPauseCause directly — same JSON shape.
-type handlerResumedEvent struct {
-	EventType   string                  `json:"event_type"`
-	EmittedAt   string                  `json:"emitted_at"`
-	AgentType   string                  `json:"agent_type"`
-	By          string                  `json:"by"`
-	PriorCause  *core.HandlerPauseCause `json:"prior_cause"`
-	PausedEpoch int                     `json:"paused_epoch"`
-}
 
 // runHandlerResume implements `harmonik handler resume --type <agent-type> [--force] [--project DIR]`.
 //
@@ -598,15 +596,23 @@ func emitHandlerResumedEvent(eventsPath, agentType string, priorCause *core.Hand
 		return fmt.Errorf("payload invalid (paused_epoch=%d agent_type=%q)", pausedEpoch, agentType)
 	}
 
-	evt := handlerResumedEvent{
-		EventType:   handlerResumedEventType,
-		EmittedAt:   time.Now().UTC().Format(time.RFC3339Nano),
-		AgentType:   agentType,
-		By:          string(core.HandlerResumedByOperator),
-		PriorCause:  priorCause,
-		PausedEpoch: pausedEpoch,
+	payload, err := json.Marshal(typedPayload)
+	if err != nil {
+		return fmt.Errorf("marshal handler_resumed payload: %w", err)
 	}
-	line, err := json.Marshal(evt)
+	eventID, err := uuid.NewV7()
+	if err != nil {
+		return fmt.Errorf("new handler_resumed event ID: %w", err)
+	}
+	event := core.Event{
+		EventID:         core.EventID(eventID),
+		SchemaVersion:   1,
+		Type:            string(core.EventTypeHandlerResumed),
+		TimestampWall:   time.Now().UTC(),
+		SourceSubsystem: handlerSubsystemID,
+		Payload:         payload,
+	}
+	line, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("marshal handler_resumed event: %w", err)
 	}

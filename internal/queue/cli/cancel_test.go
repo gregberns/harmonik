@@ -17,6 +17,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queue/cli"
 )
@@ -75,6 +76,25 @@ func TestRunQueueCancel_NoArg_ArchivesMain(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "archived") {
 		t.Errorf("RunQueueCancel no-arg: stdout %q does not mention 'archived'", out.String())
+	}
+
+	eventsPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
+	eventsData, err := os.ReadFile(eventsPath) //nolint:gosec // G304: eventsPath is rooted in t.TempDir
+	if err != nil {
+		t.Fatalf("RunQueueCancel no-arg: read event journal: %v", err)
+	}
+	var event core.Event
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(eventsData))), &event); err != nil {
+		t.Fatalf("RunQueueCancel no-arg: decode event envelope: %v", err)
+	}
+	if !event.Valid() {
+		t.Errorf("RunQueueCancel no-arg: event envelope is invalid: %+v", event)
+	}
+	if event.Type != "queue_cancelled_operator" {
+		t.Errorf("RunQueueCancel no-arg: event type = %q, want queue_cancelled_operator", event.Type)
+	}
+	if event.SourceSubsystem != "github.com/gregberns/harmonik/internal/queue" {
+		t.Errorf("RunQueueCancel no-arg: event source_subsystem = %q, want queue subsystem", event.SourceSubsystem)
 	}
 }
 

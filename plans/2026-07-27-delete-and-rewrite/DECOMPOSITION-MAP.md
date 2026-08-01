@@ -91,16 +91,26 @@ Two things worth carrying forward from that run:
 >
 > | Function | File | Lines | State |
 > |---|---|---:|---|
-> | `runAgentLaunch` | `internal/daemon/agentlaunch.go` | 836 | **the ONE launch path.** All three remaining sites call it. A CI gate (`scripts/readywait-freeze-gate.sh`) allows exactly one `runloop.DispatchSegment` in the tree, and it must be here |
-> | `beadRunOne` | `internal/daemon/workloop.go` | 1,603 | run driver. Its single-mode tail was measured at about 722 lines before Step 5 — see the ⚠ under §1c |
+> | `runAgentLaunch` | `internal/daemon/agentlaunch.go` | ~~836~~ **558** | **the ONE launch path.** All three remaining sites call it. A CI gate (`scripts/readywait-freeze-gate.sh`) allows exactly one `runloop.DispatchSegment` in the tree, and it must be here |
+> | `beadRunOne` | `internal/daemon/workloop.go` | ~~1,603~~ **1,705** | run driver. Its single-mode tail is **740 lines, 368 of them code** — see the ⚠ under §1c |
 > | `driveDotWorkflow` | `internal/daemon/dot_cascade_core.go` | 997 | the graph walker. **The default and the traffic** |
-> | `dispatchDotAgenticNode` | `internal/daemon/dot_cascade_core.go` | 543 | per-node dispatch inside the walker |
-> | `executeCognitionGate` | `internal/daemon/dot_gate.go` | 234 | **cannot run.** No code sets `daemon.Config.CPRegistry`, and no graph the daemon runs declares a `type="gate"` node |
+> | `dispatchDotAgenticNode` | `internal/daemon/dot_cascade_core.go` | ~~543~~ **544** | per-node dispatch inside the walker |
+> | `executeCognitionGate` | `internal/daemon/dot_gate.go` | ~~234~~ **230** | **cannot run.** No code sets `daemon.Config.CPRegistry`. The file is 749 lines, not 721 |
 > | ~~`runReviewLoop`~~ | ~~`internal/daemon/reviewloop.go`~~ | ~~2,194~~ | **deleted 2026-07-28 (`3cec5afd7`)** |
+>
+> **RE-MEASURED 2026-07-31 against `1e22c0141`. Three rows had drifted, one was never right, and one
+> is unchanged.** The `runAgentLaunch` row quoted **the size of the file, not the size of the
+> function**. `agentlaunch.go` was exactly 836 lines at `fabc7cb21`, the tip on the day the row was
+> written, when the function was 535. Every other row in this table is a function size, so the row was
+> not comparable with its neighbours. At `1e22c0141` the function is 558 and the file is 859.
+> `beadRunOne`, `dispatchDotAgenticNode` and `executeCognitionGate` had drifted by ordinary edits, and
+> each was re-measured with `awk '/^func <name>/,/^}/' <file> | wc -l`. `driveDotWorkflow` is still
+> exactly 997. Full working for the `beadRunOne` and tail figures is in
+> [`STEP-7-MODE-BOUNDARY.md`](STEP-7-MODE-BOUNDARY.md) §1.
 >
 > `runWorkLoop`, the outer scheduler, also left this file — `756b6604c` (2026-07-29) moved it to
 > `internal/daemon/scheduler.go`, and Step 5 (`4070c75ed`) moved the run-plan resolver out to
-> `internal/daemon/workloop_runplan.go`. That is why `workloop.go` reads 3,227 lines and not 6,656.
+> `internal/daemon/workloop_runplan.go`. That is why `workloop.go` reads 3,356 lines and not 6,656.
 >
 > What is still duplicated, and what to do about it, is §2b. The short version: the launch step is
 > one function; "decide whether it did the work" is still written twice.
@@ -160,6 +170,12 @@ the size of the drift.
 **Re-measured again 2026-07-30, after Step 5.** The middle column below moved a second time in one
 day. `4070c75ed` pulled the run-plan resolver out to `internal/daemon/workloop_runplan.go` (580
 lines), which took 162 lines off the file and 161 off `beadRunOne`.
+
+> **⚠ This table's "@ HEAD" column is dated 2026-07-30 and was not re-measured in full on 07-31.**
+> Two cells are known stale at `1e22c0141`: total lines is **3,356**, not 3,227, and `beadRunOne` is
+> **1,705**, not 1,603 — so the one-function share is 51%, not 50%. The other rows were not
+> re-counted. Treat the whole column as of its own date, and re-run the commands below before
+> quoting any cell.
 
 | Measure | `workloop.go` @ HEAD | before Step 5 | as first written |
 |---|---:|---:|---:|
@@ -238,18 +254,36 @@ Note also **three separate `ShowBead` round-trips per dispatch** on the queue pa
 #25 post-claim hydration, plus #24's blocked-status re-read on failure), each with its own retry
 budget and its own failure semantics.
 
-### 1c. `beadRunOne` — the per-run driver (1,603 lines)
+### 1c. `beadRunOne` — the per-run driver (1,705 lines)
 
-**Re-measured 2026-07-30, after Step 5. The function is 1,603 lines — it read 1,764 earlier the same
-day and 2,289 as first written — and its signature takes 7
-parameters.** Find it with `grep -n '^func beadRunOne' internal/daemon/workloop.go` and size it with
+**Re-measured 2026-07-31 against `1e22c0141`. The function is 1,705 lines — 815 code, 824 comment,
+66 blank — and its signature takes 7 parameters.** It read 1,603 after Step 5, 1,764 on 2026-07-29,
+and 2,289 as first written. Step 6's migration commits put lines back. Find it with
+`grep -n '^func beadRunOne' internal/daemon/workloop.go` and size it with
 `awk '/^func beadRunOne/,/^}/' internal/daemon/workloop.go | wc -l`.
 
-> ⚠ **The "722 deletable single-mode lines" figure is now unsafe to quote, and it is quoted in four
-> places** — §0's table, §2b, Step 7 and the §1d summary. It was derived from the pre-Step-5 function,
-> when `beadRunOne` was 1,764 lines. Step 5 took 161 lines out of that function, and how many of them
-> came out of the single-mode tail was never recorded. **Do not rescale it.** Re-derive the tail by
-> measuring from the mode switch to the end of the function before pricing Step 7 off it.
+> ⚠ **CORRECTED 2026-07-31 — the warning below had the wrong premise and pointed the wrong way.**
+> It said the 722 figure was unsafe because Step 5 removed an unrecorded number of lines from the
+> single-mode tail. **Step 5 removed none of them.** Measured across every commit that touched
+> `workloop.go`: Step 5 (`4070c75ed`) took `beadRunOne` from 1,764 to 1,591 and left the tail at
+> exactly 711 lines and 357 lines of code. Every one of its 173 lines came from above the mode
+> switch. **And the tail has since GROWN, not shrunk** — 711 → 740, because Step 6 landed inside it.
+> Anyone who rescaled 722 downward for Step 5 got a number wrong in both magnitude and direction.
+>
+> **The re-derived figure at `1e22c0141` is 740 lines: 368 code, 342 comment, 30 blank**, bracketing
+> the tail from the close of the mode switch to the end of the function. **Quote 368, not 740** —
+> comments are 46% of the tail and a raw count overstates the work by close to a factor of two. And
+> quote 368 as "code touched", never as a deletion figure: eighteen capabilities in the tail must be
+> ported onto the graph node rather than deleted. Full working in
+> [`STEP-7-MODE-BOUNDARY.md`](STEP-7-MODE-BOUNDARY.md) §1.
+>
+> **722 is not reproducible from any natural bracket** at `756b6604c`, the commit the retired text
+> in §2b names. The candidates there are 945, 933, 774, 711 and 710. It was an estimate.
+>
+> **Where the old figure still appears.** §0's table, §2b and the Step 7 entry are corrected in the
+> same commit as this note. Two mentions are deliberately left alone, and both sit inside the
+> `<details>` block under §2b, which is marked as retired text and kept so a reader can date the
+> decay. Nowhere else in this file still quotes 722. Treat it as superseded wherever it appears.
 
 Row 17 below is
 dead: `3cec5afd7` retired review-loop mode and deleted its driver, so `beadRunOne` now dispatches two
@@ -526,13 +560,25 @@ the four graphs rather than the whole tree, or the next reader greps and finds t
 
 **What is genuinely still duplicated**, after the launch collapse and measured on 2026-07-30:
 
-- **The post-exit interpretation.** The single-mode tail (`internal/daemon/workloop.go`, about 722
-  lines from the mode switch to the end of `beadRunOne` — measured before Step 5, see the ⚠ in §1c)
-  and the graph node
-  (`dispatchDotAgenticNode`, about 543 lines) each hand-roll the same four steps after
+- **The post-exit interpretation.** The single-mode tail (`internal/daemon/workloop.go`, ~~about 722
+  lines from the mode switch to the end of `beadRunOne`~~ **740 lines / 368 code at `1e22c0141`, see
+  the ⚠ in §1c**) and the graph node
+  (`dispatchDotAgenticNode`, about 543 lines — **544 measured, this one was right**) each hand-roll
+  the same four steps after
   `runAgentLaunch` returns: probe worktree HEAD, emit `implementer_phase_complete`, run the
   process-exit commit fallback, then decide what no-commit means. The steps agree in shape and
   disagree in detail.
+
+  > **CORRECTED 2026-07-31 — "the same four steps" understates it.** There are 17 post-exit steps on
+  > the single side and 12 on the graph side. **Six of them are shared, not four** — the four named
+  > here plus `defer launch.Cleanup()` and the `ctx.Err()` check. So the split is 6 shared, 11
+  > single-only, 6 graph-only. The framing hides three whole classes of divergence that sit between
+  > them: the HC-065 lifecycle transition and `SetMachine` (single only), the five-way terminal
+  > classification switch (single only), and the reviewer-verdict branch (graph only). **Do not read
+  > the two regions as one large duplicate.** Measured from the line after `runAgentLaunch` returns,
+  > single is 422 lines (193 code) and the graph is 171 (91 code), but only about 50 to 60 code lines
+  > a side are genuinely paired. The full step-by-step table, with a deliberate / accidental / defect
+  > verdict per row, is in [`STEP-7-MODE-BOUNDARY.md`](STEP-7-MODE-BOUNDARY.md) §2.
 - **Nothing else.** The terminal spine is shared already: both arms build a `runloop.RunBridge` and
   call `WireSpine`, and `runBridgeConfig` is where the two modes' merge-retry budgets are declared
   side by side.
@@ -549,25 +595,114 @@ guards)."
 | Step | single | dot graph node |
 |---|---|---|
 | escaped-worktree check (`emitImplementerEscapedWorktree`) | yes | no, **and RSM-008 requires no** |
-| `noCommitGuardShouldReopen` | yes | no, **and RSM-008 requires no** — the graph does a bare HEAD-advance compare |
+| `noCommitGuardShouldReopen` | yes | no, **and RSM-008 requires no** — ~~the graph does a bare HEAD-advance compare~~ |
 
-Two things follow. RSM-008 is stale in its own right: RSM-007 still names review-loop as a live fork,
-and review-loop was deleted on 2026-07-28. And extending the escape check to the default path is not
+> **CORRECTED 2026-07-31 on three points. Verified against the code and the spec at `1e22c0141`.**
+>
+> 1. **"The graph does a bare HEAD-advance compare" is false.** The graph consults
+>    `shared.MainHistoryHasRefsTrailer` — the same subsumption test that is the second half of
+>    `noCommitGuardShouldReopen` — and then branches three ways: subsumed, iteration < 2 hard fail,
+>    iteration ≥ 2 pass to the diff-hash check. It also has a `node.NonCommitting` opt-out with no
+>    single-mode equivalent. So the graph runs an EQUIVALENT no-commit guard inline. **The only thing
+>    it lacks is the cross-repo target** (`hk-pq3ex`). An earlier reading of this correction also
+>    named the iteration-1 hard fail as missing. It is not missing — the graph implements it verbatim,
+>    and it is the same branch listed two sentences above. Do not route porting work off the earlier
+>    wording, or you will go looking for something that is already there.
+> 2. **The RSM-008 quote above is stale.** The spec at HEAD reads "The **DOT path** MUST NOT enter
+>    `Guarding`". Review-loop was removed from it by the v0.2.2 spec pass on 2026-07-30.
+> 3. **"RSM-008 is stale in its own right: RSM-007 still names review-loop as a live fork" is false
+>    at HEAD.** RSM-007 reads "(DOT cascade, single-shot)". Both mentions were already cleaned by
+>    that same pass. **The live staleness is a different sentence:** RSM-008's parenthetical "(it
+>    does not run those guards)" is now false, because the graph does run a no-commit guard. That is
+>    what D2 has to edit.
+
+One thing still follows, and it is unchanged: extending the escape check to the default path is not
 obviously an improvement, because `hk-co8g8` root-caused that same check as firing on innocent runs
-and killing them. Decide D2 with both facts in hand.
+and killing them. Decide D2 with that fact in hand.
 
-*Group 2 — nothing specifies these. They are real drift, and four of the five leave the DEFAULT path
-worse off.*
+> **Trap, recorded 2026-07-31 (`hk-u99ha`).** `hk-co8g8`'s body in the bead ledger still describes
+> the lost-commit merge race it was originally filed as. It was root-caused the same day as the
+> escape guard firing on a sibling's half-finished merge, and only `OPEN-DEFECTS.md` carries the
+> corrected account. The citation above is right. A reader who checks it with `br show` will find a
+> body that contradicts this section and may conclude this section is wrong.
+
+*Group 2 — nothing specifies these. They are real drift, and ~~four of the five~~ **ten of the
+eighteen defects this drift has produced** leave the DEFAULT path worse off, against three that
+leave single mode worse off.*
 
 | Step | single | dot graph node |
 |---|---|---|
 | Pi provider profile on the launch context (`Provider` / `APIKeyEnv` / `APIKeyFile` / `BaseURL` / `API`) | yes | **no** — `hk-yo9g6`. `resolvedProfile` is resolved once in `beadRunOne` and read only by the single-mode `shared.LaunchCtx`. A Pi node on the default path launches with no provider profile. The model does reach it, because `resolvedModel` is overwritten from the profile before the mode switch |
 | implementer comms presence join and leave (`emitImplPresence`) | yes | **no**. No spec requires it on either path |
-| Pi stderr capture kept beside the retained worktree on failure | yes | **no** |
-| right harness for the process-exit commit fallback | yes | **no** — the graph calls `codex.EnsureRefsTrailer` for every process-exit harness, and Pi is one. Behaviour is the same, because both wrappers call the same `internal/harness/shared/refstrailer.go` primitives. Only the commit message is wrong: a Pi node's daemon-fallback commit says `feat(codex)` |
-| independent tmux session, so the run survives a daemon kill and is adopted on the next boot | yes | **no** — `hk-mh3qy`. This is the one capability that makes "just delete single mode" not a one-line change |
-| merge retry budget of 3 and the `ChargeReviewLoopFailure` ladder | **no** | yes — deliberate, declared in `runBridgeConfig` |
+| Pi stderr capture kept beside the retained worktree on failure | yes | ~~**no**~~ **half true now — see the correction below** |
+| right harness for the process-exit commit fallback | yes | **no** — the graph calls `codex.EnsureRefsTrailer` for every process-exit harness, and Pi is one. Behaviour is the same, because both wrappers call the same `internal/harness/shared/refstrailer.go` primitives. Only the commit message is wrong: a Pi node's daemon-fallback commit says `feat(codex)`. **Do not "fix" this row alone — see the correction below** |
+| independent tmux session, so the run survives a daemon kill and is adopted on the next boot | yes | **no** — `hk-mh3qy`. This is the one capability that makes "just delete single mode" not a one-line change. **`hk-mh3qy` is itself blocked twice — see the correction below** |
+| merge retry budget of 3 and the `ChargeReviewLoopFailure` ladder | **no** | yes — deliberate, declared in `runBridgeConfig`. **Misfiled — neither fact lives in `dispatchDotAgenticNode`. See the correction below** |
 | `auto_status` work-product inspection | **no** | yes — a graph node attribute, so single has no place to put it |
+
+> **CORRECTED 2026-07-31 against `1e22c0141`. This table is right as far as it goes, and it stops far
+> too early.** Full working in [`STEP-7-MODE-BOUNDARY.md`](STEP-7-MODE-BOUNDARY.md) §2 and §3.
+>
+> **The table is short by eleven rows.** Walking the single-mode tail line by line found **eighteen**
+> capabilities that live only there. Across both §2b tables this document names six of them — the two
+> guards in Group 1, and the Pi provider profile, the presence join and leave, the Pi stderr capture
+> and the independent session here. The other twelve, in the eleven rows below, appear nowhere in
+> this document. Worst first:
+>
+> | Missing row | What the DEFAULT path loses today |
+> |---|---|
+> | terminal classification (`handler.MapWaitReturnToTerminalEvent` + the five-way switch) | the graph decides node success on "did HEAD advance" alone and never reads the socket outcome. **A node that commits and then signals failure is recorded SUCCESS and merged** — `hk-v4wer` |
+> | `bridge.Drain` on the shutdown branch | committed-but-unmerged work is dropped and re-dispatched — `hk-dk0sf` |
+> | cold-start spawn semaphore | remote graph runs are ungated on concurrent cold starts — `hk-6n0z7` |
+> | `transitionToTerminated` (HC-065) and `handle.SetMachine` | no terminal transition, no `lifecycle_transition`, and `stalewatch`'s silent-hang drive plus `stategather`'s lifecycle read are inert — `hk-b4xf2` |
+> | `RunHandle.SetAgentType` | the bandwidth tuner's Pi filter cannot match, so Pi rate limits throttle unrelated work — `hk-a5hs1` |
+> | cross-repo `activeRepo` on post-exit reads | `hk-pq3ex`. The **cascade** hardcodes `env.ProjectDir`, and the merge still gets `activeRepo` through `WireSpine` |
+> | `sdHarness` | every graph run writes a `sessiondata` record with an empty harness field — `hk-bri7u` |
+> | `RunHandle.Aborted()` | a never-spawned-reaper cancel is indistinguishable from a shutdown |
+> | stderr tail in the failure reason | an exit −1 crash with no NDJSON leaves no diagnostic |
+> | the post-mode scenario gate | the tail leaves `SkipGate` false and the DOT arm sets it true, relying on a `commit_gate` node in the graph |
+> | `SkipAbortKill` / `SkipTeardown` and the shutdown early return | the other half of the independent-session row. Port the registry write without these and a bead stays `in_progress` with no reopen |
+>
+> **Four rows above need a caveat before anyone acts on them.**
+>
+> 1. **The harness row and Pi no-work detection are one row, not two.** The graph covers Pi with
+>    `codex.NoWorkSuspected` **because** it always calls the codex wrapper. Single runs that detector
+>    on its codex leg only, so a single-mode Pi run never gets it (`hk-3ywqv`). Add a Pi branch to the
+>    graph to fix the commit message and you silently delete Pi no-work detection.
+> 2. **The Pi-stderr row is half-stale.** `f6c2613fb` moved the retain-evidence fact to the launch, so
+>    a failed LOCAL graph Pi run now keeps its worktree and its captured stdout. Only the post-mortem
+>    `pi-stderr.log` write is still single-only. On a remote run retain-evidence still preserves
+>    nothing, because the capture lands on the daemon box and the worktree is on the worker.
+> 3. **The merge-retry row is misfiled.** Both facts are true and neither lives in
+>    `dispatchDotAgenticNode`. `MaxMergeAttempts: 3` is declared in `runBridgeConfig(mode)` and
+>    consumed by `NewRunBridge`, which `beadRunOne` calls **above** the mode switch.
+>    `ChargeReviewLoopFailure` fires in `beadRunOne`'s DOT arm. So this is not node-level drift and it
+>    does not move with the node. The two budgets are also different numbers: merge attempts 3,
+>    `queue.MaxReviewLoopFailures` 2.
+> 4. **The independent-session row names `hk-mh3qy` as the blocker, and `hk-mh3qy` is itself
+>    blocked.** Step 6's map found the survive-shutdown feature does not survive: the boot orphan
+>    sweep kills every run session before the adoption pass reaches it, and `WaitWithSocketGrace`
+>    kills it earlier still inside the daemon's own process (`hk-jyh5t`). Porting the independent
+>    session today ports a capability that is defeated twice before it can pay off.
+>
+> **Three rows would be better dropped than ported, and one of the three only on a condition.** The
+> tail's `pi.EnsureRefsTrailer` branch — both wrappers reach the same primitives in `shared`, so fix
+> the graph's one-line harness selection instead. The tail's empty `LaunchCtx.Phase`. And
+> `noChangeTimeoutCh`, **but only if the structural subsumed check goes with it.** That third one is
+> not "diagnostic fidelity only", although an earlier reading said so. The `case <-noChangeTimeoutCh:`
+> arm carries the noChange-subsumed carve-out, the `MainHistoryHasRefsTrailer` check that closes the
+> bead **approved**. Delete the channel from the tail on its own and a subsumed run takes `default:`,
+> hits `failRun`, and is reopened and re-dispatched instead of closed. In the port it is safe, because
+> the graph already has that check inline and already passes `nil` for the channel.
+>
+> **And one row would be wrong to add.** `runmerge.SnapshotUntrackedFiles` runs ABOVE the mode
+> switch, so every graph run already pays for the snapshot and then discards it. Only the consumer is
+> tail-only. That is shared code with a tail-only reader, not a tail-only capability.
+>
+> **The reframe that matters.** Ten of the filed defects harm the default path **today**. Each pays
+> off whether or not the single-mode tail is ever deleted, so most of this list is not a cost of Step
+> 7 — it is a backlog Step 7 happened to find, and it should be worked by harm order rather than held
+> until the tail is ready to go.
 
 > **Decision D1 — ANSWERED by the operator, 2026-07-30: collapse the duplication (option A).**
 > Do not re-open this. See §7 for what option A now means in practice, which is not what the
@@ -614,12 +749,30 @@ the guards is now the one carrying the traffic.)
 **⚠ Added 2026-07-30 — this section never cited the spec, and the spec disagrees with its framing.**
 `specs/run-state-machine.md` RSM-008 says: "The single-shot path's post-exit guards — the
 escaped-worktree check and the no-commit-guard — MUST run in a `Guarding` state between `Dispatching`
-and `Gating` … The review-loop and DOT paths MUST NOT enter `Guarding` (they do not run those
-guards)." So the asymmetry is **specified**, not accidental drift, and D2 is a request to change the
-spec. Two further facts belong in that decision. RSM-007 and RSM-008 both still name review-loop as a
-live fork, so they are stale and need editing whichever way D2 goes. And `hk-co8g8` root-caused the
-escaped-worktree check as firing on innocent runs and killing them, so moving it into the machine
+and `Gating` … ~~The review-loop and DOT paths MUST NOT enter `Guarding` (they do not run those
+guards)~~ **The DOT path MUST NOT enter `Guarding` (it does not run those guards)**." So the
+asymmetry is **specified**, not accidental drift, and D2 is a request to change the
+spec. Two further facts belong in that decision. ~~RSM-007 and RSM-008 both still name review-loop as
+a live fork, so they are stale and need editing whichever way D2 goes.~~ And `hk-co8g8` root-caused
+the escaped-worktree check as firing on innocent runs and killing them, so moving it into the machine
 would put a known-broken guard on the path that carries all the traffic. Fix `hk-co8g8` first.
+
+> **CORRECTED 2026-07-31 — this is the SECOND copy of the same two stale claims, and it was missed
+> when the first copy was fixed.** Read `specs/run-state-machine.md` at `1e22c0141`: RSM-008 names
+> only the DOT path, and RSM-007 reads "(DOT cascade, single-shot)". The v0.2.2 spec pass on
+> 2026-07-30 removed the retired `review-loop` mode from both rules and from RSM-031 and RSM-032.
+> Neither rule is stale in the way this paragraph claims, and D2 does not have to edit them for that
+> reason.
+>
+> **RSM-008 does carry one live staleness, and it is a different sentence.** The parenthetical "(it
+> does not run those guards)" is now false. `dispatchDotAgenticNode` runs an equivalent no-commit
+> guard inline — see the correction under the Group 1 table above. That parenthetical is what D2 has
+> to edit, whichever way D2 goes.
+>
+> **And RSM-008 already carries its own OPEN note**, raised by the same spec pass, which records the
+> guard-coverage question and refuses to settle it. D2 is the decision that note is waiting for. It
+> also records the traffic split that makes the question urgent: 866 runs started on `dot` against 2
+> on `single` on 2026-07-30.
 
 > **Operator decision required (D2): do the guards belong to the machine or to the caller?**
 > If the machine — then both modes get the escape check and the no-commit guard automatically, and
@@ -1278,11 +1431,61 @@ reach a mode.
    1,764 lines, Step 5 has since taken 161 lines out of the function, and nobody recorded how many of
    them left the tail. Re-derive it. See the ⚠ in §1c.
 
+> **CORRECTED 2026-07-31 against `1e22c0141`, on four points. Working in
+> [`STEP-7-MODE-BOUNDARY.md`](STEP-7-MODE-BOUNDARY.md).**
+>
+> 1. **All five named capabilities survive checking, and the list is short by thirteen.** Walking the
+>    tail line by line found **eighteen** capabilities that live only there. Thirteen must be ported,
+>    three are better dropped than ported, and one — `runmerge.SnapshotUntrackedFiles` — is not
+>    tail-only at all, because it runs above the mode switch. **Ten of the defects this mapping filed
+>    harm the DEFAULT path today**, so most of the port work pays off whether or not the
+>    tail is ever deleted. The worst is `hk-v4wer`: the graph decides node success on "did HEAD
+>    advance" alone, so a node that commits and then signals failure is recorded SUCCESS and merged.
+>    See §3 of the step map for the full list.
+> 2. **The price is re-derived: 740 lines, 368 of them code.** Quote **368**, not 740 — comments are
+>    46% of the tail. And quote it as "code touched", never as a deletion figure, because eighteen
+>    capabilities move rather than go away. The paragraph above is also wrong about why: Step 5
+>    removed **none** of the tail. See the ⚠ in §1c.
+> 3. **Step 7's honest scope is piece 1 only.** Piece 2 sits on top of three separate pieces of work
+>    that are not this step's: decision D2 and an RSM-008 amendment (the two guards are two of the
+>    five capabilities, and the spec currently FORBIDS them on the graph path), `hk-co8g8` (the
+>    escape guard fires on innocent runs), and `hk-jyh5t` plus the boot orphan sweep (which defeat
+>    the independent session twice before it can pay off). Porting the independent session today
+>    ports a capability that does not work yet.
+> 4. **One more thing must move before `core.WorkflowMode` can collapse.** `emitReviewBypassed` keys
+>    on `mode == core.WorkflowModeSingle`, and EM-012a obliges the daemon to audit that bypass.
+>    Collapse the enum and the obligation has nothing to fire on. Filed as `hk-pyouo`.
+
 Do **not** count `dot_gate.go` in this step. Its cognition-gate launch is unreachable — no code sets
 `daemon.Config.CPRegistry` and no graph the daemon runs declares a `type="gate"` node (see §2b).
 Decide separately whether to
 wire it or delete it. Migrating it costs real work and buys nothing until one of those two things is
 true.
+
+> **CORRECTED 2026-07-31 — the conclusion holds, but the two reasons are not peers.** Leg one carries
+> the argument on its own: `daemon.Config.CPRegistry` is never assigned, `daemonGate.LookupGate`
+> returns "not
+> loaded" on a nil registry with no default and no fallback, and `dispatchDotGateNode` makes that
+> lookup its FIRST step, so it returns a structural eval failure before the evaluator switch and
+> `executeCognitionGate` is never constructed. Leg two is much weaker than "no graph declares a gate
+> node" sounds. **An operator supplies the graph.** `beadRunOne`'s DOT case honours an absolute
+> `plan.WorkflowRef` verbatim, and that value arrives from `harmonik run --workflow-ref <path>`. An
+> operator can hand the daemon a graph with a gate node today, with no code change and no file in
+> this repo. Leg two is a statement about the shipped file set, not about reachability. **Exclude
+> `dot_gate.go` on leg one's authority alone.** If anyone ever populates `CPRegistry`, leg two buys
+> nothing and the file becomes live work.
+>
+> **And "exclude it from this step" is not "it is free to delete".** The file is unreachable in its
+> cognition half and it is not free-standing. `dispatchDotGateNode` has two non-test callers — a
+> `NodeTypeGate` case in `dot_cascade_core.go` and another in `sub_workflow_runner.go` — so the
+> PRODUCTION build breaks before any test does. Three test files break as well: one fails to compile
+> on three exported seams, one fails to compile and also loses live coverage of the quit-on-gate-file
+> paste injection, and one hard-codes the string `"dot_gate.go"` in a launch-site file list and fatals
+> at run time. Removal further orphans the daemon's gate-port adapter — the adapter type, its lookup,
+> the port accessor, the run-ports field, the `internal/runloop` interface, and the registry field in
+> three places — and strips the only non-test caller of three pure predicates in `internal/policy`.
+> **Price wiring-or-deleting as a multi-file change, not as a free removal.** Two dead test seams also
+> make the gate look exercised and go in the same change — `hk-f1ymu`.
 
 ### Step 8 — the terminal spine (LAST, and mostly already done)
 

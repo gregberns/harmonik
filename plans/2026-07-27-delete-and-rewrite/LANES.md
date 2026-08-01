@@ -109,6 +109,39 @@ gate is cheap and the packages are independent of each other, not because bravo'
 short mode and about **930** in full. Bravo can run its entire gate about four times per alpha short
 run and about twenty-four times per full one. Work that can go to bravo should go to bravo.
 
+### The keeper park is LIFTED for one slice — operator directive, 2026-08-01
+
+The "Deferred post-core keeper and harness-lifecycle lane" section later in this file parks
+`internal/keeper` as research. **The operator wrote that park and has lifted it**, on the ground that
+the research will not be finished for some time and should not block work that does not depend on it.
+Their instruction: work what is ready, or **separate the logic so it can be worked on independently
+and refined further.**
+
+**The park still holds for anything the four open questions in `research/README.md` touch.** What
+durable record owns a crew's work state, whether the Codex Stop-hook vertical fits the normal crew
+launcher, **which responsibility leaves `Watcher.Run` first**, and the public event vocabulary — all
+still the operator's, all still unanswered.
+
+**Bravo takes the slice that needs no answer**, in this order:
+
+1. **Restore the five lost corpus scenarios** (`hk-hs5a3`). Pure recovery of coverage the mass
+   deletion took, recoverable verbatim from `ec66da798^`, and it is precisely the research's own
+   "preserve one Claude vertical" step. Done condition: the conformance gate reaches 15 of 15 and the
+   Makefile line stops reporting five gaps.
+2. **Characterize `Watcher.Run` and move nothing.** The research says the outer watcher "still joins
+   too many jobs". Pinning each job at its current seam is what makes a later extraction safe, and it
+   is the evidence the operator needs to answer open question 3. **Extraction is not authorized. A
+   clean-looking seam is a recommendation, not a licence.**
+
+**Two prohibitions carried straight from the research, and they bind this slice too.** Do not build
+the framework before both verticals exist. Do not answer an open question by adding harness branches
+to the current watcher.
+
+**Already done, and it was the first repair the research named:** `make test-keeper-conformance` was
+false green — it reported success while running zero tests in `internal/keeper`, because `ec66da798`
+deleted the two corpus registration files and `go test` exits 0 on an empty `-run` match. Repaired at
+`a178b2e26`.
+
 ### `charlie` — retired 2026-08-01
 
 Three lanes were staffed and the table recorded only two. Charlie's two commits were finished,

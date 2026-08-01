@@ -538,27 +538,46 @@ func resolveRunPlanHookSocket(req runPlanRequest, plan *runPlan) {
 		return
 	}
 	plan.Verdict = runPlanRefusedSocketPath
-	plan.Refusal = runPlanRefusal{
+	plan.Refusal = tunnelRefusal(env.RunID, beadID, *req.PreSelectedWorker, "socket-path", sockPath, lenErr)
+}
+
+// tunnelRefusal builds the refusal a fatal reverse-tunnel problem owes an
+// operator: one stderr line that names the stage, one worker_tunnel_failed
+// report, and one reopen reason.
+//
+// Four gates reach it. This file's socket-path decision is one. The other three
+// are in the remote block of beadRunOne — port allocation, the socket-path check
+// for a run whose worker the fallback selection picked, and the readiness gate.
+// Those three used to carry a second copy of the whole report, closure and all,
+// and the two copies drifted in the stage wording. One builder plus refuseRunPlan
+// is what lets a fifth gate be added without inventing a fifth spelling.
+//
+// stage is the short name of the step that failed, and it is the only part of
+// the line that varies.
+func tunnelRefusal(runID core.RunID, beadID core.BeadID, worker workers.Worker, stage, sockPath string, cause error) runPlanRefusal {
+	return runPlanRefusal{
 		LogLine: fmt.Sprintf(
-			"daemon: workloop: reverse-tunnel socket-path bead %s run %s: %v (reopening, not launching)\n",
-			beadID, env.RunID.String(), lenErr),
-		ReopenReason: fmt.Sprintf("reverse-tunnel not ready: %v", lenErr),
-		Err:          lenErr,
+			"daemon: workloop: reverse-tunnel %s bead %s run %s: %v (reopening, not launching)\n",
+			stage, beadID, runID.String(), cause),
+		ReopenReason: fmt.Sprintf("reverse-tunnel not ready: %v", cause),
+		Err:          cause,
 		TunnelFailure: &runPlanTunnelFailure{
-			RunID:      env.RunID.String(),
+			RunID:      runID.String(),
 			BeadID:     string(beadID),
-			WorkerName: req.PreSelectedWorker.Name,
-			WorkerHost: req.PreSelectedWorker.Host,
+			WorkerName: worker.Name,
+			WorkerHost: worker.Host,
 			SocketPath: sockPath,
-			Detail:     lenErr.Error(),
+			Detail:     cause.Error(),
 		},
 	}
 }
 
-// refuseRunPlan reports one plan refusal and reopens the bead.
+// refuseRunPlan reports one refusal and reopens the bead. It is the ONE
+// reporter for a refused run: the plan's five decisions and the remote block's
+// three tunnel gates all report through this call.
 //
-// The report is the stderr line the plan built, then the refusal's own event
-// when it has one, then a best-effort ReopenBead with the plan's reason. That
+// The report is the stderr line the refusal built, then the refusal's own event
+// when it has one, then a best-effort ReopenBead with the refusal's reason. That
 // order is the order the daemon used before the plan, and it lives here so it
 // is stated once for every refusal.
 //

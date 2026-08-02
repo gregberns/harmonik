@@ -34,6 +34,7 @@ func dotFixtureAllFourNodeTypes() string {
 	return `digraph all_four {
   schema_version="1";
   version="1.0";
+  workflow_id="all-four";
   start_node="impl";
   terminal_node_ids="done";
 
@@ -279,6 +280,7 @@ func TestScenarioUnknownAttrWarningAndRetention(t *testing.T) {
 	src := `digraph unknown_test {
   schema_version="1";
   version="1.0";
+  workflow_id="unknown-test";
   start_node="work";
   terminal_node_ids="done";
   custom_graph_meta="experiment-42";

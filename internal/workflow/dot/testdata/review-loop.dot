@@ -9,6 +9,7 @@
 digraph review_loop {
   schema_version="1";
   version="1.0";
+  workflow_id="review-loop";
   start_node="implement";
   terminal_node_ids="close,close-needs-attention";
   context_keys="bead_id,pr_url";

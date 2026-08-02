@@ -87,6 +87,17 @@ func Validate(g *Graph) []Diagnostic {
 			"workflow must declare a top-level \"version\" attribute (WG-035)"))
 	}
 
+	// WG-055: workflow_id is a required typed graph identity. It is checked
+	// after template substitution so a valid parameter value can supply it.
+	if strings.TrimSpace(g.WorkflowID.String()) == "" {
+		diags = append(diags, diagError(0, "WG-055",
+			"workflow must declare a graph-level \"workflow_id\" attribute (WG-055)"))
+	} else if workflowID, err := core.NewWorkflowID(g.WorkflowID.String()); err != nil {
+		diags = append(diags, diagError(0, "WG-055", err.Error()))
+	} else {
+		g.WorkflowID = workflowID
+	}
+
 	// WG-024/WG-002/WG-005/WG-008: per-node required/forbidden attribute checks.
 	for _, n := range g.Nodes {
 		diags = append(diags, checkNodeAttrs(n)...)

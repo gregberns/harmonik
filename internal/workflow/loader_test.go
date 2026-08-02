@@ -18,6 +18,7 @@ func TestLoadDotWorkflow_Success(t *testing.T) {
 	src := `digraph test {
 		schema_version="1";
 		version="1.0";
+		workflow_id="loader-success";
 		start_node="impl";
 		terminal_node_ids="done";
 
@@ -76,6 +77,7 @@ func TestLoadDotWorkflow_ValidationError(t *testing.T) {
 	// Parseable but invalid: missing start_node, terminal_node_ids, version.
 	src := `digraph bad {
 		schema_version="1";
+		workflow_id="loader-invalid";
 		impl [type="agentic"; agent_type="claude-code"; handler_ref="builtin:claude-code"; idempotency_class="non-idempotent"];
 	}`
 	dir := t.TempDir()
@@ -94,6 +96,53 @@ func TestLoadDotWorkflow_ValidationError(t *testing.T) {
 	}
 }
 
+func TestLoadDotWorkflowWithParamsSubstitutesWorkflowID(t *testing.T) {
+	src := `digraph test {
+		schema_version="1";
+		version="1.0";
+		workflow_id="__WORKFLOW_ID__";
+		start_node="done";
+		terminal_node_ids="done";
+		done [type="non-agentic"; handler_ref="builtin:noop"; idempotency_class="idempotent"];
+	}`
+	dotPath := filepath.Join(t.TempDir(), "workflow.dot")
+	if err := os.WriteFile(dotPath, []byte(src), 0o600); err != nil {
+		t.Fatalf("write temp dot file: %v", err)
+	}
+
+	g, err := workflow.LoadDotWorkflowWithParams(dotPath, map[string]string{"WORKFLOW_ID": "substituted-graph"})
+	if err != nil {
+		t.Fatalf("LoadDotWorkflowWithParams: %v", err)
+	}
+	if g.WorkflowID != core.WorkflowID("substituted-graph") {
+		t.Errorf("WorkflowID = %q, want %q", g.WorkflowID, "substituted-graph")
+	}
+}
+
+func TestLoadDotWorkflowWithParamsRejectsInvalidWorkflowID(t *testing.T) {
+	src := `digraph test {
+		schema_version="1";
+		version="1.0";
+		workflow_id="__WORKFLOW_ID__";
+		start_node="done";
+		terminal_node_ids="done";
+		done [type="non-agentic"; handler_ref="builtin:noop"; idempotency_class="idempotent"];
+	}`
+	dotPath := filepath.Join(t.TempDir(), "workflow.dot")
+	if err := os.WriteFile(dotPath, []byte(src), 0o600); err != nil {
+		t.Fatalf("write temp dot file: %v", err)
+	}
+
+	_, err := workflow.LoadDotWorkflowWithParams(dotPath, map[string]string{"WORKFLOW_ID": "bad_id"})
+	if err == nil {
+		t.Fatal("LoadDotWorkflowWithParams accepted an invalid substituted workflow ID")
+	}
+	var loadErr *workflow.ErrWorkflowLoad
+	if !errors.As(err, &loadErr) {
+		t.Fatalf("error = %T %v, want *ErrWorkflowLoad", err, err)
+	}
+}
+
 // ── CP-056: policy_ref deprecation warning on stderr ─────────────────────────
 
 // TestLoadDotWorkflow_PolicyRefDeprecationWarning verifies (a): when a workflow
@@ -105,6 +154,7 @@ func TestLoadDotWorkflow_PolicyRefDeprecationWarning(t *testing.T) {
 	src := `digraph test {
 		schema_version="1";
 		version="1.0";
+		workflow_id="policy-warning";
 		start_node="impl";
 		terminal_node_ids="done";
 
@@ -153,6 +203,7 @@ func TestLoadDotWorkflow_PolicyRefReturnsErrDeterministic(t *testing.T) {
 	src := `digraph test {
 		schema_version="1";
 		version="1.0";
+		workflow_id="policy-error";
 		start_node="impl";
 		terminal_node_ids="done";
 
@@ -209,6 +260,7 @@ func TestLoadDotWorkflowWithPolicy_SkillsRefResolved(t *testing.T) {
 	src := `digraph test {
 		schema_version="1";
 		version="1.0";
+		workflow_id="skills-resolved";
 		start_node="impl";
 		terminal_node_ids="done";
 
@@ -253,6 +305,7 @@ func TestLoadDotWorkflowWithPolicy_SkillsRefUnresolved(t *testing.T) {
 	src := `digraph test {
 		schema_version="1";
 		version="1.0";
+		workflow_id="skills-unresolved";
 		start_node="impl";
 		terminal_node_ids="done";
 
@@ -290,6 +343,7 @@ func TestLoadDotWorkflowWithPolicy_SkillsRefOptional(t *testing.T) {
 	src := `digraph test {
 		schema_version="1";
 		version="1.0";
+		workflow_id="skills-optional";
 		start_node="agent";
 		terminal_node_ids="close";
 
@@ -329,6 +383,7 @@ func TestLoadDotWorkflowWithPolicy_SkillsRefOnGateNode(t *testing.T) {
 	src := `digraph test {
 		schema_version="1";
 		version="1.0";
+		workflow_id="skills-gate";
 		start_node="agent";
 		terminal_node_ids="close";
 

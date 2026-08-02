@@ -1,0 +1,20 @@
+// no-review-bead.dot — the registered legacy no-review workflow (v1).
+//
+// This graph is selected only by legacy workflow:single inputs. It keeps that
+// compatibility path in the DOT executor. It does not contain a reviewer node.
+
+digraph "no-review-bead" {
+    schema_version="1";
+    version="1.0";
+    workflow_id="no-review-bead";
+    start_node="implement";
+    terminal_node_ids="close,close-needs-attention";
+    context_keys="bead_id";
+
+    implement [type="agentic", agent_type="implementer", handler_ref="claude-code", idempotency_class="non-idempotent"];
+    close [type="non-agentic", handler_ref="close", idempotency_class="idempotent"];
+    "close-needs-attention" [type="non-agentic", handler_ref="close", idempotency_class="idempotent"];
+
+    implement -> close [condition="outcome.status == SUCCESS", weight="10", ordering_key="success"];
+    implement -> "close-needs-attention" [weight="1", ordering_key="fallback"];
+}

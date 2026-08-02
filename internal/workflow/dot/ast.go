@@ -45,6 +45,10 @@ type Graph struct {
 	// (distinct from SchemaVersion).
 	Version string
 
+	// WorkflowID is the required graph-level workflow_id attribute. The loader
+	// validates it after typed template substitution and before dispatch.
+	WorkflowID core.WorkflowID
+
 	// StartNodeID is the parsed value of the start_node graph-level DOT
 	// attribute per WG-027.  The corresponding DOT attribute name is
 	// "start_node"; the parsed Go field is StartNodeID.

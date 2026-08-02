@@ -41,6 +41,7 @@ func dotFixtureHarnessGraph() string {
 	return `digraph harness_test {
   schema_version="1";
   version="1.0";
+  workflow_id="harness-test";
   start_node="work";
   terminal_node_ids="close";
 
@@ -156,6 +157,7 @@ func TestDotFixtureHarnessAgentRuntimeConflict(t *testing.T) {
 	matching := `digraph ok {
   schema_version="1";
   version="1.0";
+  workflow_id="matching";
   start_node="n";
   terminal_node_ids="n";
   n [type="agentic", agent_type="impl", handler_ref="h",

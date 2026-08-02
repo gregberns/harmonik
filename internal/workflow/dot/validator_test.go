@@ -28,6 +28,11 @@ import (
 // mustParse parses src and fatals if Parse returns an error.
 func mustParse(t *testing.T, src, filename string) *Graph {
 	t.Helper()
+	if !strings.Contains(src, "workflow_id=") {
+		// These fixtures isolate other validator rules. Give them a valid
+		// identity so WG-055 does not hide the diagnostic under test.
+		src = strings.Replace(src, "{", "{\n  workflow_id=\"validator-fixture\";", 1)
+	}
 	g, err := Parse(src, filename)
 	if err != nil {
 		t.Fatalf("Parse(%s): unexpected parse error: %v", filename, err)
@@ -63,6 +68,7 @@ func valFixtureMinimal() string {
 	return `digraph minimal {
   schema_version="1";
   version="1.0";
+  workflow_id="minimal";
   start_node="work";
   terminal_node_ids="close,close-needs-attention";
 
@@ -83,6 +89,7 @@ func valFixtureGate() string {
 	return `digraph gate_wf {
   schema_version="1";
   version="1.0";
+  workflow_id="gate-wf";
   start_node="work";
   terminal_node_ids="close,close-needs-attention";
 
@@ -104,6 +111,7 @@ func valFixtureSubWorkflow() string {
 	return `digraph sw_wf {
   schema_version="1";
   version="1.0";
+  workflow_id="sw-wf";
   start_node="sub";
   terminal_node_ids="close";
 
@@ -119,6 +127,7 @@ func valFixtureCycleWithCap() string {
 	return `digraph cycle_wf {
   schema_version="1";
   version="1.0";
+  workflow_id="cycle-wf";
   start_node="impl";
   terminal_node_ids="close";
 

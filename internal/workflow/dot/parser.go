@@ -513,6 +513,10 @@ func (p *dotParser) parseAttrList() ([]rawAttrPair, error) {
 // Mirrors the HC-055a constraint in daemon/modelpreference.go.
 var nodeModelRegex = regexp.MustCompile(`^[A-Za-z0-9._:/-]+$`)
 
+// workflowIDTemplatePattern permits a complete template token to survive the
+// parse boundary. The loader substitutes and validates it before dispatch.
+var workflowIDTemplatePattern = regexp.MustCompile(`^__[A-Z][A-Z0-9_]*__$`)
+
 // nodeModelMaxLen is the maximum length for a per-node model= value (WG-042 §I.5).
 const nodeModelMaxLen = 128
 
@@ -532,6 +536,7 @@ func buildGraph(doc *rawDoc) (*Graph, error) {
 	}
 	var strictErrs ParseErrors
 	var warnings []ParseWarning
+	workflowIDSeen := false
 
 	// Graph-level attributes.
 	for _, pair := range doc.graphAttrs {
@@ -553,8 +558,29 @@ func buildGraph(doc *rawDoc) (*Graph, error) {
 		case "context_keys":
 			g.ContextKeys = splitIDs(pair.val)
 		case "workflow_id":
-			// Informational; retained in UnknownAttrs for round-trip.
-			g.UnknownAttrs["workflow_id"] = pair.val
+			if workflowIDSeen {
+				strictErrs = append(strictErrs, &ParseError{
+					Line:    pair.line,
+					Message: "graph-level workflow_id must appear exactly once (WG-055)",
+				})
+				continue
+			}
+			workflowIDSeen = true
+			if workflowIDTemplatePattern.MatchString(pair.val) {
+				// Keep the typed template value until the substitution pass. The
+				// loader validates the final value with core.NewWorkflowID.
+				g.WorkflowID = core.WorkflowID(pair.val)
+				continue
+			}
+			workflowID, err := core.NewWorkflowID(pair.val)
+			if err != nil {
+				strictErrs = append(strictErrs, &ParseError{
+					Line:    pair.line,
+					Message: fmt.Sprintf("graph-level workflow_id %q: %v (WG-055)", pair.val, err),
+				})
+				continue
+			}
+			g.WorkflowID = workflowID
 		case "workflow_class":
 			g.WorkflowClass = pair.val
 		case "goal":
@@ -578,6 +604,12 @@ func buildGraph(doc *rawDoc) (*Graph, error) {
 				Message: fmt.Sprintf("graph-level: unknown permissive attribute %q=%q (WG-031)", pair.key, pair.val),
 			})
 		}
+	}
+	if !workflowIDSeen {
+		strictErrs = append(strictErrs, &ParseError{
+			Line:    0,
+			Message: "workflow must declare a graph-level workflow_id attribute (WG-055)",
+		})
 	}
 
 	// Nodes.
@@ -799,6 +831,13 @@ func buildNode(rn *rawNode) (*Node, []*ParseError, []ParseWarning) {
 					"node %q: attribute \"schema_version\" is reserved for graph-level use only (WG-033)",
 					rn.id),
 			})
+		case "workflow_id":
+			errs = append(errs, &ParseError{
+				Line: pair.line,
+				Message: fmt.Sprintf(
+					"node %q: attribute \"workflow_id\" is reserved for graph-level use only (WG-055)",
+					rn.id),
+			})
 		case "goal":
 			// WG-044: goal is graph-level only; on a node it is a reserved-out-of-position strict error.
 			errs = append(errs, &ParseError{
@@ -915,6 +954,13 @@ func buildEdge(re *rawEdge) (*Edge, []*ParseError, []ParseWarning) {
 
 	for _, pair := range re.attrs {
 		switch pair.key {
+		case "workflow_id":
+			errs = append(errs, &ParseError{
+				Line: pair.line,
+				Message: fmt.Sprintf(
+					"edge %q -> %q: attribute \"workflow_id\" is reserved for graph-level use only (WG-055)",
+					re.from, re.to),
+			})
 		case "condition":
 			edge.ConditionRaw = pair.val
 			cond, condErr := parseCondition(pair.val, pair.line)

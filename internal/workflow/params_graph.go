@@ -205,6 +205,7 @@ func substituteGraphParams(g *dot.Graph, params map[string]string) error {
 		&g.Name, &g.SchemaVersion, &g.Version, &g.StartNodeID,
 		&g.WorkflowClass, &g.NoProgressGuard, &g.Goal,
 	)
+	g.WorkflowID = core.WorkflowID(replaceTokens(g.WorkflowID.String(), params, false))
 	for i := range g.TerminalNodeIDs {
 		verbatim = append(verbatim, &g.TerminalNodeIDs[i])
 	}
@@ -267,6 +268,7 @@ func substituteGraphParams(g *dot.Graph, params map[string]string) error {
 	for _, p := range quoted {
 		residualSources = append(residualSources, *p)
 	}
+	residualSources = append(residualSources, g.WorkflowID.String())
 	for _, m := range attrMaps {
 		for _, v := range m {
 			residualSources = append(residualSources, v)

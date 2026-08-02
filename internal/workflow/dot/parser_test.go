@@ -34,6 +34,7 @@ func dotFixtureMinimal() string {
 	return `digraph minimal {
   schema_version="1";
   version="1.0";
+  workflow_id="minimal";
   start_node="start";
   terminal_node_ids="close,close-needs-attention";
 
@@ -55,6 +56,7 @@ func dotFixtureWithUnknownAttrs() string {
 	return `digraph test {
   schema_version="1";
   version="1.0";
+  workflow_id="test";
   start_node="work";
   terminal_node_ids="close";
   custom_meta="team-alpha";
@@ -75,6 +77,7 @@ func dotFixtureConditionConjunction() string {
 	return `digraph conditions {
   schema_version="1";
   version="1.0";
+  workflow_id="conditions";
   start_node="work";
   terminal_node_ids="close,close-needs-attention";
 
@@ -99,6 +102,7 @@ func dotFixtureGateNode() string {
 	return `digraph gate_test {
   schema_version="1";
   version="1.0";
+  workflow_id="gate-test";
   start_node="work";
   terminal_node_ids="close,close-needs-attention";
 
@@ -133,6 +137,12 @@ func TestDotFixtureParseMinimal(t *testing.T) {
 	if g.Version != "1.0" {
 		t.Errorf("Version = %q, want %q", g.Version, "1.0")
 	}
+	if g.WorkflowID != core.WorkflowID("minimal") {
+		t.Errorf("WorkflowID = %q, want %q", g.WorkflowID, "minimal")
+	}
+	if _, found := g.UnknownAttrs["workflow_id"]; found {
+		t.Error("workflow_id leaked into UnknownAttrs")
+	}
 	if g.StartNodeID != "start" {
 		t.Errorf("StartNodeID = %q, want %q", g.StartNodeID, "start")
 	}
@@ -144,6 +154,54 @@ func TestDotFixtureParseMinimal(t *testing.T) {
 	}
 	if len(g.Edges) != 2 {
 		t.Errorf("len(Edges) = %d, want 2", len(g.Edges))
+	}
+}
+
+func TestDotFixtureWG055WorkflowIDValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "missing",
+			src:  `digraph missing { schema_version="1"; version="1.0"; start_node="done"; terminal_node_ids="done"; done [type="non-agentic", handler_ref="noop", idempotency_class="idempotent"]; }`,
+		},
+		{
+			name: "invalid",
+			src:  `digraph invalid { schema_version="1"; version="1.0"; workflow_id="bad_id"; start_node="done"; terminal_node_ids="done"; done [type="non-agentic", handler_ref="noop", idempotency_class="idempotent"]; }`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := Parse(tc.src, tc.name+".dot"); err == nil {
+				t.Fatal("Parse() = nil error, want WG-055 parse error")
+			}
+		})
+	}
+}
+
+func TestDotFixtureWG055RejectsRepeatedOrMisplacedWorkflowID(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "repeated",
+			src:  `digraph repeated { workflow_id="first"; workflow_id="second"; }`,
+		},
+		{
+			name: "node",
+			src:  `digraph node { workflow_id="valid"; n [workflow_id="wrong"]; }`,
+		},
+		{
+			name: "edge",
+			src:  `digraph edge { workflow_id="valid"; a -> b [workflow_id="wrong"]; }`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := Parse(tc.src, tc.name+".dot"); err == nil {
+				t.Fatal("Parse() = nil error, want WG-055 parse error")
+			}
+		})
 	}
 }
 
@@ -389,6 +447,7 @@ func TestDotFixtureConditionContextLHS(t *testing.T) {
 	src := `digraph ctx {
   schema_version="1";
   version="1.0";
+  workflow_id="ctx";
   start_node="a";
   terminal_node_ids="b";
   context_keys="pr_url";
@@ -444,6 +503,7 @@ func TestDotFixtureInequalityOp(t *testing.T) {
 	src := `digraph ineq {
   schema_version="1";
   version="1.0";
+  workflow_id="ineq";
   start_node="a";
   terminal_node_ids="b";
   a [type="agentic", agent_type="impl", handler_ref="h", idempotency_class="idempotent"];
@@ -483,6 +543,7 @@ func TestDotFixtureBlockComment(t *testing.T) {
   /* This is a block comment */
   schema_version="1";
   version="1.0";
+  workflow_id="comment";
   start_node="n";
   terminal_node_ids="n";
   n [type="non-agentic", handler_ref="h", idempotency_class="idempotent"];
@@ -501,6 +562,7 @@ func TestDotFixtureLineComment(t *testing.T) {
   // schema version
   schema_version="1";
   version="1.0";
+  workflow_id="line-comment";
   start_node="n";
   terminal_node_ids="n";
   n [type="non-agentic", handler_ref="h", idempotency_class="idempotent"];
@@ -520,6 +582,7 @@ func TestDotFixtureSubWorkflowNode(t *testing.T) {
 	src := `digraph sw {
   schema_version="1";
   version="1.0";
+  workflow_id="sw";
   start_node="work";
   terminal_node_ids="close";
   work [type="sub-workflow", sub_workflow_ref="inner-wf", workflow_version="1.0"];
@@ -664,6 +727,7 @@ func TestDotFixtureWG044GoalGraphLevel(t *testing.T) {
 	src := `digraph W {
   schema_version="1";
   version="1.0";
+  workflow_id="goal";
   start_node="n";
   terminal_node_ids="n";
   goal="Fix #172";
@@ -723,6 +787,7 @@ func TestDotFixtureConditionRawRetained(t *testing.T) {
 	src := `digraph rt {
   schema_version="1";
   version="1.0";
+  workflow_id="round-trip";
   start_node="a";
   terminal_node_ids="b";
   a [type="agentic", agent_type="impl", handler_ref="h", idempotency_class="idempotent"];
@@ -749,7 +814,8 @@ func noProgressGuardFixture(val string) string {
 	}
 	return `digraph npg {
   schema_version="1";
-  version="1.0";` + attr + `
+  version="1.0";
+  workflow_id="npg";` + attr + `
   start_node="a";
   terminal_node_ids="b";
   a [type="agentic", agent_type="impl", handler_ref="h", idempotency_class="non-idempotent"];

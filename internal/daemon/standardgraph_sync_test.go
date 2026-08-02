@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // TestStandardBeadDotLoadFailureReturnsError pins the EM-012a-FLOOR review-floor
@@ -69,5 +71,62 @@ func TestStandardBeadDotEmbedValidAndInSync(t *testing.T) {
 			"The daemon embeds the internal/daemon copy; an edit to only one copy silently "+
 			"no-ops at runtime. Re-sync with: cp %s internal/daemon/standard-bead.dot",
 			specPath, specPath)
+	}
+}
+
+func TestNoReviewBeadDotEmbedValidAndInSync(t *testing.T) {
+	g, err := loadNoReviewGraph(nil)
+	if err != nil {
+		t.Fatalf("embedded no-review-bead.dot failed to parse/validate: %v", err)
+	}
+	got := core.WorkflowDescriptor{WorkflowID: g.WorkflowID, WorkflowVersion: core.WorkflowVersion(g.Version)}
+	if got != noReviewBeadDescriptor {
+		t.Errorf("no-review descriptor = %+v, want %+v", got, noReviewBeadDescriptor)
+	}
+
+	specPath := filepath.Join("..", "..", "specs", "examples", "no-review-bead.dot")
+	specBytes, err := os.ReadFile(specPath)
+	if err != nil {
+		t.Fatalf("read canonical spec %s: %v", specPath, err)
+	}
+	if string(noReviewBeadDotSrc) != string(specBytes) {
+		t.Fatalf("embedded internal/daemon/no-review-bead.dot is OUT OF SYNC with %s", specPath)
+	}
+}
+
+func TestEmbeddedGraphRegistryResolvesExactDescriptors(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		descriptor core.WorkflowDescriptor
+	}{
+		{name: "standard", descriptor: standardBeadDescriptor},
+		{name: "no-review", descriptor: noReviewBeadDescriptor},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g, err := loadRegisteredEmbeddedGraph(tc.descriptor, nil)
+			if err != nil {
+				t.Fatalf("loadRegisteredEmbeddedGraph: %v", err)
+			}
+			got := core.WorkflowDescriptor{
+				WorkflowID:      g.WorkflowID,
+				WorkflowVersion: core.WorkflowVersion(g.Version),
+			}
+			if got != tc.descriptor {
+				t.Errorf("loaded descriptor = %+v, want %+v", got, tc.descriptor)
+			}
+		})
+	}
+}
+
+func TestEmbeddedGraphRegistryRejectsUnknownDescriptor(t *testing.T) {
+	unknownID, err := core.NewWorkflowID("unknown-graph")
+	if err != nil {
+		t.Fatalf("NewWorkflowID: %v", err)
+	}
+	if _, err := loadRegisteredEmbeddedGraph(core.WorkflowDescriptor{
+		WorkflowID:      unknownID,
+		WorkflowVersion: "1.0",
+	}, nil); err == nil {
+		t.Fatal("loadRegisteredEmbeddedGraph accepted an unregistered descriptor")
 	}
 }

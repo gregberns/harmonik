@@ -1,17 +1,12 @@
 package daemon_test
 
-// single_abort_phasecomplete_test.go — an aborted single-mode run must still
-// report the implementer phase it just finished.
+// single_abort_phasecomplete_test.go — a legacy single input selects no-review
+// DOT, and an aborted implementer node must still report its phase.
 //
 // implementer_phase_complete exists to close the diagnostic gap between
 // run_started and the run's terminal, so a silent implementer failure leaves a
-// structured record instead of nothing. The comment above the single-mode emit
-// says it fires "regardless of how" the run exited. The abort branch returned
-// above the emit, so the one exit that most needs the diagnostic was the one
-// that produced none.
-//
-// The graph node checks its own cancellation AFTER the emit and does produce the
-// event. This is single mode brought to the same order.
+// structured record instead of nothing. The legacy input below is retained to
+// prove run planning selects the no-review graph before execution.
 //
 // Bead: hk-aekon.
 
@@ -87,10 +82,10 @@ func (a *singleFixtureAborter) start() {
 
 func (a *singleFixtureAborter) finish() { close(a.stop); <-a.done }
 
-// TestSingleMode_AbortedRunStillReportsItsImplementerPhase is the claim. The
-// implementer is aborted while it runs, and the run MUST still emit
-// implementer_phase_complete.
-func TestSingleMode_AbortedRunStillReportsItsImplementerPhase(t *testing.T) {
+// TestLegacySingleInput_NoReviewDOTAbortedRunReportsImplementerPhase is the
+// claim. The implementer is aborted while it runs, and the graph must still
+// emit implementer_phase_complete.
+func TestLegacySingleInput_NoReviewDOTAbortedRunReportsImplementerPhase(t *testing.T) {
 	t.Parallel()
 
 	registry := daemon.ExportedNewRunRegistry()
@@ -109,28 +104,19 @@ func TestSingleMode_AbortedRunStillReportsItsImplementerPhase(t *testing.T) {
 	if !aborter.fired.Load() {
 		t.Fatal("the fixture never aborted a run, so this test asserts nothing — fix the fixture before trusting the result")
 	}
-	// The run must have taken the ABORT branch, not the daemon-shutdown branch or
-	// a plain failure. Without this the assertion below could be satisfied by any
-	// run that happened to reach the emit some other way.
-	//
-	// The reason names the never-spawned reaper although the abort above is shaped
-	// like the kill-consumer backstop. That is not a mismatch in the test: the run
-	// path hardcodes this one reason for every reaper, because the abort latch is
-	// all it can see and the latch does not say which reaper set it.
-	if summary := dotFixtureRunFailedSummary(res); !strings.Contains(summary, "never_spawned_reaper") {
-		t.Fatalf("run_failed summary = %q; want the per-run abort reason — the run did not take the abort branch, so the claim below is untested", summary)
+	// The graph must report its cancellation. Without this check the event below
+	// could come from an ordinary completed node.
+	if summary := dotFixtureRunFailedSummary(res); !strings.Contains(summary, "context cancelled during node") {
+		t.Fatalf("run_failed summary = %q; want the DOT cancellation reason", summary)
 	}
 	if !singleFixtureHasEvent(res, core.EventTypeImplementerPhaseComplete) {
-		t.Errorf("bead %s was aborted and emitted no implementer_phase_complete; events=%v.\n"+
-			"The abort branch returns above the emit, so the exit that most needs the diagnostic produces none — and the comment above the emit claims it fires regardless of how the run exited.",
-			beadID, res.Bus.eventTypes())
+		t.Errorf("bead %s was aborted and emitted no implementer_phase_complete; events=%v", beadID, res.Bus.eventTypes())
 	}
 }
 
-// TestSingleMode_NormalRunReportsItsImplementerPhase is the control: the emit
-// must still happen on the ordinary path. It is what keeps a "fix" that moved
-// the emit somewhere unreachable from passing the test above.
-func TestSingleMode_NormalRunReportsItsImplementerPhase(t *testing.T) {
+// TestLegacySingleInput_NoReviewDOTNormalRunReportsImplementerPhase is the
+// control. The emit must still happen on the ordinary path.
+func TestLegacySingleInput_NoReviewDOTNormalRunReportsImplementerPhase(t *testing.T) {
 	t.Parallel()
 
 	const beadID = core.BeadID("hk-aekon-normal-run")

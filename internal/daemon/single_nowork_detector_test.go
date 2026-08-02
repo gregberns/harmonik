@@ -1,13 +1,13 @@
 package daemon_test
 
 // single_nowork_detector_test.go — no-work detection must cover every
-// process-exit harness a single-mode run can be dispatched on, not just codex.
+// process-exit harness in the no-review DOT graph, not just codex.
 //
 // The detector answers the question an operator asks when a run fails with no
 // explanation: did the agent do nothing at all? It fires when the commit
 // fallback found nothing to commit AND the phase finished faster than the floor.
-// It sat inside the codex leg of the fallback's harness branch, so a single-mode
-// Pi run — same shape, same clean worktree, same seconds-long phase — produced
+// It sat inside the codex leg of the fallback's harness branch, so a no-review
+// DOT Pi run — same shape, same clean worktree, same seconds-long phase — produced
 // no such record.
 //
 // The two harness legs are the only difference between these tests. Same
@@ -23,10 +23,9 @@ import (
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
-// singleFixtureProcessExitOpts builds a single-mode run on a process-exit
-// harness. The launch-spec port stamps the resolved agent type, which is what
-// the commit fallback branches on, and the harness registry is what tells the
-// run this harness completes by process exit.
+// singleFixtureProcessExitOpts builds a legacy single input that resolves to
+// no-review DOT on a process-exit harness. The launch-spec port stamps the
+// resolved agent type, which is what the commit fallback branches on.
 func singleFixtureProcessExitOpts(t *testing.T, agent core.AgentType, script string) dotFixtureOpts {
 	t.Helper()
 
@@ -52,10 +51,10 @@ func singleFixtureProcessExitOpts(t *testing.T, agent core.AgentType, script str
 	}
 }
 
-// TestSingleMode_PiNoWorkRunIsFlagged is the claim. A Pi implementer that
+// TestLegacySingleInput_NoReviewDOTPiNoWorkIsFlagged is the claim. A Pi implementer that
 // commits nothing and leaves a clean worktree in seconds MUST be recorded as a
 // suspected no-work run.
-func TestSingleMode_PiNoWorkRunIsFlagged(t *testing.T) {
+func TestLegacySingleInput_NoReviewDOTPiNoWorkIsFlagged(t *testing.T) {
 	t.Parallel()
 
 	const beadID = core.BeadID("hk-3ywqv-pi-no-work")
@@ -64,16 +63,16 @@ func TestSingleMode_PiNoWorkRunIsFlagged(t *testing.T) {
 
 	if !singleFixtureHasEvent(res, core.EventTypeImplementerNoWorkSuspected) {
 		t.Errorf("Pi bead %s produced no commit and a clean worktree in seconds, and emitted no implementer_no_work_suspected; events=%v.\n"+
-			"The detector sits inside the codex leg of the commit fallback's harness branch, so a single-mode Pi run never reaches it.",
+			"The detector sits inside the codex leg of the commit fallback's harness branch, so a no-review DOT Pi run never reaches it.",
 			beadID, res.Bus.eventTypes())
 	}
 }
 
-// TestSingleMode_CodexNoWorkRunIsFlagged is the reference the claim is measured
+// TestLegacySingleInput_NoReviewDOTCodexNoWorkIsFlagged is the reference the claim is measured
 // against. It is the SAME implementer and the SAME fixture; only the harness
 // differs. Codex has always been detected. If this one goes red the detector or
 // the fixture broke, and the Pi test's verdict means nothing.
-func TestSingleMode_CodexNoWorkRunIsFlagged(t *testing.T) {
+func TestLegacySingleInput_NoReviewDOTCodexNoWorkIsFlagged(t *testing.T) {
 	t.Parallel()
 
 	const beadID = core.BeadID("hk-3ywqv-codex-no-work")
@@ -86,10 +85,10 @@ func TestSingleMode_CodexNoWorkRunIsFlagged(t *testing.T) {
 	}
 }
 
-// TestSingleMode_PiRunThatCommittedIsNotFlagged keeps the claim from being
+// TestLegacySingleInput_NoReviewDOTPiCommitIsNotFlagged keeps the claim from being
 // satisfied by a detector that fires on every Pi run. The implementer does real
 // work, so the fallback finds a commit and the run must NOT be flagged.
-func TestSingleMode_PiRunThatCommittedIsNotFlagged(t *testing.T) {
+func TestLegacySingleInput_NoReviewDOTPiCommitIsNotFlagged(t *testing.T) {
 	t.Parallel()
 
 	const beadID = core.BeadID("hk-3ywqv-pi-real-work")

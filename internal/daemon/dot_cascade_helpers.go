@@ -111,8 +111,8 @@ func resolveDotWorktreeHEAD(ctx context.Context, runner tmux.CommandRunner, wtPa
 // returns the reason the node must fail with. ok is false when the exit is not a
 // failure.
 //
-// It is the graph's copy of the single-mode tail's terminal decision, and it
-// keeps that decision's three cases in the same order:
+// It is the graph terminal decision. It keeps the three cases that the retired
+// imperative tail previously duplicated:
 //
 //   - CHB-020 branch 1, the Stop hook reported WORK_COMPLETE or
 //     REVIEWER_VERDICT. A pass, whatever the exit code was.

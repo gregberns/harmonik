@@ -221,6 +221,41 @@ func eventPayloadT10StreamEvents(t *testing.T, raw string) []core.Event {
 	return events
 }
 
+// eventPayloadT10SubscriberSawEvent reads completed NDJSON records from the
+// public subscriber. A final partial record is still being written and is not
+// yet evidence of delivery.
+func eventPayloadT10SubscriberSawEvent(path string, want core.EventType) bool {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if line == "" {
+			continue
+		}
+		var event core.Event
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue
+		}
+		if core.EventType(event.Type) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func eventPayloadT10WaitForSubscriberEvent(t *testing.T, path string, want core.EventType, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if eventPayloadT10SubscriberSawEvent(path, want) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("public subscribe stream did not receive %s", want)
+}
+
 // TestScenario_EventPayloadQueueSubscribeLegacySingle proves the queue submit
 // and subscribe command path. The legacy label must resolve to no-review-bead,
 // but the emitted start record must still name DOT mode and the resolver facts.
@@ -265,13 +300,19 @@ func TestScenario_EventPayloadQueueSubscribeLegacySingle(t *testing.T) {
 	}
 
 	harmonikBin := eventPayloadT9BuildHarmonik(t)
-	var subscribeOut bytes.Buffer
+	subscribePath := filepath.Join(t.TempDir(), "subscribe.ndjson")
+	subscribeFile, err := os.Create(subscribePath)
+	if err != nil {
+		t.Fatalf("create subscribe output file: %v", err)
+	}
+	defer subscribeFile.Close()
+	var subscribeErr bytes.Buffer
 	subscribeCmd := exec.Command(harmonikBin,
 		"subscribe", "--project", projectDir, "--json",
 		"--types", "run_started,node_dispatch_requested,run_completed,run_failed") //nolint:gosec // temporary test binary
 	subscribeCmd.Dir = projectDir
-	subscribeCmd.Stdout = &subscribeOut
-	subscribeCmd.Stderr = &subscribeOut
+	subscribeCmd.Stdout = subscribeFile
+	subscribeCmd.Stderr = &subscribeErr
 	if err := subscribeCmd.Start(); err != nil {
 		t.Fatalf("start public subscribe command: %v", err)
 	}
@@ -298,15 +339,22 @@ func TestScenario_EventPayloadQueueSubscribeLegacySingle(t *testing.T) {
 	if !scenarioFixturePollJSONLForEvent(t, jsonlPath, []string{string(core.EventTypeRunCompleted)}, 90*time.Second) {
 		t.Fatalf("isolated queue run did not complete; log:\n%s", strings.Join(scenarioFixtureReadJSONLLines(t, jsonlPath), "\n"))
 	}
+	// JSONL persistence proves the daemon emitted completion. Wait for the public
+	// subscriber's own output before its interrupt closes the socket.
+	eventPayloadT10WaitForSubscriberEvent(t, subscribePath, core.EventTypeRunCompleted, 10*time.Second)
 	if err := subscribeCmd.Process.Signal(os.Interrupt); err != nil {
 		t.Fatalf("stop public subscribe command: %v", err)
 	}
 	if err := <-subscribeDone; err != nil {
-		t.Fatalf("public subscribe command: %v\n%s", err, subscribeOut.String())
+		t.Fatalf("public subscribe command: %v\n%s", err, subscribeErr.String())
 	}
 	stoppedSubscribe = true
 
-	streamEvents := eventPayloadT10StreamEvents(t, subscribeOut.String())
+	subscribeRaw, err := os.ReadFile(subscribePath)
+	if err != nil {
+		t.Fatalf("read subscribe output: %v", err)
+	}
+	streamEvents := eventPayloadT10StreamEvents(t, string(subscribeRaw))
 	var starts []core.Event
 	for _, event := range streamEvents {
 		switch core.EventType(event.Type) {
@@ -315,7 +363,7 @@ func TestScenario_EventPayloadQueueSubscribeLegacySingle(t *testing.T) {
 		}
 	}
 	if len(starts) != 1 {
-		t.Fatalf("subscribe run_started count = %d, want 1\n%s", len(starts), subscribeOut.String())
+		t.Fatalf("subscribe run_started count = %d, want 1\n%s", len(starts), subscribeRaw)
 	}
 	startEvent := starts[0]
 	if startEvent.SchemaVersion != 2 || startEvent.RunID == nil {

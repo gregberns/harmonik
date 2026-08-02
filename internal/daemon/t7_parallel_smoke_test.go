@@ -124,7 +124,8 @@ func parallelSmokeFixtureSetup(t *testing.T) (projectDir, jsonlPath, brWrapper, 
 // returns its ID.
 func parallelSmokeFixtureCreateBead(t *testing.T, brWrapper, title string) string {
 	t.Helper()
-	cmd := exec.CommandContext(t.Context(), brWrapper, "create", title, "--status", "open", "--silent")
+	cmd := exec.CommandContext(t.Context(), brWrapper,
+		"create", title, "--status", "open", "--labels", "workflow:single", "--silent")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("parallelSmokeFixtureCreateBead: br create %q: %v\n%s", title, err, out)
@@ -317,7 +318,7 @@ func TestParallelSmoke_TwoBeadsConcurrent(t *testing.T) {
 		HandlerBinary:       handlerScript,
 		HandlerEnv:          nil,
 		MaxConcurrent:       2,
-		WorkflowModeDefault: core.WorkflowModeSingle,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
 	// Launch daemon.Start in a goroutine.  It blocks until loopCtx is cancelled.

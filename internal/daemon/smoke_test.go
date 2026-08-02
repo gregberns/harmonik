@@ -184,7 +184,8 @@ func smokeFixtureInitBr(t *testing.T, realBrPath, projectDir, brWrapperPath stri
 	}
 
 	// Step 2: br create via wrapper (--db is now valid since .beads/ exists).
-	createCmd := exec.CommandContext(t.Context(), brWrapperPath, "create", "smoke test bead", "--status", "open", "--silent")
+	createCmd := exec.CommandContext(t.Context(), brWrapperPath,
+		"create", "smoke test bead", "--status", "open", "--labels", "workflow:single", "--silent")
 	createOut, createErr := createCmd.CombinedOutput()
 	if createErr != nil {
 		t.Fatalf("smokeFixtureInitBr: br create: %v\n%s", createErr, createOut)
@@ -305,7 +306,7 @@ func TestSmokeLoop(t *testing.T) {
 		BrPath:              brWrapper,
 		HandlerBinary:       handlerScript,
 		HandlerEnv:          nil,
-		WorkflowModeDefault: core.WorkflowModeSingle,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
 	// Gap (hk-4e5b5): daemon.Config.HandlerArgs — Config currently lacks a

@@ -362,14 +362,10 @@ func TestM4C7_D2RemoteAPIKeyRefusal(t *testing.T) {
 // this checker can no longer prove it safe, and a credential gate fails closed.
 //
 // THE GUARD MOVED (2026-07-29, launch-path collapse). beadRunOne no longer
-// launches anything: the three hand-written launch paths (single-mode, the DOT
-// agentic node, the cognition gate) collapsed into runAgentLaunch
-// (agentlaunch.go), which is now the package's ONLY handler.Launch call site.
-// The guard moved with it, and this sensor is re-anchored there. The property is
-// unchanged and its REACH is strictly larger: one guard now dominates all three
-// launches instead of one of three — the DOT node and the cognition gate
-// previously had NO credential guard at all, which is the defect the collapse
-// eliminated by construction.
+// launches anything: the DOT agentic-node and cognition-gate launch paths
+// collapsed into runAgentLaunch (agentlaunch.go), which is now the package's
+// only handler.Launch call site. The guard moved with it, and this sensor is
+// re-anchored there. One guard now dominates every graph launch.
 //
 // Two spellings changed with the move and the shape predicates accept both:
 //

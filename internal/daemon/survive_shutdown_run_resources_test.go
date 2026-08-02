@@ -66,10 +66,9 @@ package daemon
 //     Note that this is the CLOSURE, not the function: beadRunOne's own remote
 //     block returns only on failure, and a healthy remote run does reach the
 //     flag's declaration — with the flag left false.
-//  2. The workflow mode. A graph run returns from the mode switch before the
-//     single-mode launch, and the single-mode launch is the only caller that
-//     passes ConfigurePerRunSubstrate at all, so a graph run never sets the flag
-//     by any route.
+//  2. The workflow driver. All inputs resolve to DOT before beadRunOne runs.
+//     Its graph-node launch does not pass this ConfigurePerRunSubstrate hook,
+//     so a graph run never sets the independent-session flag by that route.
 //  3. The tunnel's own lifetime. It is an exec.CommandContext on the run
 //     context, so a stopping daemon ends it whatever any gate says.
 //
@@ -82,7 +81,6 @@ package daemon
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -400,10 +398,8 @@ type surviveRunOpts struct {
 	// capture is the only record of why.
 	piRun bool
 
-	// graphMode runs the bead through the DOT cascade instead of the single-mode
-	// tail. Combined with piRun it is the case the evidence retention used to
-	// miss: the cascade launches the same Pi agent, which writes the same capture
-	// into the same worktree, but the run's own single-mode tail never runs.
+	// graphMode explicitly selects DOT instead of the historical default input.
+	// Both choices execute DOT. The explicit form keeps direct graph selection covered.
 	graphMode bool
 }
 
@@ -638,142 +634,6 @@ func surviveRunSealedRegistry(t *testing.T) *handlercontract.AdapterRegistry {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The record the whole thing hangs on
-// ─────────────────────────────────────────────────────────────────────────────
-
-// TestSurviveShutdown_TheRunRecordIsOnDiskBeforeTheAgentSessionIsCreated is the
-// precondition for every other claim in this file.
-//
-// A run that means to outlive the daemon is discoverable only by name: the next
-// boot lists the registry, reads SessionName and asks tmux about it. If the
-// record were written after the spawn, a daemon killed in between would leave a
-// live tmux session that nothing on disk names — untracked, unadoptable, and
-// swept as an orphan with no record of what it was.
-//
-// The observation is taken from inside the spawn call itself, so it states the
-// ordering as a fact about the run rather than as a reading of the source.
-func TestSurviveShutdown_TheRunRecordIsOnDiskBeforeTheAgentSessionIsCreated(t *testing.T) {
-	t.Parallel()
-
-	out := surviveRunDrive(t, true, false)
-
-	if len(out.adapter.sessions()) == 0 {
-		t.Fatal("no independent session was created, so nothing observed the ordering")
-	}
-	if out.recordAtSpawnErr != nil {
-		t.Fatalf("the run registry held no record when the agent's session was created: %v.\n"+
-			"A daemon killed between the spawn and the write leaves a live session that nothing on disk names — the next boot cannot adopt it and cannot even say what it was.", out.recordAtSpawnErr)
-	}
-	if out.recordAtSpawn.SessionName == "" {
-		t.Error("the record was written without a session name.\n" +
-			"Both adoption passes match on that string. A record without it is adopted as dead however healthy the session is.")
-	}
-	if got, want := out.recordAtSpawn.SessionName, out.adapter.sessions()[0]; got != want {
-		t.Errorf("record SessionName = %q, but the session created is %q.\n"+
-			"The two must be the same string, or the next boot asks tmux about a session that does not exist and reaps a live run.", got, want)
-	}
-	if out.recordAtSpawn.RunID != out.runID {
-		t.Errorf("record RunID = %q, want %q", out.recordAtSpawn.RunID, out.runID)
-	}
-	if out.recordAtSpawn.BeadID != "hk-survive-run-probe" {
-		t.Errorf("record BeadID = %q, want the bead this run is working — without it the adoption pass has no bead to reset",
-			out.recordAtSpawn.BeadID)
-	}
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Both facts hold — the run keeps what a later boot needs
-// ─────────────────────────────────────────────────────────────────────────────
-
-// TestSurviveShutdown_AStoppingDaemonLeavesAnOwnSessionRunItsWorktreeRecordAndBead
-// drives the case the whole gate exists for. The agent has a tmux session of its
-// own and the daemon is stopping, so all three run-level sites must decline:
-//
-//   - the worktree stays, because the agent is still working in it,
-//   - the record stays, because it is how the next boot finds the session,
-//   - and the bead stays in progress, because an agent is still on it.
-//
-// Each of those is a claim of the form "X did not happen", which is free in a
-// fixture where nothing happens. So the test first proves the machinery ran:
-// the session was created, and the record existed by then. A run that refused
-// before the launch would fail those checks rather than sail past them.
-func TestSurviveShutdown_AStoppingDaemonLeavesAnOwnSessionRunItsWorktreeRecordAndBead(t *testing.T) {
-	t.Parallel()
-
-	out := surviveRunDrive(t, true, true)
-
-	if len(out.adapter.sessions()) == 0 {
-		t.Fatal("no independent session was created, so this run never reached the sites under test")
-	}
-	if out.recordAtSpawnErr != nil {
-		t.Fatalf("no run record existed at spawn time: %v — the run did not take the independent-session path", out.recordAtSpawnErr)
-	}
-
-	if got := out.adapter.killsOnALiveContext(); got != 0 {
-		t.Errorf("%d kill(s) reached tmux on a live context, want 0.\n"+
-			"Every site the survive gate covers kills on context.Background(). A kill arriving on a live context here is the abort kill firing on a run whose session is meant to outlive this process.", got)
-	}
-	if out.worktreeCleanups != 0 {
-		t.Errorf("the worktree cleanup ran %d time(s), want 0.\n"+
-			"The agent is still working in that directory. Removing it takes the work away from a live agent and races git worktree remove against a running process.", out.worktreeCleanups)
-	}
-	if !out.worktreeSurvived() {
-		t.Errorf("the worktree at %s is gone", out.worktreePath)
-	}
-	if !out.runRecordSurvived() {
-		t.Error("the run registry record was removed.\n" +
-			"It is the only thing that names the surviving session. Without it the next boot has nothing to adopt and nothing to reset, and the bead is stuck in progress for ever.")
-	}
-	reopens, closes := out.ledger.beadSettled()
-	if len(reopens) != 0 || closes != 0 {
-		t.Errorf("the run settled its bead (reopens=%v closes=%d), want neither.\n"+
-			"A surviving run has an agent still working the bead. Reopening it dispatches the same work to a second agent; closing it claims work that has not finished.", reopens, closes)
-	}
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Half-condition one: an own session, but the daemon keeps running
-// ─────────────────────────────────────────────────────────────────────────────
-
-// TestSurviveShutdown_ARunThatEndsWhileTheDaemonRunsGivesBackItsWorktreeAndRecord
-// is the half a site that tested only the session kind would get wrong.
-//
-// The run has a session of its own, so the first half of the condition holds.
-// The daemon is not stopping, so the run is ending on its own terms and has
-// nothing to survive for. Everything must go back. A site that keyed on the
-// session kind alone would leak a worktree and a registry record on every
-// independent-session run, and the both-facts test above would stay green
-// throughout.
-func TestSurviveShutdown_ARunThatEndsWhileTheDaemonRunsGivesBackItsWorktreeAndRecord(t *testing.T) {
-	t.Parallel()
-
-	out := surviveRunDrive(t, true, false)
-
-	if len(out.adapter.sessions()) == 0 {
-		t.Fatal("no independent session was created, so this is not the half-condition it claims to be")
-	}
-	if out.recordAtSpawnErr != nil {
-		t.Fatalf("no run record existed at spawn time: %v", out.recordAtSpawnErr)
-	}
-
-	if out.worktreeCleanups == 0 {
-		t.Error("the worktree cleanup never ran.\n" +
-			"The daemon is still running and this run has ended. Keeping the worktree leaks a directory for every independent-session run until the age prune reaches it.")
-	}
-	if out.worktreeSurvived() {
-		t.Errorf("the worktree at %s is still on disk", out.worktreePath)
-	}
-	if out.runRecordSurvived() {
-		t.Error("the run registry record is still on disk.\n" +
-			"The run is over and its session is gone. A record left behind makes the next boot adopt a run that no longer exists.")
-	}
-	if reopens, _ := out.ledger.beadSettled(); len(reopens) == 0 {
-		t.Error("the bead was left in progress.\n" +
-			"Nothing is working it: the daemon is up and this run has ended. Only a surviving run may leave its bead for a later boot.")
-	}
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // The other reason a worktree is kept: it holds the only record of a failure
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -806,13 +666,10 @@ func TestSurviveShutdown_ARunThatEndsWhileTheDaemonRunsGivesBackItsWorktreeAndRe
 // mark then lands nowhere, which is what this fixture did before this test's
 // graph-mode sibling was written.
 //
-// SCOPE: this drives the SINGLE-mode path.
+// SCOPE: this drives the historical default input, which resolves to standard DOT.
 // TestSurviveShutdown_AFailedGraphModePiRunKeepsTheWorktreeItsCapturedOutputIsIn
-// drives the graph path. The two are separate tests because the fact used to be
-// recorded in the single-mode tail, below the graph branch's return, so a
-// graph-mode Pi run wrote the same capture into the same worktree and had it
-// deleted. Both tests must exist for the pair to mean anything: the fact is now
-// recorded at the launch, and the launch is the one step both modes share.
+// drives direct DOT selection. The two tests ensure the launch records captured
+// evidence for both the default and direct graph inputs.
 func TestSurviveShutdown_AFailedPiRunKeepsTheWorktreeItsCapturedOutputIsIn(t *testing.T) {
 	t.Parallel()
 
@@ -858,23 +715,18 @@ func TestSurviveShutdown_AFailedPiRunKeepsTheWorktreeItsCapturedOutputIsIn(t *te
 // TestSurviveShutdown_AFailedGraphModePiRunKeepsTheWorktreeItsCapturedOutputIsIn
 // is the same claim as the test above, for a run driven through the DOT cascade.
 //
-// This is the case the retention used to miss. The cascade launches the same Pi
-// agent, and that launch writes the same capture into the same worktree, but the
-// run reported the Pi fact from its single-mode tail — which sits below the graph
-// branch's return and therefore never runs for a graph run. So a failed
-// graph-mode Pi run produced real output and had it deleted. Almost every
-// production run is a graph run, so that was the common case, not the corner.
+// The cascade launches the Pi agent and writes its capture inside the worktree.
+// Direct DOT selection must retain that evidence on failure.
 //
 // The test proves the run really took the graph path before it asserts anything
-// about the worktree. Without that check a fixture that silently fell back to
-// single mode would pass this test while defending nothing.
+// about the worktree. Without that check a fixture that silently used the
+// default input would pass this test while defending nothing.
 //
 // Four mutations were run. Each one turns this test red. Delete the
 // SetCapturedAgentOutput call in runAgentLaunch. Report the exit with
 // EvidenceWorthKeeping hard-coded false. Make RetainEvidence release the
-// worktree. And the one that pins the whole point of the commit — restore the
-// old source by reading the single-mode runIsPi local instead of the handle,
-// which leaves the single-mode test above GREEN and turns only this one red.
+// worktree. The launch records the captured output on the run handle, so both
+// selection forms retain the same evidence.
 //
 // A fifth turns it red too. Drop the handle registration from runBeadOneTest.
 //
@@ -888,8 +740,8 @@ func TestSurviveShutdown_AFailedGraphModePiRunKeepsTheWorktreeItsCapturedOutputI
 
 	if out.startedMode != string(core.WorkflowModeDot) {
 		t.Fatalf("the run started in workflow mode %q, want %q.\n"+
-			"This test only means something if the run took the graph path. A fixture that fell "+
-			"back to single mode would re-test the case the test above already covers.",
+			"This test only means something if the run used direct DOT selection. A fixture that used "+
+			"the default input would re-test the case above.",
 			out.startedMode, core.WorkflowModeDot)
 	}
 
@@ -920,152 +772,5 @@ func TestSurviveShutdown_AFailedGraphModePiRunKeepsTheWorktreeItsCapturedOutputI
 	if !out.worktreeSurvived() {
 		t.Errorf("the worktree at %s was removed, and the captured Pi output went with it",
 			out.worktreePath)
-	}
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Half-condition two: a stopping daemon, but no session of its own
-// ─────────────────────────────────────────────────────────────────────────────
-
-// TestSurviveShutdown_AStoppingDaemonGivesBackTheWorktreeOfARunItHosts is the
-// other half, and the one a site testing only for a stopping daemon would get
-// wrong.
-//
-// The daemon is stopping, so the second half of the condition holds. The agent
-// runs in a window of the daemon's own tmux session, which does not outlive the
-// daemon, so there is nothing that COULD survive. The worktree must go back —
-// keeping it leaks a directory on every shutdown, and there is no agent left to
-// use it.
-//
-// No registry record is asserted here because none is written: the record is
-// what a run in its own session leaves behind, and this run has no such session.
-// That absence is itself checked, so the test cannot pass by way of a record
-// that quietly appeared.
-func TestSurviveShutdown_AStoppingDaemonGivesBackTheWorktreeOfARunItHosts(t *testing.T) {
-	t.Parallel()
-
-	out := surviveRunDrive(t, false, true)
-
-	if len(out.adapter.sessions()) != 0 {
-		t.Fatalf("an independent session was created (%v), so this is not the half-condition it claims to be", out.adapter.sessions())
-	}
-	if out.adapter.windows() == 0 {
-		t.Fatal("no window was opened in the daemon's shared session, so this run never launched and nothing below is meaningful")
-	}
-	if !errors.Is(out.recordAtSpawnErr, runpkg.ErrNotFound) {
-		t.Errorf("a run registry record existed at spawn time (err=%v), but a run that shares the daemon's session writes none", out.recordAtSpawnErr)
-	}
-
-	if out.worktreeCleanups == 0 {
-		t.Error("the worktree cleanup never ran.\n" +
-			"This agent lives in the daemon's own tmux session and dies with it. Keeping the worktree leaks a directory on every shutdown with nothing left to use it.")
-	}
-	if out.worktreeSurvived() {
-		t.Errorf("the worktree at %s is still on disk", out.worktreePath)
-	}
-	if out.runRecordSurvived() {
-		t.Error("a run registry record is on disk for a run that never had a session of its own")
-	}
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// The teardown gate, where it can actually be seen
-// ─────────────────────────────────────────────────────────────────────────────
-//
-// The tests above end a run through a site that kills the session with no
-// reference to the gate: the ready-timeout kill, or the completion wait. The
-// session's kill is once-guarded, so by the time the teardown pair runs there is
-// nothing left for it to prevent, and a gate that always said "skip" would look
-// identical. These three drive a run that REACHES WORKING, where the post-wait
-// window kill is the first thing that would end the session and the gate is the
-// only thing standing between it and the agent.
-
-// TestSurviveShutdown_AWorkingRunThatEndsWhileTheDaemonRunsHasItsWindowKilled is
-// the ordinary end of an own-session run: it reached working, it finished, and
-// the daemon is still up. Nothing is meant to outlive anything, so the window
-// kill must reach tmux.
-//
-// This is the one place a teardown gate that forgot the stopping-daemon half of
-// the condition shows up. Such a gate skips the kill here, leaks the tmux
-// session on every own-session run, and passes every other test in this file.
-func TestSurviveShutdown_AWorkingRunThatEndsWhileTheDaemonRunsHasItsWindowKilled(t *testing.T) {
-	t.Parallel()
-
-	out := surviveRunDriveWith(t, surviveRunOpts{ownSession: true, agentReportsReady: true})
-
-	if len(out.adapter.sessions()) == 0 {
-		t.Fatal("no independent session was created, so this run never reached the site under test")
-	}
-	if got := out.adapter.killsReachingTmux(); got == 0 {
-		t.Error("no kill reached tmux.\n" +
-			"This run reached working and ended while the daemon was still up. Its session has nothing to outlive, so the window kill must run — skipping it leaks a tmux session on every own-session run.")
-	}
-	// The gated site is the one that acted: a run ending this way passes through
-	// neither the ready-timeout kill nor the completion wait's cancel kill.
-	if got := out.adapter.killsOnALiveContext(); got == 0 {
-		t.Error("the kill did not arrive on a live context, so it did not come from the site the gate covers")
-	}
-}
-
-// TestSurviveShutdown_ADaemonStoppingDuringACompletionWaitNeverTouchesAnOwnSession
-// is the survive case as the system can actually deliver it, and the only run
-// this fixture can drive where the agent's session is never touched at all.
-//
-// The daemon stops while the run is already working, so the dispatch never
-// aborts and the completion wait was entered on a live context. That leaves the
-// post-wait window kill as the first and only thing that would end the session,
-// and the gate stops it. Zero kills reach tmux.
-//
-// A teardown gate replaced by "never skip" kills the agent here. Nothing else in
-// this file sees that, because every other ordering has already burned the
-// session's one kill somewhere ungated.
-func TestSurviveShutdown_ADaemonStoppingDuringACompletionWaitNeverTouchesAnOwnSession(t *testing.T) {
-	t.Parallel()
-
-	out := surviveRunDriveWith(t, surviveRunOpts{
-		ownSession: true, agentReportsReady: true, stopAtPanePIDCall: 2,
-	})
-
-	if len(out.adapter.sessions()) == 0 {
-		t.Fatal("no independent session was created, so this run never reached the site under test")
-	}
-	if out.recordAtSpawnErr != nil {
-		t.Fatalf("no run record existed at spawn time: %v — the run did not take the independent-session path", out.recordAtSpawnErr)
-	}
-	if got := out.adapter.killsReachingTmux(); got != 0 {
-		t.Errorf("%d kill(s) reached tmux, want 0.\n"+
-			"The agent has a session of its own and the daemon is stopping, so nothing in this process may end it. This is the one ordering where the daemon can genuinely leave the session standing, and the window kill is the only thing that would have taken it.", got)
-	}
-
-	// The same disposition reaches the run-level sites, and they agree.
-	if out.worktreeCleanups != 0 {
-		t.Errorf("the worktree cleanup ran %d time(s), want 0", out.worktreeCleanups)
-	}
-	if !out.runRecordSurvived() {
-		t.Error("the run registry record was removed, so nothing on disk names the session that was just left standing")
-	}
-}
-
-// TestSurviveShutdown_ADaemonStoppingDuringACompletionWaitStillKillsAWindowItHosts
-// is the half-condition at the teardown site.
-//
-// Same ordering as the test above, and the daemon is stopping just the same, but
-// the agent lives in a window of the daemon's own tmux session. Nothing about it
-// outlives the daemon, so the window kill must run. Leaving it would orphan a
-// live pane inside a session that is about to be torn down.
-func TestSurviveShutdown_ADaemonStoppingDuringACompletionWaitStillKillsAWindowItHosts(t *testing.T) {
-	t.Parallel()
-
-	out := surviveRunDriveWith(t, surviveRunOpts{agentReportsReady: true, stopAtPanePIDCall: 2})
-
-	if len(out.adapter.sessions()) != 0 {
-		t.Fatalf("an independent session was created (%v), so this is not the half-condition it claims to be", out.adapter.sessions())
-	}
-	if out.adapter.windows() == 0 {
-		t.Fatal("no window was opened, so this run never reached the site under test")
-	}
-	if got := out.adapter.killsReachingTmux(); got == 0 {
-		t.Error("no kill reached tmux.\n" +
-			"This agent lives in a window of the daemon's own session and dies with it. Skipping the kill orphans a live pane inside a session that is about to be torn down.")
 	}
 }

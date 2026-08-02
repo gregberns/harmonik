@@ -165,12 +165,6 @@ func ExportedRunAutoStatusInspection(ctx context.Context, wtPath string) (core.O
 // Bead ref: hk-kqdpf.1.
 var ExportedProductionWorktreeFactory = productionWorktreeFactory
 
-// ExportedNoCommitGuardShouldReopen exposes noCommitGuardShouldReopen for the
-// single-mode no-commit guard regression test (hk-4ie1z).
-func ExportedNoCommitGuardShouldReopen(ctx context.Context, projectDir, curHeadSHA, parentSHA string, beadID core.BeadID) bool {
-	return noCommitGuardShouldReopen(ctx, projectDir, curHeadSHA, parentSHA, beadID)
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // StaleWatcher test seams (hk-wkzlc)
 // ─────────────────────────────────────────────────────────────────────────────

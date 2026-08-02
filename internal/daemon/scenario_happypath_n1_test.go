@@ -183,7 +183,7 @@ func scenarioN1InitBr(t *testing.T, realBrPath, projectDir, brWrapper string) st
 		t.Fatalf("scenarioN1InitBr: br init: %v\n%s", initErr, initOut)
 	}
 	createCmd := exec.CommandContext(t.Context(), brWrapper, "create",
-		"scenario N=1 happy path", "--status", "open", "--silent")
+		"scenario N=1 happy path", "--status", "open", "--labels", "workflow:single", "--silent")
 	createOut, createErr := createCmd.CombinedOutput()
 	if createErr != nil {
 		t.Fatalf("scenarioN1InitBr: br create: %v\n%s", createErr, createOut)
@@ -370,13 +370,8 @@ func TestScenario_HappyPath_N1(t *testing.T) {
 		// is the OS scheduler quantum) while keeping the test under 10 s in CI.
 		AgentReadyTimeout: 5 * time.Second,
 		// LogWriter: direct daemon logs to test output for debugging.
-		LogWriter: testLogWriter{t: t},
-		// Single mode: this is a single-mode happy-path test (its header and the
-		// AssertEventSequence below end in run_completed with no reviewer phase).
-		// Review-loop would launch a reviewer that — running the same committing
-		// twin — never writes a verdict, tripping "verdict absent at iteration 1"
-		// and reopening the bead (hk-4f5ua).
-		WorkflowModeDefault: core.WorkflowModeSingle,
+		LogWriter:           testLogWriter{t: t},
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
 	// Launch daemon.Start in a goroutine.

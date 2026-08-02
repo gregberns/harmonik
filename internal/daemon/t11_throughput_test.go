@@ -27,7 +27,8 @@ package daemon_test
 // (MaxConcurrent=4) and ensures the parallel run is meaningfully faster than the
 // sequential run (4 in-flight × 0.3 s = 0.3 s per batch vs 0.3 s per bead × 10 =
 // 3 s sequential). The commit is required so the no-commit guard does not reopen
-// the bead — both cfgs run in WorkflowModeSingle with a committing handler so the
+// the bead — both cfgs use the historical single default with a committing handler,
+// so run planning selects the registered DOT graph and the
 // beads actually reach "closed" (hk-6hzci).
 //
 // Helper prefix: throughputFixture (per implementer-protocol.md
@@ -129,7 +130,7 @@ func throughputFixtureCreateBeads(t *testing.T, brWrapper string, n int) []strin
 	ids := make([]string, n)
 	for i := range n {
 		cmd := exec.CommandContext(t.Context(), brWrapper,
-			"create", "throughput test bead", "--status", "open", "--silent")
+			"create", "throughput test bead", "--status", "open", "--labels", "workflow:single", "--silent")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("throughputFixtureCreateBeads: br create bead %d: %v\n%s", i, err, out)
@@ -352,7 +353,7 @@ func TestThroughput_TenBeadsAtMaxFour(t *testing.T) {
 		HandlerBinary:       handlerScript,
 		HandlerEnv:          nil,
 		MaxConcurrent:       1,
-		WorkflowModeDefault: core.WorkflowModeSingle,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 	parCfg := daemon.Config{
 		ProjectDir:          parProjectDir,
@@ -361,7 +362,7 @@ func TestThroughput_TenBeadsAtMaxFour(t *testing.T) {
 		HandlerBinary:       handlerScript,
 		HandlerEnv:          nil,
 		MaxConcurrent:       4,
-		WorkflowModeDefault: core.WorkflowModeSingle,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
 	// ── Run sequential baseline and parallel run concurrently ─────────────────

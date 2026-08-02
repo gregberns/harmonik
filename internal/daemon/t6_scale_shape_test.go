@@ -113,10 +113,12 @@ func t6SeedBeads(t *testing.T, brWrapper string, count int, bodyFn func(i int) s
 		var createCmd *exec.Cmd
 		if body != "" {
 			//nolint:gosec // G204: test-internal literals
-			createCmd = exec.CommandContext(t.Context(), brWrapper, "create", title, "--body", body, "--silent")
+			createCmd = exec.CommandContext(t.Context(), brWrapper,
+				"create", title, "--body", body, "--labels", "workflow:single", "--silent")
 		} else {
 			//nolint:gosec // G204: test-internal literals
-			createCmd = exec.CommandContext(t.Context(), brWrapper, "create", title, "--silent")
+			createCmd = exec.CommandContext(t.Context(), brWrapper,
+				"create", title, "--labels", "workflow:single", "--silent")
 		}
 		out, err := createCmd.CombinedOutput()
 		if err != nil {
@@ -293,7 +295,7 @@ func TestT6_10BeadSequentialDrain(t *testing.T) {
 		// single-mode happy path that asserts run_completed counts. The smoke
 		// handler commits but writes no reviewer verdict, so review-loop would trip
 		// "verdict absent at iteration 1" and reopen every bead.
-		WorkflowModeDefault: core.WorkflowModeSingle,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -396,7 +398,7 @@ func TestT6_1MBBeadBody(t *testing.T) {
 		// single-mode happy path that asserts run_completed counts. The smoke
 		// handler commits but writes no reviewer verdict, so review-loop would trip
 		// "verdict absent at iteration 1" and reopen every bead.
-		WorkflowModeDefault: core.WorkflowModeSingle,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -448,7 +450,8 @@ func TestT6_EmptyAndNearEmptyBody(t *testing.T) {
 	// No-body bead (no --body): description is empty, so the daemon's launch-spec
 	// builder falls back to the title → non-empty work spec → drains+closes.
 	//nolint:gosec // G204: test-internal literals
-	noBodyCmd := exec.CommandContext(t.Context(), brWrapper, "create", "T6 no-body bead", "--silent")
+	noBodyCmd := exec.CommandContext(t.Context(), brWrapper,
+		"create", "T6 no-body bead", "--labels", "workflow:single", "--silent")
 	noBodyOut, noBodyErr := noBodyCmd.CombinedOutput()
 	if noBodyErr != nil {
 		t.Fatalf("T6-3: create no-body bead: %v\n%s", noBodyErr, noBodyOut)
@@ -472,7 +475,7 @@ func TestT6_EmptyAndNearEmptyBody(t *testing.T) {
 		// single-mode happy path that asserts run_completed counts. The smoke
 		// handler commits but writes no reviewer verdict, so review-loop would trip
 		// "verdict absent at iteration 1" and reopen every bead.
-		WorkflowModeDefault: core.WorkflowModeSingle,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -552,7 +555,7 @@ func TestT6_UnicodeHeavyBody(t *testing.T) {
 		// single-mode happy path that asserts run_completed counts. The smoke
 		// handler commits but writes no reviewer verdict, so review-loop would trip
 		// "verdict absent at iteration 1" and reopen every bead.
-		WorkflowModeDefault: core.WorkflowModeSingle,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -618,7 +621,7 @@ func TestT6_LargeWorktreeBase(t *testing.T) {
 		// single-mode happy path that asserts run_completed counts. The smoke
 		// handler commits but writes no reviewer verdict, so review-loop would trip
 		// "verdict absent at iteration 1" and reopen every bead.
-		WorkflowModeDefault: core.WorkflowModeSingle,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -672,7 +675,7 @@ func TestT6_ConcurrentBeadCreate(t *testing.T) {
 		// single-mode happy path that asserts run_completed counts. The smoke
 		// handler commits but writes no reviewer verdict, so review-loop would trip
 		// "verdict absent at iteration 1" and reopen every bead.
-		WorkflowModeDefault: core.WorkflowModeSingle,
+		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

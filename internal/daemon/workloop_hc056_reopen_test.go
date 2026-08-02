@@ -172,7 +172,7 @@ func (l *hc056ReopenLedger) getClaimCount() int {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // TestWorkLoop_HC056Timeout_ReopenAndRepickup verifies the end-to-end HC-056
-// single-mode path:
+// DOT path selected after legacy/default input resolution:
 //  1. The adapter never fires DetectReady, so the 50ms timeout elapses.
 //  2. ReopenBead is called — the stub ledger records this and re-enqueues the bead.
 //  3. The poll loop re-picks the bead up on the next Ready call — confirmed by

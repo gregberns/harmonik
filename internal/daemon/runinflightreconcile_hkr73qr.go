@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 
@@ -17,18 +16,6 @@ import (
 // reconcile to gate the bead reset on current status (hk-mdus1 review B3).
 type beadStatusReader interface {
 	ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord, error)
-}
-
-// reconcileRunStartedPayload reads only the fields the orphan reconcile needs.
-// It accepts both the historic version-one body and the version-two body that
-// now carries the same JSON fields.
-//
-// Keep this compatibility read model local. The event-payload replay work owns
-// the shared version-aware read boundary.
-type reconcileRunStartedPayload struct {
-	BeadID          string  `json:"bead_id"`
-	QueueID         *string `json:"queue_id"`
-	QueueGroupIndex *int    `json:"queue_group_index"`
 }
 
 // reconcileOrphanedRunsOnResume scans the durable event log for runs that
@@ -115,8 +102,8 @@ func reconcileOrphanedRunsOnResume(
 		}
 		switch core.EventType(ev.Type) {
 		case core.EventTypeRunStarted:
-			var pl reconcileRunStartedPayload
-			if err := json.Unmarshal(ev.Payload, &pl); err != nil || pl.BeadID == "" {
+			pl, err := core.DecodeRunStartedForRead(ev)
+			if err != nil || pl.BeadID == "" {
 				continue
 			}
 			started[*ev.RunID] = runMeta{

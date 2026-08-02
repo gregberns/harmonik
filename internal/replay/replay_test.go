@@ -59,9 +59,13 @@ func writeLog(t *testing.T, lines []line) string {
 		if err != nil {
 			t.Fatalf("marshal payload %s: %v", ln.evType, err)
 		}
+		schemaVersion := 1
+		if registeredVersion, ok := core.LookupTypeSchemaVersion(string(ln.evType)); ok {
+			schemaVersion = registeredVersion
+		}
 		ev := core.Event{
 			EventID:         mkID(ln.seq),
-			SchemaVersion:   1,
+			SchemaVersion:   schemaVersion,
 			Type:            string(ln.evType),
 			TimestampWall:   base.Add(time.Duration(ln.seq) * time.Second),
 			SourceSubsystem: "keeper",
@@ -334,6 +338,32 @@ func TestReplay_UnknownType_ObservationalSkips_StrictErrors(t *testing.T) {
 	var unk *core.DispatchUnknownEventError
 	if !errors.As(err, &unk) {
 		t.Errorf("strict error = %v, want *core.DispatchUnknownEventError", err)
+	}
+}
+
+func TestReplay_RunStartedV1Compatibility(t *testing.T) {
+	path := writeLog(t, nil)
+	appendRaw(t, path, map[string]any{
+		"event_id":         mkID(1).String(),
+		"schema_version":   1,
+		"type":             string(core.EventTypeRunStarted),
+		"timestamp_wall":   "2026-08-02T12:00:01Z",
+		"source_subsystem": "daemon",
+		"run_id":           "01942b3c-0000-7000-8000-000000000020",
+		"payload": map[string]any{
+			"run_id":         "01942b3c-0000-7000-8000-000000000020",
+			"bead_id":        "hk-historical",
+			"workspace_path": "/tmp/historical",
+			"started_at":     "2026-08-02T12:00:00Z",
+		},
+	})
+
+	rep, err := replay.Replay(path, core.EventID{}, true, nil)
+	if err != nil {
+		t.Fatalf("strict replay of version-1 run_started: %v", err)
+	}
+	if rep.Malformed != 0 || rep.Events != 1 {
+		t.Fatalf("replay report = %#v, want one readable historical event", rep)
 	}
 }
 

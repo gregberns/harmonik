@@ -254,6 +254,17 @@ func schemaMismatchSkips(rep *Report, ev core.Event) bool {
 // decode failure is a hard error; in observational mode an unknown type or a
 // malformed payload is counted on the report and skipped (EV-033).
 func decodeEvent(rep *Report, ev core.Event, strict bool) (p core.EventPayload, skip bool, err error) {
+	if core.EventType(ev.Type) == core.EventTypeRunStarted {
+		readPayload, derr := core.DecodeRunStartedForRead(ev)
+		if derr == nil {
+			return &readPayload, false, nil
+		}
+		if strict {
+			return nil, false, fmt.Errorf("replay: strict decode %q (event_id=%s): %w", ev.Type, ev.EventID, derr)
+		}
+		rep.Malformed++
+		return nil, true, nil
+	}
 	if strict {
 		pp, derr := ev.DecodePayloadStrict()
 		if derr != nil {

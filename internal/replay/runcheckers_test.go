@@ -24,10 +24,12 @@ func runID(n byte) core.RunID {
 	return core.RunID(uuid.UUID(b))
 }
 
-func rStarted(r core.RunID, mode core.WorkflowMode) core.EventPayload {
+func rStarted(r core.RunID, _ core.WorkflowMode) core.EventPayload {
 	return &core.RunStartedPayload{
-		RunID: r, WorkflowID: core.WorkflowID(runID(200)), WorkflowVersion: "v1",
-		WorkspacePath: "/w", InputRef: "ref", WorkflowMode: &mode,
+		RunID: r, WorkflowID: "standard-bead", WorkflowVersion: "1.0",
+		WorkspacePath: "/w", InputRef: "ref", WorkflowMode: core.WorkflowModeDot,
+		ReviewPolicy:            core.ReviewPolicyReviewed,
+		WorkflowSelectionSource: core.WorkflowSelectionEmbeddedDefault,
 	}
 }
 

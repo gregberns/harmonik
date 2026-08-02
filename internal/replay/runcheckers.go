@@ -205,6 +205,8 @@ func runKey(p core.EventPayload) (rid string, ok bool) {
 	switch v := p.(type) {
 	case *core.RunStartedPayload:
 		return runIDStr(v.RunID)
+	case *core.RunStartedReadPayload:
+		return runIDStr(v.RunID)
 	case *core.RunCompletedPayload:
 		return runIDStr(v.RunID)
 	case *core.RunFailedPayload:

@@ -1048,7 +1048,7 @@ type agentPostExitResult struct {
 // is synthesized. It emits the diagnostics the exit owes, gives the agent's
 // uncommitted work a commit, and reports whether the run must stop.
 func runAgentPostExit(ctx context.Context, in agentPostExitInput) agentPostExitResult {
-	env, ports := in.Env, in.Ports
+	ports := in.Ports
 	emit := ports.Emitter
 	launch := in.Launch
 	logf := newAgentLaunchLogf(os.Stderr, in.LogPrefix)
@@ -1149,8 +1149,8 @@ func runAgentPostExit(ctx context.Context, in agentPostExitInput) agentPostExitR
 	// no-work run, not a bead that had nothing to do. Diagnostic only — the run
 	// is already failing through the caller's no-commit guard; this records WHY,
 	// which is what was missing when hk-jcrzn went undetected.
-	if codex.NoWorkSuspected(outcome, phaseDur, env.CodexNoWorkDurationFloor) {
-		floor := codex.NoWorkFloor(env.CodexNoWorkDurationFloor)
+	if codex.NoWorkSuspected(outcome, phaseDur, 0) {
+		floor := codex.NoWorkFloor(0)
 		logf("implementer produced NO commit and a clean worktree after only %v (floor %v) — suspected no-work run (hk-368i4)",
 			phaseDur, floor)
 		codex.EmitImplementerNoWorkSuspected(ctx, emit, in.RunID, in.BeadID, phaseDur, floor)

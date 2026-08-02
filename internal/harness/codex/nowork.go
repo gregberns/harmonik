@@ -51,8 +51,7 @@ import (
 // 10s sits in the empty band between the two measured populations (worst
 // no-work run 5.19s, fastest real run 28.9s). The sample is small and all from
 // one box, so this is a STARTING POINT and not a calibrated constant — but the
-// gap it sits in is roughly 5x wide, so the exact value is not delicate. Tune
-// it via workLoopDeps.codexNoWorkDurationFloor rather than editing this.
+// gap it sits in is roughly 5x wide, so the exact value is not delicate.
 //
 // Bead ref: hk-368i4.
 const codexNoWorkDurationFloorDefault = 10 * time.Second

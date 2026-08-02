@@ -780,26 +780,11 @@ type workLoopDeps struct {
 	// goroutine would be a silent no-op (PF §3 hazard). Keeping them off the
 	// bundle makes the ownership (the single work-loop goroutine) structural.
 
-	// diskLowWatermark is the injectable free-space floor for tests. Zero →
-	// diskLowWatermarkDefault (10 GiB). Production leaves this zero.
-	//
-	// Bead ref: hk-sxlb.
-	diskLowWatermark uint64
-
 	// diskCheckIntervalOverride overrides diskCheckInterval for tests.
 	// Zero → diskCheckInterval (10 min).
 	//
 	// Bead ref: hk-sxlb.
 	diskCheckIntervalOverride time.Duration
-
-	// codexNoWorkDurationFloor overrides codexNoWorkDurationFloorDefault (10s),
-	// the implement-phase duration below which a codexRefsNoChange outcome is
-	// flagged as a no-work run.  Zero → the default.  Production leaves this
-	// zero; the measured no-work/real-work gap is ~5x wide, so the value is not
-	// delicate.
-	//
-	// Bead ref: hk-368i4.
-	codexNoWorkDurationFloor time.Duration
 
 	// diskFreeBytesFunc, when non-nil, replaces the diskFreeBytes call inside
 	// runPeriodicDiskCheck.  Tests use this to control the apparent free-space

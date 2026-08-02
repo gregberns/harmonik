@@ -187,14 +187,9 @@ func runPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps, maint *loopMa
 	if checkInterval <= 0 {
 		checkInterval = diskCheckInterval
 	}
-	watermark := deps.diskLowWatermark
-	if watermark == 0 {
-		watermark = diskLowWatermarkDefault
-	}
-
 	if time.Since(maint.lastDiskCheck) >= checkInterval {
 		maint.lastDiskCheck = now
-		runDiskProbe(ctx, deps, maint, now, watermark)
+		runDiskProbe(ctx, deps, maint, now, diskLowWatermarkDefault)
 	}
 }
 

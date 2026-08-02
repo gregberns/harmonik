@@ -63,8 +63,8 @@ type loopMaintenanceState struct {
 	lastDiskCheck time.Time
 
 	// diskLow is true when the most recent disk probe found available space below
-	// diskLowWatermarkDefault (or deps.diskLowWatermark). The dispatch loop skips
-	// bead claiming while this flag is set (hk-sxlb).
+	// diskLowWatermarkDefault. The dispatch loop skips bead claiming while this
+	// flag is set (hk-sxlb).
 	diskLow bool
 }
 

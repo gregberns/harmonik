@@ -435,7 +435,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		tidGen:                  core.NewTransitionIDGenerator(),
 		workflowModeDefault:     wmd,
 		runRegistry:             reg,
-		maxConcurrent:           maxConcurrent,
+		testCapacity:            newCapacityPort(maxConcurrent, p.ConcurrencyCtrl),
 		cpRegistry:              p.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch
 		hookStore:               hookStore,
 		launchSpecBuilder:       lsb,
@@ -447,15 +447,11 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		remoteAgentReadyTimeout: p.RemoteAgentReadyTimeout,
 		projectCfg:              p.ProjectCfg,
 		queueStore:              p.QueueStore,
-		queueLedger:             p.QueueLedger, // hk-nbjht: §2.8 deferred-item re-eval seam
-		submitWakeC:             submitWakeC,
-		handlerPauseController:  p.HandlerPauseController,
-		operatorPauseCtrl:       p.OperatorPauseCtrl, // hk-ry8q1
-		decisionBlocker:         p.DecisionBlocker,   // hk-a6e24 EV-043
-		noAutoPull:              p.NoAutoPull,        // hk-h5lv2 / EM-066
-		concurrencyCtrl:         p.ConcurrencyCtrl,   // hk-ohiaf
-		localInFlight:           new(atomic.Int32),   // hk-hs7ex: split gate — fresh counter for each test
-		skipBrHistoryRotation:   true,                // hk-hypbi: tests use temp dirs without real .br_history
+		testQueueSurface:        newQueueSurfacePort(submitWakeC, p.QueueLedger),
+		testDispatchGates:       newDispatchGatesPort(p.Bus, p.HandlerPauseController, p.OperatorPauseCtrl, p.DecisionBlocker),
+		testNoAutoPull:          p.NoAutoPull,
+		localInFlight:           new(atomic.Int32), // hk-hs7ex: split gate — fresh counter for each test
+		skipBrHistoryRotation:   true,              // hk-hypbi: tests use temp dirs without real .br_history
 		targetBranch:            bootconfig.ResolveTargetBranch(p.TargetBranch),
 		protectBranches:         p.ProtectBranches,
 		mergeQ:                  mergeQ,

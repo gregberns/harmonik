@@ -154,15 +154,19 @@ type reapSeamPort struct {
 // newReapSeamPort projects the dependencies used by the force-reap completion
 // path. It intentionally preserves nil and zero values from workLoopDeps.
 func newReapSeamPort(deps workLoopDeps, loopLifecycle loopLifecyclePort, eagerRefill eagerRefillPort) reapSeamPort {
+	return newReapSeamPortWithPorts(deps, loopLifecycle, deps.testCapacity, deps.testQueueSurface, eagerRefill)
+}
+
+func newReapSeamPortWithPorts(deps workLoopDeps, loopLifecycle loopLifecyclePort, capacity capacityPort, queueSurface queueSurfacePort, eagerRefill eagerRefillPort) reapSeamPort {
 	return reapSeamPort{
 		bus:                deps.bus,
 		projectDir:         deps.projectDir,
 		queueStore:         deps.queueStore,
-		queueLedger:        deps.queueLedger,
+		queueLedger:        queueSurface.queueLedger,
 		cancelOnQueueDrain: loopLifecycle.cancelOnQueueDrain,
 		cancelOnQueueExit:  loopLifecycle.cancelOnQueueExit,
-		maxConcurrent:      deps.maxConcurrent,
-		concurrencyCtrl:    deps.concurrencyCtrl,
+		maxConcurrent:      capacity.maxConcurrent,
+		concurrencyCtrl:    capacity.concurrencyCtrl,
 		runRegistry:        deps.runRegistry,
 		targetBranch:       deps.targetBranch,
 		eagerRefill:        eagerRefill,
@@ -440,7 +444,7 @@ func projectActiveGroup(q *queue.Queue) *orchestrator.GroupSnapshot {
 }
 
 //nolint:gocognit,cyclop,funlen // pre-existing: Seam A moved this code out of workloop.go unchanged
-func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifecyclePort, ledgerRepair ledgerRepairPort, scheduleInput schedulePort, coordinatorReap coordinatorReapPort, diskReclaim diskReclaimPort, eagerRefill eagerRefillPort, governor governorPort, governorEnabled bool) error {
+func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifecyclePort, ledgerRepair ledgerRepairPort, scheduleInput schedulePort, coordinatorReap coordinatorReapPort, diskReclaim diskReclaimPort, eagerRefill eagerRefillPort, governor governorPort, governorEnabled bool, capacity capacityPort, queueSurface queueSurfacePort, dispatchGates dispatchGatesPort, noAutoPull bool) error {
 	// wg tracks all in-flight bead goroutines. runWorkLoop waits on this before
 	// returning so callers know all bead work is complete on return.
 	var wg sync.WaitGroup
@@ -466,7 +470,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 	}
 
 	// effectiveMax: 0-value → 1 to preserve the single-threaded default.
-	effectiveMax := deps.maxConcurrent
+	effectiveMax := capacity.maxConcurrent
 	if effectiveMax <= 0 {
 		effectiveMax = 1
 	}
@@ -484,14 +488,6 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 	// Bead ref: hk-e61c3.3.
 	claimSem := make(chan struct{}, effectiveMax)
 
-	// Initialise the held-event dedup map (hk-kac8g).  Written only from this
-	// goroutine (outer poll loop) — no locking needed.
-	if deps.heldEventDedup == nil {
-		deps.heldEventDedup = make(map[string]struct{})
-	}
-	if deps.queueWriteErrorReported == nil {
-		deps.queueWriteErrorReported = make(map[string]struct{})
-	}
 	// lastSeenPauseEpoch tracks the most recent pause epoch observed by the
 	// dispatcher.  When the epoch advances (pause lifted or new pause window),
 	// all prior-epoch dedup entries are stale and pruned (hk-o48pb).
@@ -510,8 +506,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 	// (RSM-011) plus the dashboard forcing gate and the sentinel movement
 	// governor, both of which are SWITCHABLE subsystems that may be absent. It is
 	// touched only from this goroutine. See loopmaintenance.go.
-	maint := newLoopMaintenance(deps, loopLifecycle, scheduleInput, coordinatorReap, diskReclaim, eagerRefill, governor, governorEnabled, os.Stderr)
-	reapPort := newReapSeamPort(deps, loopLifecycle, eagerRefill)
+	maint := newLoopMaintenance(deps, loopLifecycle, scheduleInput, coordinatorReap, diskReclaim, eagerRefill, governor, governorEnabled, capacity, queueSurface, dispatchGates, os.Stderr)
+	reapPort := newReapSeamPortWithPorts(deps, loopLifecycle, capacity, queueSurface, eagerRefill)
 	completionPort := newRunCompletionPort(deps, reapPort)
 
 	// claimSkipInProgressUntil tracks beads whose pre-claim check observed
@@ -661,7 +657,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 			return exitClean()
 		}
 		if preObs.diskLow {
-			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 				return exitClean()
 			}
 			continue
@@ -676,8 +672,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 		// controller when it is wired (hk-ohiaf) so a queue set-concurrency change
 		// takes effect without a daemon restart.
 		controllerMax, controllerPresent := 0, false
-		if deps.concurrencyCtrl != nil {
-			controllerMax, controllerPresent = deps.concurrencyCtrl.Get(), true
+		if capacity.concurrencyCtrl != nil {
+			controllerMax, controllerPresent = capacity.concurrencyCtrl.Get(), true
 		}
 		gateMax := orchestrator.LocalGateMax(effectiveMax, controllerMax, controllerPresent)
 
@@ -697,7 +693,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 			if tickVerdict.Message != "" {
 				fmt.Fprint(os.Stderr, tickVerdict.Message)
 			}
-			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 				return exitClean()
 			}
 			continue
@@ -796,7 +792,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 				// hk-gf59k S2-F-S2-2: the return value says whether any item is STILL
 				// deferred after the pass, so the idle path can use a bounded poll
 				// rather than an indefinite wait (see hasDeferredItems use below).
-				hasDeferredItems := reevaluateDeferredQueues(ctx, deps)
+				hasDeferredItems := reevaluateDeferredQueues(ctx, deps, queueSurface, dispatchGates)
 
 				lq := deps.queueStore.LockForMutation()
 
@@ -879,11 +875,11 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 						// chains must be re-submitted to wake the loop — the re-submit churn
 						// logged in iter20 (4 full re-submits over 7.5h for a 7-bead chain).
 						if hasDeferredItems {
-							if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+							if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 								return exitClean()
 							}
 						} else {
-							if sleepErr := scheduleAwareIdleWait(dispatchCtx, scheduleInput, deps.submitWakeC); sleepErr != nil {
+							if sleepErr := scheduleAwareIdleWait(dispatchCtx, scheduleInput, queueSurface.submitWakeC); sleepErr != nil {
 								return exitClean()
 							}
 						}
@@ -921,7 +917,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 				// armed in the BI-013c non-stranded path below; it expires after
 				// claimSkipInProgressCooldown (5 min) and re-evaluates naturally.
 				if expiry, ok := claimSkipInProgressUntil[snapItemBeadID]; ok && time.Now().Before(expiry) {
-					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 						return exitClean()
 					}
 					continue
@@ -939,12 +935,12 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 				//
 				// Spec ref: specs/handler-pause.md §6.
 				// Bead ref: hk-kac8g.
-				if deps.handlerPauseController != nil {
-					epoch, isPaused := deps.handlerPauseController.PausedEpochFor(core.AgentTypeClaudeCode)
-					lastSeenPauseEpoch = pruneHeldDedupOnEpochChange(&deps, epoch, lastSeenPauseEpoch)
+				if dispatchGates.handlerPauseController != nil {
+					epoch, isPaused := dispatchGates.handlerPauseController.PausedEpochFor(core.AgentTypeClaudeCode)
+					lastSeenPauseEpoch = pruneHeldDedupOnEpochChange(dispatchGates, epoch, lastSeenPauseEpoch)
 					if isPaused {
-						emitHeldEvent(ctx, deps, snapItemBeadID, core.AgentTypeClaudeCode, epoch)
-						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+						emitHeldEvent(ctx, dispatchGates, snapItemBeadID, epoch)
+						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 							return exitClean()
 						}
 						continue
@@ -963,8 +959,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 				preLookupVerdict, preLookupErr := orchestrator.AdmitBeforeLookup(orchestrator.AdmissionInput{
 					Path:            orchestrator.PathQueue,
 					BeadID:          string(snapItemBeadID),
-					DecisionBlocked: deps.decisionBlocker != nil && deps.decisionBlocker.IsBeadBlocked(snapItemBeadID),
-					SentinelBlocked: maint.sentinelBlocksDispatch(deps),
+					DecisionBlocked: dispatchGates.decisionBlocker != nil && dispatchGates.decisionBlocker.IsBeadBlocked(snapItemBeadID),
+					SentinelBlocked: maint.sentinelBlocksDispatch(dispatchGates),
 				})
 				if preLookupErr != nil {
 					wg.Wait()
@@ -974,7 +970,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 					if preLookupVerdict.Message != "" {
 						fmt.Fprint(os.Stderr, preLookupVerdict.Message)
 					}
-					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 						return exitClean()
 					}
 					continue
@@ -1044,7 +1040,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 						fmt.Fprintf(os.Stderr,
 							"daemon: workloop: ShowBead pre-claim (queue-path) %s error (attempt %d/%d, will retry): %v\n",
 							snapItemBeadID, preClaimAttempts, maxItemAttempts, preClaimErr)
-						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 							return exitClean()
 						}
 						continue
@@ -1105,7 +1101,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 									// Queue item is still pending; the next dispatch tick will
 									// see the bead as open and claim it normally. No state
 									// change needed here — skip the deferred-for-ledger-dep path.
-									if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+									if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 										return exitClean()
 									}
 									continue
@@ -1153,7 +1149,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 								lq.Done()
 							}
 						}
-						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 							return exitClean()
 						}
 						continue
@@ -1179,7 +1175,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 					if afterLookupVerdict.Message != "" {
 						fmt.Fprint(os.Stderr, afterLookupVerdict.Message)
 					}
-					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 						return exitClean()
 					}
 					continue
@@ -1206,7 +1202,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 					if beforeStampVerdict.Message != "" {
 						fmt.Fprint(os.Stderr, beforeStampVerdict.Message)
 					}
-					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 						return exitClean()
 					}
 					continue
@@ -1263,14 +1259,14 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 
 					case reservationWriteFailed:
 						// QM-001: say so loudly and abandon the dispatch.
-						reportQueueWriteError(ctx, deps, snapQueueName, reservation)
-						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+						reportQueueWriteError(ctx, dispatchGates, snapQueueName, reservation)
+						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 							return exitClean()
 						}
 						continue
 
 					default: // reservationRetryLater
-						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+						if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 							return exitClean()
 						}
 						continue
@@ -1312,8 +1308,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 			// arrives via the queue surface (harmonik queue submit / append).  This is
 			// the queue-only mode required by the flywheel topology (CL-013/070/071)
 			// where a Pi cognition loop curates dispatch timing.
-			if deps.noAutoPull {
-				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+			if noAutoPull {
+				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 					return exitClean()
 				}
 				continue
@@ -1324,8 +1320,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 			// path is already gated via QueueStatusPausedByDrain.
 			//
 			// Spec ref: specs/operator-nfr.md §4.3 ON-007–ON-010.
-			if deps.operatorPauseCtrl != nil && deps.operatorPauseCtrl.IsPaused() {
-				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+			if dispatchGates.operatorPauseCtrl != nil && dispatchGates.operatorPauseCtrl.IsPaused() {
+				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 					return exitClean()
 				}
 				continue
@@ -1341,14 +1337,14 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 				// Non-fatal: surface to stderr so operators can diagnose CWD/PATH
 				// misconfiguration (hk-c1ln2: silent-failure fix).
 				fmt.Fprintf(os.Stderr, "daemon: workloop: Ready poll error (will retry): %v\n", err)
-				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 					return exitClean()
 				}
 				continue
 			}
 
 			if len(readyRecords) == 0 {
-				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 					return exitClean()
 				}
 				continue
@@ -1364,7 +1360,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 			if readyPathAttempts[beadRecord.BeadID] >= maxItemAttempts {
 				fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s exceeded maxItemAttempts=%d on br-ready path — skipping (hk-6pspu)\n",
 					beadRecord.BeadID, maxItemAttempts)
-				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 					return exitClean()
 				}
 				continue
@@ -1375,12 +1371,12 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 			// ready queue (not claimed) while the handler is paused.
 			//
 			// Bead ref: hk-kac8g.
-			if deps.handlerPauseController != nil {
-				epoch, isPaused := deps.handlerPauseController.PausedEpochFor(core.AgentTypeClaudeCode)
-				lastSeenPauseEpoch = pruneHeldDedupOnEpochChange(&deps, epoch, lastSeenPauseEpoch)
+			if dispatchGates.handlerPauseController != nil {
+				epoch, isPaused := dispatchGates.handlerPauseController.PausedEpochFor(core.AgentTypeClaudeCode)
+				lastSeenPauseEpoch = pruneHeldDedupOnEpochChange(dispatchGates, epoch, lastSeenPauseEpoch)
 				if isPaused {
-					emitHeldEvent(ctx, deps, beadRecord.BeadID, core.AgentTypeClaudeCode, epoch)
-					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+					emitHeldEvent(ctx, dispatchGates, beadRecord.BeadID, epoch)
+					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 						return exitClean()
 					}
 					continue
@@ -1395,8 +1391,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 			readyPreLookupVerdict, readyPreLookupErr := orchestrator.AdmitBeforeLookup(orchestrator.AdmissionInput{
 				Path:            orchestrator.PathBrReady,
 				BeadID:          string(beadRecord.BeadID),
-				DecisionBlocked: deps.decisionBlocker != nil && deps.decisionBlocker.IsBeadBlocked(beadRecord.BeadID),
-				SentinelBlocked: maint.sentinelBlocksDispatch(deps),
+				DecisionBlocked: dispatchGates.decisionBlocker != nil && dispatchGates.decisionBlocker.IsBeadBlocked(beadRecord.BeadID),
+				SentinelBlocked: maint.sentinelBlocksDispatch(dispatchGates),
 			})
 			if readyPreLookupErr != nil {
 				wg.Wait()
@@ -1406,7 +1402,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 				if readyPreLookupVerdict.Message != "" {
 					fmt.Fprint(os.Stderr, readyPreLookupVerdict.Message)
 				}
-				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 					return exitClean()
 				}
 				continue
@@ -1460,21 +1456,21 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 				if readyPathAttempts[beadID] >= maxItemAttempts {
 					fmt.Fprintf(os.Stderr, "daemon: workloop: ShowBead pre-claim check %s failed %d times, skipping bead (hk-kupeo): %v\n",
 						beadID, readyPathAttempts[beadID], showErr)
-					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 						return exitClean()
 					}
 					continue
 				}
 				fmt.Fprintf(os.Stderr, "daemon: workloop: ShowBead pre-claim check %s error (attempt %d/%d, will retry): %v\n",
 					beadID, readyPathAttempts[beadID], maxItemAttempts, showErr)
-				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 					return exitClean()
 				}
 				continue
 			}
 			if showRecord.Status != core.CoarseStatusOpen {
 				fmt.Fprintf(os.Stderr, "daemon: workloop: bead_claim_skipped %s status=%s (competing claim won)\n", beadID, showRecord.Status)
-				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+				if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 					return exitClean()
 				}
 				continue
@@ -1567,7 +1563,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 				}
 				lq.Done()
 			}
-			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, deps.submitWakeC); sleepErr != nil {
+			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 				return exitClean()
 			}
 			continue
@@ -1948,7 +1944,7 @@ func activateFirstPendingGroupLocked(ctx context.Context, deps workLoopDeps, lq 
 //
 // Spec ref: specs/queue-model.md §2.8; §3.1 QM-001.
 // Bead ref: hk-nbjht, hk-gf59k.
-func reevaluateDeferredQueues(ctx context.Context, deps workLoopDeps) bool {
+func reevaluateDeferredQueues(ctx context.Context, deps workLoopDeps, queueSurface queueSurfacePort, dispatchGates dispatchGatesPort) bool {
 	if deps.queueStore == nil {
 		return false
 	}
@@ -1956,13 +1952,13 @@ func reevaluateDeferredQueues(ctx context.Context, deps workLoopDeps) bool {
 	for name, loaded := range deps.queueStore.AllQueues() {
 		observed := loaded
 		// A nil ledger has no blocker facts to offer, so the pass reads the
-		// queue and changes nothing (see workLoopDeps.queueLedger).
-		if deps.queueLedger != nil && hasDeferredItem(loaded) {
+		// queue and changes nothing (see queueSurfacePort.queueLedger).
+		if queueSurface.queueLedger != nil && hasDeferredItem(loaded) {
 			// Keep the state we already read when nothing was committed.
 			// Reading a failed transaction as "no deferred items left" would
 			// send the idle path to an indefinite wait on a queue that still
 			// has work waiting on a blocker.
-			if post := commitDeferredReevaluation(ctx, deps, name); post != nil {
+			if post := commitDeferredReevaluation(ctx, deps, queueSurface, dispatchGates, name); post != nil {
 				observed = post
 			}
 		}
@@ -1981,7 +1977,7 @@ func reevaluateDeferredQueues(ctx context.Context, deps workLoopDeps) bool {
 // Every branch continues the tick. A queue that cannot be re-evaluated or
 // written must not stop the loop dispatching the other queues, and §2.8 makes
 // the next tick run this pass again.
-func commitDeferredReevaluation(ctx context.Context, deps workLoopDeps, name string) *queue.Queue {
+func commitDeferredReevaluation(ctx context.Context, deps workLoopDeps, queueSurface queueSurfacePort, dispatchGates dispatchGatesPort, name string) *queue.Queue {
 	snapshot := deps.queueStore.Snapshot(name)
 	if snapshot.Queue == nil {
 		return nil
@@ -1998,7 +1994,7 @@ func commitDeferredReevaluation(ctx context.Context, deps workLoopDeps, name str
 				// touches no file.
 				return nil
 			}
-			_, err := queue.ReevaluateDeferred(ctx, g, deps.queueLedger)
+			_, err := queue.ReevaluateDeferred(ctx, g, queueSurface.queueLedger)
 			return err
 		},
 	})
@@ -2024,7 +2020,7 @@ func commitDeferredReevaluation(ctx context.Context, deps workLoopDeps, name str
 		// infrastructure_unavailable and daemon_degraded events and the
 		// once-per-queue dedupe. Do not read this comment as a reason the string is
 		// expensive to change.
-		reportQueueWriteError(ctx, deps, name, reservationResult{Outcome: result.Outcome, Err: result.Err})
+		reportQueueWriteError(ctx, dispatchGates, name, reservationResult{Outcome: result.Outcome, Err: result.Err})
 		return nil
 
 	case result.Outcome == queue.OutcomeRejected:
@@ -2037,7 +2033,7 @@ func commitDeferredReevaluation(ctx context.Context, deps workLoopDeps, name str
 		// The write failed or its result is unknown. QM-001 requires three
 		// responses; the store has refused further writes to this name, and
 		// this adds the event and the degraded transition, at most once.
-		reportQueueWriteError(ctx, deps, name, reservationResult{Outcome: result.Outcome, Err: result.Err})
+		reportQueueWriteError(ctx, dispatchGates, name, reservationResult{Outcome: result.Outcome, Err: result.Err})
 		return nil
 	}
 }

@@ -299,9 +299,9 @@ func (e *recordingEmitter) EmitWithRunID(ctx context.Context, _ core.RunID, even
 // spec asks for could not even be built.
 func TestReportQueueWriteError_EmitsBothEventsQM001Requires(t *testing.T) {
 	emitter := &recordingEmitter{}
-	deps := workLoopDeps{bus: emitter, queueWriteErrorReported: map[string]struct{}{}}
+	deps := workLoopDeps{bus: emitter, testDispatchGates: newDispatchGatesPort(emitter, nil, nil, nil)}
 
-	reportQueueWriteError(context.Background(), deps, "main", reservationResult{
+	reportQueueWriteError(context.Background(), newDispatchGatesPortFromDeps(deps), "main", reservationResult{
 		Verdict: reservationWriteFailed,
 		Outcome: queue.OutcomeNotCommitted,
 		Err:     errReserveItemNotPending,
@@ -355,18 +355,18 @@ func TestReportQueueWriteError_EmitsBothEventsQM001Requires(t *testing.T) {
 // of thousands of copies of itself.
 func TestReportQueueWriteError_ReportsOncePerQueue(t *testing.T) {
 	emitter := &recordingEmitter{}
-	deps := workLoopDeps{bus: emitter, queueWriteErrorReported: map[string]struct{}{}}
+	deps := workLoopDeps{bus: emitter, testDispatchGates: newDispatchGatesPort(emitter, nil, nil, nil)}
 	failure := reservationResult{Verdict: reservationWriteFailed, Outcome: queue.OutcomeNotCommitted}
 
 	for range 5 {
-		reportQueueWriteError(context.Background(), deps, "main", failure)
+		reportQueueWriteError(context.Background(), newDispatchGatesPortFromDeps(deps), "main", failure)
 	}
 	if len(emitter.types) != 2 {
 		t.Errorf("emitted %d events for five failures on one queue; want 2 (reported once)", len(emitter.types))
 	}
 
 	// A different queue is a different failure and reports on its own.
-	reportQueueWriteError(context.Background(), deps, "other", failure)
+	reportQueueWriteError(context.Background(), newDispatchGatesPortFromDeps(deps), "other", failure)
 	if len(emitter.types) != 4 {
 		t.Errorf("emitted %d events after a second queue failed; want 4", len(emitter.types))
 	}
@@ -374,7 +374,7 @@ func TestReportQueueWriteError_ReportsOncePerQueue(t *testing.T) {
 
 // A nil bus must not panic the dispatch loop; the stderr message still goes out.
 func TestReportQueueWriteError_NilBusIsSafe(t *testing.T) {
-	reportQueueWriteError(context.Background(), workLoopDeps{}, "main", reservationResult{
+	reportQueueWriteError(context.Background(), newDispatchGatesPortFromDeps(workLoopDeps{}), "main", reservationResult{
 		Outcome: queue.OutcomeCommitIndeterminate,
 	})
 }

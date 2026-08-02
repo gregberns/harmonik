@@ -219,7 +219,7 @@ func TestSubsystemPartition_MovementGovernor_DefaultRuns(t *testing.T) {
 		t.Fatal("newMovementGovernorIfEnabled = nil with no subsystems: block; want a constructed governor (absent config must not disable anything)")
 	}
 
-	governor.tick(context.Background(), deps, schedulePort{})
+	governor.tick(context.Background(), deps, schedulePort{}, newDispatchGatesPortFromDeps(deps))
 
 	if got := ledger.readyCalls(); got != 1 {
 		t.Errorf("brAdapter.Ready called %d times; want 1 (the governor's per-evaluation shell-out must happen when it is enabled)", got)
@@ -231,7 +231,7 @@ func TestSubsystemPartition_MovementGovernor_DefaultRuns(t *testing.T) {
 	// The eval-cadence gate is load-bearing, not politeness: evaluating on every
 	// 2 s poll tick cost 25–50% daemon CPU on large event logs (hk-usn8o). A
 	// second immediate tick, far inside the default cadence, must do nothing.
-	governor.tick(context.Background(), deps, schedulePort{})
+	governor.tick(context.Background(), deps, schedulePort{}, newDispatchGatesPortFromDeps(deps))
 	if got := ledger.readyCalls(); got != 1 {
 		t.Errorf("brAdapter.Ready called %d times after a second immediate tick; want still 1 (the eval cadence must suppress it)", got)
 	}
@@ -263,7 +263,7 @@ subsystems:
 
 	// The loop calls these unconditionally; on an absent governor they are inert.
 	for range 5 {
-		governor.tick(context.Background(), deps, schedulePort{})
+		governor.tick(context.Background(), deps, schedulePort{}, newDispatchGatesPortFromDeps(deps))
 	}
 	if governor.halted() {
 		t.Error("halted() = true on an absent governor; only the governor itself can request the G-liveness halt")
@@ -295,10 +295,10 @@ func TestSubsystemPartition_MovementGovernor_DisabledReleasesDispatchGate(t *tes
 	enabledPC, enabledRoot := subpartLoadConfig(t, "schema_version: 1\n")
 	enabledDeps := wlsubGovernorDeps(enabledRoot, &wlsubBus{}, &wlsubCountingLedger{})
 	enabledDeps.projectCfg = enabledPC
-	enabledDeps.decisionBlocker = blocker
+	enabledDeps.testDispatchGates = newDispatchGatesPort(nil, nil, nil, blocker)
 
 	enabled := newMovementGovernorIfEnabled(wlsubGovernorPort(), true, io.Discard)
-	if !enabled.dispatchBlocked(enabledDeps) {
+	if !enabled.dispatchBlocked(newDispatchGatesPortFromDeps(enabledDeps)) {
 		t.Fatal("dispatchBlocked = false with the governor enabled and a pending sentinel trip restored; the FW3 queue gate must still hold dispatch")
 	}
 
@@ -310,10 +310,10 @@ subsystems:
 `)
 	disabledDeps := wlsubGovernorDeps(disabledRoot, &wlsubBus{}, &wlsubCountingLedger{})
 	disabledDeps.projectCfg = disabledPC
-	disabledDeps.decisionBlocker = blocker
+	disabledDeps.testDispatchGates = newDispatchGatesPort(nil, nil, nil, blocker)
 
 	disabled := newMovementGovernorIfEnabled(wlsubGovernorPort(), false, io.Discard)
-	if disabled.dispatchBlocked(disabledDeps) {
+	if disabled.dispatchBlocked(newDispatchGatesPortFromDeps(disabledDeps)) {
 		t.Error("dispatchBlocked = true with subsystems.movement_governor.enabled: false; a switched-off subsystem must not hold the dispatcher shut through a gate nothing can open")
 	}
 }
@@ -376,7 +376,7 @@ func TestSubsystemPartition_MovementGovernor_NoConfigStillObservesWithoutLivenes
 	ledger := &wlsubCountingLedger{}
 	deps := wlsubGovernorDeps(root, bus, ledger)
 	governor := newMovementGovernorIfEnabled(port, enabled, io.Discard)
-	governor.tick(context.Background(), deps, schedulePort{})
+	governor.tick(context.Background(), deps, schedulePort{}, newDispatchGatesPortFromDeps(deps))
 
 	if got := ledger.readyCalls(); got != 1 {
 		t.Errorf("brAdapter.Ready called %d times, want 1 so no-config still observes", got)
@@ -393,7 +393,7 @@ func TestSubsystemPartition_MovementGovernor_NoConfigStillObservesWithoutLivenes
 	// threshold into a halt.
 	port.mode = "act"
 	actGovernor := newMovementGovernorIfEnabled(port, enabled, io.Discard)
-	actGovernor.tick(context.Background(), deps, schedulePort{})
+	actGovernor.tick(context.Background(), deps, schedulePort{}, newDispatchGatesPortFromDeps(deps))
 	if actGovernor.halted() {
 		t.Error("zero liveness threshold armed a halt in ACT mode")
 	}

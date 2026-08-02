@@ -12,7 +12,7 @@ import (
 // for concurrent access via the embedded atomic.
 //
 // The controller is created once by daemon.Start from cfg.MaxConcurrent,
-// wired into workLoopDeps.concurrencyCtrl, and passed to the HandlerAdapter
+// wired into CapacityPort, and passed to the HandlerAdapter
 // so that queue-set-concurrency RPC ops can adjust the ceiling with no daemon
 // restart. The workloop reads Get() on every capacity-gate check, so a raise
 // takes effect on the next gate evaluation; a lower lets in-flight runs

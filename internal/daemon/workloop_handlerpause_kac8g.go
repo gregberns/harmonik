@@ -27,42 +27,40 @@ func heldDedupKey(beadID core.BeadID, epoch int) string {
 }
 
 // emitHeldEvent emits a queue_item_held_for_handler_pause event for
-// (beadID, agentType, epoch), subject to the at-most-once-per-(bead_id, epoch)
+// (beadID, epoch), subject to the at-most-once-per-(bead_id, epoch)
 // dedup contract from event-model.md §8.11.3.
 //
 // The function is a no-op when:
-//   - deps.bus is nil.
-//   - The (beadID, epoch) pair is already in deps.heldEventDedup (dedup hit).
+//   - gates.bus is nil.
+//   - The (beadID, epoch) pair is already in gates.heldEventDedup (dedup hit).
 //
 // On dedup miss: emit the event and record the key so future calls are suppressed.
 // Emit failures are non-fatal: logged to stderr; dedup key NOT recorded (retried
 // next tick).
 //
 // MUST be called only from the outer poll loop goroutine (single-threaded access
-// to deps.heldEventDedup — no locking needed).
+// to gates.heldEventDedup — no locking needed).
 //
 // Durability class: O (ordinary — reconstructible; low frequency per dedup).
 // Bead ref: hk-kac8g.
-func emitHeldEvent(ctx context.Context, deps workLoopDeps, beadID core.BeadID, agentType core.AgentType, epoch int) {
-	if deps.bus == nil {
+func emitHeldEvent(ctx context.Context, gates dispatchGatesPort, beadID core.BeadID, epoch int) {
+	if gates.bus == nil {
 		return
 	}
-	if deps.heldEventDedup != nil {
-		key := heldDedupKey(beadID, epoch)
-		if _, seen := deps.heldEventDedup[key]; seen {
-			return // dedup hit
-		}
+	key := heldDedupKey(beadID, epoch)
+	if _, seen := gates.heldEventDedup[key]; seen {
+		return // dedup hit
 	}
 
 	payload := core.QueueItemHeldForHandlerPausePayload{
 		BeadID:      string(beadID),
-		AgentType:   agentType,
+		AgentType:   core.AgentTypeClaudeCode,
 		PausedEpoch: epoch,
 	}
 	if !payload.Valid() {
 		fmt.Fprintf(os.Stderr,
 			"daemon: workloop: emitHeldEvent: invalid payload bead=%s agent=%s epoch=%d (skipping)\n",
-			string(beadID), string(agentType), epoch)
+			string(beadID), core.AgentTypeClaudeCode, epoch)
 		return
 	}
 
@@ -71,16 +69,14 @@ func emitHeldEvent(ctx context.Context, deps workLoopDeps, beadID core.BeadID, a
 		fmt.Fprintf(os.Stderr, "daemon: workloop: emitHeldEvent: marshal: %v\n", marshalErr)
 		return
 	}
-	if emitErr := deps.bus.Emit(ctx, core.EventTypeQueueItemHeldForHandlerPause, payloadJSON); emitErr != nil {
+	if emitErr := gates.bus.Emit(ctx, core.EventTypeQueueItemHeldForHandlerPause, payloadJSON); emitErr != nil {
 		// Non-fatal: don't record dedup key so next tick retries.
 		fmt.Fprintf(os.Stderr, "daemon: workloop: emitHeldEvent: emit: %v\n", emitErr)
 		return
 	}
 
 	// Record dedup key only after successful emit.
-	if deps.heldEventDedup != nil {
-		deps.heldEventDedup[heldDedupKey(beadID, epoch)] = struct{}{}
-	}
+	gates.heldEventDedup[key] = struct{}{}
 }
 
 // pruneHeldDedupOnEpochChange clears the heldEventDedup map when the pause
@@ -91,9 +87,9 @@ func emitHeldEvent(ctx context.Context, deps workLoopDeps, beadID core.BeadID, a
 // Returns the new lastSeenEpoch value the caller should store.
 //
 // Bead ref: hk-o48pb (unbounded-growth fix), hk-kac8g.
-func pruneHeldDedupOnEpochChange(deps *workLoopDeps, epoch int, lastSeenEpoch int) int {
-	if epoch != lastSeenEpoch && deps.heldEventDedup != nil {
-		clear(deps.heldEventDedup)
+func pruneHeldDedupOnEpochChange(gates dispatchGatesPort, epoch, lastSeenEpoch int) int {
+	if epoch != lastSeenEpoch {
+		clear(gates.heldEventDedup)
 	}
 	return epoch
 }

@@ -10,12 +10,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/digest"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/projectconfig"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 	runpkg "github.com/gregberns/harmonik/internal/run"
 	"github.com/gregberns/harmonik/internal/schedule"
 	"github.com/gregberns/harmonik/internal/sentinel"
@@ -54,16 +56,27 @@ func (bs *bootState) launchWorkLoop(ctx context.Context, daemonStartTime time.Ti
 	if injectErr := bs.injectWorkLoopDeps(ctx, &deps, &lifecyclePort, bootBackoffDelay); injectErr != nil {
 		return injectErr
 	}
+	maxConcurrent := bs.cfg.MaxConcurrent
+	if maxConcurrent <= 0 {
+		maxConcurrent = 1
+	}
+	capacity := newCapacityPort(maxConcurrent, bs.concurrencyCtrl)
+	queueAdapter, ok := deps.brAdapter.(*brcli.Adapter)
+	if !ok {
+		return fmt.Errorf("daemon.Start: queue ledger: unexpected br adapter %T", deps.brAdapter)
+	}
+	queueSurface := newQueueSurfacePort(bs.qs.WakeCh(), queuewiring.NewBRQueueLedger(queueAdapter))
+	dispatchGates := newDispatchGatesPort(bs.bus, bs.handlerPauseCtrl, bs.opPauseCtrl, bs.decisionBlocker)
 	schedulePort := newSchedulePort(deps, scheduleStore, bs.crewHandler)
 	// `harmonik sleep` suspends enabled jobs; `wake --all` restores them
 	// through this same store.
 	bs.quiesceArbiter.SetScheduleStore(schedulePort.store)
 	bs.startBackgroundLoops(ctx, &deps)
-	bs.wireStaleWatcherReapSeams(ctx, &deps, lifecyclePort, eagerRefill)
+	bs.wireStaleWatcherReapSeams(ctx, &deps, lifecyclePort, capacity, queueSurface, eagerRefill)
 
 	loopDone := make(chan error, 1)
 	go func() {
-		loopDone <- runWorkLoop(ctx, deps, lifecyclePort, ledgerRepair, schedulePort, coordinatorReap, diskReclaim, eagerRefill, governor, governorEnabled)
+		loopDone <- runWorkLoop(ctx, deps, lifecyclePort, ledgerRepair, schedulePort, coordinatorReap, diskReclaim, eagerRefill, governor, governorEnabled, capacity, queueSurface, dispatchGates, bs.cfg.NoAutoPull)
 	}()
 	// Block until the work loop exits (either ctx cancelled or fatal error).
 	<-loopDone
@@ -186,29 +199,15 @@ func newScheduleStore(cfg Config) (*schedule.Store, error) {
 	return store, nil
 }
 
-// injectWorkLoopDeps wires the shared singletons + config toggles into the work
-// loop deps: the queue store + wake channel, the pause/decision/concurrency
-// controllers, the live worker-toggle (hk-xjbvi), the shared RunRegistry, the
-// test-only overrides, and the post-boot spawn-substrate readiness gate (hk-bk33).
-// The schedule path has its own SchedulePort so it cannot read this bundle.
+// injectWorkLoopDeps wires shared run handles and boot-only seams into the
+// work-loop dependencies. The dispatch ports are built later in launchWorkLoop.
+// The schedule path has its own SchedulePort.
 func (bs *bootState) injectWorkLoopDeps(ctx context.Context, deps *workLoopDeps, loopLifecycle *loopLifecyclePort, bootBackoffDelay time.Duration) error {
 	cfg := bs.cfg
 
-	// Queue store + submit-wake channel (QM-060; hk-24xn1).
+	// Queue store is a shared run handle. Its wake channel and ledger belong to
+	// QueueSurfacePort, which launchWorkLoop builds after this injection.
 	deps.queueStore = bs.qs
-	deps.submitWakeC = bs.qs.WakeCh()
-
-	// Dispatcher skip-on-paused gate (hk-kac8g): nil → gate disabled.
-	deps.handlerPauseController = cfg.HandlerPauseController
-	// HandlerPauseController for the dispatch gate (hk-m0k0a); overrides the
-	// cfg-supplied value above with the daemon-owned controller.
-	deps.handlerPauseController = bs.handlerPauseCtrl
-	// OperatorPauseController br-ready dispatch gate (hk-ry8q1); nil in unit-test mode.
-	deps.operatorPauseCtrl = bs.opPauseCtrl
-	// DecisionBlocker dispatch gate (EV-043, EV-043a; hk-pbmsq).
-	deps.decisionBlocker = bs.decisionBlocker
-	// ConcurrencyController live ceiling (hk-ohiaf); nil falls back to the static field.
-	deps.concurrencyCtrl = bs.concurrencyCtrl
 
 	// Live worker enable/disable toggle (hk-xjbvi): the closure captures the SAME
 	// registry the dispatch path reads via SelectWorker.
@@ -336,9 +335,9 @@ func (bs *bootState) startWorkerReportLoopIfEnabled(ctx context.Context, reg *wo
 // (hk-mdus1) now that deps (queueStore, emitter) is fully built. Two-phase because
 // the watcher was constructed + started (StartWatcher) far earlier, before
 // workLoopDeps existed.
-func (bs *bootState) wireStaleWatcherReapSeams(ctx context.Context, deps *workLoopDeps, loopLifecycle loopLifecyclePort, eagerRefill eagerRefillPort) {
+func (bs *bootState) wireStaleWatcherReapSeams(ctx context.Context, deps *workLoopDeps, loopLifecycle loopLifecyclePort, capacity capacityPort, queueSurface queueSurfacePort, eagerRefill eagerRefillPort) {
 	cfg := bs.cfg
-	reapPort := newReapSeamPort(*deps, loopLifecycle, eagerRefill)
+	reapPort := newReapSeamPortWithPorts(*deps, loopLifecycle, capacity, queueSurface, eagerRefill)
 
 	// ForceReap: on a wedged run's force-Unregister, emit a terminal run_failed and
 	// drive the owning queue item terminal so the group advances.

@@ -54,13 +54,13 @@ func TestWorkLoopOwnerPorts_WaitsForSpawnReadiness(t *testing.T) {
 		brAdapter:     adapter,
 		runRegistry:   newLocalRunRegistry(),
 		localInFlight: new(atomic.Int32),
-		maxConcurrent: 1,
+		testCapacity:  newCapacityPort(1, nil),
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- runWorkLoop(ctx, deps, loopLifecyclePort{spawnSubstrateReadyCh: spawnReady}, newLedgerRepairPort(deps), schedulePort{}, coordinatorReapPort{}, newTestDiskReclaimPort(deps), eagerRefillPort{}, governorPort{}, false)
+		done <- runWorkLoop(ctx, deps, loopLifecyclePort{spawnSubstrateReadyCh: spawnReady}, newLedgerRepairPort(deps), schedulePort{}, coordinatorReapPort{}, newTestDiskReclaimPort(deps), eagerRefillPort{}, governorPort{}, false, deps.testCapacity, deps.testQueueSurface, newDispatchGatesPortFromDeps(deps), deps.testNoAutoPull)
 	}()
 
 	select {

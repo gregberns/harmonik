@@ -79,12 +79,12 @@ func em063FixtureStreamQueueWithBeads(beadIDs ...string) *queue.Queue {
 func em063FixtureDeps(t *testing.T, qs *queuewiring.QueueStore) workLoopDeps {
 	t.Helper()
 	return workLoopDeps{
-		queueStore:    qs,
-		projectDir:    t.TempDir(),
-		maxConcurrent: 4,
-		runRegistry:   newLocalRunRegistry(),
-		bus:           &noopEmitter{},
-		queueLedger:   nil,
+		queueStore:       qs,
+		projectDir:       t.TempDir(),
+		testCapacity:     newCapacityPort(4, nil),
+		testQueueSurface: newQueueSurfacePort(nil, nil),
+		runRegistry:      newLocalRunRegistry(),
+		bus:              &noopEmitter{},
 	}
 }
 
@@ -599,7 +599,7 @@ func TestStagedBeadGenerator_NoopWhenAtCeiling(t *testing.T) {
 	writeFakeBrScript(t, scriptPath, argsFile)
 
 	deps, eagerRefill := stagedBeadFixtureDeps(t, projectDir, scriptPath)
-	deps.maxConcurrent = 1
+	deps.testCapacity.maxConcurrent = 1
 
 	// Register a fake in-flight run to saturate the ceiling.
 	deps.runRegistry.Register(core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000099")), &RunHandle{
@@ -721,7 +721,7 @@ func TestStagedBeadGenerator_FiresAtMaxMinusOne(t *testing.T) {
 	writeFakeBrScript(t, scriptPath, argsFile)
 
 	deps, eagerRefill := stagedBeadFixtureDeps(t, projectDir, scriptPath)
-	deps.maxConcurrent = 3
+	deps.testCapacity.maxConcurrent = 3
 
 	// Register 2 in-flight runs: Len() == 2 == maxConcurrent-1 → one slot free.
 	deps.runRegistry.Register(core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000001")), &RunHandle{

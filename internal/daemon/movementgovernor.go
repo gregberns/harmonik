@@ -116,11 +116,11 @@ func (g *movementGovernor) halted() bool {
 // gate no code path can open: one stale pending trip file in
 // .harmonik/decision_acks/ would wedge every dispatch on every subsequent boot,
 // forever. A subsystem that is off does not get to hold the dispatcher shut.
-func (g *movementGovernor) dispatchBlocked(deps workLoopDeps) bool {
+func (g *movementGovernor) dispatchBlocked(dispatchGates dispatchGatesPort) bool {
 	if g == nil {
 		return false
 	}
-	return deps.decisionBlocker != nil && deps.decisionBlocker.IsQueueBlocked(sentinelSubjectIDACT)
+	return dispatchGates.decisionBlocker != nil && dispatchGates.decisionBlocker.IsQueueBlocked(sentinelSubjectIDACT)
 }
 
 // tick performs at most one governor evaluation, honouring the configured
@@ -129,7 +129,7 @@ func (g *movementGovernor) dispatchBlocked(deps workLoopDeps) bool {
 // Cadence-gating is load-bearing, not politeness: each evaluation scans
 // events.jsonl, and running it on every 2 s poll tick cost 25–50% daemon CPU on
 // large logs (hk-usn8o).
-func (g *movementGovernor) tick(ctx context.Context, deps workLoopDeps, schedule schedulePort) {
+func (g *movementGovernor) tick(ctx context.Context, deps workLoopDeps, schedule schedulePort, dispatchGates dispatchGatesPort) {
 	if g == nil {
 		return
 	}
@@ -141,12 +141,12 @@ func (g *movementGovernor) tick(ctx context.Context, deps workLoopDeps, schedule
 		if !g.dueForEval(deps, now) {
 			return
 		}
-		g.tickObserve(ctx, deps, now)
+		g.tickObserve(ctx, deps, dispatchGates, now)
 	case "act":
 		if !g.dueForEval(deps, now) {
 			return
 		}
-		g.tickAct(ctx, deps, schedule, now)
+		g.tickAct(ctx, deps, schedule, dispatchGates, now)
 	}
 }
 
@@ -168,10 +168,10 @@ func (g *movementGovernor) dueForEval(deps workLoopDeps, now time.Time) bool {
 // tickObserve is FW2: evaluate and emit governor_signal, nothing more.
 //
 // OBSERVE-ONLY CONTRACT: no trip, no halt, no dispatch side-effects.
-func (g *movementGovernor) tickObserve(ctx context.Context, deps workLoopDeps, now time.Time) {
-	in, _ := g.gatherInput(ctx, deps, now)
+func (g *movementGovernor) tickObserve(ctx context.Context, deps workLoopDeps, dispatchGates dispatchGatesPort, now time.Time) {
+	in, _ := g.gatherInput(ctx, deps, dispatchGates, now)
 	sig := sentinel.Evaluate(ctx, g.port.state, in, g.port.config)
-	governorEmitSignal(ctx, deps, sig)
+	governorEmitSignal(ctx, dispatchGates, sig)
 }
 
 // tickAct is FW3: evaluate, emit governor_signal, then act on the activation
@@ -182,31 +182,33 @@ func (g *movementGovernor) tickObserve(ctx context.Context, deps workLoopDeps, n
 // .harmonik/decision_acks/ (the EV-043a anchor) AND updates the in-memory
 // DecisionBlocker, so dispatchBlocked() gates all dispatch while a trip is
 // pending. Config default is "observe"; operators opt into "act" explicitly.
-func (g *movementGovernor) tickAct(ctx context.Context, deps workLoopDeps, schedule schedulePort, now time.Time) {
-	in, readyBeadIDs := g.gatherInput(ctx, deps, now)
+func (g *movementGovernor) tickAct(ctx context.Context, deps workLoopDeps, schedule schedulePort, dispatchGates dispatchGatesPort, now time.Time) {
+	in, readyBeadIDs := g.gatherInput(ctx, deps, dispatchGates, now)
 	sig := sentinel.Evaluate(ctx, g.port.state, in, g.port.config)
-	governorEmitSignal(ctx, deps, sig)
+	governorEmitSignal(ctx, dispatchGates, sig)
 
 	switch {
 	case sig.Level == sentinel.ActivationHalt:
-		g.onHalt(ctx, deps, sig)
+		g.onHalt(ctx, dispatchGates, sig)
 	case sig.Level == sentinel.ActivationActive && sig.SuppressedBy == "":
-		g.onTrip(ctx, deps, schedule, now, readyBeadIDs, in.HasUndeployedTail)
+		g.onTrip(ctx, deps, schedule, dispatchGates, now, readyBeadIDs, in.HasUndeployedTail)
 	case sig.Level == sentinel.ActivationDormant && g.pendingAckToken != "":
-		g.onClear(ctx, deps, now)
+		g.onClear(ctx, deps, dispatchGates, now)
 	}
 }
 
 // onHalt fires the G-liveness doom-loop self-kill: emit the liveness_halt page
 // event and arm haltRequested so the next loop iteration drains and exits.
-func (g *movementGovernor) onHalt(ctx context.Context, deps workLoopDeps, sig sentinel.GovernorSignal) {
+func (g *movementGovernor) onHalt(ctx context.Context, dispatchGates dispatchGatesPort, sig sentinel.GovernorSignal) {
 	g.haltRequested = true
 	haltPayload, _ := json.Marshal(map[string]interface{}{ //nolint:errcheck,errchkjson // a fixed map of two ints cannot fail to marshal
 		"consecutive_zero_cycles": sig.ConsecutiveZeroCycles,
 		"liveness_no_progress_n":  g.port.config.LivenessNoProgressN,
 	})
-	_ = deps.bus.Emit(ctx, core.EventTypeLivenessHalt, haltPayload) //nolint:errcheck // best-effort page emit; the halt proceeds regardless
-	fmt.Fprintf(g.logW,                                             //nolint:errcheck // best-effort stderr status log
+	if dispatchGates.bus != nil {
+		_ = dispatchGates.bus.Emit(ctx, core.EventTypeLivenessHalt, haltPayload) //nolint:errcheck // best-effort page emit; the halt proceeds regardless
+	}
+	fmt.Fprintf(g.logW, //nolint:errcheck // best-effort stderr status log
 		"daemon: workloop: sentinel: G-liveness halt fired after %d zero-progress cycles (threshold=%d); halting dispatch\n",
 		sig.ConsecutiveZeroCycles, g.port.config.LivenessNoProgressN)
 }
@@ -219,11 +221,11 @@ func (g *movementGovernor) onHalt(ctx context.Context, deps workLoopDeps, sig se
 // externally acknowledged it between ticks; when that happened, clear the
 // in-memory token and the DecisionBlocker so this pass emits a fresh trip for
 // re-adjudication (spec §2.2 clause 2).
-func (g *movementGovernor) onTrip(ctx context.Context, deps workLoopDeps, schedule schedulePort, now time.Time, readyBeadIDs []string, hasUndeployedTail bool) {
+func (g *movementGovernor) onTrip(ctx context.Context, deps workLoopDeps, schedule schedulePort, dispatchGates dispatchGatesPort, now time.Time, readyBeadIDs []string, hasUndeployedTail bool) {
 	if g.pendingAckToken != "" {
 		if externallyAcked, checkErr := sentinel.IsTripAcknowledged(deps.projectDir, g.pendingAckToken); checkErr == nil && externallyAcked {
-			if deps.decisionBlocker != nil {
-				deps.decisionBlocker.Acknowledge(decisionAckSubjectKindQueue, sentinelSubjectIDACT, g.pendingAckToken)
+			if dispatchGates.decisionBlocker != nil {
+				dispatchGates.decisionBlocker.Acknowledge(decisionAckSubjectKindQueue, sentinelSubjectIDACT, g.pendingAckToken)
 			}
 			g.pendingAckToken = ""
 		}
@@ -240,8 +242,8 @@ func (g *movementGovernor) onTrip(ctx context.Context, deps workLoopDeps, schedu
 			fmt.Fprintf(g.logW, "daemon: workloop: sentinel: EmitTrip failed (non-fatal): %v\n", tripErr) //nolint:errcheck // best-effort stderr status log
 		} else if tok != "" {
 			g.pendingAckToken = tok
-			if deps.decisionBlocker != nil {
-				deps.decisionBlocker.AddQueueBlock(sentinelSubjectIDACT, tok)
+			if dispatchGates.decisionBlocker != nil {
+				dispatchGates.decisionBlocker.AddQueueBlock(sentinelSubjectIDACT, tok)
 			}
 		}
 	}
@@ -284,7 +286,7 @@ func (g *movementGovernor) spawnAdversary(ctx context.Context, deps workLoopDeps
 // RecordLegitimateHalt), skip ClearTrip so we do not stack a spurious
 // governor_movement event on top of the existing legitimate_halt clear — but
 // always release the in-memory token and the DecisionBlocker so dispatch resumes.
-func (g *movementGovernor) onClear(ctx context.Context, deps workLoopDeps, now time.Time) {
+func (g *movementGovernor) onClear(ctx context.Context, deps workLoopDeps, dispatchGates dispatchGatesPort, now time.Time) {
 	alreadyAcked, _ := sentinel.IsTripAcknowledged(deps.projectDir, g.pendingAckToken) //nolint:errcheck // an unreadable ack file reads as "not acknowledged"; ClearTrip below is then the authority
 	if !alreadyAcked {
 		if clearErr := sentinel.ClearTrip(ctx, deps.projectDir, g.pendingAckToken, now); clearErr != nil {
@@ -292,8 +294,8 @@ func (g *movementGovernor) onClear(ctx context.Context, deps workLoopDeps, now t
 			return                                                                                          // preserve pendingAckToken for retry on the next eval
 		}
 	}
-	if deps.decisionBlocker != nil {
-		deps.decisionBlocker.Acknowledge(decisionAckSubjectKindQueue, sentinelSubjectIDACT, g.pendingAckToken)
+	if dispatchGates.decisionBlocker != nil {
+		dispatchGates.decisionBlocker.Acknowledge(decisionAckSubjectKindQueue, sentinelSubjectIDACT, g.pendingAckToken)
 	}
 	g.pendingAckToken = ""
 }
@@ -304,7 +306,7 @@ func (g *movementGovernor) onClear(ctx context.Context, deps workLoopDeps, now t
 //
 // Both signals fail soft: a `br` error means "no ready beads" / "no undeployed
 // tail" rather than an aborted evaluation, matching the inline behaviour.
-func (g *movementGovernor) gatherInput(ctx context.Context, deps workLoopDeps, now time.Time) (input sentinel.GovernorInput, readyBeadIDs []string) {
+func (g *movementGovernor) gatherInput(ctx context.Context, deps workLoopDeps, dispatchGates dispatchGatesPort, now time.Time) (input sentinel.GovernorInput, readyBeadIDs []string) {
 	// hasReadyBeads: ≥1 unblocked open bead exists (flywheel-motion.md §1.3).
 	// Left nil (not an empty slice) when there is nothing ready, so the ACT-mode
 	// trip payload marshals ready_bead_ids exactly as it did inline.
@@ -326,16 +328,18 @@ func (g *movementGovernor) gatherInput(ctx context.Context, deps workLoopDeps, n
 		Now:               now,
 		HasReadyBeads:     len(readyBeadIDs) > 0,
 		HasUndeployedTail: hasUndeployedTail,
-		OperatorPaused:    deps.operatorPauseCtrl != nil && deps.operatorPauseCtrl.IsPaused(),
+		OperatorPaused:    dispatchGates.operatorPauseCtrl != nil && dispatchGates.operatorPauseCtrl.IsPaused(),
 	}, readyBeadIDs
 }
 
 // governorEmitSignal publishes one governor_signal. Best-effort: a marshal or
 // emit failure never interrupts the evaluation.
-func governorEmitSignal(ctx context.Context, deps workLoopDeps, sig sentinel.GovernorSignal) {
+func governorEmitSignal(ctx context.Context, dispatchGates dispatchGatesPort, sig sentinel.GovernorSignal) {
 	raw, mErr := json.Marshal(sig)
 	if mErr != nil {
 		return
 	}
-	_ = deps.bus.Emit(ctx, core.EventTypeGovernorSignal, raw) //nolint:errcheck // best-effort observability emit
+	if dispatchGates.bus != nil {
+		_ = dispatchGates.bus.Emit(ctx, core.EventTypeGovernorSignal, raw) //nolint:errcheck // best-effort observability emit
+	}
 }

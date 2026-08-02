@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
 )
@@ -296,23 +297,21 @@ func failQueueItem(ctx context.Context, deps workLoopDeps, res queueReservation,
 // replaced need different repairs, and neither clears by retrying.
 //
 // Only the outer dispatch loop calls this, so the dedup map needs no locking —
-// the same single-threaded discipline as deps.heldEventDedup.
+// the same single-threaded discipline as DispatchGatesPort.heldEventDedup.
 //
 // Spec ref: specs/queue-model.md §3.1 QM-001; specs/event-model.md §8.7.15,
 //
 //	§8.7.5; specs/process-lifecycle.md §4.8 PL-010.
-func reportQueueWriteError(ctx context.Context, deps workLoopDeps, queueName string, res reservationResult) {
+func reportQueueWriteError(ctx context.Context, gates dispatchGatesPort, queueName string, res reservationResult) {
 	detail := fmt.Sprintf("queue %q write outcome=%s", queueName, res.Outcome)
 	if res.Err != nil {
 		detail += ": " + res.Err.Error()
 	}
 
-	if deps.queueWriteErrorReported != nil {
-		if _, reported := deps.queueWriteErrorReported[queueName]; reported {
-			return
-		}
-		deps.queueWriteErrorReported[queueName] = struct{}{}
+	if _, reported := gates.queueWriteErrorReported[queueName]; reported {
+		return
 	}
+	gates.queueWriteErrorReported[queueName] = struct{}{}
 
 	fmt.Fprintf(os.Stderr,
 		"daemon: workloop: QUEUE WRITE FAILED — %s. Dispatch abandoned; no bead was claimed and no run was started. "+
@@ -320,15 +319,15 @@ func reportQueueWriteError(ctx context.Context, deps workLoopDeps, queueName str
 			"check free disk space and the .harmonik/queues directory, then restart the daemon.\n",
 		detail, queueName)
 
-	if deps.bus == nil {
+	if gates.bus == nil {
 		return
 	}
-	emitTypedEvent(ctx, deps, core.EventTypeInfrastructureUnavailable, core.InfrastructureUnavailablePayload{
+	emitTypedEvent(ctx, gates.bus, core.EventTypeInfrastructureUnavailable, core.InfrastructureUnavailablePayload{
 		FailedPrerequisite: core.InfrastructurePrerequisiteQueueWriteError,
 		DetailString:       detail,
 		RetryCount:         0,
 	})
-	emitTypedEvent(ctx, deps, core.EventTypeDaemonDegraded, core.DaemonDegradedPayload{
+	emitTypedEvent(ctx, gates.bus, core.EventTypeDaemonDegraded, core.DaemonDegradedPayload{
 		DetectedAt: time.Now().UTC().Format(time.RFC3339),
 		Reason:     core.DaemonDegradedReasonInfrastructureUnavailable,
 	})
@@ -340,7 +339,7 @@ type validPayload interface{ Valid() bool }
 // emitTypedEvent validates, marshals, and emits one payload, reporting each
 // step's failure to stderr rather than dropping it. An event that cannot be
 // emitted is exactly the case where the operator has no other signal.
-func emitTypedEvent(ctx context.Context, deps workLoopDeps, eventType core.EventType, payload validPayload) {
+func emitTypedEvent(ctx context.Context, bus handlercontract.EventEmitter, eventType core.EventType, payload validPayload) {
 	if !payload.Valid() {
 		fmt.Fprintf(os.Stderr, "daemon: workloop: %s: payload is not valid; not emitting\n", eventType)
 		return
@@ -350,7 +349,7 @@ func emitTypedEvent(ctx context.Context, deps workLoopDeps, eventType core.Event
 		fmt.Fprintf(os.Stderr, "daemon: workloop: %s: marshal: %v\n", eventType, marshalErr)
 		return
 	}
-	if emitErr := deps.bus.Emit(ctx, eventType, payloadJSON); emitErr != nil {
+	if emitErr := bus.Emit(ctx, eventType, payloadJSON); emitErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: workloop: %s: emit: %v\n", eventType, emitErr)
 	}
 }

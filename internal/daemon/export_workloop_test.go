@@ -49,34 +49,34 @@ func WorkflowModeDefaultOf(deps workLoopDeps) core.WorkflowMode {
 // ExportedRunWorkLoop runs the work loop with the given deps until ctx is
 // cancelled, mirroring runWorkLoop.
 func ExportedRunWorkLoop(ctx context.Context, deps workLoopDeps) error {
-	return runWorkLoop(ctx, deps, loopLifecyclePort{}, newLedgerRepairPort(deps), schedulePort{}, coordinatorReapPort{}, newTestDiskReclaimPort(deps), eagerRefillPort{}, governorPort{}, false)
+	return runWorkLoop(ctx, deps, loopLifecyclePort{}, newLedgerRepairPort(deps), schedulePort{}, coordinatorReapPort{}, newTestDiskReclaimPort(deps), eagerRefillPort{}, governorPort{}, false, deps.testCapacity, deps.testQueueSurface, newDispatchGatesPortFromDeps(deps), deps.testNoAutoPull)
 }
 
 // ExportedRunWorkLoopWithTestPorts runs the loop with lifecycle and repair
 // values supplied by WorkLoopDepsParams. It keeps those owner ports outside the
 // main test dependency bundle.
 func ExportedRunWorkLoopWithTestPorts(ctx context.Context, deps workLoopDeps, p WorkLoopDepsParams) error {
-	return runWorkLoop(ctx, deps, testLoopLifecyclePort(p), testLedgerRepairPort(p), schedulePort{}, coordinatorReapPort{}, newTestDiskReclaimPort(deps), eagerRefillPort{}, governorPort{}, false)
+	return runWorkLoop(ctx, deps, testLoopLifecyclePort(p), testLedgerRepairPort(p), schedulePort{}, coordinatorReapPort{}, newTestDiskReclaimPort(deps), eagerRefillPort{}, governorPort{}, false, deps.testCapacity, deps.testQueueSurface, newDispatchGatesPortFromDeps(deps), p.NoAutoPull)
 }
 
 // ExportedRunWorkLoopWithDiskReclaim runs the work loop with a caller-built
 // disk port. Tests use it to prove the disk latch stops admission without any
 // real cache clean or worktree reclaim.
 func ExportedRunWorkLoopWithDiskReclaim(ctx context.Context, deps workLoopDeps, diskReclaim diskReclaimPort) error {
-	return runWorkLoop(ctx, deps, loopLifecyclePort{}, newLedgerRepairPort(deps), schedulePort{}, coordinatorReapPort{}, diskReclaim, eagerRefillPort{}, governorPort{}, false)
+	return runWorkLoop(ctx, deps, loopLifecyclePort{}, newLedgerRepairPort(deps), schedulePort{}, coordinatorReapPort{}, diskReclaim, eagerRefillPort{}, governorPort{}, false, deps.testCapacity, deps.testQueueSurface, newDispatchGatesPortFromDeps(deps), deps.testNoAutoPull)
 }
 
 // ExportedRunWorkLoopWithDiskReclaimAndTestPorts combines the disk test seam
 // with test-owned lifecycle and ledger-repair ports.
 func ExportedRunWorkLoopWithDiskReclaimAndTestPorts(ctx context.Context, deps workLoopDeps, diskReclaim diskReclaimPort, p WorkLoopDepsParams) error {
-	return runWorkLoop(ctx, deps, testLoopLifecyclePort(p), testLedgerRepairPort(p), schedulePort{}, coordinatorReapPort{}, diskReclaim, eagerRefillPort{}, governorPort{}, false)
+	return runWorkLoop(ctx, deps, testLoopLifecyclePort(p), testLedgerRepairPort(p), schedulePort{}, coordinatorReapPort{}, diskReclaim, eagerRefillPort{}, governorPort{}, false, deps.testCapacity, deps.testQueueSurface, newDispatchGatesPortFromDeps(deps), p.NoAutoPull)
 }
 
 // ExportedRunWorkLoopWithGovernor runs the work loop with an enabled governor
 // port. Tests use it to exercise the sentinel dispatch gate without restoring
 // governor values to workLoopDeps.
 func ExportedRunWorkLoopWithGovernor(ctx context.Context, deps workLoopDeps, state *sentinel.GovernorState) error {
-	return runWorkLoop(ctx, deps, loopLifecyclePort{}, newLedgerRepairPort(deps), schedulePort{}, coordinatorReapPort{}, newTestDiskReclaimPort(deps), eagerRefillPort{}, governorPort{state: state}, true)
+	return runWorkLoop(ctx, deps, loopLifecyclePort{}, newLedgerRepairPort(deps), schedulePort{}, coordinatorReapPort{}, newTestDiskReclaimPort(deps), eagerRefillPort{}, governorPort{state: state}, true, deps.testCapacity, deps.testQueueSurface, newDispatchGatesPortFromDeps(deps), deps.testNoAutoPull)
 }
 
 // ExportedRunWorkLoopWithGovernorAndDiskReclaim combines the two maintenance
@@ -84,7 +84,7 @@ func ExportedRunWorkLoopWithGovernor(ctx context.Context, deps workLoopDeps, sta
 func ExportedRunWorkLoopWithGovernorAndDiskReclaim(ctx context.Context, deps workLoopDeps,
 	state *sentinel.GovernorState, diskReclaim diskReclaimPort,
 ) error {
-	return runWorkLoop(ctx, deps, loopLifecyclePort{}, newLedgerRepairPort(deps), schedulePort{}, coordinatorReapPort{}, diskReclaim, eagerRefillPort{}, governorPort{state: state}, true)
+	return runWorkLoop(ctx, deps, loopLifecyclePort{}, newLedgerRepairPort(deps), schedulePort{}, coordinatorReapPort{}, diskReclaim, eagerRefillPort{}, governorPort{state: state}, true, deps.testCapacity, deps.testQueueSurface, newDispatchGatesPortFromDeps(deps), deps.testNoAutoPull)
 }
 
 // ExportedStoreLocalInFlight preloads the split-gate local-in-flight counter on

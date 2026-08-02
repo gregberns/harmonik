@@ -132,6 +132,10 @@ type loopMaintenance struct {
 	// queue wake channel. Those values stay with their owning surfaces.
 	schedule schedulePort
 
+	capacity      capacityPort
+	queueSurface  queueSurfacePort
+	dispatchGates dispatchGatesPort
+
 	// dashGate is the dashboard staleness forcing gate, or nil when
 	// `subsystems.dashboard_gate.enabled: false`. Every method tolerates nil.
 	dashGate *dashboardGate
@@ -166,13 +170,16 @@ type loopMaintenance struct {
 // logW is passed straight through. Both sub-constructors already substitute
 // os.Stderr for a nil writer, so a third copy of that guard here would be dead
 // code (the reviewer's point, and it also keeps os out of this file's imports).
-func newLoopMaintenance(deps workLoopDeps, lifecycle loopLifecyclePort, schedule schedulePort, coordinatorReap coordinatorReapPort, diskReclaim diskReclaimPort, eagerRefill eagerRefillPort, governor governorPort, governorEnabled bool, logW io.Writer) *loopMaintenance {
+func newLoopMaintenance(deps workLoopDeps, lifecycle loopLifecyclePort, schedule schedulePort, coordinatorReap coordinatorReapPort, diskReclaim diskReclaimPort, eagerRefill eagerRefillPort, governor governorPort, governorEnabled bool, capacity capacityPort, queueSurface queueSurfacePort, dispatchGates dispatchGatesPort, logW io.Writer) *loopMaintenance {
 	return &loopMaintenance{
 		lifecycle:       lifecycle,
 		coordinatorReap: coordinatorReap,
 		diskReclaim:     diskReclaim,
 		eagerRefill:     eagerRefill,
 		schedule:        schedule,
+		capacity:        capacity,
+		queueSurface:    queueSurface,
+		dispatchGates:   dispatchGates,
 		dashGate:        newDashboardGateIfEnabled(deps.projectCfg, logW),
 		governor:        newMovementGovernorIfEnabled(governor, governorEnabled, logW),
 	}
@@ -275,14 +282,14 @@ func (m *loopMaintenance) tickBeforeSelect(ctx context.Context, deps workLoopDep
 	//
 	// Spec ref: specs/execution-model.md §4.13 EM-062.
 	// Bead ref: hk-9321v.
-	eagerRefillEval(ctx, newReapSeamPort(deps, m.lifecycle, m.eagerRefill))
+	eagerRefillEval(ctx, newReapSeamPortWithPorts(deps, m.lifecycle, m.capacity, m.queueSurface, m.eagerRefill))
 
 	// Sentinel movement governor (FW2 hk-z1lr observe / FW3 hk-4toh act). One
 	// call: the mode split, the eval cadence gate (hk-usn8o — each evaluation
 	// scans events.jsonl), the trip/clear/halt handling and the adversary spawn
 	// all live in movementGovernor (movementgovernor.go). No-op — and never
 	// constructed — when the subsystem is switched off.
-	m.governor.tick(ctx, deps, m.schedule)
+	m.governor.tick(ctx, deps, m.schedule, m.dispatchGates)
 
 	return maintenanceObservation{blockedQueues: m.dashGate.blockedQueueSet()}
 }
@@ -312,6 +319,6 @@ func (m *loopMaintenance) tickBeforeSelect(ctx context.Context, deps workLoopDep
 //
 // False when the governor subsystem is absent. movementgovernor.go documents why
 // keeping the read while removing the subsystem would wedge dispatch forever.
-func (m *loopMaintenance) sentinelBlocksDispatch(deps workLoopDeps) bool {
-	return m.governor.dispatchBlocked(deps)
+func (m *loopMaintenance) sentinelBlocksDispatch(dispatchGates dispatchGatesPort) bool {
+	return m.governor.dispatchBlocked(dispatchGates)
 }

@@ -144,13 +144,13 @@ func bt6FakeBr(t *testing.T, scriptPath, argsFile string) {
 func bt6Deps(t *testing.T, projectDir, brPath string) (workLoopDeps, eagerRefillPort) {
 	t.Helper()
 	return workLoopDeps{
-			queueStore:    nil,
-			projectDir:    projectDir,
-			brPath:        brPath,
-			maxConcurrent: 4,
-			runRegistry:   newLocalRunRegistry(),
-			bus:           &noopEmitter{},
-			targetBranch:  "main",
+			queueStore:   nil,
+			projectDir:   projectDir,
+			brPath:       brPath,
+			testCapacity: newCapacityPort(4, nil),
+			runRegistry:  newLocalRunRegistry(),
+			bus:          &noopEmitter{},
+			targetBranch: "main",
 		}, eagerRefillPort{
 			followUpLedger:   make(map[string]struct{}),
 			followUpLedgerMu: new(sync.Mutex),

@@ -181,34 +181,12 @@ type workLoopDeps struct {
 	// Bead ref: hk-e61c3.2.
 	runRegistry *RunRegistry
 
-	// maxConcurrent is the ceiling on simultaneously in-flight bead goroutines.
-	// Sourced from daemon.Config.MaxConcurrent (zero → 1 per Config godoc).
-	// Row 6 (hk-e61c3.1) adds this field to Config; row 5 (this bead) enforces it.
+	// The fields in this group remain only for test-export construction. The
+	// production loop receives CapacityPort from launchWorkLoop.
 	//
-	// POST_OPERATIONAL_PARALLELISM_ROADMAP §6: enforcement lives here, NOT in the bus
-	// or adapter.
-	//
-	// When concurrencyCtrl is non-nil, the dispatch gate reads the ceiling from
-	// the controller atomically each tick instead of this static field, enabling
-	// runtime adjustment via queue-set-concurrency RPC (hk-ohiaf).
-	//
-	// PL-017a(a): hook-bridge relay grandchildren (harmonik hook-relay ...) are
-	// spawned by agent subprocesses, never by the dispatch loop, so they are
-	// naturally excluded from this ceiling without any explicit gate.
-	//
-	// Spec ref: specs/execution-model.md §4.11 EM-051 (max_concurrent configuration).
-	// Spec ref: specs/process-lifecycle.md §4.5 PL-017a(a) — relay grandchildren
-	// not subject to this ceiling.
-	// Bead ref: hk-e61c3.2.
-	maxConcurrent int
-
-	// concurrencyCtrl is the optional runtime-mutable ceiling controller.
-	// When non-nil the dispatch gate reads from it each tick, superseding the
-	// static maxConcurrent field. Set by daemon.Start (hk-ohiaf); nil in tests
-	// that do not need live adjustment.
-	//
-	// Bead ref: hk-ohiaf.
-	concurrencyCtrl *ConcurrencyController
+	// testCapacity supports test exports. It keeps the static ceiling and the
+	// live controller together.
+	testCapacity capacityPort
 
 	// localInFlight counts bead runs currently executing locally (not routed to
 	// a remote worker). The split capacity gate (hk-hs7ex) uses this to enforce
@@ -467,97 +445,25 @@ type workLoopDeps struct {
 	// Bead ref: hk-45ude.
 	queueStore *queuewiring.QueueStore
 
-	// submitWakeC, when non-nil, is the channel returned by queueStore.WakeCh().
-	// The workloop's idle sleeps select on this channel so that a queue-submit
-	// RPC immediately wakes the loop rather than waiting for the next poll tick
-	// (hk-24xn1). When nil (no queue surface / legacy path) the select case
-	// on a nil channel blocks forever and is effectively skipped — workloopSleep
-	// falls back to the timer-only path.
+	// The fields in this group remain only for test-export construction. The
+	// production loop receives QueueSurfacePort from launchWorkLoop.
 	//
-	// Wired from QueueStore.WakeCh() by daemon.Start alongside deps.queueStore.
-	//
-	// Bead ref: hk-24xn1.
-	submitWakeC <-chan struct{}
+	// testQueueSurface supports test exports. QueueStore stays a separate shared
+	// run handle.
+	testQueueSurface queueSurfacePort
 
-	// queueLedger is the queue.BeadLedger seam used by the dispatch loop to
-	// re-evaluate deferred-for-ledger-dep items on every tick (queue-model.md
-	// §2.8: "when the blocking bead closes, the dispatcher MUST re-evaluate and
-	// transition the item back to pending"). Production wires
-	// queuewiring.NewBRQueueLedger(brAdapter); tests inject a fake. When nil the re-evaluation
-	// pass is skipped (queue.ReevaluateDeferred no-ops on a nil ledger), preserving
-	// legacy behaviour for callers that do not exercise ledger-dep deferral.
+	// The fields in this group remain only for test-export construction. The
+	// production loop receives DispatchGatesPort from launchWorkLoop.
 	//
-	// Spec ref: specs/queue-model.md §2.8, §6.6 QM-025.
-	// Bead ref: hk-nbjht.
-	queueLedger queue.BeadLedger
+	// testDispatchGates supports test exports. It holds optional controllers and
+	// loop-local event dedup maps.
+	testDispatchGates dispatchGatesPort
 
-	// handlerPauseController, when non-nil, is consulted before every dispatch
-	// to implement the skip-on-paused gate (hk-kac8g).  When nil the gate is
-	// disabled: all items are dispatched regardless of handler pause state.
-	// Production wires the daemon-singleton HandlerPauseController; tests that
-	// do not exercise handler-pause behaviour leave this nil (safe default).
-	//
-	// The controller also tracks the current paused_epoch per agent type, which
-	// the dispatcher uses to enforce the at-most-once dedup contract for
-	// queue_item_held_for_handler_pause events (§8.11.3).
-	//
-	// Spec ref: specs/handler-pause.md §6.
-	// Bead ref: hk-kac8g, hk-m0k0a.
-	// Dep: hk-m0k0a (persistence) — paused_epoch survives daemon restart once that lands.
-	handlerPauseController *HandlerPauseController
-
-	// heldEventDedup tracks (beadID + ":" + epoch) pairs for which a
-	// queue_item_held_for_handler_pause event has already been emitted this
-	// session, enforcing the at-most-once-per-(bead_id, paused_epoch) contract
-	// from event-model.md §8.11.3.
-	//
-	// Keyed by the string "<beadID>:<pausedEpoch>" (e.g. "hk-abc:2").
-	// Only the outer poll loop reads/writes this map — NOT per-bead goroutines.
-	// Map is pruned on epoch change (hk-o48pb) so it stays bounded.
-	// Access is single-threaded.
-	//
-	// Bead ref: hk-kac8g, hk-m0k0a.
-	heldEventDedup map[string]struct{}
-
-	// queueWriteErrorReported tracks queue names for which the QM-001 failed-write
-	// report has already gone out. The store quarantines a queue after a failed
-	// write, so every later tick re-derives the same failure; without this the
-	// dispatch loop would re-emit the pair every poll interval forever.
-	//
-	// Only the outer poll loop reads/writes this map — NOT per-bead goroutines.
-	// Access is single-threaded, matching heldEventDedup.
-	queueWriteErrorReported map[string]struct{}
-
-	// operatorPauseCtrl, when non-nil, is checked at every br-ready dispatch
-	// to gate dispatch when the daemon is in an operator-pause state. When nil
-	// the gate is disabled (backward-compat for tests that do not exercise
-	// operator-pause behaviour). Production wires the daemon-singleton
-	// OperatorPauseController.
-	//
-	// The queue path is already gated via QueueStatusPausedByDrain (set by
-	// QueueOperatorEventConsumer on operator_pause_status). This field gates
-	// the br-ready fallback path which has no queue-status check.
-	//
-	// Spec ref: specs/operator-nfr.md §4.3 ON-007–ON-010.
-	// Bead ref: hk-ry8q1.
-	operatorPauseCtrl *OperatorPauseController
-
-	// decisionBlocker, when non-nil, is checked at every dispatch attempt to
-	// gate dispatch for beads blocked by an unacknowledged decision_required
-	// event (EV-043).  Populated at startup by LoadDecisionAckState (EV-043a).
-	// When nil the gate is disabled (backward-compat for tests that do not
-	// exercise decision-blocking behaviour).
-	//
-	// Spec ref: specs/event-model.md §4.12 EV-043, EV-043a.
-	// Bead ref: hk-pbmsq.
-	decisionBlocker *DecisionBlocker
-
-	// noAutoPull, when true, disables the br-ready fallback poll path so the
-	// work loop only dispatches items that arrive via the queue surface.
-	// Sourced from Config.NoAutoPull; see that field's godoc for rationale.
+	// noAutoPull supports test exports. Production passes Config.NoAutoPull as a
+	// loop-owned value to runWorkLoop.
 	//
 	// Bead ref: hk-exd7m.
-	noAutoPull bool
+	testNoAutoPull bool
 
 	// skipBrHistoryRotation, when true, disables the pre-close .br_history trim
 	// performed by closeBeadWithHistoryTrim before every CloseBead call (hk-hypbi).
@@ -725,13 +631,6 @@ func newWorkLoopDeps(ctx context.Context, cfg Config, bus handlercontract.EventE
 		daemonBinaryPath = "harmonik"
 	}
 
-	// Normalise MaxConcurrent: zero value → 1 (default single-threaded behavior when unset).
-	// Spec ref: specs/execution-model.md §4.11 EM-051 (max_concurrent ≥ 1, default 1, sealed at startup).
-	maxConcurrent := cfg.MaxConcurrent
-	if maxConcurrent <= 0 {
-		maxConcurrent = 1
-	}
-
 	// Inject HARMONIK_PROJECT_HASH into every handler subprocess env (hk-nvrvp).
 	//
 	// The provenance marker is prepended so it is present even when
@@ -788,7 +687,6 @@ func newWorkLoopDeps(ctx context.Context, cfg Config, bus handlercontract.EventE
 		tidGen:                  core.NewTransitionIDGenerator(),
 		workflowModeDefault:     workflowModeDefault,
 		runRegistry:             newLocalRunRegistry(),
-		maxConcurrent:           maxConcurrent,
 		localInFlight:           new(atomic.Int32), // hk-hs7ex: split gate — local sub-cap counter
 		hookStore:               store,
 		cpRegistry:              cfg.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch
@@ -800,12 +698,10 @@ func newWorkLoopDeps(ctx context.Context, cfg Config, bus handlercontract.EventE
 		agentReadyTimeout:       cfg.AgentReadyTimeout,
 		remoteAgentReadyTimeout: cfg.RemoteAgentReadyTimeout, // hk-96d7w: remote-worker agent_ready wait window
 		projectCfg:              cfg.ProjectCfg,
-		defaultHarness:          cfg.DefaultHarness,                    // hk-ytzj2: tier-4 global harness default wired from Config
-		queueStore:              nil,                                   // populated by daemon.Start after wiring QueueStore (hk-45ude)
-		queueLedger:             queuewiring.NewBRQueueLedger(adapter), // hk-nbjht: re-eval deferred-for-ledger-dep items on every dispatch tick (§2.8)
-		brPath:                  cfg.BrPath,                            // hk-f722: staged-bead generator br create
-		noAutoPull:              cfg.NoAutoPull,                        // hk-exd7m: queue-only mode for flywheel topology
-		skipBrHistoryRotation:   cfg.SkipBrHistoryRotation,             // hk-hypbi: per-close .br_history trim
+		defaultHarness:          cfg.DefaultHarness,        // hk-ytzj2: tier-4 global harness default wired from Config
+		queueStore:              nil,                       // populated by daemon.Start after wiring QueueStore (hk-45ude)
+		brPath:                  cfg.BrPath,                // hk-f722: staged-bead generator br create
+		skipBrHistoryRotation:   cfg.SkipBrHistoryRotation, // hk-hypbi: per-close .br_history trim
 		// mergeQ (RSM-015 merge exclusion domain) is left nil here: runWorkLoop
 		// creates AND owns the production queue (starts its owner, cancels on
 		// return after the drain). A test may inject a pre-started queue via

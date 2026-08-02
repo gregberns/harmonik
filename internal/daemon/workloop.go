@@ -421,14 +421,6 @@ type workLoopDeps struct {
 	// without wall-clock sleeps. Mirrors the P1 T5 keeper ClockPort migration.
 	clock substrate.ClockPort
 
-	// spawnSubstrateReadyCh, when non-nil, is awaited at the START of runWorkLoop
-	// before the first dispatch tick. daemon.Start closes this channel once the
-	// spawn substrate has been probed for readiness after a restart-backoff boot
-	// (hk-bk33). Nil on normal (no-backoff) boots — the gate is bypassed.
-	//
-	// Bead ref: hk-bk33.
-	spawnSubstrateReadyCh <-chan struct{}
-
 	// agentReadyTimeout is the maximum duration waitAgentReady blocks waiting
 	// for an agent_ready event per HC-056.  Zero → runlaunch.DefaultAgentReadyTimeout (30s).
 	// Sourced from Config.AgentReadyTimeout (also zero-value safe).
@@ -499,42 +491,6 @@ type workLoopDeps struct {
 	// Bead ref: hk-nbjht.
 	queueLedger queue.BeadLedger
 
-	// cancelOnQueueDrain, when non-nil, is called once after the queue
-	// transitions to all-success and ClearQueue completes. Used by the
-	// `harmonik run <bead-id>` subcommand (hk-icecw) to exit the daemon
-	// cleanly after a single-bead queue drains.
-	//
-	// The zero value (nil) preserves normal daemon behaviour: the work loop
-	// continues running after the queue drains.
-	//
-	// Bead ref: hk-icecw.
-	cancelOnQueueDrain context.CancelFunc
-
-	// cancelOnQueueExit, when non-nil, is called once when the queue reaches
-	// any terminal state: all-success (after ClearQueue) OR paused-by-failure
-	// (after Persist). This ensures harmonik run <bead-id> exits on failure
-	// instead of hanging indefinitely waiting for more work (hk-8jh26 Fix 1).
-	//
-	// The zero value (nil) preserves normal daemon behaviour.
-	//
-	// Bead ref: hk-8jh26.
-	cancelOnQueueExit context.CancelFunc
-
-	// stopDispatchCtx, when non-nil, is the context checked by the outer poll
-	// loop to decide whether to stop pulling new beads. When this context is
-	// cancelled the loop exits via exitClean() and waits for in-flight goroutines
-	// to drain — but in-flight goroutines continue running on the main ctx
-	// passed to runWorkLoop.
-	//
-	// This separates "stop dispatching" from "cancel in-flight work" so that
-	// CancelOnQueueDrain/CancelOnQueueExit do not propagate into reviewer
-	// goroutines (hk-2o2i9).
-	//
-	// When nil, the outer poll loop falls back to the main ctx (backward-compat).
-	//
-	// Bead ref: hk-2o2i9.
-	stopDispatchCtx context.Context
-
 	// handlerPauseController, when non-nil, is consulted before every dispatch
 	// to implement the skip-on-paused gate (hk-kac8g).  When nil the gate is
 	// disabled: all items are dispatched regardless of handler pause state.
@@ -571,38 +527,6 @@ type workLoopDeps struct {
 	// Only the outer poll loop reads/writes this map — NOT per-bead goroutines.
 	// Access is single-threaded, matching heldEventDedup.
 	queueWriteErrorReported map[string]struct{}
-
-	// staleBlockerCloser, when non-nil, is used by the claim-failure path to
-	// auto-close stale blockers (beads already subsumed in main) so the blocked
-	// bead can be retried on the next workloop iteration. When nil the
-	// auto-close behaviour is disabled (backward-compat for test stubs that do
-	// not need it). Production wires the *brcli.Adapter (which satisfies
-	// lifecycle.BeadCat3cCloser via SweepCloseBead).
-	//
-	// Bead ref: hk-rnsjs.
-	staleBlockerCloser lifecycle.BeadCat3cCloser
-
-	// strandedInProgressResetter, when non-nil, auto-resets an in_progress bead
-	// observed at pre-claim with no active run — breaking the bead_claim_skipped
-	// live-lock that starves sibling queue items (hk-l2xd1). Nil in test stubs
-	// that do not exercise this path (backward-compat default).
-	//
-	// Bead ref: hk-l2xd1.
-	strandedInProgressResetter strandedInProgressResetter
-
-	// strandedResetProjectHash is the project hash used in ResetBead idempotency
-	// keys for stranded-bead auto-resets (hk-l2xd1). It derives from ProjectDir,
-	// like the periodic coordinator reaper's project hash.
-	//
-	// Bead ref: hk-l2xd1.
-	strandedResetProjectHash core.ProjectHash
-
-	// strandedResetDaemonNS is the daemon-session epoch (nanoseconds since the
-	// Unix epoch, captured once at newWorkLoopDeps time) used to scope ResetBead
-	// idempotency keys to a single daemon session (hk-l2xd1).
-	//
-	// Bead ref: hk-l2xd1.
-	strandedResetDaemonNS int64
 
 	// operatorPauseCtrl, when non-nil, is checked at every br-ready dispatch
 	// to gate dispatch when the daemon is in an operator-pause state. When nil
@@ -852,41 +776,36 @@ func newWorkLoopDeps(ctx context.Context, cfg Config, bus handlercontract.EventE
 	}
 
 	return workLoopDeps{
-		brAdapter:                  adapter,
-		bus:                        bus,
-		intentLogDir:               intentLogDir,
-		projectDir:                 cfg.ProjectDir,
-		handlerBinary:              binary,
-		daemonBinaryPath:           daemonBinaryPath,
-		handlerArgs:                cfg.HandlerArgs,
-		handlerEnv:                 handlerEnv,
-		brTimeoutCfg:               brcli.TimeoutConfig{},
-		tidGen:                     core.NewTransitionIDGenerator(),
-		workflowModeDefault:        workflowModeDefault,
-		runRegistry:                newLocalRunRegistry(),
-		maxConcurrent:              maxConcurrent,
-		localInFlight:              new(atomic.Int32), // hk-hs7ex: split gate — local sub-cap counter
-		hookStore:                  store,
-		cpRegistry:                 cfg.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch
-		adapterRegistry:            registry,
-		harnessRegistry:            harnessReg,    // hk-hj9ld: per-agent-type Harness route table (claude-only in T3)
-		substrate:                  cfg.Substrate, // nil falls back to exec.CommandContext; set by composition root (hk-kqdpf.4)
-		reviewerSubstrate:          cfg.ReviewerSubstrate,
-		clock:                      substrate.SystemClock{}, // RSM-013 / M3-D4: run-path determinism port (SystemClock in prod, FakeClock in tests)
-		agentReadyTimeout:          cfg.AgentReadyTimeout,
-		remoteAgentReadyTimeout:    cfg.RemoteAgentReadyTimeout, // hk-96d7w: remote-worker agent_ready wait window
-		cancelOnQueueDrain:         cfg.CancelOnQueueDrain,
-		projectCfg:                 cfg.ProjectCfg,
-		defaultHarness:             cfg.DefaultHarness,                    // hk-ytzj2: tier-4 global harness default wired from Config
-		queueStore:                 nil,                                   // populated by daemon.Start after wiring QueueStore (hk-45ude)
-		queueLedger:                queuewiring.NewBRQueueLedger(adapter), // hk-nbjht: re-eval deferred-for-ledger-dep items on every dispatch tick (§2.8)
-		staleBlockerCloser:         adapter,                               // hk-rnsjs: auto-close stale blockers on claim failure
-		strandedInProgressResetter: adapter,                               // hk-l2xd1: auto-reset in_progress bead with no run
-		strandedResetProjectHash:   projectHash,                           // hk-l2xd1: idempotency key component
-		strandedResetDaemonNS:      time.Now().UnixNano(),                 // hk-l2xd1: daemon-session epoch for idempotency key scoping
-		brPath:                     cfg.BrPath,                            // hk-f722: staged-bead generator br create
-		noAutoPull:                 cfg.NoAutoPull,                        // hk-exd7m: queue-only mode for flywheel topology
-		skipBrHistoryRotation:      cfg.SkipBrHistoryRotation,             // hk-hypbi: per-close .br_history trim
+		brAdapter:               adapter,
+		bus:                     bus,
+		intentLogDir:            intentLogDir,
+		projectDir:              cfg.ProjectDir,
+		handlerBinary:           binary,
+		daemonBinaryPath:        daemonBinaryPath,
+		handlerArgs:             cfg.HandlerArgs,
+		handlerEnv:              handlerEnv,
+		brTimeoutCfg:            brcli.TimeoutConfig{},
+		tidGen:                  core.NewTransitionIDGenerator(),
+		workflowModeDefault:     workflowModeDefault,
+		runRegistry:             newLocalRunRegistry(),
+		maxConcurrent:           maxConcurrent,
+		localInFlight:           new(atomic.Int32), // hk-hs7ex: split gate — local sub-cap counter
+		hookStore:               store,
+		cpRegistry:              cfg.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch
+		adapterRegistry:         registry,
+		harnessRegistry:         harnessReg,    // hk-hj9ld: per-agent-type Harness route table (claude-only in T3)
+		substrate:               cfg.Substrate, // nil falls back to exec.CommandContext; set by composition root (hk-kqdpf.4)
+		reviewerSubstrate:       cfg.ReviewerSubstrate,
+		clock:                   substrate.SystemClock{}, // RSM-013 / M3-D4: run-path determinism port (SystemClock in prod, FakeClock in tests)
+		agentReadyTimeout:       cfg.AgentReadyTimeout,
+		remoteAgentReadyTimeout: cfg.RemoteAgentReadyTimeout, // hk-96d7w: remote-worker agent_ready wait window
+		projectCfg:              cfg.ProjectCfg,
+		defaultHarness:          cfg.DefaultHarness,                    // hk-ytzj2: tier-4 global harness default wired from Config
+		queueStore:              nil,                                   // populated by daemon.Start after wiring QueueStore (hk-45ude)
+		queueLedger:             queuewiring.NewBRQueueLedger(adapter), // hk-nbjht: re-eval deferred-for-ledger-dep items on every dispatch tick (§2.8)
+		brPath:                  cfg.BrPath,                            // hk-f722: staged-bead generator br create
+		noAutoPull:              cfg.NoAutoPull,                        // hk-exd7m: queue-only mode for flywheel topology
+		skipBrHistoryRotation:   cfg.SkipBrHistoryRotation,             // hk-hypbi: per-close .br_history trim
 		// mergeQ (RSM-015 merge exclusion domain) is left nil here: runWorkLoop
 		// creates AND owns the production queue (starts its owner, cancels on
 		// return after the drain). A test may inject a pre-started queue via

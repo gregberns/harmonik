@@ -424,57 +424,68 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 	}
 
 	return workLoopDeps{
-		brAdapter:                  p.BrAdapter,
-		bus:                        p.Bus,
-		intentLogDir:               p.IntentLogDir,
-		projectDir:                 p.ProjectDir,
-		handlerBinary:              binary,
-		handlerArgs:                p.HandlerArgs,
-		handlerEnv:                 nil,
-		brTimeoutCfg:               brcli.TimeoutConfig{},
-		tidGen:                     core.NewTransitionIDGenerator(),
-		workflowModeDefault:        wmd,
-		runRegistry:                reg,
-		maxConcurrent:              maxConcurrent,
-		cpRegistry:                 p.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch
-		hookStore:                  hookStore,
-		launchSpecBuilder:          lsb,
-		worktreeFactory:            wtf,
-		adapterRegistry:            p.AdapterRegistry2,
-		harnessRegistry:            p.HarnessRegistry, // hk-f6g7: ProcessExit completion-mode check
-		substrate:                  p.Substrate,
-		agentReadyTimeout:          p.AgentReadyTimeout,
-		remoteAgentReadyTimeout:    p.RemoteAgentReadyTimeout,
-		projectCfg:                 p.ProjectCfg,
-		queueStore:                 p.QueueStore,
-		queueLedger:                p.QueueLedger, // hk-nbjht: §2.8 deferred-item re-eval seam
-		submitWakeC:                submitWakeC,
-		cancelOnQueueDrain:         p.CancelOnQueueDrain,
-		cancelOnQueueExit:          p.CancelOnQueueExit,
-		stopDispatchCtx:            p.StopDispatchCtx,
-		handlerPauseController:     p.HandlerPauseController,
-		staleBlockerCloser:         p.StaleBlockerCloser,         // hk-rnsjs
-		strandedInProgressResetter: p.StrandedInProgressResetter, // hk-l2xd1
-		strandedResetDaemonNS:      p.StrandedResetDaemonNS,      // hk-l2xd1
-		operatorPauseCtrl:          p.OperatorPauseCtrl,          // hk-ry8q1
-		decisionBlocker:            p.DecisionBlocker,            // hk-a6e24 EV-043
-		noAutoPull:                 p.NoAutoPull,                 // hk-h5lv2 / EM-066
-		concurrencyCtrl:            p.ConcurrencyCtrl,            // hk-ohiaf
-		localInFlight:              new(atomic.Int32),            // hk-hs7ex: split gate — fresh counter for each test
-		skipBrHistoryRotation:      true,                         // hk-hypbi: tests use temp dirs without real .br_history
-		targetBranch:               bootconfig.ResolveTargetBranch(p.TargetBranch),
-		protectBranches:            p.ProtectBranches,
-		mergeQ:                     mergeQ,
-		worktreeCreateMu:           worktreeCreateMu,
-		agentSpawnSem:              agentSpawnSem,                  // hk-5z1f0: cold-start spawn semaphore (one per daemon)
-		emittedEpics:               make(map[core.BeadID]struct{}), // hk-w6y70: fresh per-test guard
-		emittedEpicsMu:             &sync.Mutex{},
-		workerRegistry:             p.WorkerRegistry,        // hk-rs-b8-codesync-3fk0: nil → local run (no SSH steps)
-		brPath:                     p.BrPath,                // hk-f722: staged-bead generator; empty → disabled
-		spawnSubstrateReadyCh:      p.SpawnSubstrateReadyCh, // hk-bk33: post-boot re-dispatch gate
-		allowedRepos:               p.AllowedRepos,          // hk-xfuc: cross-repo dispatch safelist
-		runner:                     p.Runner,                // hk-hd2w6: Config.Runner injection seam
-		defaultHarness:             p.DefaultHarness,        // hk-ytzj2: tier-4 global harness default
+		brAdapter:               p.BrAdapter,
+		bus:                     p.Bus,
+		intentLogDir:            p.IntentLogDir,
+		projectDir:              p.ProjectDir,
+		handlerBinary:           binary,
+		handlerArgs:             p.HandlerArgs,
+		handlerEnv:              nil,
+		brTimeoutCfg:            brcli.TimeoutConfig{},
+		tidGen:                  core.NewTransitionIDGenerator(),
+		workflowModeDefault:     wmd,
+		runRegistry:             reg,
+		maxConcurrent:           maxConcurrent,
+		cpRegistry:              p.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch
+		hookStore:               hookStore,
+		launchSpecBuilder:       lsb,
+		worktreeFactory:         wtf,
+		adapterRegistry:         p.AdapterRegistry2,
+		harnessRegistry:         p.HarnessRegistry, // hk-f6g7: ProcessExit completion-mode check
+		substrate:               p.Substrate,
+		agentReadyTimeout:       p.AgentReadyTimeout,
+		remoteAgentReadyTimeout: p.RemoteAgentReadyTimeout,
+		projectCfg:              p.ProjectCfg,
+		queueStore:              p.QueueStore,
+		queueLedger:             p.QueueLedger, // hk-nbjht: §2.8 deferred-item re-eval seam
+		submitWakeC:             submitWakeC,
+		handlerPauseController:  p.HandlerPauseController,
+		operatorPauseCtrl:       p.OperatorPauseCtrl, // hk-ry8q1
+		decisionBlocker:         p.DecisionBlocker,   // hk-a6e24 EV-043
+		noAutoPull:              p.NoAutoPull,        // hk-h5lv2 / EM-066
+		concurrencyCtrl:         p.ConcurrencyCtrl,   // hk-ohiaf
+		localInFlight:           new(atomic.Int32),   // hk-hs7ex: split gate — fresh counter for each test
+		skipBrHistoryRotation:   true,                // hk-hypbi: tests use temp dirs without real .br_history
+		targetBranch:            bootconfig.ResolveTargetBranch(p.TargetBranch),
+		protectBranches:         p.ProtectBranches,
+		mergeQ:                  mergeQ,
+		worktreeCreateMu:        worktreeCreateMu,
+		agentSpawnSem:           agentSpawnSem,                  // hk-5z1f0: cold-start spawn semaphore (one per daemon)
+		emittedEpics:            make(map[core.BeadID]struct{}), // hk-w6y70: fresh per-test guard
+		emittedEpicsMu:          &sync.Mutex{},
+		workerRegistry:          p.WorkerRegistry, // hk-rs-b8-codesync-3fk0: nil → local run (no SSH steps)
+		brPath:                  p.BrPath,         // hk-f722: staged-bead generator; empty → disabled
+		allowedRepos:            p.AllowedRepos,   // hk-xfuc: cross-repo dispatch safelist
+		runner:                  p.Runner,         // hk-hd2w6: Config.Runner injection seam
+		defaultHarness:          p.DefaultHarness, // hk-ytzj2: tier-4 global harness default
+	}
+}
+
+func testLoopLifecyclePort(p WorkLoopDepsParams) loopLifecyclePort {
+	return loopLifecyclePort{
+		cancelOnQueueDrain:    p.CancelOnQueueDrain,
+		cancelOnQueueExit:     p.CancelOnQueueExit,
+		stopDispatchCtx:       p.StopDispatchCtx,
+		spawnSubstrateReadyCh: p.SpawnSubstrateReadyCh,
+	}
+}
+
+func testLedgerRepairPort(p WorkLoopDepsParams) ledgerRepairPort {
+	return ledgerRepairPort{
+		staleBlockerCloser:         p.StaleBlockerCloser,
+		strandedInProgressResetter: p.StrandedInProgressResetter,
+		strandedResetProjectHash:   lifecycle.ComputeProjectHash(p.ProjectDir),
+		strandedResetDaemonNS:      p.StrandedResetDaemonNS,
 	}
 }
 

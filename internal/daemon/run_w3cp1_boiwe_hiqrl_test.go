@@ -118,7 +118,7 @@ func TestMultiBead_TwoBeadsCompleteBothClose(t *testing.T) {
 
 	loopDone := make(chan error, 1)
 	go func() {
-		loopDone <- daemon.ExportedRunWorkLoop(testCtx, deps)
+		loopDone <- daemon.ExportedRunWorkLoopWithTestPorts(testCtx, deps, p)
 	}()
 
 	select {
@@ -206,7 +206,7 @@ func TestMultiBead_MaxConcurrentOne(t *testing.T) {
 
 	loopDone := make(chan error, 1)
 	go func() {
-		loopDone <- daemon.ExportedRunWorkLoop(testCtx, deps)
+		loopDone <- daemon.ExportedRunWorkLoopWithTestPorts(testCtx, deps, p)
 	}()
 
 	select {
@@ -325,7 +325,7 @@ func TestExtraContext_WorkloopSingleBead(t *testing.T) {
 
 	loopDone := make(chan error, 1)
 	go func() {
-		loopDone <- daemon.ExportedRunWorkLoop(testCtx, deps)
+		loopDone <- daemon.ExportedRunWorkLoopWithTestPorts(testCtx, deps, p)
 	}()
 
 	select {
@@ -474,7 +474,7 @@ func TestQueueItemWorkflowMode_WorkloopHonoursItemMode(t *testing.T) {
 
 	loopDone := make(chan error, 1)
 	go func() {
-		loopDone <- daemon.ExportedRunWorkLoop(testCtx, deps)
+		loopDone <- daemon.ExportedRunWorkLoopWithTestPorts(testCtx, deps, p)
 	}()
 
 	select {
@@ -561,7 +561,7 @@ func TestSmoke_MultiBead_MaxConcurrent2_BothComplete(t *testing.T) {
 
 	loopDone := make(chan error, 1)
 	go func() {
-		loopDone <- daemon.ExportedRunWorkLoop(testCtx, deps)
+		loopDone <- daemon.ExportedRunWorkLoopWithTestPorts(testCtx, deps, p)
 	}()
 
 	select {

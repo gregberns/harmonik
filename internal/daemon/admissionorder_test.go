@@ -664,7 +664,7 @@ func TestAdmissionOrder_CooldownRunsBeforePreClaimShowBead(t *testing.T) {
 
 		runAdmissionLoop(t, qs,
 			func(c context.Context) {
-				daemon.ExportedRunWorkLoopWithDiskReclaim(c, deps, diskReclaim) //nolint:errcheck,gosec // G104: background loop; returns on ctx cancel
+				daemon.ExportedRunWorkLoopWithDiskReclaimAndTestPorts(c, deps, diskReclaim, params) //nolint:errcheck,gosec // G104: background loop; returns on ctx cancel
 			},
 			func() {},
 		)
@@ -1214,7 +1214,7 @@ func TestAdmissionOrder_TerminalDedupLeavesAWakeTokenPending(t *testing.T) {
 	loopDone := make(chan struct{})
 	go func() {
 		defer close(loopDone)
-		daemon.ExportedRunWorkLoop(ctx, deps) //nolint:errcheck,gosec // G104: background loop; error unactionable here
+		daemon.ExportedRunWorkLoopWithTestPorts(ctx, deps, params) //nolint:errcheck,gosec // G104: background loop; error unactionable here
 	}()
 
 	// No wake pump here. The loop must reach the dedup guard on its FIRST tick and

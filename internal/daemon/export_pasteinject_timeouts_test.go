@@ -199,5 +199,5 @@ func ExportedBeadAlreadySubsumedInMain(ctx context.Context, projectDir string, b
 //
 // Bead: hk-rnsjs.
 func ExportedAutoCloseStaleBlockersOnClaimFailure(ctx context.Context, p WorkLoopDepsParams, beadID core.BeadID) {
-	autoCloseStaleBlockersOnClaimFailure(ctx, ExportedWorkLoopDeps(p), beadID)
+	autoCloseStaleBlockersOnClaimFailure(ctx, ExportedWorkLoopDeps(p), testLedgerRepairPort(p), beadID)
 }

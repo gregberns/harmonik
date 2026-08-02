@@ -37,6 +37,8 @@ func (bs *bootState) launchWorkLoop(ctx context.Context, daemonStartTime time.Ti
 	if depsErr != nil {
 		return depsErr
 	}
+	lifecyclePort := newLoopLifecyclePort(bs.cfg)
+	ledgerRepair := newLedgerRepairPort(deps)
 	governor, governorEnabled, governorErr := newGovernorPort(bs.cfg, daemonStartTime)
 	if governorErr != nil {
 		return governorErr
@@ -49,7 +51,7 @@ func (bs *bootState) launchWorkLoop(ctx context.Context, daemonStartTime time.Ti
 	if scheduleErr != nil {
 		return scheduleErr
 	}
-	if injectErr := bs.injectWorkLoopDeps(ctx, &deps, bootBackoffDelay); injectErr != nil {
+	if injectErr := bs.injectWorkLoopDeps(ctx, &deps, &lifecyclePort, bootBackoffDelay); injectErr != nil {
 		return injectErr
 	}
 	schedulePort := newSchedulePort(deps, scheduleStore, bs.crewHandler)
@@ -57,11 +59,11 @@ func (bs *bootState) launchWorkLoop(ctx context.Context, daemonStartTime time.Ti
 	// through this same store.
 	bs.quiesceArbiter.SetScheduleStore(schedulePort.store)
 	bs.startBackgroundLoops(ctx, &deps)
-	bs.wireStaleWatcherReapSeams(ctx, &deps, eagerRefill)
+	bs.wireStaleWatcherReapSeams(ctx, &deps, lifecyclePort, eagerRefill)
 
 	loopDone := make(chan error, 1)
 	go func() {
-		loopDone <- runWorkLoop(ctx, deps, schedulePort, coordinatorReap, diskReclaim, eagerRefill, governor, governorEnabled)
+		loopDone <- runWorkLoop(ctx, deps, lifecyclePort, ledgerRepair, schedulePort, coordinatorReap, diskReclaim, eagerRefill, governor, governorEnabled)
 	}()
 	// Block until the work loop exits (either ctx cancelled or fatal error).
 	<-loopDone
@@ -189,7 +191,7 @@ func newScheduleStore(cfg Config) (*schedule.Store, error) {
 // controllers, the live worker-toggle (hk-xjbvi), the shared RunRegistry, the
 // test-only overrides, and the post-boot spawn-substrate readiness gate (hk-bk33).
 // The schedule path has its own SchedulePort so it cannot read this bundle.
-func (bs *bootState) injectWorkLoopDeps(ctx context.Context, deps *workLoopDeps, bootBackoffDelay time.Duration) error {
+func (bs *bootState) injectWorkLoopDeps(ctx context.Context, deps *workLoopDeps, loopLifecycle *loopLifecyclePort, bootBackoffDelay time.Duration) error {
 	cfg := bs.cfg
 
 	// Queue store + submit-wake channel (QM-060; hk-24xn1).
@@ -198,11 +200,6 @@ func (bs *bootState) injectWorkLoopDeps(ctx context.Context, deps *workLoopDeps,
 
 	// Dispatcher skip-on-paused gate (hk-kac8g): nil → gate disabled.
 	deps.handlerPauseController = cfg.HandlerPauseController
-	// harmonik run <bead-id> drain/exit cancels (hk-icecw, hk-8jh26 Fix 1).
-	deps.cancelOnQueueDrain = cfg.CancelOnQueueDrain
-	deps.cancelOnQueueExit = cfg.CancelOnQueueExit
-	// Stop-dispatch context (hk-2o2i9): nil falls back to ctx.
-	deps.stopDispatchCtx = cfg.StopDispatchCtx
 	// HandlerPauseController for the dispatch gate (hk-m0k0a); overrides the
 	// cfg-supplied value above with the daemon-owned controller.
 	deps.handlerPauseController = bs.handlerPauseCtrl
@@ -251,7 +248,7 @@ func (bs *bootState) injectWorkLoopDeps(ctx context.Context, deps *workLoopDeps,
 					log.Printf("warn: daemon.Start: spawn-substrate readiness probe (non-fatal): %v", probeErr)
 				}
 			}()
-			deps.spawnSubstrateReadyCh = readyCh
+			loopLifecycle.spawnSubstrateReadyCh = readyCh
 		}
 	}
 
@@ -339,9 +336,9 @@ func (bs *bootState) startWorkerReportLoopIfEnabled(ctx context.Context, reg *wo
 // (hk-mdus1) now that deps (queueStore, emitter) is fully built. Two-phase because
 // the watcher was constructed + started (StartWatcher) far earlier, before
 // workLoopDeps existed.
-func (bs *bootState) wireStaleWatcherReapSeams(ctx context.Context, deps *workLoopDeps, eagerRefill eagerRefillPort) {
+func (bs *bootState) wireStaleWatcherReapSeams(ctx context.Context, deps *workLoopDeps, loopLifecycle loopLifecyclePort, eagerRefill eagerRefillPort) {
 	cfg := bs.cfg
-	reapPort := newReapSeamPort(*deps, eagerRefill)
+	reapPort := newReapSeamPort(*deps, loopLifecycle, eagerRefill)
 
 	// ForceReap: on a wedged run's force-Unregister, emit a terminal run_failed and
 	// drive the owning queue item terminal so the group advances.

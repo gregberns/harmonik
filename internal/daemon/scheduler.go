@@ -37,6 +37,7 @@ import (
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/harness/shared"
+	"github.com/gregberns/harmonik/internal/lifecycle"
 	tmuxpkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/mergeq"
 	"github.com/gregberns/harmonik/internal/orchestrator"
@@ -89,6 +90,50 @@ type windowCleaner interface {
 	KillAllWindows(ctx context.Context) error
 }
 
+// loopLifecyclePort owns the values that control the dispatch loop's lifetime.
+// The composition root builds it because the run shell and loop core only need
+// these four values, not the full work-loop dependency bundle.
+type loopLifecyclePort struct {
+	cancelOnQueueDrain    context.CancelFunc
+	cancelOnQueueExit     context.CancelFunc
+	stopDispatchCtx       context.Context //nolint:containedctx // Config.StopDispatchCtx is a context by design.
+	spawnSubstrateReadyCh <-chan struct{}
+}
+
+func newLoopLifecyclePort(cfg Config) loopLifecyclePort {
+	return loopLifecyclePort{
+		cancelOnQueueDrain: cfg.CancelOnQueueDrain,
+		cancelOnQueueExit:  cfg.CancelOnQueueExit,
+		stopDispatchCtx:    cfg.StopDispatchCtx,
+	}
+}
+
+// ledgerRepairPort owns the two claim-failure repair paths. It is a value port
+// so neither repair path retains workLoopDeps after composition.
+type ledgerRepairPort struct {
+	staleBlockerCloser         lifecycle.BeadCat3cCloser
+	strandedInProgressResetter strandedInProgressResetter
+	strandedResetProjectHash   core.ProjectHash
+	strandedResetDaemonNS      int64
+}
+
+func newLedgerRepairPort(deps workLoopDeps) ledgerRepairPort {
+	var closer lifecycle.BeadCat3cCloser
+	if value, ok := deps.brAdapter.(lifecycle.BeadCat3cCloser); ok {
+		closer = value
+	}
+	var resetter strandedInProgressResetter
+	if value, ok := deps.brAdapter.(strandedInProgressResetter); ok {
+		resetter = value
+	}
+	return ledgerRepairPort{
+		staleBlockerCloser:         closer,
+		strandedInProgressResetter: resetter,
+		strandedResetProjectHash:   lifecycle.ComputeProjectHash(deps.projectDir),
+		strandedResetDaemonNS:      time.Now().UnixNano(),
+	}
+}
+
 // reapSeamPort is the complete dependency set of the StaleWatcher force-reap
 // completion path. It is projected before the callback is installed so the
 // callback cannot retain the mutable work-loop dependency bundle.
@@ -108,14 +153,14 @@ type reapSeamPort struct {
 
 // newReapSeamPort projects the dependencies used by the force-reap completion
 // path. It intentionally preserves nil and zero values from workLoopDeps.
-func newReapSeamPort(deps workLoopDeps, eagerRefill eagerRefillPort) reapSeamPort {
+func newReapSeamPort(deps workLoopDeps, loopLifecycle loopLifecyclePort, eagerRefill eagerRefillPort) reapSeamPort {
 	return reapSeamPort{
 		bus:                deps.bus,
 		projectDir:         deps.projectDir,
 		queueStore:         deps.queueStore,
 		queueLedger:        deps.queueLedger,
-		cancelOnQueueDrain: deps.cancelOnQueueDrain,
-		cancelOnQueueExit:  deps.cancelOnQueueExit,
+		cancelOnQueueDrain: loopLifecycle.cancelOnQueueDrain,
+		cancelOnQueueExit:  loopLifecycle.cancelOnQueueExit,
 		maxConcurrent:      deps.maxConcurrent,
 		concurrencyCtrl:    deps.concurrencyCtrl,
 		runRegistry:        deps.runRegistry,
@@ -395,7 +440,7 @@ func projectActiveGroup(q *queue.Queue) *orchestrator.GroupSnapshot {
 }
 
 //nolint:gocognit,cyclop,funlen // pre-existing: Seam A moved this code out of workloop.go unchanged
-func runWorkLoop(ctx context.Context, deps workLoopDeps, schedule schedulePort, coordinatorReap coordinatorReapPort, diskReclaim diskReclaimPort, eagerRefill eagerRefillPort, governor governorPort, governorEnabled bool) error {
+func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifecyclePort, ledgerRepair ledgerRepairPort, scheduleInput schedulePort, coordinatorReap coordinatorReapPort, diskReclaim diskReclaimPort, eagerRefill eagerRefillPort, governor governorPort, governorEnabled bool) error {
 	// wg tracks all in-flight bead goroutines. runWorkLoop waits on this before
 	// returning so callers know all bead work is complete on return.
 	var wg sync.WaitGroup
@@ -465,8 +510,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, schedule schedulePort, 
 	// (RSM-011) plus the dashboard forcing gate and the sentinel movement
 	// governor, both of which are SWITCHABLE subsystems that may be absent. It is
 	// touched only from this goroutine. See loopmaintenance.go.
-	maint := newLoopMaintenance(deps, schedule, coordinatorReap, diskReclaim, eagerRefill, governor, governorEnabled, os.Stderr)
-	reapPort := newReapSeamPort(deps, eagerRefill)
+	maint := newLoopMaintenance(deps, loopLifecycle, scheduleInput, coordinatorReap, diskReclaim, eagerRefill, governor, governorEnabled, os.Stderr)
+	reapPort := newReapSeamPort(deps, loopLifecycle, eagerRefill)
 	completionPort := newRunCompletionPort(deps, reapPort)
 
 	// claimSkipInProgressUntil tracks beads whose pre-claim check observed
@@ -505,15 +550,15 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, schedule schedulePort, 
 	// so that CancelOnQueueDrain/CancelOnQueueExit can stop the dispatch loop
 	// without cancelling in-flight goroutines (hk-2o2i9).
 	//
-	// When deps.stopDispatchCtx is set (wired from Config.StopDispatchCtx by the
+	// When loopLifecycle.stopDispatchCtx is set (wired from Config.StopDispatchCtx by the
 	// harmonik run subcommand), the outer loop halts when stopDispatchCtx is
 	// cancelled. In-flight goroutines still receive ctx and are unaffected.
 	//
-	// When deps.stopDispatchCtx is nil, dispatchCtx falls back to ctx, preserving
+	// When loopLifecycle.stopDispatchCtx is nil, dispatchCtx falls back to ctx, preserving
 	// the prior behavior for normal daemon operation and existing tests.
 	dispatchCtx := ctx //nolint:contextcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
-	if deps.stopDispatchCtx != nil {
-		dispatchCtx = deps.stopDispatchCtx
+	if loopLifecycle.stopDispatchCtx != nil {
+		dispatchCtx = loopLifecycle.stopDispatchCtx
 	}
 
 	// exitClean terminates the loop cleanly: it waits for in-flight goroutines
@@ -562,9 +607,9 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, schedule schedulePort, 
 	// launching a run before the tmux session is ready to accept new windows,
 	// avoiding spurious agent_ready_timeout on QM-002a-reverted beads.
 	// Nil on normal (no-backoff) boots — the select is skipped entirely.
-	if deps.spawnSubstrateReadyCh != nil {
+	if loopLifecycle.spawnSubstrateReadyCh != nil {
 		select {
-		case <-deps.spawnSubstrateReadyCh:
+		case <-loopLifecycle.spawnSubstrateReadyCh:
 		case <-ctx.Done():
 			return exitClean()
 		}
@@ -838,7 +883,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, schedule schedulePort, 
 								return exitClean()
 							}
 						} else {
-							if sleepErr := scheduleAwareIdleWait(dispatchCtx, schedule, deps.submitWakeC); sleepErr != nil {
+							if sleepErr := scheduleAwareIdleWait(dispatchCtx, scheduleInput, deps.submitWakeC); sleepErr != nil {
 								return exitClean()
 							}
 						}
@@ -1039,14 +1084,14 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, schedule schedulePort, 
 							// ~2.5s spin loop. Instead, detect the stranded state and reset the
 							// bead to open so the next tick claims it normally.
 							if preClaimRecord.Status == core.CoarseStatusInProgress &&
-								deps.strandedInProgressResetter != nil &&
+								ledgerRepair.strandedInProgressResetter != nil &&
 								!deps.runRegistry.HasBeadRun(snapItemBeadID) &&
 								!strandedBeadHasOnDiskRun(deps.projectDir, snapItemBeadID) {
-								if resetErr := deps.strandedInProgressResetter.ResetBead(
+								if resetErr := ledgerRepair.strandedInProgressResetter.ResetBead(
 									ctx, deps.intentLogDir, deps.brTimeoutCfg,
 									snapItemBeadID,
-									deps.strandedResetProjectHash,
-									deps.strandedResetDaemonNS,
+									ledgerRepair.strandedResetProjectHash,
+									ledgerRepair.strandedResetDaemonNS,
 								); resetErr != nil {
 									fmt.Fprintf(os.Stderr,
 										"daemon: workloop: stranded_bead_auto_reset FAILED bead=%s: %v — bead stays in_progress until next restart\n",
@@ -1495,7 +1540,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, schedule schedulePort, 
 			}
 			// hk-rnsjs: if the bead is blocked by stale dependencies already in
 			// main, auto-close them so the next workloop retry can claim the bead.
-			autoCloseStaleBlockersOnClaimFailure(ctx, deps, beadID)
+			autoCloseStaleBlockersOnClaimFailure(ctx, deps, ledgerRepair, beadID)
 			// On queue-path: revert the item back to pending so the loop can retry.
 			// NQ-B1: target the selected queue by name (capturedQueueName).
 			if queueItemIndex >= 0 && deps.queueStore != nil {
@@ -1662,12 +1707,12 @@ func runDispatchedBead(runCtx, daemonCtx context.Context, env runloop.RunEnv, rp
 // On the next workloop retry the bead should no longer be blocked and
 // ClaimBead will succeed.
 //
-// No-op when deps.staleBlockerCloser is nil (backward-compat for test stubs
+// No-op when repair.staleBlockerCloser is nil (backward-compat for test stubs
 // that do not set this field).
 //
 // Bead ref: hk-rnsjs.
-func autoCloseStaleBlockersOnClaimFailure(ctx context.Context, deps workLoopDeps, beadID core.BeadID) {
-	if deps.staleBlockerCloser == nil {
+func autoCloseStaleBlockersOnClaimFailure(ctx context.Context, deps workLoopDeps, repair ledgerRepairPort, beadID core.BeadID) {
+	if repair.staleBlockerCloser == nil {
 		return
 	}
 	record, err := deps.brAdapter.ShowBead(ctx, beadID)
@@ -1697,7 +1742,7 @@ func autoCloseStaleBlockersOnClaimFailure(ctx context.Context, deps workLoopDeps
 			continue
 		}
 		fmt.Fprintf(os.Stderr, "daemon: workloop: claim-failure auto-close stale blocker %s (subsumed in main, unblocks %s)\n", blockerID, beadID)
-		if closeErr := deps.staleBlockerCloser.SweepCloseBead(ctx, deps.brTimeoutCfg, blockerID); closeErr != nil {
+		if closeErr := repair.staleBlockerCloser.SweepCloseBead(ctx, deps.brTimeoutCfg, blockerID); closeErr != nil {
 			fmt.Fprintf(os.Stderr, "daemon: workloop: SweepCloseBead stale blocker %s: %v\n", blockerID, closeErr)
 		}
 	}

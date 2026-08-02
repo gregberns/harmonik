@@ -127,7 +127,7 @@ func TestRunCompletionPort_CarriesEagerRefillValues(t *testing.T) {
 		followUpLedgerMu:   new(sync.Mutex),
 		followUpLedgerPath: "/project/.harmonik/follow-up-ledger.jsonl",
 	}
-	completion := newRunCompletionPort(workLoopDeps{brPath: "/tools/br"}, newReapSeamPort(workLoopDeps{}, eager))
+	completion := newRunCompletionPort(workLoopDeps{brPath: "/tools/br"}, newReapSeamPort(workLoopDeps{}, loopLifecyclePort{}, eager))
 	if completion.brPath != "/tools/br" || completion.eagerRefill.kerfPath != eager.kerfPath {
 		t.Fatal("completion port did not retain its command and eager-refill values")
 	}
@@ -163,7 +163,7 @@ func TestEM063_Phase1_AlreadyInQueue_PendingExcluded(t *testing.T) {
 	deps := em063FixtureDeps(t, qs)
 
 	candidates := []core.BeadID{"hk-inqueue-01", "hk-inqueue-02", "hk-new-bead"}
-	survivors := preScreenCandidates(context.Background(), newReapSeamPort(deps, eagerRefillPort{}), candidates)
+	survivors := preScreenCandidates(context.Background(), newReapSeamPort(deps, loopLifecyclePort{}, eagerRefillPort{}), candidates)
 
 	// Only the bead NOT already in the queue should survive Phase 1.
 	if len(survivors) != 1 {
@@ -202,7 +202,7 @@ func TestEM063_Phase1_AlreadyInQueue_DispatchedExcluded(t *testing.T) {
 	deps := em063FixtureDeps(t, qs)
 
 	candidates := []core.BeadID{"hk-dispatched", "hk-fresh"}
-	survivors := preScreenCandidates(context.Background(), newReapSeamPort(deps, eagerRefillPort{}), candidates)
+	survivors := preScreenCandidates(context.Background(), newReapSeamPort(deps, loopLifecyclePort{}, eagerRefillPort{}), candidates)
 
 	if len(survivors) != 1 || survivors[0] != "hk-fresh" {
 		t.Errorf("Phase 1: survivors = %v, want [hk-fresh]", survivors)
@@ -218,7 +218,7 @@ func TestEM063_Phase1_EmptyQueueAllSurvive(t *testing.T) {
 
 	candidates := []core.BeadID{"hk-a", "hk-b", "hk-c"}
 	// Phase 2 git check will not find anything (temp dir has no git history).
-	survivors := preScreenCandidates(context.Background(), newReapSeamPort(deps, eagerRefillPort{}), candidates)
+	survivors := preScreenCandidates(context.Background(), newReapSeamPort(deps, loopLifecyclePort{}, eagerRefillPort{}), candidates)
 
 	if len(survivors) != 3 {
 		t.Errorf("Phase 1 with empty queue: survivors = %v, want all 3 candidates", survivors)
@@ -295,7 +295,7 @@ func TestEM063_EagerRefillEval_NoopWhenKerfPathEmpty(t *testing.T) {
 	deps := em063FixtureDeps(t, qs)
 
 	// Must not panic, must not mutate queue.
-	eagerRefillEval(context.Background(), newReapSeamPort(deps, eagerRefillPort{}))
+	eagerRefillEval(context.Background(), newReapSeamPort(deps, loopLifecyclePort{}, eagerRefillPort{}))
 
 	// Queue should be unchanged.
 	got := qs.Queue()
@@ -313,7 +313,7 @@ func TestEM063_EagerRefillEval_NoopWhenQueueStoreNil(t *testing.T) {
 	deps.queueStore = nil
 
 	// Must not panic.
-	eagerRefillEval(context.Background(), newReapSeamPort(deps, eagerRefillPort{kerfPath: "/some/kerf"}))
+	eagerRefillEval(context.Background(), newReapSeamPort(deps, loopLifecyclePort{}, eagerRefillPort{kerfPath: "/some/kerf"}))
 }
 
 // ---------------------------------------------------------------------------

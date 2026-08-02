@@ -112,6 +112,9 @@ type maintenanceObservation struct {
 // One instance per runWorkLoop call, held by pointer, touched only from that
 // goroutine. There is exactly one writer (PRINCIPLES §6) and it is the loop.
 type loopMaintenance struct {
+	// lifecycle supplies queue terminal cancels to the periodic eager-refill path.
+	lifecycle loopLifecyclePort
+
 	// state is the periodic-maintenance timing and latch state (RSM-011).
 	state loopMaintenanceState
 
@@ -163,8 +166,9 @@ type loopMaintenance struct {
 // logW is passed straight through. Both sub-constructors already substitute
 // os.Stderr for a nil writer, so a third copy of that guard here would be dead
 // code (the reviewer's point, and it also keeps os out of this file's imports).
-func newLoopMaintenance(deps workLoopDeps, schedule schedulePort, coordinatorReap coordinatorReapPort, diskReclaim diskReclaimPort, eagerRefill eagerRefillPort, governor governorPort, governorEnabled bool, logW io.Writer) *loopMaintenance {
+func newLoopMaintenance(deps workLoopDeps, lifecycle loopLifecyclePort, schedule schedulePort, coordinatorReap coordinatorReapPort, diskReclaim diskReclaimPort, eagerRefill eagerRefillPort, governor governorPort, governorEnabled bool, logW io.Writer) *loopMaintenance {
 	return &loopMaintenance{
+		lifecycle:       lifecycle,
 		coordinatorReap: coordinatorReap,
 		diskReclaim:     diskReclaim,
 		eagerRefill:     eagerRefill,
@@ -271,7 +275,7 @@ func (m *loopMaintenance) tickBeforeSelect(ctx context.Context, deps workLoopDep
 	//
 	// Spec ref: specs/execution-model.md §4.13 EM-062.
 	// Bead ref: hk-9321v.
-	eagerRefillEval(ctx, newReapSeamPort(deps, m.eagerRefill))
+	eagerRefillEval(ctx, newReapSeamPort(deps, m.lifecycle, m.eagerRefill))
 
 	// Sentinel movement governor (FW2 hk-z1lr observe / FW3 hk-4toh act). One
 	// call: the mode split, the eval cadence gate (hk-usn8o — each evaluation

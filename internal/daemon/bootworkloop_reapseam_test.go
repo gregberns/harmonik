@@ -68,7 +68,7 @@ func TestWireStaleWatcherReapSeams_ForceReapPersistsGroupAdvance(t *testing.T) {
 		bus:          bus,
 		staleWatcher: watcher,
 	}
-	bs.wireStaleWatcherReapSeams(context.Background(), &deps, eagerRefillPort{})
+	bs.wireStaleWatcherReapSeams(context.Background(), &deps, loopLifecyclePort{}, eagerRefillPort{})
 
 	forceReap := watcher.forceReapFn()
 	if forceReap == nil {

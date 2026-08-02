@@ -395,7 +395,7 @@ func projectActiveGroup(q *queue.Queue) *orchestrator.GroupSnapshot {
 }
 
 //nolint:gocognit,cyclop,funlen // pre-existing: Seam A moved this code out of workloop.go unchanged
-func runWorkLoop(ctx context.Context, deps workLoopDeps, coordinatorReap coordinatorReapPort, eagerRefill eagerRefillPort) error {
+func runWorkLoop(ctx context.Context, deps workLoopDeps, coordinatorReap coordinatorReapPort, eagerRefill eagerRefillPort, governor governorPort, governorEnabled bool) error {
 	// wg tracks all in-flight bead goroutines. runWorkLoop waits on this before
 	// returning so callers know all bead work is complete on return.
 	var wg sync.WaitGroup
@@ -465,7 +465,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, coordinatorReap coordin
 	// (RSM-011) plus the dashboard forcing gate and the sentinel movement
 	// governor, both of which are SWITCHABLE subsystems that may be absent. It is
 	// touched only from this goroutine. See loopmaintenance.go.
-	maint := newLoopMaintenance(deps, coordinatorReap, eagerRefill, os.Stderr)
+	maint := newLoopMaintenance(deps, coordinatorReap, eagerRefill, governor, governorEnabled, os.Stderr)
 	reapPort := newReapSeamPort(deps, eagerRefill)
 	completionPort := newRunCompletionPort(deps, reapPort)
 

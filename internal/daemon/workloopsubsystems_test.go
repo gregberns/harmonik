@@ -189,17 +189,17 @@ subsystems:
 // Sentinel movement governor — subsystems.movement_governor
 // ─────────────────────────────────────────────────────────────────────────────
 
-// wlsubGovernorDeps builds the deps the governor reads, seeded the way
-// bootState.seedGovernorDeps seeds them in production: a non-nil governorState
-// and the default (observe) mode, which is what every production daemon runs.
+// wlsubGovernorDeps builds the work-loop values the governor reads.
 func wlsubGovernorDeps(root string, bus *wlsubBus, ledger *wlsubCountingLedger) workLoopDeps {
 	return workLoopDeps{
-		projectDir:    root,
-		bus:           bus,
-		brAdapter:     ledger,
-		governorState: &sentinel.GovernorState{DaemonStartedAt: time.Now()},
-		sentinelMode:  "", // "" and "observe" are the same branch
+		projectDir: root,
+		bus:        bus,
+		brAdapter:  ledger,
 	}
+}
+
+func wlsubGovernorPort() governorPort {
+	return governorPort{state: &sentinel.GovernorState{DaemonStartedAt: time.Now()}}
 }
 
 // Default state: no subsystems: block → the governor is constructed and its
@@ -214,7 +214,7 @@ func TestSubsystemPartition_MovementGovernor_DefaultRuns(t *testing.T) {
 	deps := wlsubGovernorDeps(root, bus, ledger)
 	deps.projectCfg = pc
 
-	governor := newMovementGovernorIfEnabled(deps, io.Discard)
+	governor := newMovementGovernorIfEnabled(wlsubGovernorPort(), true, io.Discard)
 	if governor == nil {
 		t.Fatal("newMovementGovernorIfEnabled = nil with no subsystems: block; want a constructed governor (absent config must not disable anything)")
 	}
@@ -256,7 +256,7 @@ subsystems:
 	deps := wlsubGovernorDeps(root, bus, ledger)
 	deps.projectCfg = pc
 
-	governor := newMovementGovernorIfEnabled(deps, io.Discard)
+	governor := newMovementGovernorIfEnabled(wlsubGovernorPort(), false, io.Discard)
 	if governor != nil {
 		t.Fatal("newMovementGovernorIfEnabled returned a governor with subsystems.movement_governor.enabled: false; it must be ABSENT, not constructed")
 	}
@@ -297,7 +297,7 @@ func TestSubsystemPartition_MovementGovernor_DisabledReleasesDispatchGate(t *tes
 	enabledDeps.projectCfg = enabledPC
 	enabledDeps.decisionBlocker = blocker
 
-	enabled := newMovementGovernorIfEnabled(enabledDeps, io.Discard)
+	enabled := newMovementGovernorIfEnabled(wlsubGovernorPort(), true, io.Discard)
 	if !enabled.dispatchBlocked(enabledDeps) {
 		t.Fatal("dispatchBlocked = false with the governor enabled and a pending sentinel trip restored; the FW3 queue gate must still hold dispatch")
 	}
@@ -312,19 +312,18 @@ subsystems:
 	disabledDeps.projectCfg = disabledPC
 	disabledDeps.decisionBlocker = blocker
 
-	disabled := newMovementGovernorIfEnabled(disabledDeps, io.Discard)
+	disabled := newMovementGovernorIfEnabled(wlsubGovernorPort(), false, io.Discard)
 	if disabled.dispatchBlocked(disabledDeps) {
 		t.Error("dispatchBlocked = true with subsystems.movement_governor.enabled: false; a switched-off subsystem must not hold the dispatcher shut through a gate nothing can open")
 	}
 }
 
-// The boot seam, not the loop seam. bootState.seedGovernorDeps reads the same
+// The boot seam, not the loop seam. newGovernorPort reads the same
 // switch as newMovementGovernorIfEnabled, and it has to: it reads the sentinel:
 // block through digest.LoadSentinelConfig, and a malformed value there is FATAL
 // — daemon.Start returns the error and the daemon does not boot. A subsystem the
 // operator switched OFF must not be able to refuse the daemon's boot over config
-// it no longer reads (hk-e3y8x). It also allocates a sentinel.GovernorState,
-// which is the constructed-and-inert state CHARTER §4 rejects.
+// it no longer reads (hk-e3y8x).
 //
 // The malformed value here is a suppression_ttl that is not a duration, which
 // parseSentinelConfig rejects. The pair is the point: OFF must swallow it, ON
@@ -336,18 +335,13 @@ func TestSubsystemPartition_MovementGovernor_DisabledSkipsFatalBootConfig(t *tes
 
 	pc, root := subpartLoadConfig(t, wlsubMalformedSentinelYAML+
 		"subsystems:\n  movement_governor:\n    enabled: false\n")
-	bs := &bootState{cfg: Config{ProjectDir: root, ProjectCfg: pc}}
-
-	var deps workLoopDeps
-	if err := bs.seedGovernorDeps(&deps, time.Now()); err != nil {
-		t.Fatalf("seedGovernorDeps = %v with subsystems.movement_governor.enabled: false; want nil — "+
+	port, enabled, err := newGovernorPort(Config{ProjectDir: root, ProjectCfg: pc}, time.Now())
+	if err != nil {
+		t.Fatalf("newGovernorPort = %v with subsystems.movement_governor.enabled: false; want nil — "+
 			"a switched-off subsystem must not refuse the daemon's boot over config it no longer reads", err)
 	}
-	if deps.governorState != nil {
-		t.Error("governorState allocated with the subsystem disabled; \"off\" means never constructed, not constructed-and-inert (CHARTER §4)")
-	}
-	if deps.sentinelMode != "" || deps.sentinelPhase2Classes != nil {
-		t.Errorf("sentinel deps seeded with the subsystem disabled: mode=%q phase2=%v", deps.sentinelMode, deps.sentinelPhase2Classes)
+	if enabled || port.state != nil {
+		t.Error("disabled movement governor constructed a port")
 	}
 }
 
@@ -356,11 +350,54 @@ func TestSubsystemPartition_MovementGovernor_EnabledStillFailsOnBadConfig(t *tes
 
 	// No subsystems: block — the governor is ON, so the fatal path must survive.
 	pc, root := subpartLoadConfig(t, wlsubMalformedSentinelYAML)
-	bs := &bootState{cfg: Config{ProjectDir: root, ProjectCfg: pc}}
-
-	var deps workLoopDeps
-	if err := bs.seedGovernorDeps(&deps, time.Now()); err == nil {
-		t.Fatal("seedGovernorDeps = nil on a malformed sentinel: block with the subsystem ENABLED; " +
+	_, enabled, err := newGovernorPort(Config{ProjectDir: root, ProjectCfg: pc}, time.Now())
+	if !enabled || err == nil {
+		t.Fatal("newGovernorPort accepted a malformed sentinel: block with the subsystem ENABLED; " +
 			"the partition gate must not double as an error suppressor")
+	}
+}
+
+func TestSubsystemPartition_MovementGovernor_NoConfigStillObservesWithoutLivenessHalt(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	port, enabled, err := newGovernorPort(Config{ProjectDir: root}, time.Now())
+	if err != nil {
+		t.Fatalf("newGovernorPort with no config: %v", err)
+	}
+	if !enabled || port.state == nil {
+		t.Fatal("no-config boot did not construct an enabled governor port")
+	}
+	if port.config.LivenessNoProgressN != 0 {
+		t.Fatalf("no-config liveness threshold = %d, want 0", port.config.LivenessNoProgressN)
+	}
+
+	bus := &wlsubBus{}
+	ledger := &wlsubCountingLedger{}
+	deps := wlsubGovernorDeps(root, bus, ledger)
+	governor := newMovementGovernorIfEnabled(port, enabled, io.Discard)
+	governor.tick(context.Background(), deps)
+
+	if got := ledger.readyCalls(); got != 1 {
+		t.Errorf("brAdapter.Ready called %d times, want 1 so no-config still observes", got)
+	}
+	if got := bus.count(core.EventTypeGovernorSignal); got != 1 {
+		t.Errorf("governor_signal emitted %d times, want 1 so no-config still ticks", got)
+	}
+	if governor.halted() {
+		t.Error("no-config zero threshold armed a liveness halt")
+	}
+
+	// The production no-config mode is observe. Exercise ACT as a focused
+	// threshold control: changing the mode alone must not turn a zero liveness
+	// threshold into a halt.
+	port.mode = "act"
+	actGovernor := newMovementGovernorIfEnabled(port, enabled, io.Discard)
+	actGovernor.tick(context.Background(), deps)
+	if actGovernor.halted() {
+		t.Error("zero liveness threshold armed a halt in ACT mode")
+	}
+	if got := bus.count(core.EventTypeLivenessHalt); got != 0 {
+		t.Errorf("liveness_halt emitted %d times with zero threshold, want 0", got)
 	}
 }

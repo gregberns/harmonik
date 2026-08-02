@@ -14,20 +14,16 @@ package daemon
 // Two large blocks of exactly that logic used to be welded inline into
 // runWorkLoop's poll loop — one per mode. They are here now, behind
 // newMovementGovernorIfEnabled, so that `subsystems.movement_governor.enabled:
-// false` means the governor's per-loop state is NEVER CONSTRUCTED and none of it
-// runs. A nil *movementGovernor is the OFF state and every method tolerates it;
-// that is the whole nil-guard surface, answered once and documented, rather than
-// repeated at five call sites in the loop.
+// false` means the governor is never constructed and none of it runs. A nil
+// *movementGovernor is the OFF state and every method tolerates it.
 //
 // # Why it is switchable
 //
-// Observe mode ran on every production daemon before this subsystem existed:
-// seedGovernorDeps allocated governorState for any non-empty ProjectDir, costing
-// a `br` shell-out plus an O(events.jsonl) scan every eval cadence — and
+// Observe mode ran on every production daemon before this subsystem existed,
+// costing a `br` shell-out plus an O(events.jsonl) scan every eval cadence — and
 // governor_signal has no Go consumer. Neither the governor nor anything it
 // touches is in the core set (CHARTER §3), so it must be absent when switched
-// off. seedGovernorDeps now reads the same switch and skips the allocation
-// entirely; see newMovementGovernorIfEnabled on why both gates exist.
+// off.
 //
 // # NOT part of this subsystem
 //
@@ -54,12 +50,23 @@ import (
 	"github.com/gregberns/harmonik/internal/sentinel"
 )
 
+// governorPort is the movement governor's configuration and per-daemon mutable
+// state. It is built at boot and held by loopMaintenance, not workLoopDeps.
+type governorPort struct {
+	state         *sentinel.GovernorState
+	config        sentinel.Config
+	mode          string
+	phase2Classes []string
+}
+
 // movementGovernor is the movement governor's per-loop mutable state. It is
 // owned solely by the runWorkLoop goroutine — no locking.
 //
-// A nil *movementGovernor means the subsystem is OFF (or was never seeded) and
-// every method below is a no-op on it.
+// A nil *movementGovernor means the subsystem is OFF and every method below is
+// a no-op on it.
 type movementGovernor struct {
+	port governorPort
+
 	// lastEval is the wall clock of the most recent sentinel.Evaluate call.
 	// Zero makes the first tick fire immediately.
 	lastEval time.Time
@@ -78,42 +85,18 @@ type movementGovernor struct {
 	logW io.Writer
 }
 
-// newMovementGovernorIfEnabled builds the governor's per-loop state, or returns
-// nil when the subsystem must be ABSENT.
-//
-// It returns nil in two cases, and the distinction matters:
-//
-//   - `subsystems.movement_governor.enabled: false` — the operator partitioned it
-//     away. Said loudly on the log writer, because a silent partition is
-//     indistinguishable from a config that did not take effect.
-//   - deps.governorState is nil — nothing seeded the governor (unit-test mode, an
-//     empty ProjectDir, or the same subsystem switch read earlier at boot). This
-//     is the pre-existing `governorState != nil` guard the inline blocks carried,
-//     kept at the same seam.
-//
-// ORDER IS LOAD-BEARING: a disabled subsystem now trips BOTH branches, because
-// bootState.seedGovernorDeps reads the same switch and returns before allocating
-// GovernorState (hk-e3y8x — it also guards a FATAL sentinel-config read, so an
-// off subsystem must not be able to refuse the daemon's boot). The Enabled check
-// must therefore stay FIRST, or the loud "disabled by config" line is replaced by
-// the silent nil-state return and a partition becomes indistinguishable from a
-// config that never took effect. That is the whole reason the two are separate.
-//
-// An absent subsystems: block enables the governor, so a deployment without one
-// behaves exactly as it did before the block existed.
-func newMovementGovernorIfEnabled(deps workLoopDeps, logW io.Writer) *movementGovernor {
+// newMovementGovernorIfEnabled builds the governor's per-loop state. The
+// enabled value comes only from the movement-governor subsystem switch.
+func newMovementGovernorIfEnabled(port governorPort, enabled bool, logW io.Writer) *movementGovernor {
 	if logW == nil {
 		logW = os.Stderr
 	}
-	if !deps.projectCfg.Subsystems.Enabled(projectconfig.SubsystemMovementGovernor) {
+	if !enabled {
 		fmt.Fprintf(logW, "daemon: subsystem %q disabled by .harmonik/config.yaml; movement governor not constructed\n", //nolint:errcheck // best-effort stderr status log
 			projectconfig.SubsystemMovementGovernor)
 		return nil
 	}
-	if deps.governorState == nil {
-		return nil
-	}
-	return &movementGovernor{logW: logW}
+	return &movementGovernor{port: port, logW: logW}
 }
 
 // halted reports whether the G-liveness gate has fired and the loop should drain
@@ -153,7 +136,7 @@ func (g *movementGovernor) tick(ctx context.Context, deps workLoopDeps) {
 	now := time.Now()
 	// Modes are mutually exclusive and share one cadence clock. An unrecognised
 	// mode string evaluates nothing — same as the two inline guards it replaces.
-	switch deps.sentinelMode {
+	switch g.port.mode {
 	case "", "observe":
 		if !g.dueForEval(deps, now) {
 			return
@@ -171,7 +154,7 @@ func (g *movementGovernor) tick(ctx context.Context, deps workLoopDeps) {
 // when it has. Zero or negative configured cadence falls back to the compiled
 // default.
 func (g *movementGovernor) dueForEval(deps workLoopDeps, now time.Time) bool {
-	cadence := deps.governorCfg.EvalCadence
+	cadence := g.port.config.EvalCadence
 	if cadence <= 0 {
 		cadence = sentinel.DefaultSentinelEvalCadence
 	}
@@ -186,8 +169,8 @@ func (g *movementGovernor) dueForEval(deps workLoopDeps, now time.Time) bool {
 //
 // OBSERVE-ONLY CONTRACT: no trip, no halt, no dispatch side-effects.
 func (g *movementGovernor) tickObserve(ctx context.Context, deps workLoopDeps, now time.Time) {
-	in, _ := governorGatherInput(ctx, deps, now)
-	sig := sentinel.Evaluate(ctx, deps.governorState, in, deps.governorCfg)
+	in, _ := g.gatherInput(ctx, deps, now)
+	sig := sentinel.Evaluate(ctx, g.port.state, in, g.port.config)
 	governorEmitSignal(ctx, deps, sig)
 }
 
@@ -200,8 +183,8 @@ func (g *movementGovernor) tickObserve(ctx context.Context, deps workLoopDeps, n
 // DecisionBlocker, so dispatchBlocked() gates all dispatch while a trip is
 // pending. Config default is "observe"; operators opt into "act" explicitly.
 func (g *movementGovernor) tickAct(ctx context.Context, deps workLoopDeps, now time.Time) {
-	in, readyBeadIDs := governorGatherInput(ctx, deps, now)
-	sig := sentinel.Evaluate(ctx, deps.governorState, in, deps.governorCfg)
+	in, readyBeadIDs := g.gatherInput(ctx, deps, now)
+	sig := sentinel.Evaluate(ctx, g.port.state, in, g.port.config)
 	governorEmitSignal(ctx, deps, sig)
 
 	switch {
@@ -220,12 +203,12 @@ func (g *movementGovernor) onHalt(ctx context.Context, deps workLoopDeps, sig se
 	g.haltRequested = true
 	haltPayload, _ := json.Marshal(map[string]interface{}{ //nolint:errcheck,errchkjson // a fixed map of two ints cannot fail to marshal
 		"consecutive_zero_cycles": sig.ConsecutiveZeroCycles,
-		"liveness_no_progress_n":  deps.governorCfg.LivenessNoProgressN,
+		"liveness_no_progress_n":  g.port.config.LivenessNoProgressN,
 	})
 	_ = deps.bus.Emit(ctx, core.EventTypeLivenessHalt, haltPayload) //nolint:errcheck // best-effort page emit; the halt proceeds regardless
 	fmt.Fprintf(g.logW,                                             //nolint:errcheck // best-effort stderr status log
 		"daemon: workloop: sentinel: G-liveness halt fired after %d zero-progress cycles (threshold=%d); halting dispatch\n",
-		sig.ConsecutiveZeroCycles, deps.governorCfg.LivenessNoProgressN)
+		sig.ConsecutiveZeroCycles, g.port.config.LivenessNoProgressN)
 }
 
 // onTrip emits a decision_required trip for sustained low movement with
@@ -316,13 +299,13 @@ func (g *movementGovernor) onClear(ctx context.Context, deps workLoopDeps, now t
 	g.pendingAckToken = ""
 }
 
-// governorGatherInput assembles one GovernorInput, and returns the ready-bead
+// gatherInput assembles one GovernorInput, and returns the ready-bead
 // IDs alongside it because the ACT-mode trip payload needs them (observe mode
 // discards them).
 //
 // Both signals fail soft: a `br` error means "no ready beads" / "no undeployed
 // tail" rather than an aborted evaluation, matching the inline behaviour.
-func governorGatherInput(ctx context.Context, deps workLoopDeps, now time.Time) (input sentinel.GovernorInput, readyBeadIDs []string) {
+func (g *movementGovernor) gatherInput(ctx context.Context, deps workLoopDeps, now time.Time) (input sentinel.GovernorInput, readyBeadIDs []string) {
 	// hasReadyBeads: ≥1 unblocked open bead exists (flywheel-motion.md §1.3).
 	// Left nil (not an empty slice) when there is nothing ready, so the ACT-mode
 	// trip payload marshals ready_bead_ids exactly as it did inline.
@@ -335,8 +318,8 @@ func governorGatherInput(ctx context.Context, deps workLoopDeps, now time.Time) 
 	// HasUndeployedTail: a closed Phase-2-class bead is present (§1.3, §5.2).
 	// Skip the br call entirely when no Phase-2 classes are configured.
 	var hasUndeployedTail bool
-	if len(deps.sentinelPhase2Classes) > 0 && deps.brPath != "" {
-		hasUndeployedTail, _ = digest.BuildHasUndeployedTail(ctx, deps.brPath, deps.sentinelPhase2Classes) //nolint:errcheck // fails soft: a br error reads as "no undeployed tail", never an aborted evaluation
+	if len(g.port.phase2Classes) > 0 && deps.brPath != "" {
+		hasUndeployedTail, _ = digest.BuildHasUndeployedTail(ctx, deps.brPath, g.port.phase2Classes) //nolint:errcheck // fails soft: a br error reads as "no undeployed tail", never an aborted evaluation
 	}
 
 	return sentinel.GovernorInput{

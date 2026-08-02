@@ -1002,7 +1002,7 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// RegisterEventType calls and BEFORE Seal. A positive result is FATAL — the
 	// daemon refuses to boot rather than risk emitting a secret-named field to the
 	// durable JSONL log with no startup failure. Fail-closed, matching the
-	// governor-config fail-loud discipline in seedGovernorDeps.
+	// governor-config fail-loud discipline in newGovernorPort.
 	if scanErr := scanRegisteredPayloadsForSecretFields(); scanErr != nil {
 		return fmt.Errorf("daemon.Start: EV-036 secret-field scan: %w", scanErr)
 	}

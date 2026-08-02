@@ -68,7 +68,6 @@ import (
 	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/runmerge"
 	"github.com/gregberns/harmonik/internal/schedule"
-	"github.com/gregberns/harmonik/internal/sentinel"
 	"github.com/gregberns/harmonik/internal/sessiondata"
 	"github.com/gregberns/harmonik/internal/substrate"
 	codesyncpkg "github.com/gregberns/harmonik/internal/transport/codesync"
@@ -768,37 +767,6 @@ type workLoopDeps struct {
 	//
 	// Bead ref: hk-5uezz.
 	worktreeReclaimFunc func(ctx context.Context, projectDir string, stalePaths []string) error
-
-	// governorState is the mutable state persisted across sentinel governor
-	// evaluation cycles (flywheel-motion.md §§1, 6.1; FW2 wire-Evaluate).
-	// Nil when no sentinel config is loaded (governor evaluations are no-ops
-	// until FW2 adds the Evaluate call). Production wires a non-nil pointer at
-	// daemon.Start after newWorkLoopDeps (FW1, hk-y9fn).
-	//
-	// Bead ref: hk-y9fn (FW1).
-	governorState *sentinel.GovernorState
-
-	// governorCfg is the resolved sentinel governor configuration derived from
-	// the sentinel: block in .harmonik/config.yaml (flywheel-motion.md §7).
-	// Zero value causes sentinel.Evaluate to use compiled defaults.
-	// Production populated from digest.LoadSentinelConfig at daemon.Start (FW1, hk-y9fn).
-	//
-	// Bead ref: hk-y9fn (FW1).
-	governorCfg sentinel.Config
-
-	// sentinelMode is the mode from the sentinel: block (flywheel-motion.md §7).
-	// "" or "observe" → FW2 observe-only (emit GovernorSignal, no trip, no halt).
-	// "act"           → FW3 ACT mode (adds EmitTrip/halt — wired by hk-4toh).
-	//
-	// Bead ref: hk-z1lr (FW2).
-	sentinelMode string
-
-	// sentinelPhase2Classes are the Phase-2 done_definition class names from the
-	// sentinel config, used to compute HasUndeployedTail in the governor input.
-	// Nil/empty → HasUndeployedTail always false (no br call needed).
-	//
-	// Bead ref: hk-z1lr (FW2).
-	sentinelPhase2Classes []string
 
 	// sandboxCfg holds the sandbox: block from .harmonik/config.yaml (hk-6596l).
 	// When Backend == "" the block was absent and no sandboxing occurs. When

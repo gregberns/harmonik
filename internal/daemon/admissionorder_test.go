@@ -49,11 +49,9 @@ package daemon_test
 //   - 6 governor.tick before the sentinel-queue gate in the same tick — PINNED,
 //     in sentinelgate_test.go rather than here. The gate is
 //     m.sentinelBlocksDispatch, which returns false unless a movementGovernor was
-//     constructed. That construction gates on the movement_governor subsystem
-//     switch first (enabled by default, so every fixture passes it) and on
-//     workLoopDeps.governorState second. governorState now has a mirror on
-//     WorkLoopDepsParams (GovernorState), so a loop in which the gate can fire is
-//     buildable from daemon_test. Three tests: the gate holds on the queue path,
+//     constructed. The test seam passes a governor port separately from the
+//     bundle, so a loop in which the gate can fire is buildable from daemon_test.
+//     Three tests: the gate holds on the queue path,
 //     it holds on the br-ready path, and a trip armed INSIDE governor.tick gates
 //     the same tick it was armed.
 //   - 7 the two dispatch paths order the same gates differently — PINNED.

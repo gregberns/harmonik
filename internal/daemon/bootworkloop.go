@@ -33,9 +33,13 @@ func (bs *bootState) launchWorkLoop(ctx context.Context, daemonStartTime time.Ti
 		return nil
 	}
 
-	deps, depsErr := bs.buildWorkLoopDeps(ctx, daemonStartTime, workflowModeDefault)
+	deps, depsErr := bs.buildWorkLoopDeps(ctx, workflowModeDefault)
 	if depsErr != nil {
 		return depsErr
+	}
+	governor, governorEnabled, governorErr := newGovernorPort(bs.cfg, daemonStartTime)
+	if governorErr != nil {
+		return governorErr
 	}
 	coordinatorReap := newCoordinatorReapPort(bs.cfg)
 	eagerRefill := newEagerRefillPort(bs.cfg)
@@ -52,7 +56,7 @@ func (bs *bootState) launchWorkLoop(ctx context.Context, daemonStartTime time.Ti
 
 	loopDone := make(chan error, 1)
 	go func() {
-		loopDone <- runWorkLoop(ctx, deps, coordinatorReap, eagerRefill)
+		loopDone <- runWorkLoop(ctx, deps, coordinatorReap, eagerRefill, governor, governorEnabled)
 	}()
 	// Block until the work loop exits (either ctx cancelled or fatal error).
 	<-loopDone
@@ -86,22 +90,15 @@ func newCoordinatorReapPort(cfg Config) coordinatorReapPort {
 	}
 }
 
-// buildWorkLoopDeps constructs the work-loop deps (newWorkLoopDeps), initialises
-// the sentinel governor deps from config (FW1/FW2, hk-y9fn/hk-z1lr), and boot-seeds
-// emittedEpics (C1, hk-o50hy) from the durable log so a restart does not re-emit.
-// Governor-config errors are fatal only when the operator actually has a
-// .harmonik/config.yaml.
-func (bs *bootState) buildWorkLoopDeps(ctx context.Context, daemonStartTime time.Time, workflowModeDefault core.WorkflowMode) (workLoopDeps, error) {
+// buildWorkLoopDeps constructs the work-loop deps (newWorkLoopDeps) and
+// boot-seeds emittedEpics (C1, hk-o50hy) from the durable log so a restart does
+// not re-emit.
+func (bs *bootState) buildWorkLoopDeps(ctx context.Context, workflowModeDefault core.WorkflowMode) (workLoopDeps, error) {
 	cfg := bs.cfg
 
 	deps, depsErr := newWorkLoopDeps(ctx, cfg, bs.bus, workflowModeDefault, bs.adapterReg, bs.hookStore)
 	if depsErr != nil {
 		return workLoopDeps{}, fmt.Errorf("daemon.Start: work loop deps: %w", depsErr)
-	}
-
-	// FW1/FW2 (hk-y9fn/hk-z1lr): init sentinel governor deps from config.
-	if govErr := bs.seedGovernorDeps(&deps, daemonStartTime); govErr != nil {
-		return workLoopDeps{}, govErr
 	}
 
 	// C1 boot-seed (hk-o50hy): populate emittedEpics from the durable event log so
@@ -114,40 +111,37 @@ func (bs *bootState) buildWorkLoopDeps(ctx context.Context, daemonStartTime time
 	return deps, nil
 }
 
-// seedGovernorDeps initialises the sentinel governor deps from config (FW1
-// hk-y9fn / FW2 hk-z1lr). hk-drygf (FIX-B): a missing liveness_no_progress_n key
-// (or read error) fails the load loud ONLY when the operator has a config.yaml;
-// absence means "sentinel not configured", not "misconfigured".
-func (bs *bootState) seedGovernorDeps(deps *workLoopDeps, daemonStartTime time.Time) error {
-	cfg := bs.cfg
+// newGovernorPort constructs the governor's configuration and mutable state.
+// The enabled result reads only the movement-governor subsystem switch. A
+// missing config file still returns an enabled port with zero thresholds, so the
+// observe pass remains active while the liveness gate stays disabled.
+func newGovernorPort(cfg Config, daemonStartTime time.Time) (governorPort, bool, error) {
+	enabled := cfg.ProjectCfg.Subsystems.Enabled(projectconfig.SubsystemMovementGovernor)
+	if !enabled {
+		return governorPort{}, false, nil
+	}
+
+	port := governorPort{state: &sentinel.GovernorState{DaemonStartedAt: daemonStartTime}}
 	if cfg.ProjectDir == "" {
-		return nil
+		return port, true, nil
 	}
-	// Subsystem partition: with movement_governor off, seed nothing. Reading the
-	// sentinel: block below is a FATAL path on a malformed value, so a disabled
-	// subsystem could otherwise still refuse the daemon's boot — and allocating
-	// GovernorState is the constructed-and-inert state the charter rejects.
-	// newMovementGovernorIfEnabled treats the resulting nil deps as OFF.
-	if !cfg.ProjectCfg.Subsystems.Enabled(projectconfig.SubsystemMovementGovernor) {
-		return nil
-	}
+
 	sentinelCfg, sentinelErr := digest.LoadSentinelConfig(cfg.ProjectDir)
 	if sentinelErr != nil {
-		return fmt.Errorf("daemon.Start: sentinel config: %w", sentinelErr)
+		return governorPort{}, true, fmt.Errorf("daemon.Start: sentinel config: %w", sentinelErr)
 	}
 	governorCfg, govErr := sentinelCfg.GovernorConfig()
 	if govErr != nil {
 		configPath := filepath.Join(cfg.ProjectDir, ".harmonik", "config.yaml")
 		if _, statErr := os.Stat(configPath); statErr == nil {
-			return fmt.Errorf("daemon.Start: governor config: %w", govErr)
+			return governorPort{}, true, fmt.Errorf("daemon.Start: governor config: %w", govErr)
 		}
 		// No config.yaml: leave governorCfg zero-valued (gate disabled).
 	}
-	deps.governorCfg = governorCfg
-	deps.governorState = &sentinel.GovernorState{DaemonStartedAt: daemonStartTime}
-	deps.sentinelMode = sentinelCfg.Mode
-	deps.sentinelPhase2Classes = sentinelCfg.Phase2Classes()
-	return nil
+	port.config = governorCfg
+	port.mode = sentinelCfg.Mode
+	port.phase2Classes = sentinelCfg.Phase2Classes()
+	return port, true, nil
 }
 
 // scanEmittedEpics reads the durable event log and returns the set of epic IDs

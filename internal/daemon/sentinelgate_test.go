@@ -9,13 +9,9 @@ package daemon_test
 // "governor.tick before the sentinel-queue gate in the same tick". That
 // constraint was a declared gap for one reason only. The gate is
 // m.sentinelBlocksDispatch, which delegates to movementGovernor.dispatchBlocked,
-// which returns false on a nil governor. A governor is only constructed when
-// workLoopDeps.governorState is non-nil, and WorkLoopDepsParams had no field for
-// it. So no test in package daemon_test could build a loop in which this gate
-// could fire at all.
-//
-// The seam is now there: WorkLoopDepsParams.GovernorState. See its doc comment
-// in export_workloopdeps_test.go for why that shape.
+// which returns false on a nil governor. The test seam passes a governor port
+// separately from workLoopDeps, so tests can build a loop in which this gate
+// can fire without restoring a nil-state OFF model.
 //
 // # Why these tests need no ACT mode and no crew spawn
 //
@@ -64,8 +60,8 @@ const sentinelGateSubjectID = "sentinel"
 // the token set for the subject is non-empty.
 const sentinelGateTripToken = "sentinel-gate-test-token"
 
-// sentinelGateGovernorState builds the governor state the way
-// bootState.seedGovernorDeps builds it in production.
+// sentinelGateGovernorState builds the state newGovernorPort creates in
+// production.
 //
 // DaemonStartedAt is now, which puts the evaluation inside the cold-start warmup
 // window. That is belt-and-braces: observe mode cannot trip in any case, and the
@@ -92,7 +88,7 @@ func sentinelGateGovernorState() *sentinel.GovernorState {
 //   - trip pending → no claim, and the item is left exactly as it was found.
 //   - trip pending but the governor subsystem ABSENT → the bead IS claimed. A
 //     switched-off subsystem does not get to hold the dispatcher shut, and this
-//     is also the proof that governorState is what makes the gate reachable.
+//     is also the proof that an enabled governor makes the gate reachable.
 func TestSentinelGate_QueuePathHoldsWhileTheGovernorTripIsPending(t *testing.T) {
 	t.Parallel()
 
@@ -105,7 +101,7 @@ func TestSentinelGate_QueuePathHoldsWhileTheGovernorTripIsPending(t *testing.T) 
 	// is the same in-memory state a real ACT-mode trip leaves behind (and the
 	// same state LoadDecisionAckState restores at boot, EV-043a).
 	//
-	// governorPresent seeds workLoopDeps.governorState. False means the movement
+	// governorPresent supplies an enabled governor port. False means the movement
 	// governor subsystem is absent.
 	observe := func(t *testing.T, tripPending, governorPresent bool) (claimCalls, showCalls, ticks int, item queue.Item) {
 		t.Helper()
@@ -128,9 +124,7 @@ func TestSentinelGate_QueuePathHoldsWhileTheGovernorTripIsPending(t *testing.T) 
 
 		params := admissionDeps(t, ledger, qs, &admissionQueueLedger{}, true, nil)
 		params.DecisionBlocker = blocker
-		if governorPresent {
-			params.GovernorState = sentinelGateGovernorState()
-		}
+		governorState := sentinelGateGovernorState()
 		// tickCount rises once per tick: the disk probe's cadence is overridden
 		// below so it is always due, and it runs before the capacity gate, so it
 		// counts held ticks too. Free space is reported far above the watermark,
@@ -152,6 +146,10 @@ func TestSentinelGate_QueuePathHoldsWhileTheGovernorTripIsPending(t *testing.T) 
 		var snapshot *queue.Queue
 		runAdmissionLoop(t, qs,
 			func(c context.Context) {
+				if governorPresent {
+					daemon.ExportedRunWorkLoopWithGovernor(c, deps, governorState) //nolint:errcheck,gosec // G104: background loop; returns on ctx cancel
+					return
+				}
 				daemon.ExportedRunWorkLoop(c, deps) //nolint:errcheck,gosec // G104: background loop; returns on ctx cancel
 			},
 			func() { snapshot = qs.Queue() },
@@ -254,7 +252,7 @@ func TestSentinelGate_ReadyPathHoldsWhileTheGovernorTripIsPending(t *testing.T) 
 		qs := daemon.ExportedNewQueueStore()
 		params := admissionDeps(t, ledger, qs, &admissionQueueLedger{}, false, nil)
 		params.DecisionBlocker = blocker
-		params.GovernorState = sentinelGateGovernorState()
+		governorState := sentinelGateGovernorState()
 
 		// Per-tick witness, same shape as the queue-path test above.
 		var tickMu sync.Mutex
@@ -272,7 +270,7 @@ func TestSentinelGate_ReadyPathHoldsWhileTheGovernorTripIsPending(t *testing.T) 
 
 		runAdmissionLoop(t, qs,
 			func(c context.Context) {
-				daemon.ExportedRunWorkLoop(c, deps) //nolint:errcheck,gosec // G104: background loop; returns on ctx cancel
+				daemon.ExportedRunWorkLoopWithGovernor(c, deps, governorState) //nolint:errcheck,gosec // G104: background loop; returns on ctx cancel
 			},
 			func() {},
 		)
@@ -401,13 +399,13 @@ func TestSentinelGate_GovernorTickArmsTheTripBeforeTheGateReadsIt(t *testing.T) 
 		params := admissionDeps(t, base, qs, &admissionQueueLedger{}, true, nil)
 		params.BrAdapter = ledger
 		params.DecisionBlocker = blocker
-		params.GovernorState = sentinelGateGovernorState()
+		governorState := sentinelGateGovernorState()
 		deps := daemon.ExportedWorkLoopDeps(params)
 
 		var snapshot *queue.Queue
 		runAdmissionLoop(t, qs,
 			func(c context.Context) {
-				daemon.ExportedRunWorkLoop(c, deps) //nolint:errcheck,gosec // G104: background loop; returns on ctx cancel
+				daemon.ExportedRunWorkLoopWithGovernor(c, deps, governorState) //nolint:errcheck,gosec // G104: background loop; returns on ctx cancel
 			},
 			func() { snapshot = qs.Queue() },
 		)

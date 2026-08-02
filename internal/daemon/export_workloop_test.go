@@ -24,6 +24,7 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/queuewiring"
 	"github.com/gregberns/harmonik/internal/runloop"
+	"github.com/gregberns/harmonik/internal/sentinel"
 	"github.com/gregberns/harmonik/internal/substrate"
 	"github.com/gregberns/harmonik/internal/workers"
 )
@@ -48,7 +49,14 @@ func WorkflowModeDefaultOf(deps workLoopDeps) core.WorkflowMode {
 // ExportedRunWorkLoop runs the work loop with the given deps until ctx is
 // cancelled, mirroring runWorkLoop.
 func ExportedRunWorkLoop(ctx context.Context, deps workLoopDeps) error {
-	return runWorkLoop(ctx, deps, coordinatorReapPort{}, eagerRefillPort{})
+	return runWorkLoop(ctx, deps, coordinatorReapPort{}, eagerRefillPort{}, governorPort{}, false)
+}
+
+// ExportedRunWorkLoopWithGovernor runs the work loop with an enabled governor
+// port. Tests use it to exercise the sentinel dispatch gate without restoring
+// governor values to workLoopDeps.
+func ExportedRunWorkLoopWithGovernor(ctx context.Context, deps workLoopDeps, state *sentinel.GovernorState) error {
+	return runWorkLoop(ctx, deps, coordinatorReapPort{}, eagerRefillPort{}, governorPort{state: state}, true)
 }
 
 // ExportedStoreLocalInFlight preloads the split-gate local-in-flight counter on

@@ -126,8 +126,7 @@ type loopMaintenance struct {
 	dashGate *dashboardGate
 
 	// governor is the sentinel movement governor, or nil when
-	// `subsystems.movement_governor.enabled: false` or nothing seeded its state.
-	// Every method tolerates nil.
+	// `subsystems.movement_governor.enabled: false`. Every method tolerates nil.
 	governor *movementGovernor
 }
 
@@ -140,10 +139,10 @@ type loopMaintenance struct {
 // dashboardgate.go.
 //
 // Sentinel movement governor (FW2 hk-z1lr / FW3 hk-4toh) — a SWITCHABLE
-// subsystem. nil means `subsystems.movement_governor.enabled: false` (or that
-// nothing seeded a governor state): no evaluation, no trip, no halt, and no
-// sentinel dispatch gate. All its per-loop state — eval cadence, pending ack
-// token, halt flag — lives inside it. See movementgovernor.go.
+// subsystem. nil means `subsystems.movement_governor.enabled: false`: no
+// evaluation, no trip, no halt, and no sentinel dispatch gate. All its per-loop
+// state — eval cadence, pending ack token, halt flag — lives inside it. See
+// movementgovernor.go.
 //
 // CONSTRUCTION ORDER IS OBSERVABLE: each constructor announces a partitioned
 // subsystem on logW, because a silent partition is indistinguishable from a
@@ -156,12 +155,12 @@ type loopMaintenance struct {
 // logW is passed straight through. Both sub-constructors already substitute
 // os.Stderr for a nil writer, so a third copy of that guard here would be dead
 // code (the reviewer's point, and it also keeps os out of this file's imports).
-func newLoopMaintenance(deps workLoopDeps, coordinatorReap coordinatorReapPort, eagerRefill eagerRefillPort, logW io.Writer) *loopMaintenance {
+func newLoopMaintenance(deps workLoopDeps, coordinatorReap coordinatorReapPort, eagerRefill eagerRefillPort, governor governorPort, governorEnabled bool, logW io.Writer) *loopMaintenance {
 	return &loopMaintenance{
 		coordinatorReap: coordinatorReap,
 		eagerRefill:     eagerRefill,
 		dashGate:        newDashboardGateIfEnabled(deps.projectCfg, logW),
-		governor:        newMovementGovernorIfEnabled(deps, logW),
+		governor:        newMovementGovernorIfEnabled(governor, governorEnabled, logW),
 	}
 }
 

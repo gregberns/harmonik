@@ -395,7 +395,7 @@ func projectActiveGroup(q *queue.Queue) *orchestrator.GroupSnapshot {
 }
 
 //nolint:gocognit,cyclop,funlen // pre-existing: Seam A moved this code out of workloop.go unchanged
-func runWorkLoop(ctx context.Context, deps workLoopDeps, coordinatorReap coordinatorReapPort, diskReclaim diskReclaimPort, eagerRefill eagerRefillPort, governor governorPort, governorEnabled bool) error {
+func runWorkLoop(ctx context.Context, deps workLoopDeps, schedule schedulePort, coordinatorReap coordinatorReapPort, diskReclaim diskReclaimPort, eagerRefill eagerRefillPort, governor governorPort, governorEnabled bool) error {
 	// wg tracks all in-flight bead goroutines. runWorkLoop waits on this before
 	// returning so callers know all bead work is complete on return.
 	var wg sync.WaitGroup
@@ -465,7 +465,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, coordinatorReap coordin
 	// (RSM-011) plus the dashboard forcing gate and the sentinel movement
 	// governor, both of which are SWITCHABLE subsystems that may be absent. It is
 	// touched only from this goroutine. See loopmaintenance.go.
-	maint := newLoopMaintenance(deps, coordinatorReap, diskReclaim, eagerRefill, governor, governorEnabled, os.Stderr)
+	maint := newLoopMaintenance(deps, schedule, coordinatorReap, diskReclaim, eagerRefill, governor, governorEnabled, os.Stderr)
 	reapPort := newReapSeamPort(deps, eagerRefill)
 	completionPort := newRunCompletionPort(deps, reapPort)
 
@@ -611,7 +611,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, coordinatorReap coordin
 		// reports. This loop decides. In particular the sentinel governor asks for
 		// a halt through preObs.halt rather than shutting the daemon down itself,
 		// so exitClean stays owned here.
-		preObs := maint.tickBeforeDispatch(ctx, &deps)
+		preObs := maint.tickBeforeDispatch(ctx)
 		if preObs.halt {
 			return exitClean()
 		}
@@ -838,7 +838,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, coordinatorReap coordin
 								return exitClean()
 							}
 						} else {
-							if sleepErr := scheduleAwareIdleWait(dispatchCtx, deps); sleepErr != nil {
+							if sleepErr := scheduleAwareIdleWait(dispatchCtx, schedule, deps.submitWakeC); sleepErr != nil {
 								return exitClean()
 							}
 						}
@@ -1799,18 +1799,18 @@ func workloopIdleWait(ctx context.Context, wakeC <-chan struct{}) error {
 // preserving the no-busy-poll idle contract (PL-013).
 //
 // Bead ref: hk-0es.
-func scheduleAwareIdleWait(ctx context.Context, deps workLoopDeps) error {
-	if deps.scheduleStore == nil || !hasEnabledScheduledJob(deps.scheduleStore) {
-		return workloopIdleWait(ctx, deps.submitWakeC)
+func scheduleAwareIdleWait(ctx context.Context, schedule schedulePort, submitWakeC <-chan struct{}) error {
+	if schedule.store == nil || !hasEnabledScheduledJob(schedule.store) {
+		return workloopIdleWait(ctx, submitWakeC)
 	}
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-time.After(workloopPollInterval):
 		return nil
-	case <-deps.submitWakeC:
+	case <-submitWakeC:
 		return nil
-	case <-deps.scheduleWakeC:
+	case <-schedule.wakeC:
 		return nil
 	}
 }

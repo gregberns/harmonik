@@ -219,7 +219,7 @@ func TestSubsystemPartition_MovementGovernor_DefaultRuns(t *testing.T) {
 		t.Fatal("newMovementGovernorIfEnabled = nil with no subsystems: block; want a constructed governor (absent config must not disable anything)")
 	}
 
-	governor.tick(context.Background(), deps)
+	governor.tick(context.Background(), deps, schedulePort{})
 
 	if got := ledger.readyCalls(); got != 1 {
 		t.Errorf("brAdapter.Ready called %d times; want 1 (the governor's per-evaluation shell-out must happen when it is enabled)", got)
@@ -231,7 +231,7 @@ func TestSubsystemPartition_MovementGovernor_DefaultRuns(t *testing.T) {
 	// The eval-cadence gate is load-bearing, not politeness: evaluating on every
 	// 2 s poll tick cost 25–50% daemon CPU on large event logs (hk-usn8o). A
 	// second immediate tick, far inside the default cadence, must do nothing.
-	governor.tick(context.Background(), deps)
+	governor.tick(context.Background(), deps, schedulePort{})
 	if got := ledger.readyCalls(); got != 1 {
 		t.Errorf("brAdapter.Ready called %d times after a second immediate tick; want still 1 (the eval cadence must suppress it)", got)
 	}
@@ -263,7 +263,7 @@ subsystems:
 
 	// The loop calls these unconditionally; on an absent governor they are inert.
 	for range 5 {
-		governor.tick(context.Background(), deps)
+		governor.tick(context.Background(), deps, schedulePort{})
 	}
 	if governor.halted() {
 		t.Error("halted() = true on an absent governor; only the governor itself can request the G-liveness halt")
@@ -376,7 +376,7 @@ func TestSubsystemPartition_MovementGovernor_NoConfigStillObservesWithoutLivenes
 	ledger := &wlsubCountingLedger{}
 	deps := wlsubGovernorDeps(root, bus, ledger)
 	governor := newMovementGovernorIfEnabled(port, enabled, io.Discard)
-	governor.tick(context.Background(), deps)
+	governor.tick(context.Background(), deps, schedulePort{})
 
 	if got := ledger.readyCalls(); got != 1 {
 		t.Errorf("brAdapter.Ready called %d times, want 1 so no-config still observes", got)
@@ -393,7 +393,7 @@ func TestSubsystemPartition_MovementGovernor_NoConfigStillObservesWithoutLivenes
 	// threshold into a halt.
 	port.mode = "act"
 	actGovernor := newMovementGovernorIfEnabled(port, enabled, io.Discard)
-	actGovernor.tick(context.Background(), deps)
+	actGovernor.tick(context.Background(), deps, schedulePort{})
 	if actGovernor.halted() {
 		t.Error("zero liveness threshold armed a halt in ACT mode")
 	}

@@ -125,6 +125,10 @@ type loopMaintenance struct {
 	// eagerRefill holds the eager-refill and staged-follow-up inputs.
 	eagerRefill eagerRefillPort
 
+	// schedule holds the recurring-job path inputs. It has no event bus and no
+	// queue wake channel. Those values stay with their owning surfaces.
+	schedule schedulePort
+
 	// dashGate is the dashboard staleness forcing gate, or nil when
 	// `subsystems.dashboard_gate.enabled: false`. Every method tolerates nil.
 	dashGate *dashboardGate
@@ -159,11 +163,12 @@ type loopMaintenance struct {
 // logW is passed straight through. Both sub-constructors already substitute
 // os.Stderr for a nil writer, so a third copy of that guard here would be dead
 // code (the reviewer's point, and it also keeps os out of this file's imports).
-func newLoopMaintenance(deps workLoopDeps, coordinatorReap coordinatorReapPort, diskReclaim diskReclaimPort, eagerRefill eagerRefillPort, governor governorPort, governorEnabled bool, logW io.Writer) *loopMaintenance {
+func newLoopMaintenance(deps workLoopDeps, schedule schedulePort, coordinatorReap coordinatorReapPort, diskReclaim diskReclaimPort, eagerRefill eagerRefillPort, governor governorPort, governorEnabled bool, logW io.Writer) *loopMaintenance {
 	return &loopMaintenance{
 		coordinatorReap: coordinatorReap,
 		diskReclaim:     diskReclaim,
 		eagerRefill:     eagerRefill,
+		schedule:        schedule,
 		dashGate:        newDashboardGateIfEnabled(deps.projectCfg, logW),
 		governor:        newMovementGovernorIfEnabled(governor, governorEnabled, logW),
 	}
@@ -177,7 +182,7 @@ func newLoopMaintenance(deps workLoopDeps, coordinatorReap coordinatorReapPort, 
 // that drains and exits.
 //
 // It fills halt and diskLow. blockedQueues is not this pass's question.
-func (m *loopMaintenance) tickBeforeDispatch(ctx context.Context, deps *workLoopDeps) maintenanceObservation {
+func (m *loopMaintenance) tickBeforeDispatch(ctx context.Context) maintenanceObservation {
 	// G-liveness halt (FW3 hk-4toh): if the governor fired ActivationHalt in ACT
 	// mode on a prior tick, the loop must drain in-flight runs and exit cleanly.
 	// The liveness_halt page event was already emitted when the halt was armed.
@@ -191,8 +196,8 @@ func (m *loopMaintenance) tickBeforeDispatch(ctx context.Context, deps *workLoop
 	// Runs IN-LOOP (reusing the loop's poll cadence + claim-write serialisation),
 	// placed after the dispatch-halt check and before the capacity gate so a fired
 	// spawn-crew/command action is independent of the bead-dispatch capacity.
-	// No-op when scheduleStore is nil.
-	runScheduleTick(ctx, *deps)
+	// No-op when the schedule store is nil.
+	runScheduleTick(ctx, m.schedule)
 
 	// Periodic coordinator-session reap (hk-t08m).
 	m.reapCoordinatorSessions(ctx)
@@ -273,7 +278,7 @@ func (m *loopMaintenance) tickBeforeSelect(ctx context.Context, deps workLoopDep
 	// scans events.jsonl), the trip/clear/halt handling and the adversary spawn
 	// all live in movementGovernor (movementgovernor.go). No-op — and never
 	// constructed — when the subsystem is switched off.
-	m.governor.tick(ctx, deps)
+	m.governor.tick(ctx, deps, m.schedule)
 
 	return maintenanceObservation{blockedQueues: m.dashGate.blockedQueueSet()}
 }

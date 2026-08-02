@@ -129,7 +129,7 @@ func (g *movementGovernor) dispatchBlocked(deps workLoopDeps) bool {
 // Cadence-gating is load-bearing, not politeness: each evaluation scans
 // events.jsonl, and running it on every 2 s poll tick cost 25–50% daemon CPU on
 // large logs (hk-usn8o).
-func (g *movementGovernor) tick(ctx context.Context, deps workLoopDeps) {
+func (g *movementGovernor) tick(ctx context.Context, deps workLoopDeps, schedule schedulePort) {
 	if g == nil {
 		return
 	}
@@ -146,7 +146,7 @@ func (g *movementGovernor) tick(ctx context.Context, deps workLoopDeps) {
 		if !g.dueForEval(deps, now) {
 			return
 		}
-		g.tickAct(ctx, deps, now)
+		g.tickAct(ctx, deps, schedule, now)
 	}
 }
 
@@ -182,7 +182,7 @@ func (g *movementGovernor) tickObserve(ctx context.Context, deps workLoopDeps, n
 // .harmonik/decision_acks/ (the EV-043a anchor) AND updates the in-memory
 // DecisionBlocker, so dispatchBlocked() gates all dispatch while a trip is
 // pending. Config default is "observe"; operators opt into "act" explicitly.
-func (g *movementGovernor) tickAct(ctx context.Context, deps workLoopDeps, now time.Time) {
+func (g *movementGovernor) tickAct(ctx context.Context, deps workLoopDeps, schedule schedulePort, now time.Time) {
 	in, readyBeadIDs := g.gatherInput(ctx, deps, now)
 	sig := sentinel.Evaluate(ctx, g.port.state, in, g.port.config)
 	governorEmitSignal(ctx, deps, sig)
@@ -191,7 +191,7 @@ func (g *movementGovernor) tickAct(ctx context.Context, deps workLoopDeps, now t
 	case sig.Level == sentinel.ActivationHalt:
 		g.onHalt(ctx, deps, sig)
 	case sig.Level == sentinel.ActivationActive && sig.SuppressedBy == "":
-		g.onTrip(ctx, deps, now, readyBeadIDs, in.HasUndeployedTail)
+		g.onTrip(ctx, deps, schedule, now, readyBeadIDs, in.HasUndeployedTail)
 	case sig.Level == sentinel.ActivationDormant && g.pendingAckToken != "":
 		g.onClear(ctx, deps, now)
 	}
@@ -219,7 +219,7 @@ func (g *movementGovernor) onHalt(ctx context.Context, deps workLoopDeps, sig se
 // externally acknowledged it between ticks; when that happened, clear the
 // in-memory token and the DecisionBlocker so this pass emits a fresh trip for
 // re-adjudication (spec §2.2 clause 2).
-func (g *movementGovernor) onTrip(ctx context.Context, deps workLoopDeps, now time.Time, readyBeadIDs []string, hasUndeployedTail bool) {
+func (g *movementGovernor) onTrip(ctx context.Context, deps workLoopDeps, schedule schedulePort, now time.Time, readyBeadIDs []string, hasUndeployedTail bool) {
 	if g.pendingAckToken != "" {
 		if externallyAcked, checkErr := sentinel.IsTripAcknowledged(deps.projectDir, g.pendingAckToken); checkErr == nil && externallyAcked {
 			if deps.decisionBlocker != nil {
@@ -245,25 +245,24 @@ func (g *movementGovernor) onTrip(ctx context.Context, deps workLoopDeps, now ti
 			}
 		}
 	}
-	g.spawnAdversary(ctx, deps)
+	g.spawnAdversary(ctx, deps, schedule)
 }
 
 // spawnAdversary is FW4 (hk-jsvc): spawn a fresh-context adversary crew to
 // adjudicate the trip. It reviews captain comms/commits as a foreign artifact
 // and emits its own sentinel trip if it confirms the governor's verdict.
 //
-// Both dependencies it needs are NON-CORE and may legitimately be nil — the crew
-// handler is nil whenever the socket subtree is absent, and the comms querier is
-// nil in unit-test mode. Nil crew handler means no adversary at all; nil comms
-// querier means an empty online set, which SpawnAdversary reads as "not already
-// online" (the overlap-skip fails open, matching the pre-extraction behaviour).
-func (g *movementGovernor) spawnAdversary(ctx context.Context, deps workLoopDeps) {
-	if deps.crewHandler == nil {
+// The SchedulePort holds both non-core dependencies. Its crew handler is nil
+// whenever the socket subtree is absent. Its comms querier is nil in unit-test
+// mode. A nil crew handler means no adversary. A nil comms querier gives an
+// empty online set, so overlap checks fail open as they did before extraction.
+func (g *movementGovernor) spawnAdversary(ctx context.Context, deps workLoopDeps, schedule schedulePort) {
+	if schedule.crewHandler == nil {
 		return
 	}
 	var onlineAgents map[string]struct{}
-	if deps.commsWhoQuerier != nil {
-		if agents, whoErr := deps.commsWhoQuerier(ctx); whoErr == nil {
+	if schedule.commsWhoQuerier != nil {
+		if agents, whoErr := schedule.commsWhoQuerier(ctx); whoErr == nil {
 			onlineAgents = agents
 		}
 	}
@@ -272,7 +271,7 @@ func (g *movementGovernor) spawnAdversary(ctx context.Context, deps workLoopDeps
 	}
 	if _, spawnErr := sentinel.SpawnAdversary(ctx, sentinel.AdversaryInput{
 		ProjectDir: deps.projectDir,
-	}, deps.crewHandler, onlineAgents); spawnErr != nil {
+	}, schedule.crewHandler, onlineAgents); spawnErr != nil {
 		fmt.Fprintf(g.logW, "daemon: workloop: sentinel: SpawnAdversary failed (non-fatal): %v\n", spawnErr) //nolint:errcheck // best-effort stderr status log
 	}
 }

@@ -67,7 +67,6 @@ import (
 	"github.com/gregberns/harmonik/internal/runlease"
 	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/runmerge"
-	"github.com/gregberns/harmonik/internal/schedule"
 	"github.com/gregberns/harmonik/internal/sessiondata"
 	"github.com/gregberns/harmonik/internal/substrate"
 	codesyncpkg "github.com/gregberns/harmonik/internal/transport/codesync"
@@ -678,47 +677,6 @@ type workLoopDeps struct {
 	//
 	// Bead ref: hk-hd2w6.
 	runner tmuxpkg.CommandRunner
-
-	// scheduleStore, when non-nil, is the daemon-owned recurring-job registry
-	// (codename:schedule, hk-0es). The work loop runs runScheduleTick once per
-	// poll iteration (after the dispatch-context check, before the capacity gate)
-	// to fire any due jobs. When nil the schedule surface is disabled (legacy /
-	// unit-test daemons without the surface).
-	//
-	// Bead ref: hk-0es.
-	scheduleStore *schedule.Store
-
-	// crewHandler, when non-nil, is the daemon's crew-start handler. The schedule
-	// tick fires spawn-crew actions through HandleCrewStart so subscription-billing
-	// guards apply by construction (reuses the same path as `harmonik crew start`).
-	// Injected at daemon composition alongside scheduleStore. nil → spawn-crew
-	// scheduled actions error out (logged, non-fatal); command actions are unaffected.
-	//
-	// Bead ref: hk-0es.
-	crewHandler crewStarter
-
-	// commsWhoQuerier returns the set of presence-online agent names for the
-	// spawn-crew overlap check. Production wires shellCommsWho (shells out to
-	// `harmonik comms who --json`); tests inject a double. nil → spawn-crew
-	// overlap never blocks (HandleCrewStart's own collision check is the backstop).
-	//
-	// Bead ref: hk-0es.
-	commsWhoQuerier commsWhoQuerier
-
-	// commsSend fires a comms-send schedule action (WE6). Production wires
-	// shellCommsSend (execs harmonik comms send directly — no bash -c wrapper);
-	// tests inject a recording double. nil → comms-send actions return an error
-	// (no sender configured).
-	//
-	// Bead ref: hk-we6-watch-scheduled-send-6onfu.
-	commsSend commsSendFunc
-
-	// scheduleWakeC, when non-nil, is the channel returned by scheduleStore.WakeCh().
-	// The work loop selects on it alongside submitWakeC so a schedule mutation made
-	// against the in-memory store wakes the idle loop immediately.
-	//
-	// Bead ref: hk-0es.
-	scheduleWakeC <-chan struct{}
 
 	// NOTE (RSM-011): the periodic-maintenance VALUE fields formerly here —
 	// lastCoordinatorReap, lastDiskCheck, diskLow — were lifted out onto

@@ -69,10 +69,10 @@ func haltFixture(t *testing.T) (*workLoopDeps, coordinatorReapPort, diskReclaimP
 // the loop's exit.
 func TestTickBeforeDispatchHaltShortCircuits(t *testing.T) {
 	t.Run("halted governor reports halt and skips every other job", func(t *testing.T) {
-		deps, port, diskReclaim, adapter := haltFixture(t)
+		_, port, diskReclaim, adapter := haltFixture(t)
 		m := &loopMaintenance{coordinatorReap: port, diskReclaim: diskReclaim, governor: &movementGovernor{haltRequested: true}}
 
-		obs := m.tickBeforeDispatch(context.Background(), deps)
+		obs := m.tickBeforeDispatch(context.Background())
 
 		if !obs.halt {
 			t.Fatalf("armed governor halt: want observation.halt = true, got %+v", obs)
@@ -101,10 +101,10 @@ func TestTickBeforeDispatchHaltShortCircuits(t *testing.T) {
 	// Positive control. Without this, the assertions above would still pass if the
 	// fixture simply could not reach tmux, and the test would prove nothing.
 	t.Run("same fixture without the halt does run the reap", func(t *testing.T) {
-		deps, port, diskReclaim, adapter := haltFixture(t)
+		_, port, diskReclaim, adapter := haltFixture(t)
 		m := &loopMaintenance{coordinatorReap: port, diskReclaim: diskReclaim, governor: &movementGovernor{haltRequested: false}}
 
-		obs := m.tickBeforeDispatch(context.Background(), deps)
+		obs := m.tickBeforeDispatch(context.Background())
 
 		if obs.halt {
 			t.Error("no armed halt: want observation.halt = false")
@@ -126,10 +126,10 @@ func TestTickBeforeDispatchHaltShortCircuits(t *testing.T) {
 	// rather than panicking, which is what lets runWorkLoop hold one code path for
 	// both configurations.
 	t.Run("absent governor subsystem never halts", func(t *testing.T) {
-		deps, port, diskReclaim, adapter := haltFixture(t)
+		_, port, diskReclaim, adapter := haltFixture(t)
 		m := &loopMaintenance{coordinatorReap: port, diskReclaim: diskReclaim, governor: nil}
 
-		obs := m.tickBeforeDispatch(context.Background(), deps)
+		obs := m.tickBeforeDispatch(context.Background())
 
 		if obs.halt {
 			t.Error("nil governor must not request a halt")
@@ -250,10 +250,10 @@ func TestDiskLowBranch(t *testing.T) {
 	// calling runPeriodicDiskCheck directly, and the observation must carry the
 	// latch out to the loop.
 	t.Run("tickBeforeDispatch reports diskLow to the loop", func(t *testing.T) {
-		deps, port, calls := diskLowFixture(t, diskLowWatermarkDefault-1)
+		_, port, calls := diskLowFixture(t, diskLowWatermarkDefault-1)
 		m := &loopMaintenance{diskReclaim: port}
 
-		obs := m.tickBeforeDispatch(context.Background(), deps)
+		obs := m.tickBeforeDispatch(context.Background())
 
 		if !obs.diskLow {
 			t.Error("want observation.diskLow = true so the loop skips bead claiming this tick")

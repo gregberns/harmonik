@@ -49,15 +49,19 @@ func (bs *bootState) launchWorkLoop(ctx context.Context, daemonStartTime time.Ti
 	if scheduleErr != nil {
 		return scheduleErr
 	}
-	if injectErr := bs.injectWorkLoopDeps(ctx, &deps, scheduleStore, bootBackoffDelay); injectErr != nil {
+	if injectErr := bs.injectWorkLoopDeps(ctx, &deps, bootBackoffDelay); injectErr != nil {
 		return injectErr
 	}
+	schedulePort := newSchedulePort(deps, scheduleStore, bs.crewHandler)
+	// `harmonik sleep` suspends enabled jobs; `wake --all` restores them
+	// through this same store.
+	bs.quiesceArbiter.SetScheduleStore(schedulePort.store)
 	bs.startBackgroundLoops(ctx, &deps)
 	bs.wireStaleWatcherReapSeams(ctx, &deps, eagerRefill)
 
 	loopDone := make(chan error, 1)
 	go func() {
-		loopDone <- runWorkLoop(ctx, deps, coordinatorReap, diskReclaim, eagerRefill, governor, governorEnabled)
+		loopDone <- runWorkLoop(ctx, deps, schedulePort, coordinatorReap, diskReclaim, eagerRefill, governor, governorEnabled)
 	}()
 	// Block until the work loop exits (either ctx cancelled or fatal error).
 	<-loopDone
@@ -181,26 +185,16 @@ func newScheduleStore(cfg Config) (*schedule.Store, error) {
 }
 
 // injectWorkLoopDeps wires the shared singletons + config toggles into the work
-// loop deps: the queue store + wake channel, the loaded schedule store
-// (codename:schedule, hk-0es), the crew handler, the pause/decision/concurrency
+// loop deps: the queue store + wake channel, the pause/decision/concurrency
 // controllers, the live worker-toggle (hk-xjbvi), the shared RunRegistry, the
 // test-only overrides, and the post-boot spawn-substrate readiness gate (hk-bk33).
-func (bs *bootState) injectWorkLoopDeps(ctx context.Context, deps *workLoopDeps, scheduleStore *schedule.Store, bootBackoffDelay time.Duration) error {
+// The schedule path has its own SchedulePort so it cannot read this bundle.
+func (bs *bootState) injectWorkLoopDeps(ctx context.Context, deps *workLoopDeps, bootBackoffDelay time.Duration) error {
 	cfg := bs.cfg
 
 	// Queue store + submit-wake channel (QM-060; hk-24xn1).
 	deps.queueStore = bs.qs
 	deps.submitWakeC = bs.qs.WakeCh()
-
-	// Recurring-job surface (codename:schedule, hk-0es). The composition root
-	// supplies the loaded store to both the work loop and the quiesce arbiter.
-	deps.scheduleStore = scheduleStore
-	deps.scheduleWakeC = scheduleStore.WakeCh()
-	// `harmonik sleep` suspends enabled jobs; `wake --all` restores them (hk-xjr1n).
-	bs.quiesceArbiter.SetScheduleStore(scheduleStore)
-	deps.crewHandler = bs.crewHandler // may be nil in unit-test mode (no socket)
-	deps.commsWhoQuerier = shellCommsWho(deps.daemonBinaryPath, cfg.ProjectDir)
-	deps.commsSend = shellCommsSend(deps.daemonBinaryPath, cfg.ProjectDir)
 
 	// Dispatcher skip-on-paused gate (hk-kac8g): nil → gate disabled.
 	deps.handlerPauseController = cfg.HandlerPauseController

@@ -75,7 +75,7 @@ type crewStarter interface {
 
 // commsSendFunc fires a comms-send schedule action. Production: shellCommsSend
 // (execs harmonik comms send directly — no bash -c wrapper, per WE6 operator ruling 3).
-// Tests: inject a recording double via workLoopDeps.commsSend.
+// Tests: inject a recording double through schedulePort.commsSend.
 type commsSendFunc func(ctx context.Context, to, from, body, topic string) error
 
 // commsWhoQuerier returns the set of presence-online agent names. Production
@@ -83,34 +83,68 @@ type commsSendFunc func(ctx context.Context, to, from, body, topic string) error
 // set keeps the spawn-crew overlap check a simple membership test.
 type commsWhoQuerier func(ctx context.Context) (map[string]struct{}, error)
 
+// schedulePort is the recurring-job path's complete dependency set. It is built
+// once at boot from the loaded store. The quiesce arbiter holds the same store
+// pointer, so sleep and wake update the jobs that this tick reads.
+//
+// It deliberately does not own the event bus. Schedule actions do not emit
+// directly, and the queue wake channel remains on the queue dispatch surface.
+type schedulePort struct {
+	store           *schedule.Store
+	wakeC           <-chan struct{}
+	crewHandler     crewStarter
+	commsWhoQuerier commsWhoQuerier
+	commsSend       commsSendFunc
+	projectDir      string
+	handlerEnv      []string
+}
+
+// newSchedulePort projects the schedule path's dependencies at the composition
+// seam. The caller supplies the one loaded store that both the tick and quiesce
+// arbiter use.
+func newSchedulePort(deps workLoopDeps, store *schedule.Store, crewHandler crewStarter) schedulePort {
+	port := schedulePort{
+		store:           store,
+		crewHandler:     crewHandler,
+		commsWhoQuerier: shellCommsWho(deps.daemonBinaryPath, deps.projectDir),
+		commsSend:       shellCommsSend(deps.daemonBinaryPath, deps.projectDir),
+		projectDir:      deps.projectDir,
+		handlerEnv:      deps.handlerEnv,
+	}
+	if store != nil {
+		port.wakeC = store.WakeCh()
+	}
+	return port
+}
+
 // runScheduleTick evaluates every job in the store once and fires those that are
 // due and not blocked by their overlap policy. It is invoked once per work-loop
 // poll iteration. Errors on individual jobs are logged and skipped — one bad job
 // never stalls the others or the dispatch loop.
 //
-// deps.scheduleStore nil → no-op (legacy / unit-test daemons without the surface).
-func runScheduleTick(ctx context.Context, deps workLoopDeps) {
-	if deps.scheduleStore == nil {
+// port.store nil → no-op (legacy / unit-test daemons without the surface).
+func runScheduleTick(ctx context.Context, port schedulePort) {
+	if port.store == nil {
 		return
 	}
 	// Pick up out-of-process mutations (the CLI writes schedules.json directly
 	// whether or not the daemon is running). Cheap stat-then-maybe-read.
-	if _, err := deps.scheduleStore.ReloadIfChanged(); err != nil {
+	if _, err := port.store.ReloadIfChanged(); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: schedule: reload: %v\n", err)
 		// Keep going with the in-memory state on a transient read error.
 	}
 	nowUTC := time.Now().UTC()
-	for _, job := range deps.scheduleStore.List() {
+	for _, job := range port.store.List() {
 		// A run-now request fires regardless of Enabled/due, honouring overlap.
 		if job.ForceNext {
-			if skipped, reason := overlapBlocks(ctx, deps, job); skipped {
+			if skipped, reason := overlapBlocks(ctx, port, job); skipped {
 				fmt.Fprintf(os.Stderr, "daemon: schedule: job %q: run-now skip-on-overlap (%s)\n", job.ID, reason)
-			} else if err := doFireAction(ctx, deps, job, nowUTC); err != nil {
+			} else if err := doFireAction(ctx, port, job, nowUTC); err != nil {
 				fmt.Fprintf(os.Stderr, "daemon: schedule: job %q: run-now fire: %v\n", job.ID, err)
 			}
 			// Clear the flag whether or not the fire succeeded/was-skipped so it is a
 			// genuine one-shot (a failed fire is logged; the operator can re-issue).
-			if _, cErr := deps.scheduleStore.ClearForceNext(job.ID); cErr != nil {
+			if _, cErr := port.store.ClearForceNext(job.ID); cErr != nil {
 				fmt.Fprintf(os.Stderr, "daemon: schedule: job %q: clear run-now flag: %v\n", job.ID, cErr)
 			}
 			continue
@@ -118,14 +152,14 @@ func runScheduleTick(ctx context.Context, deps workLoopDeps) {
 		if !job.Enabled {
 			continue
 		}
-		fireScheduledJobIfDue(ctx, deps, job, nowUTC)
+		fireScheduledJobIfDue(ctx, port, job, nowUTC)
 	}
 }
 
 // fireScheduledJobIfDue evaluates one job at nowUTC and fires it when due.
 // The ad-hoc run-now path is handled in runScheduleTick via the ForceNext flag
 // (it bypasses the due check but still honours the overlap policy).
-func fireScheduledJobIfDue(ctx context.Context, deps workLoopDeps, job schedule.ScheduledJob, nowUTC time.Time) {
+func fireScheduledJobIfDue(ctx context.Context, port schedulePort, job schedule.ScheduledJob, nowUTC time.Time) {
 	decision, err := schedule.Decide(job, nowUTC)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: schedule: job %q: decide: %v\n", job.ID, err)
@@ -136,7 +170,7 @@ func fireScheduledJobIfDue(ctx context.Context, deps workLoopDeps, job schedule.
 		// so we don't re-evaluate it forever, and log.
 		fmt.Fprintf(os.Stderr, "daemon: schedule: job %q: skipping missed fire at %s (outside catch-up window)\n",
 			job.ID, decision.FireInstant.UTC().Format(time.RFC3339))
-		if _, mErr := deps.scheduleStore.MarkFired(job.ID, decision.FireInstant.UTC().Format(time.RFC3339), job.LastPID); mErr != nil {
+		if _, mErr := port.store.MarkFired(job.ID, decision.FireInstant.UTC().Format(time.RFC3339), job.LastPID); mErr != nil {
 			fmt.Fprintf(os.Stderr, "daemon: schedule: job %q: mark missed: %v\n", job.ID, mErr)
 		}
 		return
@@ -144,19 +178,19 @@ func fireScheduledJobIfDue(ctx context.Context, deps workLoopDeps, job schedule.
 	if !decision.Fire {
 		return
 	}
-	fireScheduledJob(ctx, deps, job, nowUTC, decision.Catchup)
+	fireScheduledJob(ctx, port, job, nowUTC, decision.Catchup)
 }
 
 // fireScheduledJob applies the overlap policy then fires; logs and returns.
-func fireScheduledJob(ctx context.Context, deps workLoopDeps, job schedule.ScheduledJob, nowUTC time.Time, isCatchup bool) {
-	if skipped, reason := overlapBlocks(ctx, deps, job); skipped {
+func fireScheduledJob(ctx context.Context, port schedulePort, job schedule.ScheduledJob, nowUTC time.Time, isCatchup bool) {
+	if skipped, reason := overlapBlocks(ctx, port, job); skipped {
 		fmt.Fprintf(os.Stderr, "daemon: schedule: job %q: skip-on-overlap (%s)\n", job.ID, reason)
 		return
 	}
 	if isCatchup {
 		fmt.Fprintf(os.Stderr, "daemon: schedule: job %q: firing coalesced catch-up\n", job.ID)
 	}
-	if err := doFireAction(ctx, deps, job, nowUTC); err != nil {
+	if err := doFireAction(ctx, port, job, nowUTC); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: schedule: job %q: fire: %v\n", job.ID, err)
 	}
 }
@@ -166,7 +200,7 @@ func fireScheduledJob(ctx context.Context, deps workLoopDeps, job schedule.Sched
 //   - OverlapPolicyAllow: never blocks.
 //   - command action: blocks iff LastPID is still alive.
 //   - spawn-crew action: blocks iff a crew named Action.Crew is presence-online.
-func overlapBlocks(ctx context.Context, deps workLoopDeps, job schedule.ScheduledJob) (blocked bool, reason string) {
+func overlapBlocks(ctx context.Context, port schedulePort, job schedule.ScheduledJob) (blocked bool, reason string) {
 	if job.OverlapPolicy == schedule.OverlapPolicyAllow {
 		return false, ""
 	}
@@ -180,7 +214,10 @@ func overlapBlocks(ctx context.Context, deps workLoopDeps, job schedule.Schedule
 		if job.Action.Crew == "" {
 			return false, ""
 		}
-		online, err := deps.commsWhoQuerier(ctx)
+		if port.commsWhoQuerier == nil {
+			return false, ""
+		}
+		online, err := port.commsWhoQuerier(ctx)
 		if err != nil {
 			// Fail-open on a query error: we'd rather risk a duplicate spawn than
 			// silently never fire. HandleCrewStart's own collision check is the
@@ -204,54 +241,54 @@ func overlapBlocks(ctx context.Context, deps workLoopDeps, job schedule.Schedule
 // doFireAction performs the action and records the fire. On a command action it
 // records the spawned pid; on spawn-crew it records pid 0. LastFire is set to
 // nowUTC (RFC3339 UTC).
-func doFireAction(ctx context.Context, deps workLoopDeps, job schedule.ScheduledJob, nowUTC time.Time) error {
+func doFireAction(ctx context.Context, port schedulePort, job schedule.ScheduledJob, nowUTC time.Time) error {
 	var firedPID int
 	switch job.Action.Kind {
 	case schedule.ActionKindCommand:
-		pid, err := fireCommandAction(deps, job)
+		pid, err := fireCommandAction(port, job)
 		if err != nil {
 			return err
 		}
 		firedPID = pid
 	case schedule.ActionKindSpawnCrew:
-		if err := fireSpawnCrewAction(ctx, deps, job); err != nil {
+		if err := fireSpawnCrewAction(ctx, port, job); err != nil {
 			return err
 		}
 		firedPID = 0
 	case schedule.ActionKindCommsSend:
-		if err := fireCommsSendAction(ctx, deps, job); err != nil {
+		if err := fireCommsSendAction(ctx, port, job); err != nil {
 			return err
 		}
 		firedPID = 0
 	default:
 		return fmt.Errorf("unknown action kind %q", job.Action.Kind)
 	}
-	if _, err := deps.scheduleStore.MarkFired(job.ID, nowUTC.Format(time.RFC3339), firedPID); err != nil {
+	if _, err := port.store.MarkFired(job.ID, nowUTC.Format(time.RFC3339), firedPID); err != nil {
 		return fmt.Errorf("mark fired: %w", err)
 	}
 	return nil
 }
 
 // fireCommandAction spawns Argv as a fresh detached process. Its environment is
-// os.Environ() plus deps.handlerEnv (HARMONIK_PROJECT_HASH prepended), then run
+// os.Environ() plus port.handlerEnv (HARMONIK_PROJECT_HASH prepended), then run
 // through scrubCredentialEnv so no credential deny-list key (ANTHROPIC_API_KEY
 // etc.) reaches the child — the same defense-in-depth the claude path applies at
 // ClaudeEnvVars. By CI-001 os.Environ() should already be credential-free; the
 // scrub is the belt-and-braces guard against the 2026-05-30 mis-launch failure
 // mode (hk-f2nm1). It does NOT block the loop on the process. Returns the spawned
 // pid.
-func fireCommandAction(deps workLoopDeps, job schedule.ScheduledJob) (int, error) {
+func fireCommandAction(port schedulePort, job schedule.ScheduledJob) (int, error) {
 	if len(job.Action.Argv) == 0 {
 		return 0, fmt.Errorf("command action has empty argv")
 	}
 	//nolint:gosec // G204: argv is operator-authored schedule config, not untrusted input.
 	cmd := exec.Command(job.Action.Argv[0], job.Action.Argv[1:]...)
-	cmd.Dir = deps.projectDir
+	cmd.Dir = port.projectDir
 	// os.Environ()+handlerEnv made credential-safe by CI-001 (the daemon env holds
 	// no key) AND the scrub below (belt-and-braces strip of the deny-list keys,
 	// matching the claude path). handlerEnv is the same base env passed to handler
 	// subprocesses; appended last so HARMONIK_PROJECT_HASH wins.
-	cmd.Env = scrubCredentialEnv(append(os.Environ(), deps.handlerEnv...))
+	cmd.Env = scrubCredentialEnv(append(os.Environ(), port.handlerEnv...))
 	// Detach into its own process group so it survives a daemon restart and is not
 	// signalled by the daemon's own process-group teardown.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -269,8 +306,8 @@ func fireCommandAction(deps workLoopDeps, job schedule.ScheduledJob) (int, error
 // {crew,queue,mission}. Reusing HandleCrewStart is what enforces the
 // subscription-billing baseline (--remote-control, no credential keys) by
 // construction — the schedule tick never execs claude directly.
-func fireSpawnCrewAction(ctx context.Context, deps workLoopDeps, job schedule.ScheduledJob) error {
-	if deps.crewHandler == nil {
+func fireSpawnCrewAction(ctx context.Context, port schedulePort, job schedule.ScheduledJob) error {
+	if port.crewHandler == nil {
 		return fmt.Errorf("spawn-crew action but no crew handler wired")
 	}
 	if job.Action.Crew == "" || job.Action.Queue == "" {
@@ -285,25 +322,25 @@ func fireSpawnCrewAction(ctx context.Context, deps workLoopDeps, job schedule.Sc
 	if err != nil {
 		return fmt.Errorf("marshal crew-start request: %w", err)
 	}
-	if _, err := deps.crewHandler.HandleCrewStart(ctx, payload); err != nil {
+	if _, err := port.crewHandler.HandleCrewStart(ctx, payload); err != nil {
 		return fmt.Errorf("crew-start: %w", err)
 	}
 	return nil
 }
 
-// fireCommsSendAction sends a comms message via deps.commsSend (WE6). The
+// fireCommsSendAction sends a comms message via port.commsSend (WE6). The
 // commsSend func is the production shellCommsSend (execs harmonik comms send
 // directly) or a test double. No PID is recorded (firedPID=0): comms-send is
 // fire-and-forget, and the overlap policy is always allow for this action kind
 // (overlapBlocks returns false unconditionally for ActionKindCommsSend).
-func fireCommsSendAction(ctx context.Context, deps workLoopDeps, job schedule.ScheduledJob) error {
-	if deps.commsSend == nil {
+func fireCommsSendAction(ctx context.Context, port schedulePort, job schedule.ScheduledJob) error {
+	if port.commsSend == nil {
 		return fmt.Errorf("comms-send action but no commsSend func wired")
 	}
 	if job.Action.To == "" {
 		return fmt.Errorf("comms-send action: To is required")
 	}
-	return deps.commsSend(ctx, job.Action.To, job.Action.From, job.Action.Body, job.Action.Topic)
+	return port.commsSend(ctx, job.Action.To, job.Action.From, job.Action.Body, job.Action.Topic)
 }
 
 // commsSendArgv builds the argv slice for `harmonik comms send`.  Body is

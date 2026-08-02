@@ -2,7 +2,7 @@ package daemon
 
 // scheduletick_test.go — unit tests for the work-loop schedule tick (hk-0es).
 //
-// These are plain unit tests (NOT scenario): they construct a workLoopDeps with
+// These are plain unit tests (NOT scenario): they construct a schedulePort with
 // a real schedule.Store over a temp dir and lightweight doubles for the crew
 // handler and comms-who query. No daemon, tmux, or br is booted.
 
@@ -53,7 +53,7 @@ func onlineSet(names ...string) commsWhoQuerier {
 	return func(_ context.Context) (map[string]struct{}, error) { return set, nil }
 }
 
-func newTickDeps(t *testing.T) (workLoopDeps, *schedule.Store, *fakeCrewStarter) {
+func newTickPort(t *testing.T) (schedulePort, *schedule.Store, *fakeCrewStarter) {
 	t.Helper()
 	dir := t.TempDir()
 	store := schedule.NewStore(dir)
@@ -61,14 +61,15 @@ func newTickDeps(t *testing.T) (workLoopDeps, *schedule.Store, *fakeCrewStarter)
 		t.Fatalf("store Load: %v", err)
 	}
 	crew := &fakeCrewStarter{}
-	deps := workLoopDeps{
+	port := schedulePort{
 		projectDir:      dir,
-		scheduleStore:   store,
+		store:           store,
+		wakeC:           store.WakeCh(),
 		crewHandler:     crew,
 		commsWhoQuerier: onlineSet(), // none online by default
 		handlerEnv:      []string{"HARMONIK_PROJECT_HASH=test"},
 	}
-	return deps, store, crew
+	return port, store, crew
 }
 
 // pastDailyAt returns an HH:MM string that is already in the past today (UTC) so
@@ -80,7 +81,7 @@ func pastDailyAt(t *testing.T) string {
 }
 
 func TestScheduleTick_SpawnCrewFires(t *testing.T) {
-	deps, store, crew := newTickDeps(t)
+	port, store, crew := newTickPort(t)
 
 	job := schedule.ScheduledJob{
 		ID:       "j1",
@@ -92,7 +93,7 @@ func TestScheduleTick_SpawnCrewFires(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
-	runScheduleTick(context.Background(), deps)
+	runScheduleTick(context.Background(), port)
 
 	if crew.count() != 1 {
 		t.Fatalf("crew start count = %d, want 1", crew.count())
@@ -103,15 +104,15 @@ func TestScheduleTick_SpawnCrewFires(t *testing.T) {
 	}
 
 	// A second tick in the same window must NOT re-fire (LastFire now covers it).
-	runScheduleTick(context.Background(), deps)
+	runScheduleTick(context.Background(), port)
 	if crew.count() != 1 {
 		t.Fatalf("crew re-fired in same window: count = %d, want 1", crew.count())
 	}
 }
 
 func TestScheduleTick_SpawnCrewSkipOnOverlap(t *testing.T) {
-	deps, store, crew := newTickDeps(t)
-	deps.commsWhoQuerier = onlineSet("owl") // crew already online → skip
+	port, store, crew := newTickPort(t)
+	port.commsWhoQuerier = onlineSet("owl") // crew already online → skip
 
 	job := schedule.ScheduledJob{
 		ID:            "j2",
@@ -124,7 +125,7 @@ func TestScheduleTick_SpawnCrewSkipOnOverlap(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
-	runScheduleTick(context.Background(), deps)
+	runScheduleTick(context.Background(), port)
 
 	if crew.count() != 0 {
 		t.Fatalf("crew fired despite overlap skip: count = %d, want 0", crew.count())
@@ -137,8 +138,8 @@ func TestScheduleTick_SpawnCrewSkipOnOverlap(t *testing.T) {
 }
 
 func TestScheduleTick_SpawnCrewAllowOverlap(t *testing.T) {
-	deps, store, crew := newTickDeps(t)
-	deps.commsWhoQuerier = onlineSet("owl") // online, but policy=allow
+	port, store, crew := newTickPort(t)
+	port.commsWhoQuerier = onlineSet("owl") // online, but policy=allow
 
 	job := schedule.ScheduledJob{
 		ID:            "j3",
@@ -151,7 +152,7 @@ func TestScheduleTick_SpawnCrewAllowOverlap(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
-	runScheduleTick(context.Background(), deps)
+	runScheduleTick(context.Background(), port)
 
 	if crew.count() != 1 {
 		t.Fatalf("allow-overlap crew did not fire: count = %d, want 1", crew.count())
@@ -159,7 +160,7 @@ func TestScheduleTick_SpawnCrewAllowOverlap(t *testing.T) {
 }
 
 func TestScheduleTick_DisabledJobNeverFires(t *testing.T) {
-	deps, store, crew := newTickDeps(t)
+	port, store, crew := newTickPort(t)
 	job := schedule.ScheduledJob{
 		ID:       "j4",
 		Schedule: schedule.Schedule{Kind: schedule.ScheduleKindDaily, At: pastDailyAt(t), TZ: "UTC"},
@@ -169,14 +170,14 @@ func TestScheduleTick_DisabledJobNeverFires(t *testing.T) {
 	if err := store.Add(job); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	runScheduleTick(context.Background(), deps)
+	runScheduleTick(context.Background(), port)
 	if crew.count() != 0 {
 		t.Fatalf("disabled job fired: count = %d, want 0", crew.count())
 	}
 }
 
 func TestScheduleTick_RunNowFiresAndClears(t *testing.T) {
-	deps, store, crew := newTickDeps(t)
+	port, store, crew := newTickPort(t)
 	// Future fire time so the job is NOT due on its own, isolating the run-now path.
 	future := time.Now().UTC().Add(6 * time.Hour).Format("15:04")
 	job := schedule.ScheduledJob{
@@ -192,7 +193,7 @@ func TestScheduleTick_RunNowFiresAndClears(t *testing.T) {
 		t.Fatalf("RequestRunNow = (%v,%v)", ok, err)
 	}
 
-	runScheduleTick(context.Background(), deps)
+	runScheduleTick(context.Background(), port)
 
 	if crew.count() != 1 {
 		t.Fatalf("run-now did not fire: count = %d, want 1", crew.count())
@@ -203,14 +204,14 @@ func TestScheduleTick_RunNowFiresAndClears(t *testing.T) {
 	}
 
 	// A subsequent tick must not re-fire (flag cleared, not yet due).
-	runScheduleTick(context.Background(), deps)
+	runScheduleTick(context.Background(), port)
 	if crew.count() != 1 {
 		t.Fatalf("run-now re-fired: count = %d, want 1", crew.count())
 	}
 }
 
 func TestScheduleTick_CommandActionRecordsPID(t *testing.T) {
-	deps, store, _ := newTickDeps(t)
+	port, store, _ := newTickPort(t)
 	job := schedule.ScheduledJob{
 		ID:       "cmd1",
 		Schedule: schedule.Schedule{Kind: schedule.ScheduleKindDaily, At: pastDailyAt(t), TZ: "UTC"},
@@ -220,7 +221,7 @@ func TestScheduleTick_CommandActionRecordsPID(t *testing.T) {
 	if err := store.Add(job); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	runScheduleTick(context.Background(), deps)
+	runScheduleTick(context.Background(), port)
 	got, _ := store.Get("cmd1")
 	if got.LastFire == "" {
 		t.Fatalf("command action did not record LastFire")
@@ -231,10 +232,10 @@ func TestScheduleTick_CommandActionRecordsPID(t *testing.T) {
 }
 
 func TestScheduleTick_ReloadPicksUpOutOfProcessAdd(t *testing.T) {
-	deps, _, crew := newTickDeps(t)
+	port, _, crew := newTickPort(t)
 	// Simulate the CLI writing to the same file via a SECOND store over the same
 	// dir (the daemon's in-memory store has not seen this add).
-	cliStore := schedule.NewStore(deps.projectDir)
+	cliStore := schedule.NewStore(port.projectDir)
 	if err := cliStore.Load(); err != nil {
 		t.Fatalf("cliStore Load: %v", err)
 	}
@@ -249,7 +250,7 @@ func TestScheduleTick_ReloadPicksUpOutOfProcessAdd(t *testing.T) {
 	}
 
 	// The daemon's tick must reload the file (mtime changed) and fire the new job.
-	runScheduleTick(context.Background(), deps)
+	runScheduleTick(context.Background(), port)
 	if crew.count() != 1 {
 		t.Fatalf("daemon did not pick up out-of-process add: count = %d, want 1", crew.count())
 	}
@@ -260,7 +261,7 @@ func TestScheduleTick_ReloadPicksUpOutOfProcessAdd(t *testing.T) {
 // must coalesce to EXACTLY ONE catch-up fire within the window, and LastFire must
 // advance to NOW (not to the old missed instant) so the next tick is not due.
 func TestScheduleTick_MultiDayMissCoalescesToOneFire(t *testing.T) {
-	deps, store, crew := newTickDeps(t)
+	port, store, crew := newTickPort(t)
 
 	// At fires 1h ago each day; LastFire is 3 days ago → 3 missed instants. A wide
 	// catch-up window so the most-recent missed instant is in-window.
@@ -279,7 +280,7 @@ func TestScheduleTick_MultiDayMissCoalescesToOneFire(t *testing.T) {
 	}
 
 	before := time.Now().UTC()
-	runScheduleTick(context.Background(), deps)
+	runScheduleTick(context.Background(), port)
 	after := time.Now().UTC()
 
 	if crew.count() != 1 {
@@ -298,7 +299,7 @@ func TestScheduleTick_MultiDayMissCoalescesToOneFire(t *testing.T) {
 	}
 
 	// A second tick must NOT re-fire — the coalesce is one-shot.
-	runScheduleTick(context.Background(), deps)
+	runScheduleTick(context.Background(), port)
 	if crew.count() != 1 {
 		t.Fatalf("multi-day catch-up re-fired on second tick: count = %d, want 1", crew.count())
 	}
@@ -309,7 +310,7 @@ func TestScheduleTick_MultiDayMissCoalescesToOneFire(t *testing.T) {
 // fire (no crew start) but advances LastFire past the missed instant and logs, so
 // the job resumes normal forward scheduling without re-evaluating the stale miss.
 func TestScheduleTick_MissedBeyondWindowSkips(t *testing.T) {
-	deps, store, crew := newTickDeps(t)
+	port, store, crew := newTickPort(t)
 
 	// At fires 1h ago; window 30m → the 1h-ago missed instant is outside it.
 	at := time.Now().UTC().Add(-1 * time.Hour).Format("15:04")
@@ -326,7 +327,7 @@ func TestScheduleTick_MissedBeyondWindowSkips(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
-	runScheduleTick(context.Background(), deps)
+	runScheduleTick(context.Background(), port)
 
 	if crew.count() != 0 {
 		t.Fatalf("missed-beyond-window fired the crew: count = %d, want 0", crew.count())
@@ -343,7 +344,7 @@ func TestScheduleTick_MissedBeyondWindowSkips(t *testing.T) {
 	}
 
 	// Next tick: the skipped instant is now serviced, so nothing is due (no fire).
-	runScheduleTick(context.Background(), deps)
+	runScheduleTick(context.Background(), port)
 	if crew.count() != 0 {
 		t.Fatalf("re-evaluated the skipped miss on a later tick: count = %d, want 0", crew.count())
 	}
@@ -354,7 +355,7 @@ func TestScheduleTick_MissedBeyondWindowSkips(t *testing.T) {
 // command is still running). We spawn a real long-sleep process to obtain a live
 // pid, record it as the job's LastPID, and assert the tick skips.
 func TestScheduleTick_CommandOverlapSkip(t *testing.T) {
-	deps, store, _ := newTickDeps(t)
+	port, store, _ := newTickPort(t)
 
 	// Spawn a real, alive process whose pid we can record as the prior command.
 	sleeper := exec.Command("sleep", "30")
@@ -383,7 +384,7 @@ func TestScheduleTick_CommandOverlapSkip(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
-	runScheduleTick(context.Background(), deps)
+	runScheduleTick(context.Background(), port)
 
 	got, _ := store.Get("cmdskip")
 	// Skipped: LastFire/LastPID unchanged (the fire was not serviced).
@@ -400,7 +401,7 @@ func TestScheduleTick_CommandOverlapSkip(t *testing.T) {
 // tick that is too early does not re-fire; a tick after the interval elapses fires
 // again.
 func TestScheduleTick_IntervalFires(t *testing.T) {
-	deps, store, crew := newTickDeps(t)
+	port, store, crew := newTickPort(t)
 
 	job := schedule.ScheduledJob{
 		ID:            "interval1",
@@ -415,13 +416,13 @@ func TestScheduleTick_IntervalFires(t *testing.T) {
 	}
 
 	// First tick: never fired → should fire immediately.
-	runScheduleTick(context.Background(), deps)
+	runScheduleTick(context.Background(), port)
 	if crew.count() != 1 {
 		t.Fatalf("interval job did not fire on first tick: count = %d, want 1", crew.count())
 	}
 
 	// Immediate second tick: interval not yet elapsed → no re-fire.
-	runScheduleTick(context.Background(), deps)
+	runScheduleTick(context.Background(), port)
 	if crew.count() != 1 {
 		t.Fatalf("interval job re-fired before interval elapsed: count = %d, want 1", crew.count())
 	}
@@ -430,7 +431,7 @@ func TestScheduleTick_IntervalFires(t *testing.T) {
 // TestScheduleTick_EnsureOpsMonitor verifies ensureOpsMonitorSchedule registers
 // the ops-monitor job when absent and is a no-op when already present.
 func TestScheduleTick_EnsureOpsMonitor(t *testing.T) {
-	deps, store, _ := newTickDeps(t)
+	_, store, _ := newTickPort(t)
 
 	// Before: job is absent.
 	if _, ok := store.Get(opsMonitorJobID); ok {
@@ -455,13 +456,12 @@ func TestScheduleTick_EnsureOpsMonitor(t *testing.T) {
 
 	// Second call is a no-op (idempotent).
 	ensureOpsMonitorSchedule(store, projectconfig.OpsmonitorConfig{})
-	_ = deps // satisfy unused import
 }
 
 // TestScheduleTick_EnsureOpsMonitor_Override verifies that non-empty OpsmonitorConfig
 // fields override the compiled defaults for interval and script_path (hk-bi4bg).
 func TestScheduleTick_EnsureOpsMonitor_Override(t *testing.T) {
-	_, store, _ := newTickDeps(t)
+	_, store, _ := newTickPort(t)
 
 	cfg := projectconfig.OpsmonitorConfig{Interval: "10m", ScriptPath: "scripts/custom-ops.sh"}
 	ensureOpsMonitorSchedule(store, cfg)
@@ -487,7 +487,7 @@ func TestScheduleTick_EnsureOpsMonitor_Override(t *testing.T) {
 // TestScheduleTick_EnsureCtxWatchdog verifies ensureCtxWatchdogSchedule registers
 // the ctx-watchdog job when absent and is a no-op when already present (hk-sbitr).
 func TestScheduleTick_EnsureCtxWatchdog(t *testing.T) {
-	deps, store, _ := newTickDeps(t)
+	_, store, _ := newTickPort(t)
 
 	// enabled=true path: job absent before the first call.
 	if _, ok := store.Get(ctxWatchdogJobID); ok {
@@ -514,25 +514,24 @@ func TestScheduleTick_EnsureCtxWatchdog(t *testing.T) {
 	ensureCtxWatchdogSchedule(store, true)
 
 	// enabled=false path: a fresh store should NOT register the job.
-	_, store2, _ := newTickDeps(t)
+	_, store2, _ := newTickPort(t)
 	ensureCtxWatchdogSchedule(store2, false)
 	if _, ok := store2.Get(ctxWatchdogJobID); ok {
 		t.Error("ctx-watchdog job registered despite enabled=false")
 	}
-	_ = deps // satisfy unused import
 }
 
 // TestScheduleTick_CommsSendActionFires is the WE6 RED test (a): a registered
 // comms-send schedule fires the native comms-send action to the configured target.
-// An injected recording double (deps.commsSend) captures the call so no real daemon
+// An injected recording double (port.commsSend) captures the call so no real daemon
 // socket or harmonik binary is needed.
 func TestScheduleTick_CommsSendActionFires(t *testing.T) {
-	deps, store, _ := newTickDeps(t)
+	port, store, _ := newTickPort(t)
 
 	type call struct{ to, from, body, topic string }
 	var mu sync.Mutex
 	var calls []call
-	deps.commsSend = func(_ context.Context, to, from, body, topic string) error {
+	port.commsSend = func(_ context.Context, to, from, body, topic string) error {
 		mu.Lock()
 		defer mu.Unlock()
 		calls = append(calls, call{to, from, body, topic})
@@ -551,7 +550,7 @@ func TestScheduleTick_CommsSendActionFires(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
-	runScheduleTick(context.Background(), deps)
+	runScheduleTick(context.Background(), port)
 
 	mu.Lock()
 	n := len(calls)
@@ -584,7 +583,7 @@ func TestScheduleTick_CommsSendActionFires(t *testing.T) {
 // TestScheduleTick_EnsureWatchLiveness verifies ensureWatchLivenessSchedule
 // registers liveness-ping and verify-services jobs when intervals are set (WE6).
 func TestScheduleTick_EnsureWatchLiveness(t *testing.T) {
-	_, store, _ := newTickDeps(t)
+	_, store, _ := newTickPort(t)
 
 	cfg := projectconfig.WatchConfig{LivenessInterval: "1h", DigestInterval: "1h"}
 	ensureWatchLivenessSchedule(store, cfg, "")
@@ -624,7 +623,7 @@ func TestScheduleTick_EnsureWatchLiveness(t *testing.T) {
 // TestScheduleTick_EnsureWatchLivenessConfiguredBodies verifies that configured
 // LivenessPingBody / VerifyServicesBody override the Go-literal default bodies.
 func TestScheduleTick_EnsureWatchLivenessConfiguredBodies(t *testing.T) {
-	_, store, _ := newTickDeps(t)
+	_, store, _ := newTickPort(t)
 
 	cfg := projectconfig.WatchConfig{
 		LivenessInterval:   "1h",
@@ -655,7 +654,7 @@ func TestScheduleTick_EnsureWatchLivenessConfiguredBodies(t *testing.T) {
 // ensureWatchLivenessSchedule is a no-op when interval fields are empty (WE6).
 // The fail-loud gate is checkMissingWatchValues (cmd/harmonik), not this function.
 func TestScheduleTick_WatchLivenessSkippedWhenNotConfigured(t *testing.T) {
-	_, store, _ := newTickDeps(t)
+	_, store, _ := newTickPort(t)
 	ensureWatchLivenessSchedule(store, projectconfig.WatchConfig{}, "")
 	if _, ok := store.Get(watchLivenessPingJobID); ok {
 		t.Error("watch-liveness-ping registered despite missing LivenessInterval")

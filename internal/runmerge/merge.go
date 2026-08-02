@@ -182,7 +182,9 @@ func RunBranchToTarget(ctx context.Context, submit Submit, projectDir string, ru
 			// ctx values the rest of the merge path carries.
 			cleanupCtx := context.WithoutCancel(ctx)
 			defer func() {
-				RemoveWorktree(cleanupCtx, projectDir, wtPath)
+				if cleanupErr := RemoveWorktree(cleanupCtx, projectDir, wtPath); cleanupErr != nil {
+					fmt.Fprintf(os.Stderr, "daemon: runmerge: temporary worktree reclaim failed: %v\n", cleanupErr)
+				}
 			}()
 		}
 	}

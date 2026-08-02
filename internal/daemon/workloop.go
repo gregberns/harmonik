@@ -2905,7 +2905,11 @@ func productionWorktreeFactory(ctx context.Context, projectDir, runID, headSHA s
 	// cancellation). This mirrors the intent of the original `defer removeWorktree`
 	// call — git worktree prune is best-effort.
 	cleanup := func() {
-		runmerge.RemoveWorktree(context.Background(), projectDir, wtPath)
+		if cleanupErr := runmerge.RemoveWorktree(context.Background(), projectDir, wtPath); cleanupErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: worktree reclaim failed for run %s at %s; "+
+				"the worktree remains because cleanup failed, not because evidence was retained: %v\n",
+				runID, wtPath, cleanupErr)
+		}
 	}
 	return wtPath, cleanup, nil
 }

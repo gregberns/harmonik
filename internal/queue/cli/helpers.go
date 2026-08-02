@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/gregberns/harmonik/internal/queue"
 )
 
 // parseQueueFlags parses the --project and --json/--format flags from subArgs
@@ -261,14 +263,16 @@ func beadsToQueueDoc(beadIDs []string, queueName, workflowMode string) (map[stri
 	}
 
 	items := make([]itemDoc, len(beadIDs))
+	pendingItem := queue.NewPendingItem(queue.Item{})
 	for i, id := range beadIDs {
-		items[i] = itemDoc{BeadID: id, Status: "pending", WorkflowMode: workflowMode}
+		items[i] = itemDoc{BeadID: id, Status: string(pendingItem.Status), WorkflowMode: workflowMode}
 	}
+	pendingGroup := queue.NewPendingGroup(queue.Group{})
 	doc := queueDoc{
 		SchemaVersion: 1,
 		Name:          queueName,
 		Groups: []groupDoc{
-			{GroupIndex: 0, Kind: "stream", Status: "pending", Items: items},
+			{GroupIndex: 0, Kind: "stream", Status: string(pendingGroup.Status), Items: items},
 		},
 	}
 	raw, err := json.Marshal(doc)

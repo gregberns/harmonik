@@ -252,9 +252,8 @@ func tlLockWaitForSocket(t *testing.T, projectDir string, budget time.Duration) 
 	t.Fatalf("tlLock: daemon socket %s not ready within %s", sockPath, budget)
 }
 
-// tlLockRunStartedPayload mirrors the wire shape of the (unexported)
-// workloopRunStartedPayload — only the JSON tags matter here, not the type
-// identity, since this file lives in package daemon_test.
+// tlLockRunStartedPayload mirrors the historic version-one wire shape. Only
+// the JSON tags matter here, since this file lives in package daemon_test.
 type tlLockRunStartedPayload struct {
 	RunID         string `json:"run_id"`
 	BeadID        string `json:"bead_id"`

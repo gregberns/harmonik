@@ -19,6 +19,18 @@ type beadStatusReader interface {
 	ShowBead(ctx context.Context, id core.BeadID) (core.BeadRecord, error)
 }
 
+// reconcileRunStartedPayload reads only the fields the orphan reconcile needs.
+// It accepts both the historic version-one body and the version-two body that
+// now carries the same JSON fields.
+//
+// Keep this compatibility read model local. The event-payload replay work owns
+// the shared version-aware read boundary.
+type reconcileRunStartedPayload struct {
+	BeadID          string  `json:"bead_id"`
+	QueueID         *string `json:"queue_id"`
+	QueueGroupIndex *int    `json:"queue_group_index"`
+}
+
 // reconcileOrphanedRunsOnResume scans the durable event log for runs that
 // emitted run_started but never emitted a terminal event (run_completed or
 // run_failed). These runs were active when the daemon was last killed without
@@ -103,7 +115,7 @@ func reconcileOrphanedRunsOnResume(
 		}
 		switch core.EventType(ev.Type) {
 		case core.EventTypeRunStarted:
-			var pl workloopRunStartedPayload
+			var pl reconcileRunStartedPayload
 			if err := json.Unmarshal(ev.Payload, &pl); err != nil || pl.BeadID == "" {
 				continue
 			}

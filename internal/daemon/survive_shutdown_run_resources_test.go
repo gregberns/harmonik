@@ -528,9 +528,9 @@ func surviveRunDriveWith(t *testing.T, opts surviveRunOpts) *surviveRunOutcome {
 			// error here would instead fail the EMIT, which changes the run under
 			// test to report a problem in the reader.
 			var pl core.RunStartedPayload
-			if uErr := json.Unmarshal(evt.Payload, &pl); uErr == nil && pl.WorkflowMode != nil {
+			if uErr := json.Unmarshal(evt.Payload, &pl); uErr == nil {
 				mu.Lock()
-				out.startedMode = string(*pl.WorkflowMode)
+				out.startedMode = string(pl.WorkflowMode)
 				mu.Unlock()
 			}
 			return nil

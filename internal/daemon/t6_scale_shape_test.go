@@ -229,7 +229,7 @@ func t6JSONLContains(t *testing.T, jsonlPath, substr string) bool {
 // "event_id", "schema_version"). As a result, event types cannot be detected by
 // looking for their string name in the log. Instead, we use distinctive payload
 // field names as proxies:
-//   - run_started  → "workspace_path" (workloopRunStartedPayload)
+//   - run_started  → "workspace_path" (core.RunStartedPayload)
 //   - run_completed → "auto-close: exit=0" or "auto-reopen" in summary field
 //   - run_failed   → "success":false in workloopRunCompletedPayload
 //   - daemon_started → "pid" field (DaemonStartedPayload)

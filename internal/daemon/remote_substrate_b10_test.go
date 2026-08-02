@@ -5,7 +5,7 @@ package daemon
 //
 // Gate-runnable: no real tmux, SSH, or git required.  All observable behaviour
 // is exercised through package-internal functions and the exported
-// workloopRunStartedPayload struct.
+// core.RunStartedPayload record.
 //
 // Test matrix (acceptance criteria from bead):
 //   TestRSB10_ZeroWorkers_LocalSubstrate:
@@ -17,15 +17,16 @@ package daemon
 //   TestRSB10_APIKeyAbsent_NotRefused:
 //     env without ANTHROPIC_API_KEY → hasAPIKeyInEnv returns false.
 //   TestRSB10_RunStartedPayload_WorkerFields_Remote:
-//     workloopRunStartedPayload carries worker_name + worker_os for remote runs.
+//     core.RunStartedPayload carries worker_name + worker_os for remote runs.
 //   TestRSB10_RunStartedPayload_WorkerFields_Local:
-//     workloopRunStartedPayload has empty worker fields for local runs.
+//     core.RunStartedPayload carries explicit null worker fields for local runs.
 //
 // Bead: hk-rs-b10-wiring-12cl.
 
 import (
 	"testing"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
@@ -124,51 +125,41 @@ func TestRSB10_APIKeyAbsent_NotRefused(t *testing.T) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// workloopRunStartedPayload worker fields (FR13 — tests 5 and 6)
+// RunStartedPayload worker fields (FR13 — tests 5 and 6)
 // ─────────────────────────────────────────────────────────────────────────────
 
 // TestRSB10_RunStartedPayload_WorkerFields_Remote verifies that
-// workloopRunStartedPayload carries WorkerName and WorkerOS for remote runs.
+// RunStartedPayload carries WorkerName and WorkerOS for remote runs.
 func TestRSB10_RunStartedPayload_WorkerFields_Remote(t *testing.T) {
 	t.Parallel()
 
-	const wantName = "worker-a"
-	const wantOS = "darwin"
+	wantName := "worker-a"
+	wantOS := "darwin"
 
-	pl := workloopRunStartedPayload{
-		RunID:         "019ec897-0000-7000-8000-000000000001",
-		BeadID:        "hk-rsb10-test",
-		WorkspacePath: "/tmp/wt",
-		StartedAt:     "2026-06-14T00:00:00Z",
-		WorkerName:    wantName,
-		WorkerOS:      wantOS,
+	pl := core.RunStartedPayload{
+		WorkerName: &wantName,
+		WorkerOS:   &wantOS,
 	}
 
-	if pl.WorkerName != wantName {
-		t.Errorf("RSB10: WorkerName = %q, want %q", pl.WorkerName, wantName)
+	if pl.WorkerName == nil || *pl.WorkerName != wantName {
+		t.Errorf("RSB10: WorkerName = %v, want %q", pl.WorkerName, wantName)
 	}
-	if pl.WorkerOS != wantOS {
-		t.Errorf("RSB10: WorkerOS = %q, want %q", pl.WorkerOS, wantOS)
+	if pl.WorkerOS == nil || *pl.WorkerOS != wantOS {
+		t.Errorf("RSB10: WorkerOS = %v, want %q", pl.WorkerOS, wantOS)
 	}
 }
 
 // TestRSB10_RunStartedPayload_WorkerFields_Local verifies that
-// workloopRunStartedPayload has empty WorkerName/WorkerOS for local runs.
+// RunStartedPayload has explicit null WorkerName/WorkerOS for local runs.
 func TestRSB10_RunStartedPayload_WorkerFields_Local(t *testing.T) {
 	t.Parallel()
 
-	pl := workloopRunStartedPayload{
-		RunID:         "019ec897-0000-7000-8000-000000000002",
-		BeadID:        "hk-rsb10-local",
-		WorkspacePath: "/tmp/wt",
-		StartedAt:     "2026-06-14T00:00:00Z",
-		// WorkerName and WorkerOS intentionally left empty (local run).
-	}
+	pl := core.RunStartedPayload{}
 
-	if pl.WorkerName != "" {
-		t.Errorf("RSB10: local run WorkerName = %q, want empty", pl.WorkerName)
+	if pl.WorkerName != nil {
+		t.Errorf("RSB10: local run WorkerName = %v, want null", pl.WorkerName)
 	}
-	if pl.WorkerOS != "" {
-		t.Errorf("RSB10: local run WorkerOS = %q, want empty", pl.WorkerOS)
+	if pl.WorkerOS != nil {
+		t.Errorf("RSB10: local run WorkerOS = %v, want null", pl.WorkerOS)
 	}
 }

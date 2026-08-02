@@ -38,7 +38,7 @@ func swTestRun(t *testing.T) *core.Run {
 	t.Helper()
 	return &core.Run{
 		RunID:           core.RunID(uuid.Must(uuid.NewV7())),
-		WorkflowID:      core.WorkflowID(uuid.Must(uuid.NewV7())),
+		WorkflowID:      core.WorkflowID("test-sub-workflow"),
 		WorkflowVersion: core.WorkflowVersion("1.0"),
 		Input:           core.WorkspaceRef("/tmp/wt"),
 		WorkflowMode:    core.WorkflowModeDot,

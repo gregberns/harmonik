@@ -118,6 +118,7 @@ func driveDotWorkflow(
 	wtPath string,
 	parentSHA string,
 	graph *dot.Graph,
+	descriptor core.WorkflowDescriptor,
 	resolvedModel string,
 	resolvedEffort string,
 	// piProfile is the per-bead Pi provider tuple resolved at claim time from a
@@ -158,13 +159,13 @@ func driveDotWorkflow(
 		nodesByID[n.ID] = n
 	}
 
-	// Synthesize a *core.Run for the cascade engine. The cascade only reads
-	// RunID (for cycle-counter keying) and Context (for EM-041a context updates);
-	// the remaining fields are set to valid placeholders so Run is well-formed.
+	// Synthesize the execution record from the descriptor resolved before the
+	// run started. The cascade only reads a subset of this record, but it must
+	// not invent a second workflow identity.
 	run := &core.Run{
 		RunID:           runID,
-		WorkflowID:      core.WorkflowID(uuid.New()),
-		WorkflowVersion: core.WorkflowVersion(graphVersionOr(graph)),
+		WorkflowID:      descriptor.WorkflowID,
+		WorkflowVersion: descriptor.WorkflowVersion,
 		Input:           core.WorkspaceRef(wtPath),
 		WorkflowMode:    core.WorkflowModeDot,
 		State:           core.StateID(uuid.New()),

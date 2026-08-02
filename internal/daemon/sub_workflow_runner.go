@@ -26,8 +26,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/google/uuid"
-
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
@@ -183,7 +181,7 @@ func (r *dotSubWorkflowRunner) Run(ctx context.Context, spec handler.SubWorkflow
 	}
 
 	// ── Step 1: Three-tier graph resolution (SW-004) ──────────────────────────
-	subGraph, resolvedPath, resolveErr := resolveSubWorkflowGraph(
+	subGraph, _, resolveErr := resolveSubWorkflowGraph(
 		string(spec.SubWorkflowRef),
 		r.env.ProjectDir,
 	)
@@ -221,10 +219,9 @@ func (r *dotSubWorkflowRunner) Run(ctx context.Context, spec handler.SubWorkflow
 	}
 
 	// ── Step 4: Build expansion pin and expand graph (SW-001/SW-002) ──────────
-	// The resolved workflow UUID is derived deterministically from the resolved
-	// filesystem path via UUID v5 (namespace=DNS), giving a stable identifier
-	// per EM-034c without requiring a formal registry.
-	resolvedWorkflowID := core.WorkflowID(uuid.NewSHA1(uuid.NameSpaceDNS, []byte(resolvedPath)))
+	// The parsed artifact carries the selected sub-workflow's durable identity.
+	// Do not derive a second identifier from its filesystem path.
+	resolvedWorkflowID := subGraph.WorkflowID
 	pin := core.SubWorkflowExpansionPin{
 		SubWorkflowRef:     spec.SubWorkflowRef,
 		SubWorkflowVersion: spec.SubWorkflowVersion,

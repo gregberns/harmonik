@@ -551,8 +551,8 @@ func TestScenario_RemoteSubstrate_Localhost_E2E(t *testing.T) {
 
 // rsb12RunStartedWorkerName scans the recorded bus events for the run_started
 // event and returns its worker_name field (false when none was captured). The
-// emitted payload is workloopRunStartedPayload, which is package-internal to
-// daemon; from this external _test package we decode only the load-bearing
+// emitted payload is core.RunStartedPayload. From this external _test package
+// we decode only the load-bearing
 // worker_name field. Mirrors the b10 unit test's worker_name decode, but off the
 // real emitted bus event rather than a hand-built payload struct.
 func rsb12RunStartedWorkerName(t *testing.T, col *stubEventCollector) (string, bool) {

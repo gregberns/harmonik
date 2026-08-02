@@ -64,8 +64,6 @@ import (
 	codesyncpkg "github.com/gregberns/harmonik/internal/transport/codesync"
 	tunnelpkg "github.com/gregberns/harmonik/internal/transport/tunnel"
 	"github.com/gregberns/harmonik/internal/workers"
-	"github.com/gregberns/harmonik/internal/workflow"
-	"github.com/gregberns/harmonik/internal/workflow/dot"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
@@ -156,7 +154,6 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	runID, beadRecord := env.RunID, env.BeadRecord
 	queueName, queueID := env.QueueName, env.QueueID
 	queueGroupIndex, queueItemIndex := env.QueueGroupIndex, env.QueueItemIndex
-	itemTemplateParams := env.ItemTemplateParams
 	// mport.Submit() is the merge exclusion-domain submit surface (RSM-015).
 	mport := rp.Merge
 	// RSM-010: the run's EmitterPort, off the bundle rp already holds.
@@ -332,7 +329,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	}
 
 	// Alias the plan's answers under the names the body below already uses.
-	workflowMode := plan.WorkflowMode
+	workflowMode := plan.Workflow.Mode
 	resolvedModel, resolvedEffort := plan.Model, plan.Effort
 	resolvedProfile := plan.PiProfile
 	activeRepo := plan.ActiveRepo
@@ -799,14 +796,16 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		fmt.Fprintf(os.Stderr, "daemon: workloop: runmerge.SnapshotUntrackedFiles for bead %s run %s: %v (escape check will run without baseline)\n", beadID, runID.String(), snapErr)
 	}
 
-	// Emit run_started with optional queue_id + queue_group_index per QM-011/QM-012.
-	// FR13: include worker_name and worker_os for remote runs; empty for local.
-	var runStartedWorkerName, runStartedWorkerOS string
+	// Emit run_started with the graph decision that this run will execute.
+	// Worker fields are explicit null for local runs and set for remote runs.
+	var runStartedWorkerName, runStartedWorkerOS *string
 	if rbc != nil {
-		runStartedWorkerName = rbc.worker.Name
-		runStartedWorkerOS = rbc.worker.OS
+		runStartedWorkerName = &rbc.worker.Name
+		runStartedWorkerOS = &rbc.worker.OS
 	}
-	emitRunStarted(ctx, emit, runID, beadID, wtPath, queueID, queueGroupIndex, runStartedWorkerName, runStartedWorkerOS, string(workflowMode))
+	emitRunStarted(ctx, emit, runID, beadID, wtPath, queueID, queueGroupIndex,
+		plan.Workflow.Descriptor, workflowMode, plan.Workflow.ReviewPolicy, plan.Workflow.SelectionSource,
+		runStartedWorkerName, runStartedWorkerOS)
 
 	// Do NOT add a pre-dispatch "already landed on main?" check here. One used to
 	// sit at this point and closed the bead when shared.MainHistoryHasRefsTrailer
@@ -817,45 +816,6 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// noChange timeout and by noCommitGuardShouldReopen, and both of those check
 	// whether the work is present before closing. Full record: hk-f38n, and the
 	// informative note under BI-022 in specs/beads-integration.md §4.7.
-
-	// Pre-switch: for DOT mode, resolve and pre-load the graph source (hk-30vlb).
-	// Three-tier resolution:
-	//   1. plan.WorkflowRef set → explicit path (resolved below in the DOT case).
-	//   2. <projectDir>/workflow.dot exists → project-level path (resolved below).
-	//   3. Neither → use the embedded standard-bead.dot (loaded here).
-	//
-	// The embedded load happens here — before the switch — so a failure can fail
-	// the run before anything is dispatched.
-	//
-	// Review floor (EM-012a-FLOOR, amended): the floor's guarantee is that a bead
-	// resolved below tier 1 is NEVER dispatched without a review gate. That is
-	// delivered by the embedded graph itself — standard-bead.dot carries a
-	// reviewer node on the sole inbound edge to close — plus this branch, which
-	// FAILS THE RUN rather than dispatching under some other shape.
-	//
-	// This used to demote to review-loop. It no longer does, for two reasons the
-	// amendment records: review-loop is retired (it was a hand-written particular
-	// of the general graph walker this very branch is loading), and a demotion was
-	// dishonest — run_started stamps workflow_mode ABOVE this line, so a demoted
-	// run's own start event named a mode it did not execute.
-	var preloadedDotGraph *dot.Graph
-	if workflowMode == core.WorkflowModeDot && plan.WorkflowRef == "" {
-		defaultDotPath := filepath.Join(env.ProjectDir, "workflow.dot")
-		if _, statErr := os.Stat(defaultDotPath); os.IsNotExist(statErr) {
-			g, embErr := loadStandardGraph(itemTemplateParams)
-			if embErr != nil {
-				fmt.Fprintf(os.Stderr,
-					"daemon: workloop: embedded standard-bead.dot failed to load for bead %s run %s: %v — failing the run; "+
-						"the daemon will NOT dispatch this bead under a different workflow shape (EM-012a-FLOOR)\n",
-					beadID, runID.String(), embErr)
-				// Same reopen spine as the tier-1/tier-2 load failure below.
-				reason := fmt.Sprintf("workflow_load: embedded standard-bead.dot: %v", embErr)
-				failRun(reason, reason)
-				return bridge.Success()
-			}
-			preloadedDotGraph = g
-		}
-	}
 
 	// The routed launch builder (T12 hk-xhawy) is resolved ONCE by the caller in
 	// buildRunBundles and threaded here on rp.Launch / rp.LaunchBuilder, so ALL
@@ -878,43 +838,9 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// production default.
 	switch workflowMode {
 	case core.WorkflowModeDot:
-		// DOT workflow mode: load + validate the .dot artifact, then hand the
-		// validated graph to the cascade driver (driveDotWorkflow, dot_cascade.go)
-		// which walks the graph node-by-node using workflow.DecideNextNode
-		// (hk-9dnak; cascade engine library hk-bf85t).
-		//
-		// Graph source resolution uses preloadedDotGraph (Tier 3: embedded) when
-		// already set by the pre-switch block; otherwise resolves Tier 1/2 from
-		// an explicit ref or <projectDir>/workflow.dot (three-tier spec hk-30vlb).
-		// Embedded-load failure was already handled above: the run was failed and
-		// the bead reopened with a workflow_load reason, so this case is not reached.
-		var graph *dot.Graph
-		if preloadedDotGraph != nil {
-			// Tier 3: embedded standard-bead.dot (already parsed and validated).
-			graph = preloadedDotGraph
-		} else {
-			// Tier 1 or 2: explicit ref or <projectDir>/workflow.dot.
-			// WG-046 ordering: read → substitute(itemTemplateParams) → parse → validate → dispatch.
-			dotPath := filepath.Join(env.ProjectDir, "workflow.dot")
-			if plan.WorkflowRef != "" {
-				if filepath.IsAbs(plan.WorkflowRef) {
-					dotPath = plan.WorkflowRef
-				} else {
-					dotPath = filepath.Join(env.ProjectDir, plan.WorkflowRef)
-				}
-			}
-			var loadErr error
-			graph, loadErr = workflow.LoadDotWorkflowWithParams(dotPath, itemTemplateParams)
-			if loadErr != nil {
-				fmt.Fprintf(os.Stderr, "daemon: workloop: DOT workflow load failed for bead %s run %s: %v (reopening)\n",
-					beadID, runID.String(), loadErr)
-				// RT9: the load failure rides the machine's reopen spine (reopen +
-				// run_failed with the same workflow_load reason, RSM-009/032).
-				reason := fmt.Sprintf("workflow_load: %v", loadErr)
-				failRun(reason, reason)
-				return bridge.Success()
-			}
-		}
+		// The resolver has already loaded, substituted, and validated this graph.
+		// The descriptor below and the start event name the same selected artifact.
+		graph := plan.Workflow.Graph
 
 		// WG-044: thread the (substituted) graph-level goal into every agentic node's
 		// brief via the ExtraContext channel.  Prepend so it appears before any
@@ -956,7 +882,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		// type (non-agentic synthesize-success, agentic substrate-dispatch,
 		// gate/sub-workflow out-of-scope error).
 		dotResult := driveDotWorkflow(ctx, env, rp, handles, runID, beadID, beadRecord, beadRecord.Title, beadRecord.Description,
-			activeRepo, wtPath, headSHA, graph, resolvedModel, resolvedEffort, resolvedProfile, dotExtraContext, baseBranch, dotRunner,
+			activeRepo, wtPath, headSHA, graph, plan.Workflow.Descriptor, resolvedModel, resolvedEffort, resolvedProfile, dotExtraContext, baseBranch, dotRunner,
 			dotWorkerBinary, dotWorkerHookSock, dotWorkerSession, dotWorkerCwd)
 
 		// ── RT9: the DOT terminal rides the Run tail (RSM-020) ────────────────
@@ -1933,27 +1859,6 @@ func resolveHEAD(ctx context.Context, repoRoot string) (string, error) {
 // Event helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-// workloopRunStartedPayload is the minimal run_started payload emitted by the
-// work loop.  Full RunStartedPayload requires WorkflowID / WorkflowVersion
-// which are deferred; we emit a raw map so the event is observable without
-// requiring a valid RunStartedPayload.Valid() call.
-//
-// QueueID and QueueGroupIndex are optional: set when the run was dispatched
-// from a queue submission per QM-011 / QM-012 (EM-015a).
-type workloopRunStartedPayload struct {
-	RunID           string  `json:"run_id"`
-	BeadID          string  `json:"bead_id"`
-	WorkspacePath   string  `json:"workspace_path"`
-	StartedAt       string  `json:"started_at"`
-	QueueID         *string `json:"queue_id,omitempty"`
-	QueueGroupIndex *int    `json:"queue_group_index,omitempty"`
-	// WorkerName and WorkerOS are non-empty for remote runs (FR13); empty for local.
-	WorkerName string `json:"worker_name,omitempty"`
-	WorkerOS   string `json:"worker_os,omitempty"`
-	// WorkflowMode is the resolved workflow mode for this run (hk-zhysl observability).
-	WorkflowMode string `json:"workflow_mode,omitempty"`
-}
-
 // workloopRunCompletedPayload is the minimal run_completed / run_failed payload
 // emitted by the work loop.
 //
@@ -2025,17 +1930,36 @@ func hasAPIKeyInEnv(env []string) bool {
 	return false
 }
 
-func emitRunStarted(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, beadID core.BeadID, wtPath string, queueID *string, queueGroupIndex *int, workerName, workerOS, workflowMode string) {
-	pl := workloopRunStartedPayload{
-		RunID:           runID.String(),
-		BeadID:          string(beadID),
-		WorkspacePath:   wtPath,
-		StartedAt:       time.Now().UTC().Format(time.RFC3339),
-		QueueID:         queueID,
-		QueueGroupIndex: queueGroupIndex,
-		WorkerName:      workerName,
-		WorkerOS:        workerOS,
-		WorkflowMode:    workflowMode,
+func emitRunStarted(
+	ctx context.Context,
+	bus handlercontract.EventEmitter,
+	runID core.RunID,
+	beadID core.BeadID,
+	wtPath string,
+	queueID *string,
+	queueGroupIndex *int,
+	descriptor core.WorkflowDescriptor,
+	workflowMode core.WorkflowMode,
+	reviewPolicy core.ReviewPolicy,
+	selectionSource core.WorkflowSelectionSource,
+	workerName *string,
+	workerOS *string,
+) {
+	pl := core.RunStartedPayload{
+		RunID:                   runID,
+		WorkflowID:              descriptor.WorkflowID,
+		WorkflowVersion:         descriptor.WorkflowVersion,
+		WorkflowMode:            workflowMode,
+		ReviewPolicy:            reviewPolicy,
+		WorkflowSelectionSource: selectionSource,
+		BeadID:                  &beadID,
+		WorkspacePath:           wtPath,
+		InputRef:                "bead:" + string(beadID),
+		StartedAt:               time.Now().UTC(),
+		WorkerName:              workerName,
+		WorkerOS:                workerOS,
+		QueueID:                 queueID,
+		QueueGroupIndex:         queueGroupIndex,
 	}
 	b, err := json.Marshal(pl)
 	if err != nil {

@@ -49,6 +49,10 @@ func TestQueueConstructionStatusOwners(t *testing.T) {
 	if group.Status != queue.GroupStatusPending {
 		t.Fatalf("group status = %q, want pending", group.Status)
 	}
+	group = queue.NewActiveGroup(group)
+	if group.Status != queue.GroupStatusActive {
+		t.Fatalf("group status = %q, want active", group.Status)
+	}
 	q := queue.NewActiveQueue(queue.Queue{Name: queue.QueueNameMain, Groups: []queue.Group{group}})
 	if q.Status != queue.QueueStatusActive {
 		t.Fatalf("queue status = %q, want active", q.Status)

@@ -14,9 +14,9 @@ import (
 )
 
 const (
-	bravoBaseline        = 19
+	bravoBaseline        = 20
 	daemonBaseline       = 14
-	constructionBaseline = 8
+	constructionBaseline = 5
 )
 
 type measurement struct {

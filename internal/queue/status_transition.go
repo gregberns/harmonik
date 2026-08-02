@@ -17,6 +17,12 @@ func NewPendingGroup(group Group) Group {
 	return group
 }
 
+// NewActiveGroup sets the first status for a group that starts work at once.
+func NewActiveGroup(group Group) Group {
+	group.Status = GroupStatusActive
+	return group
+}
+
 // NewActiveQueue sets the first status for a queue.
 func NewActiveQueue(q Queue) Queue {
 	q.Status = QueueStatusActive

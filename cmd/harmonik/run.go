@@ -539,14 +539,13 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 
 	items := make([]queue.Item, len(beadIDs))
 	for i, id := range beadIDs {
-		items[i] = queue.Item{
+		items[i] = queue.NewPendingItem(queue.Item{
 			BeadID:         id,
-			Status:         queue.ItemStatusPending,
 			Context:        extraContext,     // hk-boiwe
 			WorkflowMode:   itemWorkflowMode, // hk-hiqrl
 			WorkflowRef:    itemWorkflowRef,  // hk-qo9pq
 			TemplateParams: sealedParams,     // hk-55zv2 / WG-045
-		}
+		})
 	}
 
 	queueUUID, uuidErr := uuid.NewV7()
@@ -555,21 +554,20 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 		return 1
 	}
 	now := time.Now().UTC()
-	q := &queue.Queue{
+	initialQueue := queue.NewActiveQueue(queue.Queue{
 		SchemaVersion: 1,
 		QueueID:       queueUUID.String(),
 		SubmittedAt:   now,
-		Status:        queue.QueueStatusActive,
 		Groups: []queue.Group{
-			{
+			queue.NewActiveGroup(queue.Group{
 				GroupIndex: 0,
 				Kind:       resolveGroupKind(subArgs),
-				Status:     queue.GroupStatusActive,
 				Items:      items,
 				CreatedAt:  now,
-			},
+			}),
 		},
-	}
+	})
+	q := &initialQueue
 
 	if mkErr := os.MkdirAll(filepath.Join(projectDir, ".harmonik"), core.HarmonikDirMode); mkErr != nil {
 		fmt.Fprintf(os.Stderr, "harmonik run: cannot create .harmonik/: %v\n", mkErr)

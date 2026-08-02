@@ -38,6 +38,23 @@ func TestResolveDeferredItemRejectsOtherStates(t *testing.T) {
 	}
 }
 
+func TestQueueConstructionStatusOwners(t *testing.T) {
+	t.Parallel()
+
+	item := queue.NewPendingItem(queue.Item{BeadID: "hk-item"})
+	if item.Status != queue.ItemStatusPending {
+		t.Fatalf("item status = %q, want pending", item.Status)
+	}
+	group := queue.NewPendingGroup(queue.Group{GroupIndex: 3, Items: []queue.Item{item}})
+	if group.Status != queue.GroupStatusPending {
+		t.Fatalf("group status = %q, want pending", group.Status)
+	}
+	q := queue.NewActiveQueue(queue.Queue{Name: queue.QueueNameMain, Groups: []queue.Group{group}})
+	if q.Status != queue.QueueStatusActive {
+		t.Fatalf("queue status = %q, want active", q.Status)
+	}
+}
+
 func TestCompleteActiveGroupRequiresTerminalItems(t *testing.T) {
 	t.Parallel()
 

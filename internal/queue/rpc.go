@@ -281,9 +281,8 @@ func HandleQueueSubmit(
 		// Normalise submitted items: daemon-minted fields reset per §2.10.
 		items := make([]Item, len(g.Items))
 		for j, item := range g.Items {
-			items[j] = Item{
+			items[j] = NewPendingItem(Item{
 				BeadID:     item.BeadID,
-				Status:     ItemStatusPending,
 				RunID:      nil,
 				AppendedAt: nil,
 				// Carry per-item workflow fields verbatim so the persisted queue
@@ -295,7 +294,7 @@ func HandleQueueSubmit(
 				WorkflowRef:    item.WorkflowRef,
 				Context:        item.Context,
 				TemplateParams: item.TemplateParams,
-			}
+			})
 		}
 		// Apply QM-025 deferred status to items that have an open blocker.
 		deferredSet := buildDeferredSet(deferredPairs, i)
@@ -310,18 +309,17 @@ func HandleQueueSubmit(
 				}
 			}
 		}
-		groups[i] = Group{
+		groups[i] = NewPendingGroup(Group{
 			GroupIndex:  i,
 			Kind:        g.Kind,
-			Status:      GroupStatusPending,
 			Items:       items,
 			CreatedAt:   now,
 			StartedAt:   nil,
 			CompletedAt: nil,
-		}
+		})
 	}
 
-	q := &Queue{
+	initialQueue := NewActiveQueue(Queue{
 		SchemaVersion: schemaVersion,
 		QueueID:       queueID,
 		// Name is the durable routing key; already normalised above (QM-002/2.1)
@@ -348,8 +346,8 @@ func HandleQueueSubmit(
 		DefaultHarness: NormaliseDefaultHarness(req.DefaultHarness),
 		SubmittedAt:    now,
 		Groups:         groups,
-		Status:         QueueStatusActive,
-	}
+	})
+	q := &initialQueue
 
 	// Persist per QM-001 (QM-063: persist before events).
 	if persistErr := Persist(ctx, projectDir, q); persistErr != nil {
@@ -693,39 +691,39 @@ func HandleQueueDryRun(
 		items := make([]Item, len(g.Items))
 		deferredSet := buildDeferredSet(deferredPairs, i)
 		for j, item := range g.Items {
-			status := ItemStatusPending
-			if _, deferred := deferredSet[item.BeadID]; deferred {
-				status = ItemStatusDeferredForLedgerDep
-			}
-			items[j] = Item{
+			items[j] = NewPendingItem(Item{
 				BeadID:     item.BeadID,
-				Status:     status,
 				RunID:      nil,
 				AppendedAt: nil,
+			})
+			if _, deferred := deferredSet[item.BeadID]; deferred {
+				if err := DeferItemForLedgerDependency(&items[j]); err != nil {
+					return QueueDryRunResponse{}, &RPCError{
+						Code: -32099, Message: "internal_error", Detail: map[string]any{"error": err.Error()},
+					}
+				}
 			}
 		}
-		groups[i] = Group{
+		groups[i] = NewPendingGroup(Group{
 			GroupIndex:  i,
 			Kind:        g.Kind,
-			Status:      GroupStatusPending,
 			Items:       items,
 			CreatedAt:   now,
 			StartedAt:   nil,
 			CompletedAt: nil,
-		}
+		})
 	}
 
 	// Use a placeholder queue_id for the dry-run resolved envelope (per §2.10:
 	// "would-be Queue envelope as it would exist post-submit"). queue_id is
 	// daemon-minted at accept time so the dry-run uses a well-formed zero UUID.
-	resolvedQueue := Queue{
+	resolvedQueue := NewActiveQueue(Queue{
 		SchemaVersion: schemaVersion,
 		QueueID:       "00000000-0000-0000-0000-000000000000",
 		Name:          queueName,
 		SubmittedAt:   now,
 		Groups:        groups,
-		Status:        QueueStatusActive,
-	}
+	})
 
 	// Build LedgerDepNotices from LedgerDepPairs.
 	notices := make([]LedgerDepNotice, 0, len(deferredPairs))

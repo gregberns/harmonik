@@ -14,9 +14,9 @@ import (
 )
 
 const (
-	bravoBaseline        = 16
+	bravoBaseline        = 19
 	daemonBaseline       = 14
-	constructionBaseline = 18
+	constructionBaseline = 11
 )
 
 type measurement struct {
@@ -67,7 +67,9 @@ func main() {
 
 	fmt.Printf("queue-status-writer-ratchet: baseline direct assignments bravo=%d daemon=%d\n", bravoBaseline, daemonBaseline)
 	fmt.Printf("queue-status-writer-ratchet: current direct assignments owner=%d daemon=%d\n", m.ownerAssignments, m.daemonAssignments)
-	fmt.Printf("queue-status-writer-ratchet: construction-path writes=%d (17 literals + 1 pre-persist adjustment)\n", m.construction)
+	if _, err := fmt.Fprintf(os.Stdout, "queue-status-writer-ratchet: construction-path writes=%d\n", m.construction); err != nil {
+		fail("write construction-path count: %v", err)
+	}
 	for _, source := range sortedKeys(m.constructionByFile) {
 		fmt.Printf("queue-status-writer-ratchet: construction source %s=%d\n", source, m.constructionByFile[source])
 	}
@@ -165,11 +167,6 @@ func measure(root string) (measurement, error) {
 							result.constructionByFile[rel] += count
 						}
 						return false
-					}
-				case *ast.CallExpr:
-					if rel == "internal/queue/rpc.go" && callsDeferredConstruction(value) {
-						result.construction++
-						result.constructionByFile[rel]++
 					}
 				}
 				return true
@@ -303,11 +300,6 @@ func statusFieldsDeep(literal *ast.CompositeLit) int {
 		return true
 	})
 	return count
-}
-
-func callsDeferredConstruction(call *ast.CallExpr) bool {
-	name, ok := call.Fun.(*ast.Ident)
-	return ok && name.Name == "DeferItemForLedgerDependency"
 }
 
 func fail(format string, args ...any) {

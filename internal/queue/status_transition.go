@@ -5,6 +5,24 @@ import (
 	"time"
 )
 
+// NewPendingItem sets the first status for an item that enters a queue.
+func NewPendingItem(item Item) Item {
+	item.Status = ItemStatusPending
+	return item
+}
+
+// NewPendingGroup sets the first status for a group that enters a queue.
+func NewPendingGroup(group Group) Group {
+	group.Status = GroupStatusPending
+	return group
+}
+
+// NewActiveQueue sets the first status for a queue that enters the store.
+func NewActiveQueue(q Queue) Queue {
+	q.Status = QueueStatusActive
+	return q
+}
+
 // DeferItemForLedgerDependency changes a pending item to the ledger-deferred
 // state. A deferred item is not terminal and emits no event on later recovery.
 func DeferItemForLedgerDependency(item *Item) error {

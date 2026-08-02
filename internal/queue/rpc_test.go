@@ -733,6 +733,36 @@ func TestHandleQueueDryRun_HappyPath(t *testing.T) {
 	}
 }
 
+func TestHandleQueueDryRunDefersBlockedItem(t *testing.T) {
+	t.Parallel()
+
+	const blocker core.BeadID = "hk-rpc-blocker"
+	const blocked core.BeadID = "hk-rpc-blocked"
+	ledger := &rpcFixtureFakeLedger{
+		statuses: map[core.BeadID]queue.BeadStatus{
+			blocker: queue.BeadStatusOpen,
+			blocked: queue.BeadStatusOpen,
+		},
+		edges: map[[2]core.BeadID]bool{{blocker, blocked}: true},
+	}
+	req := queue.QueueDryRunRequest{
+		SchemaVersion: 1,
+		Groups:        []queue.Group{rpcFixtureWaveGroup(blocker, blocked)},
+	}
+
+	resp, rpcErr := queue.HandleQueueDryRun(t.Context(), req, ledger, rpcFixtureTempProjectDir(t))
+	if rpcErr != nil {
+		t.Fatalf("HandleQueueDryRun: unexpected RPCError: %v", rpcErr)
+	}
+	if !resp.ParallelismNarrowed {
+		t.Fatal("ParallelismNarrowed = false, want true")
+	}
+	item := resp.ResolvedQueue.Groups[0].Items[1]
+	if item.Status != queue.ItemStatusDeferredForLedgerDep {
+		t.Fatalf("blocked item status = %q, want deferred-for-ledger-dep", item.Status)
+	}
+}
+
 // TestHandleQueueDryRun_ValidationError_BeadNotFound verifies that a dry-run
 // with an unknown bead_id returns RPCError with code -32013 (bead_not_found).
 func TestHandleQueueDryRun_ValidationError_BeadNotFound(t *testing.T) {

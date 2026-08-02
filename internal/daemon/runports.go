@@ -286,9 +286,8 @@ func newStaticRunPorts(adapter beadLedger, bus handlercontract.EventEmitter, int
 // before, so reaching a value through env.<Field> is byte-identical to the
 // pre-bundle deps field access (RSM-010).
 //
-// ItemWorkflowRef holds the ref exactly as dispatched, BEFORE the EM-012a
-// tier-0/tier-1 resolveWorkflowRef resolution that beadRunOne applies to its
-// own local. Nothing on the run path may read env.ItemWorkflowRef.
+// itemWorkflow holds the workflow fields exactly as dispatched. The resolver
+// owns the tier walk and preserves the raw values for audit.
 func runEnvWithDispatch(base runloop.RunEnv,
 	runID core.RunID,
 	beadRecord core.BeadRecord,
@@ -296,8 +295,7 @@ func runEnvWithDispatch(base runloop.RunEnv,
 	queueID *string,
 	queueGroupIndex *int,
 	queueItemIndex int,
-	itemWorkflowMode string,
-	itemWorkflowRef string,
+	itemWorkflow runloop.QueueWorkflowInput,
 	itemTemplateParams map[string]string,
 	itemLocalOnly bool,
 	itemWorkerTarget string,
@@ -310,8 +308,7 @@ func runEnvWithDispatch(base runloop.RunEnv,
 	base.QueueGroupIndex = queueGroupIndex
 	base.QueueItemIndex = queueItemIndex
 	base.QueueDefaultHarness = queueDefaultHarness
-	base.ItemWorkflowMode = itemWorkflowMode
-	base.ItemWorkflowRef = itemWorkflowRef
+	base.ItemWorkflow = itemWorkflow
 	base.ItemTemplateParams = itemTemplateParams
 	base.ItemLocalOnly = itemLocalOnly
 	base.ItemWorkerTarget = itemWorkerTarget

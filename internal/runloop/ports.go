@@ -293,11 +293,20 @@ type RunEnv struct {
 	QueueGroupIndex *int
 	QueueItemIndex  int
 
-	ItemWorkflowMode   string
-	ItemWorkflowRef    string
+	// ItemWorkflow retains the queue item's workflow fields together through
+	// dispatch. The resolver uses both raw values for tier ordering and audit.
+	ItemWorkflow       QueueWorkflowInput
 	ItemTemplateParams map[string]string
 	ItemLocalOnly      bool
 	ItemWorkerTarget   string
+}
+
+// QueueWorkflowInput is the workflow portion of one dispatched queue item.
+// Values remain raw queue data until the daemon resolver produces a validated
+// workflow selection.
+type QueueWorkflowInput struct {
+	Mode string
+	Ref  string
 }
 
 // SharedHandles is the cross-goroutine state shared by reference (ports-design

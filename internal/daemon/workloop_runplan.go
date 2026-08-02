@@ -77,6 +77,8 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/workers"
+	"github.com/gregberns/harmonik/internal/workflow"
+	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
 
 // runPlanRequest names everything the resolver reads.
@@ -183,6 +185,11 @@ type runPlan struct {
 	// it and must not be read on the run path.
 	WorkflowRef string
 
+	// Workflow is the complete graph selection. T5 consumes it for event
+	// emission and DOT execution. WorkflowMode and WorkflowRef remain as a
+	// temporary compatibility bridge for the old executor path.
+	Workflow resolvedWorkflow
+
 	// AgentType, Model and Effort are the RUN-level harness tuple. A DOT run
 	// recomputes an effective harness per node and re-derives the node model
 	// from it. These three are the run default that per-node resolution starts
@@ -229,6 +236,162 @@ type runPlan struct {
 	WorkerTarget string
 }
 
+// resolvedWorkflow is one complete graph decision before the daemon creates a
+// run. Raw queue values stay beside the resolved value for audit and migration.
+type resolvedWorkflow struct {
+	Graph              *dot.Graph
+	Descriptor         core.WorkflowDescriptor
+	Mode               core.WorkflowMode
+	ReviewPolicy       core.ReviewPolicy
+	SelectionSource    core.WorkflowSelectionSource
+	WorkflowRef        string
+	RawQueueMode       string
+	RawQueueRef        string
+	legacyExecutorMode core.WorkflowMode
+}
+
+func (w resolvedWorkflow) Valid() bool {
+	if w.Graph == nil || !w.Descriptor.Valid() || w.Mode != core.WorkflowModeDot || !w.ReviewPolicy.Valid() || !w.SelectionSource.Valid() {
+		return false
+	}
+	noReviewDescriptor := w.Descriptor == noReviewBeadDescriptor
+	legacySource := w.SelectionSource == core.WorkflowSelectionLegacySingleLabel ||
+		w.SelectionSource == core.WorkflowSelectionQueueItemSingleMode
+	if w.ReviewPolicy == core.ReviewPolicyNoReview {
+		return noReviewDescriptor && legacySource
+	}
+	return w.ReviewPolicy == core.ReviewPolicyReviewed && !(noReviewDescriptor && legacySource)
+}
+
+// resolveWorkflow returns the parsed graph and every durable selection fact.
+// It is the one resolver boundary for new runs. It retains raw queue fields so
+// migration audit can distinguish persisted legacy input from resolved output.
+func resolveWorkflow(ctx context.Context, env runloop.RunEnv, emit handlercontract.EventEmitter) (resolvedWorkflow, error) {
+	input := env.ItemWorkflow
+	mode := resolveWorkflowModeWithAudit(ctx, env.BeadRecord, env.WorkflowModeDefault, emit, false)
+	if candidate := core.WorkflowMode(input.Mode); candidate.Valid() {
+		mode = candidate
+	}
+
+	if input.Mode == string(core.WorkflowModeSingle) {
+		return resolveNoReviewWorkflow(input, core.WorkflowSelectionQueueItemSingleMode)
+	}
+	if mode == core.WorkflowModeSingle && hasExactWorkflowSingleLabel(env.BeadRecord.Labels) {
+		emitReviewBypassed(ctx, emit, env.BeadRecord, workflowLabelPrefix+string(core.WorkflowModeSingle))
+		return resolveNoReviewWorkflow(input, core.WorkflowSelectionLegacySingleLabel)
+	}
+
+	// A stale daemon default may still name single. It is not one of the two
+	// audited compatibility inputs, so it cannot select no_review.
+	workflowMode := core.WorkflowModeDot
+	workflowRef := resolveWorkflowRef(env.BeadRecord, input.Ref)
+	graph, source, err := loadResolvedWorkflowGraph(env.ProjectDir, workflowRef, env.ItemTemplateParams)
+	if err != nil {
+		return resolvedWorkflow{}, err
+	}
+	if err := rejectGraphAuthoredReviewPolicy(graph); err != nil {
+		return resolvedWorkflow{}, err
+	}
+	resolved := resolvedWorkflow{
+		Graph:              graph,
+		Descriptor:         graphDescriptor(graph),
+		Mode:               workflowMode,
+		ReviewPolicy:       core.ReviewPolicyReviewed,
+		SelectionSource:    source,
+		WorkflowRef:        workflowRef,
+		RawQueueMode:       input.Mode,
+		RawQueueRef:        input.Ref,
+		legacyExecutorMode: core.WorkflowModeDot,
+	}
+	if !resolved.Valid() {
+		return resolvedWorkflow{}, fmt.Errorf("resolved workflow has invalid descriptor or policy")
+	}
+	return resolved, nil
+}
+
+func resolveNoReviewWorkflow(input runloop.QueueWorkflowInput, source core.WorkflowSelectionSource) (resolvedWorkflow, error) {
+	graph, err := loadRegisteredEmbeddedGraph(noReviewBeadDescriptor, nil)
+	if err != nil {
+		return resolvedWorkflow{}, fmt.Errorf("load registered no-review graph: %w", err)
+	}
+	resolved := resolvedWorkflow{
+		Graph:              graph,
+		Descriptor:         noReviewBeadDescriptor,
+		Mode:               core.WorkflowModeDot,
+		ReviewPolicy:       core.ReviewPolicyNoReview,
+		SelectionSource:    source,
+		RawQueueMode:       input.Mode,
+		RawQueueRef:        input.Ref,
+		legacyExecutorMode: core.WorkflowModeSingle,
+	}
+	if !resolved.Valid() {
+		return resolvedWorkflow{}, fmt.Errorf("registered no-review workflow is invalid")
+	}
+	return resolved, nil
+}
+
+func loadResolvedWorkflowGraph(projectDir, workflowRef string, params map[string]string) (*dot.Graph, core.WorkflowSelectionSource, error) {
+	if workflowRef != "" {
+		path := workflowRef
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(projectDir, path)
+		}
+		graph, err := workflow.LoadDotWorkflowWithParams(path, params)
+		if err != nil {
+			return nil, "", err
+		}
+		return graph, core.WorkflowSelectionExplicitRef, nil
+	}
+
+	defaultPath := filepath.Join(projectDir, "workflow.dot")
+	if _, err := os.Stat(defaultPath); err == nil {
+		graph, loadErr := workflow.LoadDotWorkflowWithParams(defaultPath, params)
+		if loadErr != nil {
+			return nil, "", loadErr
+		}
+		return graph, core.WorkflowSelectionProjectDefault, nil
+	} else if !os.IsNotExist(err) {
+		return nil, "", fmt.Errorf("stat project workflow: %w", err)
+	}
+
+	graph, err := loadStandardGraph(params)
+	if err != nil {
+		return nil, "", err
+	}
+	return graph, core.WorkflowSelectionEmbeddedDefault, nil
+}
+
+func graphDescriptor(graph *dot.Graph) core.WorkflowDescriptor {
+	return core.WorkflowDescriptor{
+		WorkflowID:      graph.WorkflowID,
+		WorkflowVersion: core.WorkflowVersion(graph.Version),
+	}
+}
+
+// rejectGraphAuthoredReviewPolicy enforces WG-056 at the resolver boundary.
+// The permissive DOT parser retains unknown attributes, so this check runs
+// after parameter substitution and graph validation for every selected graph.
+func rejectGraphAuthoredReviewPolicy(graph *dot.Graph) error {
+	if _, found := graph.UnknownAttrs["review_policy"]; found {
+		return fmt.Errorf("workflow graph declares reserved review_policy attribute")
+	}
+	for _, node := range graph.Nodes {
+		if _, found := node.UnknownAttrs["review_policy"]; found {
+			return fmt.Errorf("workflow node %q declares reserved review_policy attribute", node.ID)
+		}
+	}
+	for _, edge := range graph.Edges {
+		if _, found := edge.UnknownAttrs["review_policy"]; found {
+			return fmt.Errorf("workflow edge %q -> %q declares reserved review_policy attribute", edge.FromNodeID, edge.ToNodeID)
+		}
+	}
+	return nil
+}
+
+func legacyWorkflowModeForExecutor(resolved resolvedWorkflow) core.WorkflowMode {
+	return resolved.legacyExecutorMode
+}
+
 // resolveRunPlan walks the ten decisions in dependency order and returns the
 // plan.
 //
@@ -251,25 +414,26 @@ func resolveRunPlan(ctx context.Context, req runPlanRequest) runPlan {
 		WorkerTarget: env.ItemWorkerTarget,
 	}
 
-	// ── 1. Workflow mode (EM-012a) ─────────────────────────────────────────
+	// ── 1–2. Workflow graph (EM-012a) ───────────────────────────────────────
 	//
-	// Four-tier precedence: per-bead label → project config (no-op) → daemon
-	// default → dot (hk-30vlb). The per-item override is tier 0: the CLI
-	// --review-loop flag writes it onto the queue item, and when it holds a
-	// valid mode it wins over the whole walk (hk-hiqrl).
-	plan.WorkflowMode = resolveWorkflowMode(ctx, bead, env.WorkflowModeDefault, emit)
-	if env.ItemWorkflowMode != "" {
-		if candidate := core.WorkflowMode(env.ItemWorkflowMode); candidate.Valid() {
-			plan.WorkflowMode = candidate
+	// Resolve and validate one graph before any run resource exists. The old
+	// WorkflowMode and WorkflowRef fields stay populated until T5 replaces the
+	// legacy executor handoff with plan.Workflow.
+	resolved, workflowErr := resolveWorkflow(ctx, env, emit)
+	if workflowErr != nil {
+		plan.Verdict = runPlanRefusedStartFrom
+		plan.Refusal = runPlanRefusal{
+			LogLine:      fmt.Sprintf("daemon: workloop: resolve workflow for bead %s: %v (reopening)\n", bead.BeadID, workflowErr),
+			ReopenReason: fmt.Sprintf("resolve workflow failed: %v", workflowErr),
+			Err:          workflowErr,
 		}
+		return plan
 	}
-
-	// ── 2. Workflow ref (EM-012a) ──────────────────────────────────────────
-	//
-	// Per-item ref (tier 0, hk-qo9pq) beats the per-bead dot:<name> label (tier
-	// 1, hk-30q6). Absence falls through to the project workflow.dot or the
-	// embedded standard-bead.dot.
-	plan.WorkflowRef = resolveWorkflowRef(bead, env.ItemWorkflowRef)
+	plan.Workflow = resolved
+	plan.WorkflowRef = resolved.WorkflowRef
+	// Preserve the old imperative route until T5 consumes resolved.Mode. The
+	// resolved value itself is dot for both legacy single compatibility paths.
+	plan.WorkflowMode = legacyWorkflowModeForExecutor(resolved)
 
 	// Decisions 3 to 5 answer WHAT runs the bead, decisions 6 to 10 answer
 	// WHERE. Each returns false when it refuses, having filled plan.Refusal.

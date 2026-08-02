@@ -56,6 +56,19 @@ func resolveWorkflowMode(
 	daemonDefault core.WorkflowMode,
 	bus handlercontract.EventEmitter,
 ) core.WorkflowMode {
+	return resolveWorkflowModeWithAudit(ctx, bead, daemonDefault, bus, true)
+}
+
+// resolveWorkflowModeWithAudit performs the mode tier walk. The resolved graph
+// selector disables the old label-only bypass audit until it knows no tier-0
+// queue value supersedes the label.
+func resolveWorkflowModeWithAudit(
+	ctx context.Context,
+	bead core.BeadRecord,
+	daemonDefault core.WorkflowMode,
+	bus handlercontract.EventEmitter,
+	emitBypassAudit bool,
+) core.WorkflowMode {
 	// ── Tier 1: per-bead workflow:<mode> label ─────────────────────────────
 	//
 	// Collect all labels that start with "workflow:".
@@ -71,7 +84,7 @@ func resolveWorkflowMode(
 		modePart := strings.TrimPrefix(workflowLabels[0], workflowLabelPrefix)
 		mode := core.WorkflowMode(modePart)
 		if mode.Valid() {
-			if mode == core.WorkflowModeSingle {
+			if mode == core.WorkflowModeSingle && emitBypassAudit {
 				// Emit review_bypassed audit event (hk-81n9r): single mode is only
 				// reachable via an explicit per-bead label; the daemon default and
 				// tier-4 fallback both resolve to dot (hk-30vlb).
@@ -104,6 +117,16 @@ func resolveWorkflowMode(
 	// single is only reachable via an explicit workflow:single per-bead label
 	// or --workflow-mode single flag — NEVER via tier-3 or tier-4 resolution.
 	return core.WorkflowModeDot
+}
+
+func hasExactWorkflowSingleLabel(labels []string) bool {
+	var workflowLabels []string
+	for _, label := range labels {
+		if strings.HasPrefix(label, workflowLabelPrefix) {
+			workflowLabels = append(workflowLabels, label)
+		}
+	}
+	return len(workflowLabels) == 1 && workflowLabels[0] == workflowLabelPrefix+string(core.WorkflowModeSingle)
 }
 
 // emitReviewBypassed emits a review_bypassed event (hk-81n9r) when a bead's

@@ -132,6 +132,9 @@ func runplanRepo(t *testing.T) (dir, headSHA string) {
 	}
 	run("add", "README")
 	run("commit", "-m", "Initial commit")
+	for _, name := range []string{"kerf.dot", "a.dot", "eval-bead.dot", "explicit.dot"} {
+		runplanWriteFile(t, dir, name, string(standardBeadDotSrc))
+	}
 	return dir, run("rev-parse", "HEAD")
 }
 
@@ -245,9 +248,9 @@ func TestRunPlan_WorkflowModePrecedence(t *testing.T) {
 			wantEvents: nil,
 		},
 		{
-			name:          "tier-1 absent: daemon default wins",
+			name:          "daemon single default cannot choose the retired single executor",
 			daemonDefault: core.WorkflowModeSingle,
-			wantMode:      core.WorkflowModeSingle,
+			wantMode:      core.WorkflowModeDot,
 			wantEvents:    nil,
 		},
 		{
@@ -267,14 +270,14 @@ func TestRunPlan_WorkflowModePrecedence(t *testing.T) {
 			name:          "tier-1 exactly one INVALID label: conflict, walk continues",
 			labels:        []string{"workflow:review-loop"},
 			daemonDefault: core.WorkflowModeSingle,
-			wantMode:      core.WorkflowModeSingle,
+			wantMode:      core.WorkflowModeDot,
 			wantEvents:    []core.EventType{core.EventTypeBeadLabelConflict},
 		},
 		{
 			name:          "tier-1 more than one label: conflict, walk continues",
 			labels:        []string{"workflow:dot", "workflow:single"},
 			daemonDefault: core.WorkflowModeSingle,
-			wantMode:      core.WorkflowModeSingle,
+			wantMode:      core.WorkflowModeDot,
 			wantEvents:    []core.EventType{core.EventTypeBeadLabelConflict},
 		},
 		{
@@ -282,9 +285,9 @@ func TestRunPlan_WorkflowModePrecedence(t *testing.T) {
 			labels:       []string{"workflow:single"},
 			itemOverride: "dot",
 			wantMode:     core.WorkflowModeDot,
-			// The walk still runs and still audits the single label. Only the
-			// answer changes.
-			wantEvents: []core.EventType{core.EventTypeReviewBypassed},
+			// A higher-priority DOT value prevents the legacy label from bypassing
+			// review, so it must not emit a false bypass audit.
+			wantEvents: nil,
 		},
 		{
 			name:         "tier-0 per-item override that is not a mode is ignored",
@@ -298,7 +301,7 @@ func TestRunPlan_WorkflowModePrecedence(t *testing.T) {
 			t.Parallel()
 			env := runplanEnv(repo, runplanBead(tc.labels, ""))
 			env.WorkflowModeDefault = tc.daemonDefault
-			env.ItemWorkflowMode = tc.itemOverride
+			env.ItemWorkflow.Mode = tc.itemOverride
 
 			plan, bus, _ := runplanResolve(t, env)
 
@@ -339,7 +342,7 @@ func TestRunPlan_WorkflowRefPrecedence(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			env := runplanEnv(repo, runplanBead(tc.labels, ""))
-			env.ItemWorkflowRef = tc.itemOverride
+			env.ItemWorkflow.Ref = tc.itemOverride
 
 			plan, bus, _ := runplanResolve(t, env)
 

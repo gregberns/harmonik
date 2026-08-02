@@ -276,8 +276,7 @@ type queueSelection struct {
 	itemIdx          int
 	itemBeadID       core.BeadID
 	itemContext      string
-	itemWFMode       string
-	itemWFRef        string
+	itemWorkflow     runloop.QueueWorkflowInput
 	itemTemplateMap  map[string]string
 	anyEligible      bool // true if any queue had an active group with eligible items
 	anyPausedOrEmpty bool // true if at least one queue existed but contributed nothing
@@ -339,14 +338,16 @@ func selectNextQueue(lq *queuewiring.LockedQueueStore, reg *RunRegistry, globalC
 		return queueSelection{anyPausedOrEmpty: sel.SawNonContributing}, false
 	}
 	return queueSelection{
-		queueName:           sel.QueueName,
-		queueID:             sel.QueueID,
-		groupIndex:          sel.GroupIndex,
-		itemIdx:             sel.Item.ItemIdx,
-		itemBeadID:          sel.Item.BeadID,
-		itemContext:         sel.Item.Context,
-		itemWFMode:          sel.Item.WorkflowMode,
-		itemWFRef:           sel.Item.WorkflowRef,
+		queueName:   sel.QueueName,
+		queueID:     sel.QueueID,
+		groupIndex:  sel.GroupIndex,
+		itemIdx:     sel.Item.ItemIdx,
+		itemBeadID:  sel.Item.BeadID,
+		itemContext: sel.Item.Context,
+		itemWorkflow: runloop.QueueWorkflowInput{
+			Mode: sel.Item.WorkflowMode,
+			Ref:  sel.Item.WorkflowRef,
+		},
 		itemTemplateMap:     sel.Item.TemplateParams,
 		anyEligible:         true,
 		queueLocalOnly:      sel.LocalOnly,
@@ -727,13 +728,12 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 			capturedQueueName           string // NQ-B1: name of the dispatching queue ("" = br-ready)
 			queueIDField                *string
 			queueGroupIdxFd             *int
-			capturedExtraContext        string            // hk-boiwe: per-item context from queue.Item.Context
-			capturedItemWFMode          string            // hk-hiqrl: per-item workflow mode from queue.Item.WorkflowMode
-			capturedItemWFRef           string            // hk-qo9pq: per-item workflow ref from queue.Item.WorkflowRef
-			capturedItemTemplateParams  map[string]string // hk-55zv2 / WG-045: template params from queue.Item.TemplateParams
-			capturedQueueLocalOnly      bool              // hk-f10xl [L5 Move 2]: per-queue local-only routing gate
-			capturedQueueWorkerTarget   string            // hk-f10xl [L5 Move 2]: per-queue worker-target pin
-			capturedQueueDefaultHarness core.AgentType    // per-queue tier-2 harness default
+			capturedExtraContext        string                     // hk-boiwe: per-item context from queue.Item.Context
+			capturedItemWorkflow        runloop.QueueWorkflowInput // raw queue.Item workflow fields
+			capturedItemTemplateParams  map[string]string          // hk-55zv2 / WG-045: template params from queue.Item.TemplateParams
+			capturedQueueLocalOnly      bool                       // hk-f10xl [L5 Move 2]: per-queue local-only routing gate
+			capturedQueueWorkerTarget   string                     // hk-f10xl [L5 Move 2]: per-queue worker-target pin
+			capturedQueueDefaultHarness core.AgentType             // per-queue tier-2 harness default
 		)
 		queueItemIndex = -1 // sentinel: not queue-dispatched
 
@@ -755,8 +755,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 				snapItemIdx            int = -1 // -1 → no item found (no queue can contribute)
 				snapItemBeadID         core.BeadID
 				snapItemContext        string
-				snapItemWFMode         string
-				snapItemWFRef          string
+				snapItemWorkflow       runloop.QueueWorkflowInput
 				snapItemTemplateParams map[string]string
 				snapGroupIndex         int
 				snapQueueID            string
@@ -895,8 +894,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 					snapItemIdx = sel.itemIdx
 					snapItemBeadID = sel.itemBeadID
 					snapItemContext = sel.itemContext
-					snapItemWFMode = sel.itemWFMode
-					snapItemWFRef = sel.itemWFRef
+					snapItemWorkflow = sel.itemWorkflow
 					snapItemTemplateParams = sel.itemTemplateMap
 					snapGroupIndex = sel.groupIndex
 					snapQueueID = sel.queueID
@@ -1293,8 +1291,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 				queueIDField = &qID
 				queueGroupIdxFd = &gIdx
 				capturedExtraContext = snapItemContext              // hk-boiwe
-				capturedItemWFMode = snapItemWFMode                 // hk-hiqrl
-				capturedItemWFRef = snapItemWFRef                   // hk-qo9pq
+				capturedItemWorkflow = snapItemWorkflow             // raw queue workflow input
 				capturedItemTemplateParams = snapItemTemplateParams // hk-55zv2 / WG-045
 			}
 		}
@@ -1589,9 +1586,8 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 		capturedQueueGroupIdx := queueGroupIdxFd
 		capturedItemIndex := queueItemIndex
 		// Per-item overrides captured here; empty for br-ready path.
-		capturedCtx := capturedExtraContext              // hk-boiwe
-		capturedWFMode := capturedItemWFMode             // hk-hiqrl
-		capturedWFRef := capturedItemWFRef               // hk-qo9pq
+		capturedCtx := capturedExtraContext // hk-boiwe
+		capturedWorkflow := capturedItemWorkflow
 		capturedTmplParams := capturedItemTemplateParams // hk-55zv2 / WG-045
 		// hk-f10xl [L5 Move 2]: per-queue routing gate captured for the goroutine.
 		capturedLocalOnly := capturedQueueLocalOnly
@@ -1659,7 +1655,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 
 		wg.Add(1)
 		env := runEnvWithDispatch(baseEnv, runID, beadRecord, capturedQueueName, capturedQueueID,
-			capturedQueueGroupIdx, capturedItemIndex, capturedWFMode, capturedWFRef,
+			capturedQueueGroupIdx, capturedItemIndex, capturedWorkflow,
 			capturedTmplParams, capturedLocalOnly, capturedWorkerTarget, capturedDefaultHarness)
 		rp, runHandles := buildRunBundles(basePorts, handles, env, launchBuilder)
 		go runDispatchedBead(runCtx, ctx, env, rp, runHandles, completionPort, capturedCtx,

@@ -31,7 +31,7 @@ type testRuntime struct {
 }
 
 func (r testRuntime) runEnv(id core.RunID, record core.BeadRecord, queueName, workerTarget string, queueHarness core.AgentType) runloop.RunEnv {
-	return runEnvWithDispatch(r.env, id, record, queueName, nil, nil, 0, "", "", nil, false, workerTarget, queueHarness)
+	return runEnvWithDispatch(r.env, id, record, queueName, nil, nil, 0, runloop.QueueWorkflowInput{}, nil, false, workerTarget, queueHarness)
 }
 
 func (r testRuntime) buildRunBundles(env runloop.RunEnv) (runloop.RunPorts, runloop.SharedHandles) {

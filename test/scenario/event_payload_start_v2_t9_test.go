@@ -3,6 +3,8 @@
 package scenario
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -173,5 +175,190 @@ func TestScenario_EventPayloadStartV2_DOTLifecycle(t *testing.T) {
 	}
 	if !sawCompleted {
 		t.Fatal("no run_completed event for the started run")
+	}
+}
+
+// eventPayloadT10InitLegacySingleBead seeds one open bead with the legacy
+// workflow:single label. The resolver must map this compatibility input to the
+// registered no-review DOT graph before it emits run_started.
+func eventPayloadT10InitLegacySingleBead(t *testing.T, brPath, projectDir, brWrapper string) string {
+	t.Helper()
+	initCmd := exec.CommandContext(t.Context(), brPath, "init", "--prefix", "t10") //nolint:gosec // fixed test command
+	initCmd.Dir = projectDir
+	if out, err := initCmd.CombinedOutput(); err != nil {
+		t.Fatalf("initialise isolated Beads store: %v\n%s", err, out)
+	}
+	createCmd := exec.CommandContext(t.Context(), brWrapper,
+		"create", "legacy no-review DOT scenario bead", "--status", "open",
+		"--labels", "workflow:single", "--silent") //nolint:gosec // fixed test command
+	out, err := createCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("create legacy single bead: %v\n%s", err, out)
+	}
+	beadID := strings.TrimSpace(string(out))
+	if beadID == "" {
+		t.Fatal("create legacy single bead returned no ID")
+	}
+	return beadID
+}
+
+// eventPayloadT10StreamEvents decodes the public subscribe command's NDJSON.
+func eventPayloadT10StreamEvents(t *testing.T, raw string) []core.Event {
+	t.Helper()
+	var events []core.Event
+	scanner := bufio.NewScanner(strings.NewReader(raw))
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		var event core.Event
+		if err := json.Unmarshal(line, &event); err != nil {
+			t.Fatalf("decode subscribe stream line: %v\n%s", err, line)
+		}
+		events = append(events, event)
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("read subscribe stream: %v", err)
+	}
+	return events
+}
+
+// TestScenario_EventPayloadQueueSubscribeLegacySingle proves the queue submit
+// and subscribe command path. The legacy label must resolve to no-review-bead,
+// but the emitted start record must still name DOT mode and the resolver facts.
+func TestScenario_EventPayloadQueueSubscribeLegacySingle(t *testing.T) {
+	if codexTwinBinaryPath == "" {
+		t.Skip("harmonik-twin-codex binary not built")
+	}
+
+	realBrPath := codexLifecycleFixtureBrPath(t)
+	project := scenarioFixtureProjectDir(t)
+	projectDir, err := filepath.EvalSymlinks(project.projectDir)
+	if err != nil {
+		t.Fatalf("resolve scenario project path: %v", err)
+	}
+	jsonlPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
+	codexLifecycleFixtureGitRepo(t, projectDir)
+
+	dbPath := filepath.Join(projectDir, ".beads", "beads.db")
+	brWrapper := codexLifecycleFixtureBrWrapperScript(t, realBrPath, dbPath)
+	beadID := eventPayloadT10InitLegacySingleBead(t, realBrPath, projectDir, brWrapper)
+	handlerScript := codexLifecycleFixtureHandlerScript(t, codexTwinBinaryPath)
+
+	t.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", filepath.Join(t.TempDir(), ".claude.json"))
+	cancel, daemonDone := scenarioFixtureStartDaemon(t, daemon.Config{
+		ProjectDir:          projectDir,
+		JSONLLogPath:        jsonlPath,
+		BrPath:              brWrapper,
+		HandlerBinary:       handlerScript,
+		HandlerEnv:          os.Environ(),
+		NoAutoPull:          true,
+		QueueStore:          queuewiring.NewQueueStore(),
+		WorkflowModeDefault: core.WorkflowModeDot,
+	})
+	defer func() {
+		cancel()
+		scenarioFixtureWaitDaemon(t, daemonDone, 10*time.Second)
+	}()
+
+	sockPath := filepath.Join(projectDir, ".harmonik", "daemon.sock")
+	if !scenarioFixturePollSocket(sockPath, 10*time.Second) {
+		t.Fatalf("isolated daemon socket did not start: %s", sockPath)
+	}
+
+	harmonikBin := eventPayloadT9BuildHarmonik(t)
+	var subscribeOut bytes.Buffer
+	subscribeCmd := exec.Command(harmonikBin,
+		"subscribe", "--project", projectDir, "--json",
+		"--types", "run_started,node_dispatch_requested,run_completed,run_failed") //nolint:gosec // temporary test binary
+	subscribeCmd.Dir = projectDir
+	subscribeCmd.Stdout = &subscribeOut
+	subscribeCmd.Stderr = &subscribeOut
+	if err := subscribeCmd.Start(); err != nil {
+		t.Fatalf("start public subscribe command: %v", err)
+	}
+	subscribeDone := make(chan error, 1)
+	go func() { subscribeDone <- subscribeCmd.Wait() }()
+	stoppedSubscribe := false
+	defer func() {
+		if !stoppedSubscribe {
+			_ = subscribeCmd.Process.Signal(os.Interrupt)
+			<-subscribeDone
+		}
+	}()
+
+	// The public subscriber is live-only. Give its socket request time to arm
+	// before the queue command emits the start record.
+	time.Sleep(250 * time.Millisecond)
+	submitCmd := exec.CommandContext(t.Context(), harmonikBin,
+		"queue", "submit", "--project", projectDir, "--beads", beadID, "--json") //nolint:gosec // temporary test binary
+	submitCmd.Dir = projectDir
+	if out, err := submitCmd.CombinedOutput(); err != nil {
+		t.Fatalf("public queue submit failed: %v\n%s", err, out)
+	}
+
+	if !scenarioFixturePollJSONLForEvent(t, jsonlPath, []string{string(core.EventTypeRunCompleted)}, 90*time.Second) {
+		t.Fatalf("isolated queue run did not complete; log:\n%s", strings.Join(scenarioFixtureReadJSONLLines(t, jsonlPath), "\n"))
+	}
+	if err := subscribeCmd.Process.Signal(os.Interrupt); err != nil {
+		t.Fatalf("stop public subscribe command: %v", err)
+	}
+	if err := <-subscribeDone; err != nil {
+		t.Fatalf("public subscribe command: %v\n%s", err, subscribeOut.String())
+	}
+	stoppedSubscribe = true
+
+	streamEvents := eventPayloadT10StreamEvents(t, subscribeOut.String())
+	var starts []core.Event
+	for _, event := range streamEvents {
+		switch core.EventType(event.Type) {
+		case core.EventTypeRunStarted:
+			starts = append(starts, event)
+		}
+	}
+	if len(starts) != 1 {
+		t.Fatalf("subscribe run_started count = %d, want 1\n%s", len(starts), subscribeOut.String())
+	}
+	startEvent := starts[0]
+	if startEvent.SchemaVersion != 2 || startEvent.RunID == nil {
+		t.Fatalf("subscribe start envelope = %#v, want version 2 with a run ID", startEvent)
+	}
+	var start core.RunStartedPayload
+	if err := json.Unmarshal(startEvent.Payload, &start); err != nil {
+		t.Fatalf("decode subscribed strict version-2 start payload: %v\npayload: %s", err, startEvent.Payload)
+	}
+	if start.RunID != *startEvent.RunID || start.Descriptor() != (core.WorkflowDescriptor{
+		WorkflowID:      core.WorkflowID("no-review-bead"),
+		WorkflowVersion: core.WorkflowVersion("1.0"),
+	}) {
+		t.Fatalf("subscribe start identity = envelope %v payload %#v", startEvent.RunID, start)
+	}
+	if start.WorkflowMode != core.WorkflowModeDot || start.ReviewPolicy != core.ReviewPolicyNoReview ||
+		start.WorkflowSelectionSource != core.WorkflowSelectionLegacySingleLabel {
+		t.Fatalf("subscribe start workflow decision = mode %q policy %q source %q", start.WorkflowMode, start.ReviewPolicy, start.WorkflowSelectionSource)
+	}
+	if start.BeadID == nil || string(*start.BeadID) != beadID || start.WorkspacePath == "" ||
+		start.InputRef != "bead:"+beadID || start.StartedAt.IsZero() ||
+		start.WorkerName != nil || start.WorkerOS != nil || start.QueueID == nil || *start.QueueID == "" ||
+		start.QueueGroupIndex == nil || *start.QueueGroupIndex != 0 {
+		t.Fatalf("subscribe start context is incomplete: %#v", start)
+	}
+	var sawDotDispatch, sawCompleted bool
+	for _, event := range streamEvents {
+		if event.RunID == nil || *event.RunID != start.RunID {
+			continue
+		}
+		switch core.EventType(event.Type) {
+		case core.EventTypeNodeDispatchRequested:
+			sawDotDispatch = true
+		case core.EventTypeRunCompleted:
+			sawCompleted = true
+		case core.EventTypeRunFailed:
+			t.Fatalf("legacy single run failed: %s", event.Payload)
+		}
+	}
+	if !sawDotDispatch {
+		t.Fatal("subscribe stream did not show DOT node dispatch")
+	}
+	if !sawCompleted {
+		t.Fatal("subscribe stream did not show run_completed for the started run")
 	}
 }

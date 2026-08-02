@@ -185,9 +185,8 @@ type runPlan struct {
 	// it and must not be read on the run path.
 	WorkflowRef string
 
-	// Workflow is the complete graph selection. T5 consumes it for event
-	// emission and DOT execution. WorkflowMode and WorkflowRef remain as a
-	// temporary compatibility bridge for the old executor path.
+	// Workflow is the complete graph selection used for event emission and DOT
+	// execution. WorkflowMode and WorkflowRef mirror its resolved identity.
 	Workflow resolvedWorkflow
 
 	// AgentType, Model and Effort are the RUN-level harness tuple. A DOT run
@@ -239,15 +238,14 @@ type runPlan struct {
 // resolvedWorkflow is one complete graph decision before the daemon creates a
 // run. Raw queue values stay beside the resolved value for audit and migration.
 type resolvedWorkflow struct {
-	Graph              *dot.Graph
-	Descriptor         core.WorkflowDescriptor
-	Mode               core.WorkflowMode
-	ReviewPolicy       core.ReviewPolicy
-	SelectionSource    core.WorkflowSelectionSource
-	WorkflowRef        string
-	RawQueueMode       string
-	RawQueueRef        string
-	legacyExecutorMode core.WorkflowMode
+	Graph           *dot.Graph
+	Descriptor      core.WorkflowDescriptor
+	Mode            core.WorkflowMode
+	ReviewPolicy    core.ReviewPolicy
+	SelectionSource core.WorkflowSelectionSource
+	WorkflowRef     string
+	RawQueueMode    string
+	RawQueueRef     string
 }
 
 func (w resolvedWorkflow) Valid() bool {
@@ -293,15 +291,14 @@ func resolveWorkflow(ctx context.Context, env runloop.RunEnv, emit handlercontra
 		return resolvedWorkflow{}, err
 	}
 	resolved := resolvedWorkflow{
-		Graph:              graph,
-		Descriptor:         graphDescriptor(graph),
-		Mode:               workflowMode,
-		ReviewPolicy:       core.ReviewPolicyReviewed,
-		SelectionSource:    source,
-		WorkflowRef:        workflowRef,
-		RawQueueMode:       input.Mode,
-		RawQueueRef:        input.Ref,
-		legacyExecutorMode: core.WorkflowModeDot,
+		Graph:           graph,
+		Descriptor:      graphDescriptor(graph),
+		Mode:            workflowMode,
+		ReviewPolicy:    core.ReviewPolicyReviewed,
+		SelectionSource: source,
+		WorkflowRef:     workflowRef,
+		RawQueueMode:    input.Mode,
+		RawQueueRef:     input.Ref,
 	}
 	if !resolved.Valid() {
 		return resolvedWorkflow{}, fmt.Errorf("resolved workflow has invalid descriptor or policy")
@@ -315,14 +312,13 @@ func resolveNoReviewWorkflow(input runloop.QueueWorkflowInput, source core.Workf
 		return resolvedWorkflow{}, fmt.Errorf("load registered no-review graph: %w", err)
 	}
 	resolved := resolvedWorkflow{
-		Graph:              graph,
-		Descriptor:         noReviewBeadDescriptor,
-		Mode:               core.WorkflowModeDot,
-		ReviewPolicy:       core.ReviewPolicyNoReview,
-		SelectionSource:    source,
-		RawQueueMode:       input.Mode,
-		RawQueueRef:        input.Ref,
-		legacyExecutorMode: core.WorkflowModeSingle,
+		Graph:           graph,
+		Descriptor:      noReviewBeadDescriptor,
+		Mode:            core.WorkflowModeDot,
+		ReviewPolicy:    core.ReviewPolicyNoReview,
+		SelectionSource: source,
+		RawQueueMode:    input.Mode,
+		RawQueueRef:     input.Ref,
 	}
 	if !resolved.Valid() {
 		return resolvedWorkflow{}, fmt.Errorf("registered no-review workflow is invalid")
@@ -388,10 +384,6 @@ func rejectGraphAuthoredReviewPolicy(graph *dot.Graph) error {
 	return nil
 }
 
-func legacyWorkflowModeForExecutor(resolved resolvedWorkflow) core.WorkflowMode {
-	return resolved.legacyExecutorMode
-}
-
 // resolveRunPlan walks the ten decisions in dependency order and returns the
 // plan.
 //
@@ -416,9 +408,7 @@ func resolveRunPlan(ctx context.Context, req runPlanRequest) runPlan {
 
 	// ── 1–2. Workflow graph (EM-012a) ───────────────────────────────────────
 	//
-	// Resolve and validate one graph before any run resource exists. The old
-	// WorkflowMode and WorkflowRef fields stay populated until T5 replaces the
-	// legacy executor handoff with plan.Workflow.
+	// Resolve and validate one graph before any run resource exists.
 	resolved, workflowErr := resolveWorkflow(ctx, env, emit)
 	if workflowErr != nil {
 		plan.Verdict = runPlanRefusedStartFrom
@@ -431,9 +421,7 @@ func resolveRunPlan(ctx context.Context, req runPlanRequest) runPlan {
 	}
 	plan.Workflow = resolved
 	plan.WorkflowRef = resolved.WorkflowRef
-	// Preserve the old imperative route until T5 consumes resolved.Mode. The
-	// resolved value itself is dot for both legacy single compatibility paths.
-	plan.WorkflowMode = legacyWorkflowModeForExecutor(resolved)
+	plan.WorkflowMode = resolved.Mode
 
 	// Decisions 3 to 5 answer WHAT runs the bead, decisions 6 to 10 answer
 	// WHERE. Each returns false when it refuses, having filled plan.Refusal.

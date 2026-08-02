@@ -261,9 +261,9 @@ func TestRunPlan_WorkflowModePrecedence(t *testing.T) {
 			wantEvents:    nil,
 		},
 		{
-			name:       "tier-1 workflow:single is audited",
+			name:       "tier-1 workflow:single selects no-review DOT and is audited",
 			labels:     []string{"workflow:single"},
-			wantMode:   core.WorkflowModeSingle,
+			wantMode:   core.WorkflowModeDot,
 			wantEvents: []core.EventType{core.EventTypeReviewBypassed},
 		},
 		{
@@ -293,7 +293,7 @@ func TestRunPlan_WorkflowModePrecedence(t *testing.T) {
 			name:         "tier-0 per-item override that is not a mode is ignored",
 			labels:       []string{"workflow:single"},
 			itemOverride: "review-loop",
-			wantMode:     core.WorkflowModeSingle,
+			wantMode:     core.WorkflowModeDot,
 			wantEvents:   []core.EventType{core.EventTypeReviewBypassed},
 		},
 	} {

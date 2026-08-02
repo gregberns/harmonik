@@ -750,12 +750,11 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 func buildProposedQueue(req ValidationRequest) Queue {
 	if !req.IsAppend {
 		// Submit: the proposed queue is entirely from the request.
-		return Queue{
+		return NewActiveQueue(Queue{
 			SchemaVersion: 1,
 			QueueID:       "00000000-0000-0000-0000-000000000000",
-			Status:        QueueStatusActive,
 			Groups:        req.Groups,
-		}
+		})
 	}
 	// Append: clone the active queue and append to the target group.
 	if req.ActiveQueue == nil {

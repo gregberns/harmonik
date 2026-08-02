@@ -814,6 +814,27 @@ At the end of this stage `workLoopDeps` has no reader. Delete it, delete `newWor
 `buildWorkLoopDeps` / `injectWorkLoopDeps` with one function that constructs the eleven ports in the
 order §4.3 requires.
 
+**Source correction, 2026-08-02:** the last sentence above understates the
+work at the current source revision. After stages 1 through 7, production code
+still uses `workLoopDeps` in the scheduler, governor, boot wiring, and port
+constructors. Replacing only `daemonLedger` and `daemonBudget` does not make
+the type deletable. Stage 8 must build the existing typed run bundles and ports
+directly in `launchWorkLoop`. It must pass only those values to the scheduler,
+maintenance, watcher, and run path. It must not replace `workLoopDeps` with a
+new wide bundle.
+
+`QueueStore` remains a shared run handle. `QueueSurfacePort` owns only the wake
+channel and queue ledger. Scheduler helpers and `daemonBudget` receive the one
+store as an explicit input. `daemonLedger` holds its five values directly. The
+stale watcher receives the already-built reap seam. The shared run registry
+comes from boot state.
+
+The test seam must construct an explicit test runtime from
+`TestRuntimeParams`. It must not restore the deleted type. Update the affected
+freeze gate in the same change. The proof is a source search with no
+`workLoopDeps` or `newWorkLoopDeps` match in `internal/daemon`, plus the daemon
+short suite and the run-loop freeze gates.
+
 **Test that proves it:** the compiler. The type is gone.
 
 ### 7.1 What this plan does NOT do

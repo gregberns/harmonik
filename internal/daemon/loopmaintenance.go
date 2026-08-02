@@ -40,13 +40,26 @@ import (
 	"context"
 	"io"
 	"time"
+
+	"github.com/gregberns/harmonik/internal/core"
+	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
 // periodicCoordinatorReapInterval is the default minimum interval between
 // successive periodic coordinator-session reap passes in the work loop
 // (hk-t08m). 5 minutes balances prompt cleanup against excess tmux chatter.
-// Tests may inject a shorter value via workLoopDeps.coordinatorReapInterval.
+// Tests may inject a shorter value through coordinatorReapPort.interval.
 const periodicCoordinatorReapInterval = 5 * time.Minute
+
+// coordinatorReapPort is the periodic coordinator-session reaper's dependency
+// set. It is constructed from Config and held by loopMaintenance so the work
+// loop does not carry maintenance-only values.
+type coordinatorReapPort struct {
+	projectDir  string
+	projectHash core.ProjectHash
+	adapter     ltmux.Adapter
+	interval    time.Duration
+}
 
 // loopMaintenanceState holds the periodic-maintenance value fields owned solely
 // by the runWorkLoop goroutine (RSM-011). They were lifted off workLoopDeps
@@ -102,6 +115,9 @@ type loopMaintenance struct {
 	// state is the periodic-maintenance timing and latch state (RSM-011).
 	state loopMaintenanceState
 
+	// coordinatorReap holds the periodic coordinator-session reaper inputs.
+	coordinatorReap coordinatorReapPort
+
 	// dashGate is the dashboard staleness forcing gate, or nil when
 	// `subsystems.dashboard_gate.enabled: false`. Every method tolerates nil.
 	dashGate *dashboardGate
@@ -137,10 +153,11 @@ type loopMaintenance struct {
 // logW is passed straight through. Both sub-constructors already substitute
 // os.Stderr for a nil writer, so a third copy of that guard here would be dead
 // code (the reviewer's point, and it also keeps os out of this file's imports).
-func newLoopMaintenance(deps workLoopDeps, logW io.Writer) *loopMaintenance {
+func newLoopMaintenance(deps workLoopDeps, coordinatorReap coordinatorReapPort, logW io.Writer) *loopMaintenance {
 	return &loopMaintenance{
-		dashGate: newDashboardGateIfEnabled(deps.projectCfg, logW),
-		governor: newMovementGovernorIfEnabled(deps, logW),
+		coordinatorReap: coordinatorReap,
+		dashGate:        newDashboardGateIfEnabled(deps.projectCfg, logW),
+		governor:        newMovementGovernorIfEnabled(deps, logW),
 	}
 }
 
@@ -170,7 +187,7 @@ func (m *loopMaintenance) tickBeforeDispatch(ctx context.Context, deps *workLoop
 	runScheduleTick(ctx, *deps)
 
 	// Periodic coordinator-session reap (hk-t08m).
-	m.reapCoordinatorSessions(ctx, deps)
+	m.reapCoordinatorSessions(ctx)
 
 	// Periodic disk watermark check and reactive go-cache reap (hk-sxlb,
 	// hk-guez). Reactive only — every diskCheckInterval (default 10 min). When
@@ -198,17 +215,17 @@ func (m *loopMaintenance) tickBeforeDispatch(ctx context.Context, deps *workLoop
 // skipped clean shutdown. Running the same predicate periodically here ensures
 // leaked sessions are cleaned up without requiring a daemon restart.
 //
-// Rate-limited by deps.coordinatorReapInterval (default 5 min) so the tmux
+// Rate-limited by coordinatorReapPort.interval (default 5 min) so the tmux
 // adapter is not called on every 2 s poll tick. The first tick fires immediately
-// (lastCoordinatorReap is zero-valued). No-op when coordinatorReapAdapter is nil
+// (lastCoordinatorReap is zero-valued). No-op when the port adapter is nil
 // (no tmux substrate).
-func (m *loopMaintenance) reapCoordinatorSessions(ctx context.Context, deps *workLoopDeps) {
-	interval := deps.coordinatorReapInterval
+func (m *loopMaintenance) reapCoordinatorSessions(ctx context.Context) {
+	interval := m.coordinatorReap.interval
 	if interval <= 0 {
 		interval = periodicCoordinatorReapInterval
 	}
-	if deps.coordinatorReapAdapter != nil && time.Since(m.state.lastCoordinatorReap) >= interval {
-		runPeriodicCoordinatorReap(ctx, deps.projectDir, deps.coordinatorReapProjectHash, deps.coordinatorReapAdapter, nil)
+	if m.coordinatorReap.adapter != nil && time.Since(m.state.lastCoordinatorReap) >= interval {
+		runPeriodicCoordinatorReap(ctx, m.coordinatorReap.projectDir, m.coordinatorReap.projectHash, m.coordinatorReap.adapter, nil)
 		m.state.lastCoordinatorReap = time.Now()
 	}
 }

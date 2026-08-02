@@ -620,8 +620,8 @@ type workLoopDeps struct {
 	strandedInProgressResetter strandedInProgressResetter
 
 	// strandedResetProjectHash is the project hash used in ResetBead idempotency
-	// keys for stranded-bead auto-resets (hk-l2xd1). Same value as
-	// coordinatorReapProjectHash; stored separately for clarity.
+	// keys for stranded-bead auto-resets (hk-l2xd1). It derives from ProjectDir,
+	// like the periodic coordinator reaper's project hash.
 	//
 	// Bead ref: hk-l2xd1.
 	strandedResetProjectHash core.ProjectHash
@@ -747,31 +747,6 @@ type workLoopDeps struct {
 	//
 	// Bead ref: hk-0es.
 	scheduleWakeC <-chan struct{}
-
-	// coordinatorReapAdapter is the tmux Adapter used by the work-loop periodic
-	// coordinator-session reaper (hk-t08m). When nil the periodic reap is disabled
-	// (no tmux substrate, or test callers that do not need it).
-	//
-	// Extracted from cfg.Substrate via substrateWithAdapter at startup; threaded
-	// here so the work loop does not touch cfg.Substrate directly.
-	//
-	// Bead ref: hk-t08m.
-	coordinatorReapAdapter tmuxpkg.Adapter
-
-	// coordinatorReapProjectHash is the project hash used to derive the
-	// flywheel-coordinator session name for the periodic reaper (hk-t08m).
-	// Pre-computed once at startup from cfg.ProjectDir to avoid repeated hashing.
-	//
-	// Bead ref: hk-t08m.
-	coordinatorReapProjectHash core.ProjectHash
-
-	// coordinatorReapInterval is the minimum duration between periodic
-	// coordinator-session reap passes. Zero or negative → defaults to
-	// periodicCoordinatorReapInterval (5 min). Tests may inject a shorter value
-	// (e.g. 0) to exercise the periodic path without real wall-clock delay.
-	//
-	// Bead ref: hk-t08m.
-	coordinatorReapInterval time.Duration
 
 	// NOTE (RSM-011): the periodic-maintenance VALUE fields formerly here —
 	// lastCoordinatorReap, lastDiskCheck, diskLow — were lifted out onto
@@ -1018,15 +993,6 @@ func newWorkLoopDeps(ctx context.Context, cfg Config, bus handlercontract.EventE
 		cfg.WorkerRegistryObserver(workerReg)
 	}
 
-	// Extract the tmux adapter from cfg.Substrate for the periodic coordinator
-	// reaper (hk-t08m). Same extraction pattern as the boot-time sweep above.
-	// When no tmux substrate is configured, coordinatorReapAdapter stays nil and
-	// the periodic reap is a no-op (safe default).
-	var coordinatorReapAdapter tmuxpkg.Adapter
-	if sa, ok := cfg.Substrate.(substrateWithAdapter); ok {
-		coordinatorReapAdapter = sa.tmuxAdapter()
-	}
-
 	return workLoopDeps{
 		brAdapter:                  adapter,
 		bus:                        bus,
@@ -1071,19 +1037,17 @@ func newWorkLoopDeps(ctx context.Context, cfg Config, bus handlercontract.EventE
 		// creates AND owns the production queue (starts its owner, cancels on
 		// return after the drain). A test may inject a pre-started queue via
 		// WithMergeQueue, which runWorkLoop then leaves untouched (hk-yyso7).
-		worktreeCreateMu:           &sync.Mutex{},                  // hk-5qp7z: global worktree-create serialisation for remote runs
-		agentSpawnSem:              make(chan struct{}, 3),         // hk-5z1f0: cold-start spawn semaphore (cap 3, remote-only). ONE per daemon; per-worker only because v1 admits one worker — see the take site.
-		cacheReapMu:                &sync.RWMutex{},                // hk-y3frr: reap↔dispatch exclusion
-		emittedEpics:               make(map[core.BeadID]struct{}), // hk-w6y70: at-most-once guard per daemon session
-		emittedEpicsMu:             &sync.Mutex{},
-		targetBranch:               bootconfig.ResolveTargetBranch(cfg.TargetBranch),
-		protectBranches:            cfg.ProtectBranches,
-		allowedRepos:               cfg.ProjectCfg.Daemon.AllowedRepos, // hk-xfuc: cross-repo dispatch safelist
-		workerRegistry:             workerReg,                          // remote-substrate B4/B8: nil → local-only dispatch (NFR7)
-		coordinatorReapAdapter:     coordinatorReapAdapter,             // hk-t08m: periodic flywheel-coordinator reaper
-		coordinatorReapProjectHash: projectHash,                        // hk-t08m: pre-computed for session name derivation
-		runner:                     cfg.Runner,                         // hk-hd2w6: test injection / Config.Runner seam
-		sandboxCfg:                 cfg.ProjectCfg.Sandbox,             // hk-6596l: srt sandbox config block
+		worktreeCreateMu: &sync.Mutex{},                  // hk-5qp7z: global worktree-create serialisation for remote runs
+		agentSpawnSem:    make(chan struct{}, 3),         // hk-5z1f0: cold-start spawn semaphore (cap 3, remote-only). ONE per daemon; per-worker only because v1 admits one worker — see the take site.
+		cacheReapMu:      &sync.RWMutex{},                // hk-y3frr: reap↔dispatch exclusion
+		emittedEpics:     make(map[core.BeadID]struct{}), // hk-w6y70: at-most-once guard per daemon session
+		emittedEpicsMu:   &sync.Mutex{},
+		targetBranch:     bootconfig.ResolveTargetBranch(cfg.TargetBranch),
+		protectBranches:  cfg.ProtectBranches,
+		allowedRepos:     cfg.ProjectCfg.Daemon.AllowedRepos, // hk-xfuc: cross-repo dispatch safelist
+		workerRegistry:   workerReg,                          // remote-substrate B4/B8: nil → local-only dispatch (NFR7)
+		runner:           cfg.Runner,                         // hk-hd2w6: test injection / Config.Runner seam
+		sandboxCfg:       cfg.ProjectCfg.Sandbox,             // hk-6596l: srt sandbox config block
 	}, nil
 }
 

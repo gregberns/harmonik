@@ -29,7 +29,8 @@ func (a *recordingReapAdapter) ListSessions(context.Context) ([]string, error) {
 	return nil, nil
 }
 
-// haltFixture builds the deps and maintenance state the two subtests share.
+// haltFixture builds the deps, coordinator-reap port, and maintenance state the
+// two subtests share.
 //
 // projectDir is a real temp dir with no coordinator sentinel file in it, so
 // probeCoordinatorSentinel reports "not live" and the reap proceeds to the
@@ -40,16 +41,18 @@ func (a *recordingReapAdapter) ListSessions(context.Context) ([]string, error) {
 // diskFreeBytesFunc is injected well above the watermark so the disk job takes
 // its healthy path here. The disk-LOW branch is covered separately by
 // TestDiskLowBranch below.
-func haltFixture(t *testing.T) (*workLoopDeps, *recordingReapAdapter) {
+func haltFixture(t *testing.T) (*workLoopDeps, coordinatorReapPort, *recordingReapAdapter) {
 	t.Helper()
 	adapter := &recordingReapAdapter{}
 	deps := &workLoopDeps{
-		projectDir:              t.TempDir(),
-		coordinatorReapAdapter:  adapter,
-		coordinatorReapInterval: time.Nanosecond, // cadence is never the reason a call is skipped
-		diskFreeBytesFunc:       func(string) (uint64, error) { return 1 << 62, nil },
+		diskFreeBytesFunc: func(string) (uint64, error) { return 1 << 62, nil },
 	}
-	return deps, adapter
+	port := coordinatorReapPort{
+		projectDir: t.TempDir(),
+		adapter:    adapter,
+		interval:   time.Nanosecond, // cadence is never the reason a call is skipped
+	}
+	return deps, port, adapter
 }
 
 // TestTickBeforeDispatchHaltShortCircuits pins the invariant loopmaintenance.go
@@ -64,8 +67,8 @@ func haltFixture(t *testing.T) (*workLoopDeps, *recordingReapAdapter) {
 // the loop's exit.
 func TestTickBeforeDispatchHaltShortCircuits(t *testing.T) {
 	t.Run("halted governor reports halt and skips every other job", func(t *testing.T) {
-		deps, adapter := haltFixture(t)
-		m := &loopMaintenance{governor: &movementGovernor{haltRequested: true}}
+		deps, port, adapter := haltFixture(t)
+		m := &loopMaintenance{coordinatorReap: port, governor: &movementGovernor{haltRequested: true}}
 
 		obs := m.tickBeforeDispatch(context.Background(), deps)
 
@@ -96,8 +99,8 @@ func TestTickBeforeDispatchHaltShortCircuits(t *testing.T) {
 	// Positive control. Without this, the assertions above would still pass if the
 	// fixture simply could not reach tmux, and the test would prove nothing.
 	t.Run("same fixture without the halt does run the reap", func(t *testing.T) {
-		deps, adapter := haltFixture(t)
-		m := &loopMaintenance{governor: &movementGovernor{haltRequested: false}}
+		deps, port, adapter := haltFixture(t)
+		m := &loopMaintenance{coordinatorReap: port, governor: &movementGovernor{haltRequested: false}}
 
 		obs := m.tickBeforeDispatch(context.Background(), deps)
 
@@ -121,8 +124,8 @@ func TestTickBeforeDispatchHaltShortCircuits(t *testing.T) {
 	// rather than panicking, which is what lets runWorkLoop hold one code path for
 	// both configurations.
 	t.Run("absent governor subsystem never halts", func(t *testing.T) {
-		deps, adapter := haltFixture(t)
-		m := &loopMaintenance{governor: nil}
+		deps, port, adapter := haltFixture(t)
+		m := &loopMaintenance{coordinatorReap: port, governor: nil}
 
 		obs := m.tickBeforeDispatch(context.Background(), deps)
 

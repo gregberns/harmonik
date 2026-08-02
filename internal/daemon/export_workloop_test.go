@@ -48,7 +48,7 @@ func WorkflowModeDefaultOf(deps workLoopDeps) core.WorkflowMode {
 // ExportedRunWorkLoop runs the work loop with the given deps until ctx is
 // cancelled, mirroring runWorkLoop.
 func ExportedRunWorkLoop(ctx context.Context, deps workLoopDeps) error {
-	return runWorkLoop(ctx, deps)
+	return runWorkLoop(ctx, deps, coordinatorReapPort{})
 }
 
 // ExportedStoreLocalInFlight preloads the split-gate local-in-flight counter on

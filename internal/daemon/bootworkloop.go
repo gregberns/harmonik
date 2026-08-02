@@ -13,6 +13,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/digest"
 	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/projectconfig"
 	runpkg "github.com/gregberns/harmonik/internal/run"
@@ -36,6 +37,7 @@ func (bs *bootState) launchWorkLoop(ctx context.Context, daemonStartTime time.Ti
 	if depsErr != nil {
 		return depsErr
 	}
+	coordinatorReap := newCoordinatorReapPort(bs.cfg)
 	scheduleStore, scheduleErr := newScheduleStore(bs.cfg) //nolint:contextcheck // Schedule registration is a bootstrap file mutation with no context-aware API.
 	if scheduleErr != nil {
 		return scheduleErr
@@ -48,11 +50,26 @@ func (bs *bootState) launchWorkLoop(ctx context.Context, daemonStartTime time.Ti
 
 	loopDone := make(chan error, 1)
 	go func() {
-		loopDone <- runWorkLoop(ctx, deps)
+		loopDone <- runWorkLoop(ctx, deps, coordinatorReap)
 	}()
 	// Block until the work loop exits (either ctx cancelled or fatal error).
 	<-loopDone
 	return nil
+}
+
+// newCoordinatorReapPort builds the periodic coordinator-session reaper's
+// dependencies from daemon config. An absent tmux substrate leaves adapter nil,
+// which keeps the periodic reaper disabled.
+func newCoordinatorReapPort(cfg Config) coordinatorReapPort {
+	var adapter ltmux.Adapter
+	if substrate, ok := cfg.Substrate.(substrateWithAdapter); ok {
+		adapter = substrate.tmuxAdapter()
+	}
+	return coordinatorReapPort{
+		projectDir:  cfg.ProjectDir,
+		projectHash: lifecycle.ComputeProjectHash(cfg.ProjectDir),
+		adapter:     adapter,
+	}
 }
 
 // buildWorkLoopDeps constructs the work-loop deps (newWorkLoopDeps), initialises

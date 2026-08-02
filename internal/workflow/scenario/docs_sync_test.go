@@ -50,7 +50,7 @@ func dsRun(t *testing.T) *core.Run {
 	t.Helper()
 	return &core.Run{
 		RunID:           core.RunID(uuid.Must(uuid.NewV7())),
-		WorkflowID:      core.WorkflowID(uuid.Must(uuid.NewV7())),
+		WorkflowID:      mustWorkflowID(t, uuid.Must(uuid.NewV7()).String()),
 		WorkflowVersion: core.WorkflowVersion("1.0"),
 		Input:           core.WorkspaceRef("ws-test"),
 		WorkflowMode:    core.WorkflowModeDot,

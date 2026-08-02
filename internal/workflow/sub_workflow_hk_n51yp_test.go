@@ -42,10 +42,14 @@ const (
 )
 
 func subwfFixturePin() core.SubWorkflowExpansionPin {
+	workflowID, err := core.NewWorkflowID(uuid.MustParse("01960000-0000-7000-8000-000000001001").String())
+	if err != nil {
+		panic(err)
+	}
 	return core.SubWorkflowExpansionPin{
 		SubWorkflowRef:     core.SubWorkflowRef(subwfFixtureRef),
 		SubWorkflowVersion: core.WorkflowVersion(subwfFixtureVersion),
-		ResolvedWorkflowID: core.WorkflowID(uuid.MustParse("01960000-0000-7000-8000-000000001001")),
+		ResolvedWorkflowID: workflowID,
 	}
 }
 
@@ -75,7 +79,7 @@ func subwfFixtureRun(t *testing.T) *core.Run {
 	t.Helper()
 	return &core.Run{
 		RunID:           core.RunID(uuid.Must(uuid.NewV7())),
-		WorkflowID:      core.WorkflowID(uuid.Must(uuid.NewV7())),
+		WorkflowID:      mustWorkflowID(t, uuid.Must(uuid.NewV7()).String()),
 		WorkflowVersion: core.WorkflowVersion("1.0"),
 		Input:           core.WorkspaceRef("ws-ref"),
 		WorkflowMode:    core.WorkflowModeDot,

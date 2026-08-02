@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -587,6 +588,26 @@ func (w *Watcher) readLoop(ctx context.Context, cfg SpawnWatcherConfig, _ int) {
 		// The bus (EventBus.Emit) stamps event_id, source_subsystem, and envelope
 		// timestamps at enqueue time per EV-002b; the watcher supplies only the
 		// type and the raw NDJSON line as payload.
+		if typeOnly.Type == ProgressMsgTypeHandlerCapabilities {
+			var wire HandlerCapabilitiesMsg
+			if err := json.Unmarshal(line, &wire); err != nil {
+				continue
+			}
+			versions := make([]string, len(wire.SupportedVersions))
+			for i, version := range wire.SupportedVersions {
+				versions[i] = strconv.Itoa(version)
+			}
+			runID, err := uuid.Parse(w.runID)
+			if err != nil {
+				w.publishOrDeadLetter(ctx, core.EventType(typeOnly.Type), line, cfg.Publisher, cfg.DeadLetter)
+				continue
+			}
+			payload := core.HandlerCapabilitiesPayload{RunID: core.RunID(runID), SessionID: w.sessionID, ProtocolVersionsSupported: versions}
+			if wire.ClaudeSessionID != "" {
+				payload.ClaudeSessionID = &wire.ClaudeSessionID
+			}
+			line, _ = json.Marshal(payload)
+		}
 		w.publishOrDeadLetter(ctx, core.EventType(typeOnly.Type), line, cfg.Publisher, cfg.DeadLetter)
 
 		// CP-024: every agent_output_chunk MUST co-emit a budget_accrual event

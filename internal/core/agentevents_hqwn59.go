@@ -763,7 +763,24 @@ type HandlerCapabilitiesPayload struct {
 	// by this handler. Required (non-nil; must be non-empty to be meaningful
 	// for version negotiation per handler-contract.md §8.1.10).
 	ProtocolVersionsSupported []string `json:"protocol_versions_supported"`
+	ClaudeSessionID           *string  `json:"claude_session_id,omitempty"`
 }
+
+type LivenessHaltPayload struct {
+	ConsecutiveZeroCycles int `json:"consecutive_zero_cycles"`
+	LivenessNoProgressN   int `json:"liveness_no_progress_n"`
+}
+
+func (p LivenessHaltPayload) Valid() bool {
+	return p.ConsecutiveZeroCycles >= 0 && p.LivenessNoProgressN >= 0
+}
+
+type StaleOpenBeadDetectedPayload struct {
+	BeadID    BeadID `json:"bead_id"`
+	CommitSHA string `json:"commit_sha"`
+}
+
+func (p StaleOpenBeadDetectedPayload) Valid() bool { return p.BeadID != "" && p.CommitSHA != "" }
 
 // Valid reports whether p is a well-formed HandlerCapabilitiesPayload.
 //

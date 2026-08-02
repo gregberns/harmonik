@@ -208,10 +208,7 @@ func (g *movementGovernor) tickAct(ctx context.Context, input governorInputPort,
 // event and arm haltRequested so the next loop iteration drains and exits.
 func (g *movementGovernor) onHalt(ctx context.Context, dispatchGates dispatchGatesPort, sig sentinel.GovernorSignal) {
 	g.haltRequested = true
-	haltPayload, _ := json.Marshal(map[string]interface{}{ //nolint:errcheck,errchkjson // a fixed map of two ints cannot fail to marshal
-		"consecutive_zero_cycles": sig.ConsecutiveZeroCycles,
-		"liveness_no_progress_n":  g.port.config.LivenessNoProgressN,
-	})
+	haltPayload, _ := json.Marshal(core.LivenessHaltPayload{ConsecutiveZeroCycles: sig.ConsecutiveZeroCycles, LivenessNoProgressN: g.port.config.LivenessNoProgressN}) //nolint:errcheck,errchkjson // fixed typed values cannot fail to marshal
 	if dispatchGates.bus != nil {
 		_ = dispatchGates.bus.Emit(ctx, core.EventTypeLivenessHalt, haltPayload) //nolint:errcheck // best-effort page emit; the halt proceeds regardless
 	}

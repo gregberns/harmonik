@@ -84,6 +84,8 @@ type PayloadCompatEntry struct {
 // reviewer to verify §6.4 classification (additive vs. breaking) and, for
 // breaking changes, a migration release per ON-018/ON-019.
 var allPayloadCompatEntries = []PayloadCompatEntry{
+	{TypeName: "liveness_halt", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: "stale_open_bead_detected", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// ── §8.1 Run lifecycle ──────────────────────────────────────────────────
 	{TypeName: "run_started", CurrentVersion: 2, PreviousVersion: 1, CompatWindowHolds: true, AdditiveOnly: false},
 	{TypeName: "run_completed", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},

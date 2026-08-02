@@ -329,10 +329,7 @@ func beadLandedOnOriginMain(ctx context.Context, projectDir, targetBranch, beadI
 //
 // Spec ref: specs/execution-model.md §4.13 EM-063.
 func emitStaleOpenBeadDetected(ctx context.Context, port reapSeamPort, beadID core.BeadID, commitSHA string) {
-	payload := map[string]string{
-		"bead_id":    string(beadID),
-		"commit_sha": commitSHA,
-	}
+	payload := core.StaleOpenBeadDetectedPayload{BeadID: beadID, CommitSHA: commitSHA}
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return

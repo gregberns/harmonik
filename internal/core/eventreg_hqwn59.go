@@ -26,6 +26,8 @@ package core
 // Bead refs: hk-hqwn.59.1 through hk-hqwn.59.78, hk-yslws, hk-gjyks.
 
 func init() {
+	mustRegister("liveness_halt", func() EventPayload { return &LivenessHaltPayload{} })
+	mustRegister("stale_open_bead_detected", func() EventPayload { return &StaleOpenBeadDetectedPayload{} })
 	registerRunLifecycle()
 	registerControlPoints()
 	registerAgentEvents()

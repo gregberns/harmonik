@@ -209,6 +209,14 @@ type SpawnWatcherConfig struct {
 	// FSM transitions (backward-compatible with callers that predate HC-064).
 	Machine *hclifecycle.Machine
 
+	// RunID is the durable run identity for progress messages whose wire shape
+	// does not carry it. Handler callers source it from LaunchSpec.RunID.
+	//
+	// Optional for legacy watchers that do not receive handler_capabilities.
+	// A handler_capabilities message without a valid RunID is sent to the
+	// dead-letter sink. The watcher never publishes its raw wire payload.
+	RunID core.RunID
+
 	// NodeType is the workflow-graph node type for the node this session is
 	// executing, per specs/handler-contract.md §4.2a HC-058 / HC-061.
 	//
@@ -286,6 +294,11 @@ type Watcher struct {
 	// events so they are attributable by the reconciler. Sourced from
 	// cfg.Machine.RunID() at spawn time; empty when no Machine was supplied.
 	runID string
+
+	// capabilitiesRunID is the valid durable run ID for the typed
+	// handler_capabilities event. It is distinct from runID because the
+	// lifecycle machine is optional and can use the legacy "unknown" value.
+	capabilitiesRunID core.RunID
 
 	// done is closed when the goroutine exits (success or failure).
 	done chan struct{}
@@ -426,11 +439,18 @@ func SpawnWatcher(ctx context.Context, cfg SpawnWatcherConfig) *Watcher {
 
 	w := &Watcher{
 		sessionID:           cfg.SessionID,
+		capabilitiesRunID:   cfg.RunID,
 		done:                make(chan struct{}),
 		onDeadLetterFailure: cfg.OnDeadLetterFailure,
 	}
 	if cfg.Machine != nil {
 		w.runID = cfg.Machine.RunID()
+		if w.capabilitiesRunID == (core.RunID{}) {
+			runID, err := uuid.Parse(w.runID)
+			if err == nil && runID != uuid.Nil {
+				w.capabilitiesRunID = core.RunID(runID)
+			}
+		}
 	}
 
 	go w.runLoop(ctx, cfg, bufSize)
@@ -593,20 +613,24 @@ func (w *Watcher) readLoop(ctx context.Context, cfg SpawnWatcherConfig, _ int) {
 			if err := json.Unmarshal(line, &wire); err != nil {
 				continue
 			}
+			if w.capabilitiesRunID == (core.RunID{}) {
+				w.appendDeadLetter(cfg.DeadLetter, core.EventTypeHandlerCapabilities, line, "handler_capabilities has no valid run ID")
+				continue
+			}
 			versions := make([]string, len(wire.SupportedVersions))
 			for i, version := range wire.SupportedVersions {
 				versions[i] = strconv.Itoa(version)
 			}
-			runID, err := uuid.Parse(w.runID)
-			if err != nil {
-				w.publishOrDeadLetter(ctx, core.EventType(typeOnly.Type), line, cfg.Publisher, cfg.DeadLetter)
-				continue
-			}
-			payload := core.HandlerCapabilitiesPayload{RunID: core.RunID(runID), SessionID: w.sessionID, ProtocolVersionsSupported: versions}
+			payload := core.HandlerCapabilitiesPayload{RunID: w.capabilitiesRunID, SessionID: w.sessionID, ProtocolVersionsSupported: versions}
 			if wire.ClaudeSessionID != "" {
 				payload.ClaudeSessionID = &wire.ClaudeSessionID
 			}
-			line, _ = json.Marshal(payload)
+			encoded, err := json.Marshal(payload)
+			if err != nil {
+				w.appendDeadLetter(cfg.DeadLetter, core.EventTypeHandlerCapabilities, line, fmt.Sprintf("handler_capabilities encode: %v", err))
+				continue
+			}
+			line = encoded
 		}
 		w.publishOrDeadLetter(ctx, core.EventType(typeOnly.Type), line, cfg.Publisher, cfg.DeadLetter)
 

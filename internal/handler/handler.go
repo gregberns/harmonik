@@ -33,6 +33,7 @@ import (
 	"os/exec"
 	"sync/atomic"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 )
@@ -343,8 +344,10 @@ func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handle
 	// Resolve runID for the lifecycle Machine: use HandlerSpec.RunID when
 	// available; fall back to "unknown" for the legacy/test path.
 	runIDStr := "unknown"
+	var watcherRunID core.RunID
 	if spec.HandlerSpec != nil {
-		runIDStr = spec.HandlerSpec.RunID.String()
+		watcherRunID = spec.HandlerSpec.RunID
+		runIDStr = watcherRunID.String()
 	}
 
 	sess, err := newSessionWithIDs(ctx, cmd, string(sessionID), runIDStr)
@@ -405,6 +408,7 @@ func (h *handler) Launch(ctx context.Context, spec LaunchSpec) (Session, *handle
 		DeadLetter:          h.deadLetter,
 		OnDeadLetterFailure: newDeadLetterFailureLogger(h.deadLetterFailureLog),
 		Machine:             sess.Machine(),
+		RunID:               watcherRunID,
 		WireTap:             wireWriter,
 	})
 
@@ -522,8 +526,10 @@ func (h *handler) launchViaSubstrate(ctx context.Context, sessionID handlercontr
 
 	// Resolve runID for the lifecycle Machine (same logic as the exec path).
 	subRunIDStr := "unknown"
+	var watcherRunID core.RunID
 	if spec.HandlerSpec != nil {
-		subRunIDStr = spec.HandlerSpec.RunID.String()
+		watcherRunID = spec.HandlerSpec.RunID
+		subRunIDStr = watcherRunID.String()
 	}
 	adapted, err := newSubstrateAdapter(subSess, string(sessionID), subRunIDStr)
 	if err != nil {
@@ -564,6 +570,7 @@ func (h *handler) launchViaSubstrate(ctx context.Context, sessionID handlercontr
 		DeadLetter:          h.deadLetter,
 		OnDeadLetterFailure: newDeadLetterFailureLogger(h.deadLetterFailureLog),
 		Machine:             adapted.Machine(),
+		RunID:               watcherRunID,
 		WireTap:             wireWriter,
 	})
 

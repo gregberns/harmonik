@@ -36,7 +36,11 @@ func (bs *bootState) launchWorkLoop(ctx context.Context, daemonStartTime time.Ti
 	if depsErr != nil {
 		return depsErr
 	}
-	if injectErr := bs.injectWorkLoopDeps(ctx, &deps, bootBackoffDelay); injectErr != nil {
+	scheduleStore, scheduleErr := newScheduleStore(bs.cfg) //nolint:contextcheck // Schedule registration is a bootstrap file mutation with no context-aware API.
+	if scheduleErr != nil {
+		return scheduleErr
+	}
+	if injectErr := bs.injectWorkLoopDeps(ctx, &deps, scheduleStore, bootBackoffDelay); injectErr != nil {
 		return injectErr
 	}
 	bs.startBackgroundLoops(ctx, &deps)
@@ -143,28 +147,37 @@ func scanEmittedEpics(jsonlLogPath string) map[core.BeadID]struct{} {
 	return seed
 }
 
+// newScheduleStore builds the recurring-job store and registers the daemon-owned
+// jobs. An absent file is a normal empty store. A present-but-unparseable file is
+// fatal so the operator can inspect it.
+func newScheduleStore(cfg Config) (*schedule.Store, error) {
+	store := schedule.NewStore(cfg.ProjectDir)
+	if loadErr := store.Load(); loadErr != nil {
+		return nil, fmt.Errorf("daemon.Start: load schedule store: %w", loadErr)
+	}
+	ensureOpsMonitorSchedule(store, cfg.ProjectCfg.Opsmonitor)
+	ensureCtxWatchdogSchedule(store, cfg.ProjectCfg.Watchdog.Enabled)
+	// ensureWatchLivenessSchedule declares its third parameter as `_ string` in
+	// watch_liveness_schedule.go, so it cannot affect registration. Keep an
+	// explicit empty value.
+	ensureWatchLivenessSchedule(store, cfg.ProjectCfg.Watch, "")
+	return store, nil
+}
+
 // injectWorkLoopDeps wires the shared singletons + config toggles into the work
-// loop deps: the queue store + wake channel, the schedule store (codename:schedule,
-// hk-0es), the crew handler, the pause/decision/concurrency controllers, the live
-// worker-toggle (hk-xjbvi), the shared RunRegistry, the test-only overrides, and
-// the post-boot spawn-substrate readiness gate (hk-bk33). A present-but-unparseable
-// schedule file is fatal.
-func (bs *bootState) injectWorkLoopDeps(ctx context.Context, deps *workLoopDeps, bootBackoffDelay time.Duration) error {
+// loop deps: the queue store + wake channel, the loaded schedule store
+// (codename:schedule, hk-0es), the crew handler, the pause/decision/concurrency
+// controllers, the live worker-toggle (hk-xjbvi), the shared RunRegistry, the
+// test-only overrides, and the post-boot spawn-substrate readiness gate (hk-bk33).
+func (bs *bootState) injectWorkLoopDeps(ctx context.Context, deps *workLoopDeps, scheduleStore *schedule.Store, bootBackoffDelay time.Duration) error {
 	cfg := bs.cfg
 
 	// Queue store + submit-wake channel (QM-060; hk-24xn1).
 	deps.queueStore = bs.qs
 	deps.submitWakeC = bs.qs.WakeCh()
 
-	// Recurring-job surface (codename:schedule, hk-0es). A present-but-unparseable
-	// file is fatal; an absent file is a normal empty store.
-	scheduleStore := schedule.NewStore(cfg.ProjectDir)
-	if loadErr := scheduleStore.Load(); loadErr != nil {
-		return fmt.Errorf("daemon.Start: load schedule store: %w", loadErr)
-	}
-	ensureOpsMonitorSchedule(scheduleStore, cfg.ProjectCfg.Opsmonitor)
-	ensureCtxWatchdogSchedule(scheduleStore, cfg.ProjectCfg.Watchdog.Enabled)
-	ensureWatchLivenessSchedule(scheduleStore, cfg.ProjectCfg.Watch, deps.daemonBinaryPath)
+	// Recurring-job surface (codename:schedule, hk-0es). The composition root
+	// supplies the loaded store to both the work loop and the quiesce arbiter.
 	deps.scheduleStore = scheduleStore
 	deps.scheduleWakeC = scheduleStore.WakeCh()
 	// `harmonik sleep` suspends enabled jobs; `wake --all` restores them (hk-xjr1n).

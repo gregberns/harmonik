@@ -256,9 +256,9 @@ func BuildConflictResolverLaunchSpec(params ConflictResolverLaunchSpecParams) (h
 			"workspace: BuildConflictResolverLaunchSpec: RunID must be non-zero",
 		)
 	}
-	if params.WorkflowID == (core.WorkflowID{}) {
+	if !params.WorkflowID.Valid() {
 		return handlercontract.LaunchSpec{}, fmt.Errorf(
-			"workspace: BuildConflictResolverLaunchSpec: WorkflowID must be non-zero",
+			"workspace: BuildConflictResolverLaunchSpec: WorkflowID must be valid",
 		)
 	}
 	if params.NodeID == "" {

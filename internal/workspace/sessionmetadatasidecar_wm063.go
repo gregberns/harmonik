@@ -92,8 +92,8 @@ func (s SessionMetadataSidecar) Valid() error {
 	if s.AgentType == "" {
 		return fmt.Errorf("workspace: SessionMetadataSidecar.AgentType must be non-empty")
 	}
-	if s.WorkflowID == (core.WorkflowID{}) {
-		return fmt.Errorf("workspace: SessionMetadataSidecar.WorkflowID must be non-zero")
+	if !s.WorkflowID.Valid() {
+		return fmt.Errorf("workspace: SessionMetadataSidecar.WorkflowID must be valid")
 	}
 	if s.LaunchedAt == "" {
 		return fmt.Errorf("workspace: SessionMetadataSidecar.LaunchedAt must be non-empty")

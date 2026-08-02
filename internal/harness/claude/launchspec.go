@@ -244,7 +244,11 @@ func BuildLaunchSpec(ctx context.Context, rc shared.LaunchCtx) (handler.LaunchSp
 	// TODO(hk-gql20.x): replace with typed WorkflowID / NodeID from a workflow
 	// registry once multi-node workflows are introduced.
 	nodeID := "bead/" + rc.BeadID
-	workflowID := core.WorkflowID(rc.RunID)
+	workflowID, err := core.NewWorkflowID(rc.RunID.String())
+	if err != nil {
+		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf(
+			"daemon: buildClaudeLaunchSpec: validate workflow ID: %w", err)
+	}
 
 	// Build optional ClaudeEnvConfig fields.
 	workflowModeStr := string(rc.WorkflowMode)

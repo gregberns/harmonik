@@ -177,8 +177,8 @@ func (s LaunchSpec) Valid() error {
 	if s.RunID == (core.RunID{}) {
 		return fmt.Errorf("handlercontract: LaunchSpec.RunID must be non-zero")
 	}
-	if s.WorkflowID == (core.WorkflowID{}) {
-		return fmt.Errorf("handlercontract: LaunchSpec.WorkflowID must be non-zero")
+	if !s.WorkflowID.Valid() {
+		return fmt.Errorf("handlercontract: LaunchSpec.WorkflowID must be valid")
 	}
 	if s.NodeID == "" {
 		return fmt.Errorf("handlercontract: LaunchSpec.NodeID must be non-empty")

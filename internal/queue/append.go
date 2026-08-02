@@ -89,10 +89,9 @@ func AppendItems(
 	// Build the Items slice for the validation request.
 	appendItems := make([]Item, len(beadIDs))
 	for i, id := range beadIDs {
-		appendItems[i] = Item{
+		appendItems[i] = NewPendingItem(Item{
 			BeadID: core.BeadID(id),
-			Status: ItemStatusPending,
-		}
+		})
 	}
 
 	// Run the validation pipeline (IsAppend=true covers QM-024, QM-020..QM-026,
@@ -100,12 +99,12 @@ func AppendItems(
 	// EM-065 double-queue guard (passed in by the caller via variadic param).
 	vreq := ValidationRequest{
 		Groups: []Group{
-			{
+			NewPendingGroup(Group{
 				GroupIndex: groupIndex,
 				Kind:       GroupKindStream,
-				Status:     GroupStatusPending, // placeholder; QM-024 checks live group
-				Items:      appendItems,
-			},
+				// This is a validation placeholder. QM-024 checks the live group.
+				Items: appendItems,
+			}),
 		},
 		ActiveQueue:      q,
 		IsAppend:         true,
@@ -167,16 +166,16 @@ func AppendItems(
 	newItems := make([]Item, len(beadIDs))
 	for i, id := range beadIDs {
 		beadID := core.BeadID(id)
-		status := ItemStatusPending
-		if _, deferred := deferredSet[beadID]; deferred {
-			status = ItemStatusDeferredForLedgerDep
-		}
 		appended := now
-		newItems[i] = Item{
+		newItems[i] = NewPendingItem(Item{
 			BeadID:     beadID,
-			Status:     status,
 			RunID:      nil,
 			AppendedAt: &appended,
+		})
+		if _, deferred := deferredSet[beadID]; deferred {
+			if err := DeferItemForLedgerDependency(&newItems[i]); err != nil {
+				return nil, nil, fmt.Errorf("queue: AppendItems: defer item %q: %w", beadID, err)
+			}
 		}
 	}
 

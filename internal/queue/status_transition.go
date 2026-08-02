@@ -5,19 +5,19 @@ import (
 	"time"
 )
 
-// NewPendingItem sets the first status for an item that enters a queue.
+// NewPendingItem sets the first status for an item.
 func NewPendingItem(item Item) Item {
 	item.Status = ItemStatusPending
 	return item
 }
 
-// NewPendingGroup sets the first status for a group that enters a queue.
+// NewPendingGroup sets the first status for a group.
 func NewPendingGroup(group Group) Group {
 	group.Status = GroupStatusPending
 	return group
 }
 
-// NewActiveQueue sets the first status for a queue that enters the store.
+// NewActiveQueue sets the first status for a queue.
 func NewActiveQueue(q Queue) Queue {
 	q.Status = QueueStatusActive
 	return q

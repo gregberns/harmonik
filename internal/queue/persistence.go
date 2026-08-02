@@ -259,6 +259,18 @@ func (r TerminalResult) Err() error {
 // CompleteAndUnlinkResult performs completion on a detached candidate. The
 // supplied queue changes only after the completed candidate persists.
 func CompleteAndUnlinkResult(ctx context.Context, projectDir string, q *Queue) TerminalResult {
+	return completeAndUnlinkResult(ctx, projectDir, q, Unlink)
+}
+
+// completeAndUnlinkResult makes the durable-write boundary observable before
+// cleanup. Production uses Unlink. The internal test reads the canonical file
+// at that boundary.
+func completeAndUnlinkResult(
+	ctx context.Context,
+	projectDir string,
+	q *Queue,
+	unlink func(context.Context, string, string) error,
+) TerminalResult {
 	if q == nil {
 		return TerminalResult{CommitErr: errors.New("queue: CompleteAndUnlink: nil queue")}
 	}
@@ -275,7 +287,7 @@ func CompleteAndUnlinkResult(ctx context.Context, projectDir string, q *Queue) T
 
 	// Step 2: unlink the per-queue file and fsync parent dir (QM-053 step 3 / QM-003).
 	name := NormaliseQueueName(q.Name)
-	if err := Unlink(ctx, projectDir, name); err != nil {
+	if err := unlink(ctx, projectDir, name); err != nil {
 		return TerminalResult{Committed: true, CleanupErr: fmt.Errorf("queue: CompleteAndUnlink: unlink: %w", err)}
 	}
 	return TerminalResult{Committed: true}

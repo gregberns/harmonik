@@ -24,7 +24,30 @@ type measurement struct {
 	daemonAssignments  int
 	construction       int
 	constructionByFile map[string]int
+	durableCalls       map[string]int
+	missingDurability  []string
+	driftedDurability  []string
 	misplaced          []string
+}
+
+// durableRequirement is a production status transition that must retain its
+// durable-write edge. Construction and append paths remain outside this list
+// until the queue-store migration reaches them.
+type durableRequirement struct {
+	source   string
+	function string
+	call     string
+}
+
+var durableRequirements = []durableRequirement{
+	{source: "internal/queue/rpc.go", function: "HandleQueueSubmit", call: "Persist"},
+	{source: "internal/lifecycle/startup_pl005_qm002.go", function: "reconcileDispatchedItems", call: "Persist"},
+	{source: "internal/lifecycle/startup_pl005_qm002.go", function: "reconcileThreeWay", call: "Persist"},
+	{source: "internal/lifecycle/startup_pl005_qm002.go", function: "reconcileQueueTerminalState", call: "CompleteAndUnlink"},
+	{source: "internal/lifecycle/startup_pl005_qm002.go", function: "reconcileQueueTerminalState", call: "Persist"},
+	{source: "internal/queue/persistence.go", function: "completeAndUnlinkResult", call: "Persist"},
+	{source: "internal/queue/persistence.go", function: "CancelQueueOnShutdownResult", call: "Persist"},
+	{source: "internal/queuewiring/operatorevents.go", function: "transitionQueue", call: "Transact"},
 }
 
 func main() {
@@ -48,6 +71,15 @@ func main() {
 	for _, source := range sortedKeys(m.constructionByFile) {
 		fmt.Printf("queue-status-writer-ratchet: construction source %s=%d\n", source, m.constructionByFile[source])
 	}
+	if _, err := fmt.Fprintf(os.Stdout, "queue-status-writer-ratchet: durable transition edges=%d/%d\n", len(durableRequirements)-len(m.missingDurability)-len(m.driftedDurability), len(durableRequirements)); err != nil {
+		fail("write durable transition edge count: %v", err)
+	}
+	for _, requirement := range durableRequirements {
+		key := durableRequirementName(requirement)
+		if _, err := fmt.Fprintf(os.Stdout, "queue-status-writer-ratchet: durable edge %s=%d\n", key, m.durableCalls[key]); err != nil {
+			fail("write durable transition edge: %v", err)
+		}
+	}
 
 	failed := false
 	if m.ownerAssignments > bravoBaseline {
@@ -69,6 +101,20 @@ func main() {
 		}
 		failed = true
 	}
+	if len(m.missingDurability) > 0 {
+		fmt.Fprintln(os.Stderr, "queue-status-writer-ratchet: FAIL required durable transition edge is missing:")
+		for _, missing := range m.missingDurability {
+			fmt.Fprintln(os.Stderr, missing)
+		}
+		failed = true
+	}
+	if len(m.driftedDurability) > 0 {
+		fmt.Fprintln(os.Stderr, "queue-status-writer-ratchet: FAIL required durable transition edge changed its call count:")
+		for _, drifted := range m.driftedDurability {
+			fmt.Fprintln(os.Stderr, drifted)
+		}
+		failed = true
+	}
 	if failed {
 		os.Exit(1)
 	}
@@ -76,7 +122,10 @@ func main() {
 }
 
 func measure(root string) (measurement, error) {
-	result := measurement{constructionByFile: make(map[string]int)}
+	result := measurement{
+		constructionByFile: make(map[string]int),
+		durableCalls:       make(map[string]int),
+	}
 	for _, sourceRoot := range []string{"internal", "cmd"} {
 		err := filepath.WalkDir(filepath.Join(root, sourceRoot), func(path string, entry fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
@@ -131,8 +180,62 @@ func measure(root string) (measurement, error) {
 			return measurement{}, err
 		}
 	}
+	if err := measureDurability(root, &result); err != nil {
+		return measurement{}, err
+	}
 	sort.Strings(result.misplaced)
+	sort.Strings(result.missingDurability)
+	sort.Strings(result.driftedDurability)
 	return result, nil
+}
+
+func measureDurability(root string, result *measurement) error {
+	for _, requirement := range durableRequirements {
+		path := filepath.Join(root, filepath.FromSlash(requirement.source))
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.SkipObjectResolution)
+		if err != nil {
+			return fmt.Errorf("parse %s: %w", requirement.source, err)
+		}
+
+		calls := 0
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Name.Name != requirement.function || function.Body == nil {
+				continue
+			}
+			ast.Inspect(function.Body, func(node ast.Node) bool {
+				call, ok := node.(*ast.CallExpr)
+				if ok && callName(call.Fun) == requirement.call {
+					calls++
+				}
+				return true
+			})
+		}
+
+		key := durableRequirementName(requirement)
+		result.durableCalls[key] = calls
+		if calls == 0 {
+			result.missingDurability = append(result.missingDurability, key)
+		} else if calls != 1 {
+			result.driftedDurability = append(result.driftedDurability, fmt.Sprintf("%s: got %d, want 1", key, calls))
+		}
+	}
+	return nil
+}
+
+func durableRequirementName(requirement durableRequirement) string {
+	return requirement.source + " " + requirement.function + " requires " + requirement.call
+}
+
+func callName(expression ast.Expr) string {
+	switch value := expression.(type) {
+	case *ast.Ident:
+		return value.Name
+	case *ast.SelectorExpr:
+		return value.Sel.Name
+	default:
+		return ""
+	}
 }
 
 func sortedKeys(values map[string]int) []string {

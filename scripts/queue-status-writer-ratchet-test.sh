@@ -21,6 +21,7 @@ new_fixture() {
 output="$(run_ratchet "$repo_root")"
 grep -q 'baseline direct assignments bravo=16 daemon=14' <<<"$output"
 grep -q 'construction-path writes=18' <<<"$output"
+grep -q 'durable transition edges=8/8' <<<"$output"
 grep -q 'queue-status-writer-ratchet: OK' <<<"$output"
 
 fixture="$(new_fixture)"
@@ -54,5 +55,21 @@ if failed_output="$(run_ratchet "$fixture")"; then
     exit 1
 fi
 grep -q 'construction surface grew from 18 to 19' <<<"$failed_output"
+
+fixture="$(new_fixture)"
+sed -i.bak 's/queue.Persist(ctx, projectDir, q)/queue.PersistDeleted(ctx, projectDir, q)/' "$fixture/internal/lifecycle/startup_pl005_qm002.go"
+if failed_output="$(run_ratchet "$fixture")"; then
+    echo "queue-status-writer-ratchet test: expected missing lifecycle persistence to fail" >&2
+    exit 1
+fi
+grep -q 'reconcileDispatchedItems requires Persist' <<<"$failed_output"
+
+fixture="$(new_fixture)"
+sed -i.bak 's/c\.cfg\.QueueStore\.Transact(ctx/c.cfg.QueueStore.TransactDeleted(ctx/' "$fixture/internal/queuewiring/operatorevents.go"
+if failed_output="$(run_ratchet "$fixture")"; then
+    echo "queue-status-writer-ratchet test: expected missing transaction edge to fail" >&2
+    exit 1
+fi
+grep -q 'transitionQueue requires Transact' <<<"$failed_output"
 
 echo "queue-status-writer-ratchet test: OK"

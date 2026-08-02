@@ -512,6 +512,35 @@ func TestCancelQueueOnShutdownResultReportsCleanupFailureAfterCommit(t *testing.
 	}
 }
 
+// TestCancelQueueOnShutdownPersistsCancelledBeforeArchive verifies the archive
+// holds the committed cancelled status.
+func TestCancelQueueOnShutdownPersistsCancelledBeforeArchive(t *testing.T) {
+	t.Parallel()
+
+	projectDir := persistFixtureProjectDir(t)
+	q := typesFixtureQueue()
+	archiveTime := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	archivePath := filepath.Join(projectDir, ".harmonik", "queues", "main.json.cancelled-20260801120000")
+
+	result := queue.CancelQueueOnShutdownResult(context.Background(), projectDir, &q, archiveTime)
+	if !result.Committed || result.CommitErr != nil || result.CleanupErr != nil {
+		t.Fatalf("result = %+v, want committed archive", result)
+	}
+
+	//nolint:gosec // G304: archivePath is derived from the test fixture directory and fixed archive time.
+	data, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatalf("read cancelled archive: %v", err)
+	}
+	var archived queue.Queue
+	if err := json.Unmarshal(data, &archived); err != nil {
+		t.Fatalf("decode cancelled archive: %v", err)
+	}
+	if archived.Status != queue.QueueStatusCancelled {
+		t.Fatalf("archive status = %q, want %q", archived.Status, queue.QueueStatusCancelled)
+	}
+}
+
 func TestCancelQueueOnShutdownNilIsSuccessfulNoOp(t *testing.T) {
 	t.Parallel()
 

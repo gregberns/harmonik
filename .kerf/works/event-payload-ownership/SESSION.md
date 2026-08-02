@@ -32,3 +32,15 @@ workflow-graph draft can finalize.
 
 Step 14 and Step 27a remain planning-only references. This task-plan update
 changed no production source file or normative `specs/` file.
+
+### Published-spec recheck
+
+Commit `304cfe395` published the five reviewed drafts. The work is `ready`,
+and `kerf square` passes. Each published file byte-matches its Kerf draft.
+Three independent reviews accept the validated logical workflow-ID contract.
+See `convergence-review.md`.
+
+The next work is Alpha-owned implementation from `07-tasks.md`. Do not use
+this planning work to edit Alpha-owned production files. Step 14 remains source
+inventory only until Step 10 is complete. Step 27a remains deferred until Step
+10 is complete.

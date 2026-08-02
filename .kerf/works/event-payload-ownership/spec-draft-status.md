@@ -1,7 +1,8 @@
 # Spec Draft Status — 2026-08-02
 
-The Kerf work is in `Integration`. The Step 13 integration pass is complete.
-The draft is not ready for finalization.
+This historical status is superseded. The Kerf work is `ready`, and its square
+check passes. Commit `304cfe395` published the five reviewed Step 13 drafts.
+Each published specification byte-matches its Kerf draft.
 
 Five complete target specification drafts now exist:
 
@@ -43,10 +44,8 @@ Together, these drafts define one Step 13 contract:
   `review_bypassed` reference. The durable audit is the resolved start-event
   descriptor, policy, and selection source.
 
-The integration review found no remaining Step 13 contradiction. The remaining
-requirement is the final independent spec-draft review before finalization. It
-must verify all five drafts against the workflow-identity decision and their
-cross-references. The disclosed `sub-workflow-dispatch.md` forward reference is
-outside Step 13 and remains a finalization prerequisite for workflow-graph.
-This remains a planning boundary. It does not authorize an Alpha-owned
-production edit.
+The integration review found no remaining Step 13 contradiction. Three
+independent rechecks accepted the published workflow-ID contract. Their
+schema-valid verdicts are in `convergence-review.md`. The disclosed
+`sub-workflow-dispatch.md` forward reference remains outside Step 13. Step 13
+planning does not authorize an Alpha-owned production edit.

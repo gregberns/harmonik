@@ -5,13 +5,13 @@
 title: Event Model
 spec-id: event-model
 requirement-prefix: EV
-status: reviewed
+status: draft
 spec-category: foundation-cross-cutting
 spec-shape: taxonomy-first
-version: 0.7.4
+version: 0.7.6
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-08-01
+last-updated: 2026-08-02
 depends-on:
   - architecture
   - execution-model
@@ -68,6 +68,7 @@ Events are the **observational stream**. They are NOT the state-reconstruction s
 - **FailureClass** — the enum declared in [execution-model.md §8]. Values: `transient | structural | deterministic | canceled | budget_exhausted | compilation_loop`.
 - **ErrorCategory** — the sentinel-error set declared in [handler-contract.md §4.5]. Values: `ErrTransient | ErrStructural | ErrDeterministic | ErrCanceled | ErrBudget | ErrSkillProvisioningFailed | ErrProtocolMismatch`. See §6.3 `run_failed` notes for how the two coexist.
 - **WorkflowMode** — the enum declared in [execution-model.md §6.1]. Values: `single | dot`. `review-loop` was RETIRED at v0.10.0 per [execution-model.md §4.3 EM-015d] and is no longer a selectable mode. Payloads written before that retirement still carry the value, and readers still decode it — see the §8.1a payload schemas in §6.3. Surfaced on run-lifecycle event payloads (`run_started`, `run_completed`, `run_failed`) and on every §8.1a review-loop event payload via the optional `workflow_mode` field per §8.1 / §8.1a.
+- **WorkflowDescriptor** — the resolved identity of a workflow: `workflow_id` and `workflow_version`. `workflow_id` is a validated string from the selected DOT graph's `workflow_id` attribute. Its accepted source grammar is the union of named ID `^[A-Za-z][A-Za-z0-9-]*$` and canonical UUID text. The named form covers the declared workflow corpus. The UUID form preserves the existing legacy fixture and historic durable values. A UUID is not generated as a new workflow identity. The ID is not derived from a filename, graph name, or content hash. `workflow_version` is the selected DOT graph's declared version. The descriptor records the selected graph identity. It does not carry the graph body, graph configuration, selection source, mode, or policy.
 - **claude_session_id** — the Claude Code session identifier per [execution-model.md §3]. Distinct from this spec's `session_id` envelope/payload field. `session_id` (used pervasively on §8.3 agent-lifecycle event payloads) is a UUIDv7 minted by the handler per [handler-contract.md §4.1] and is opaque to non-handler consumers; `claude_session_id` is the Claude-Code-minted opaque string consumed by `claude --resume <id>`. The two MUST NOT be conflated; the review-loop event payloads at §8.1a carry `claude_session_id` explicitly to distinguish it.
 
 ## 8. Event taxonomy
@@ -78,7 +79,7 @@ Every event type declared below is part of the **complete cross-subsystem emissi
 
 | # | Type | Dur | Emitter | Typical consumers | Payload fields |
 |---|---|---|---|---|---|
-| 8.1.1 | `run_started` | F | orchestrator-core | reconciliation, audit, observability, beads-integration | `run_id`, `workflow_id`, `workflow_version`, `bead_id?`, `workspace_path`, `input_ref` |
+| 8.1.1 | `run_started` | F | orchestrator-core | reconciliation, audit, observability, beads-integration | `run_id`, `workflow_id`, `workflow_version`, `workflow_mode`, `review_policy`, `workflow_selection_source`, `bead_id?`, `workspace_path`, `input_ref`, `started_at`, `worker_name`, `worker_os` |
 | 8.1.2 | `run_completed` | F | orchestrator-core | audit, beads-integration, observability, improvement-loop | `run_id`, `terminal_state_id`, `ended_at`, `summary?` |
 | 8.1.3 | `run_failed` | F | orchestrator-core | reconciliation, audit, beads-integration, observability, improvement-loop | `run_id`, `terminal_state_id?`, `failure_class` (see §6.3), `error_category?`, `ended_at`, `reason` |
 | 8.1.4 | `state_entered` | O | orchestrator-core | observability, improvement-loop | `run_id`, `state_id`, `node_id`, `entered_at` |
@@ -95,7 +96,7 @@ Every event type declared below is part of the **complete cross-subsystem emissi
 
 > Section Axes (§8.1 Run lifecycle): All §8.1 event emissions are mechanism-tagged. Class F entries (`run_started`, `run_completed`, `run_failed`, `transition_event`, `checkpoint_written`) are fsync-backed; class O entries are best-effort. Default per-entry Axes — class F: `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent`. Class O: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`. Replay-safety is `safe` for all: the JSONL append is idempotent at the content level and consumers tolerate duplicate delivery per EV-014b.
 
-> **`workflow_mode` payload-field rule (§8.1 and §8.1a).** Every run-lifecycle event payload listed in §8.1 (`run_started`, `run_completed`, `run_failed`) and every review-loop event payload listed in §8.1a MUST carry an optional `workflow_mode ∈ {single, review-loop, dot}` field (per WorkflowMode in §3 glossary, cross-referenced to [execution-model.md §6.1]). The field surfaces the resolved `workflow_mode` per [execution-model.md §4.3 EM-012a]. The field is OPTIONAL on `run_started` / `run_completed` / `run_failed` for backward compatibility with v0.3.x consumers (a v0.3.x reader observing the new field treats it as additive per §6.4); it is REQUIRED on every §8.1a event payload. For most §8.1a events the value is always `review-loop`; the exception is `no_progress_detected` (§8.1a.5), which may carry `workflow_mode = "dot"` when emitted from the DOT cascade driver — see the §8.1a.5 normative note.
+> **`workflow_mode` payload-field rule (§8.1 and §8.1a).** `run_started` schema version 2 MUST carry `workflow_mode = "dot"`, because the daemon resolves a DOT graph before it emits the event. `run_completed` and `run_failed` MAY carry `workflow_mode ∈ {single, review-loop, dot}` for compatibility with old runs. Every §8.1a review-loop event payload MUST carry `workflow_mode`. Historic version-1 `run_started` records and historic review-loop records remain readable under §6.4. The field surfaces the resolved mode per [execution-model.md §4.3 EM-012a]. For most §8.1a events the value is `review-loop`. `no_progress_detected` (§8.1a.5) may carry `workflow_mode = "dot"` when emitted from the DOT cascade driver.
 
 Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
 
@@ -164,7 +165,7 @@ Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempote
 | 8.3.6 | `agent_rate_limit_status` | O | handler (via daemon watcher) | orchestrator-core, observability | `run_id`, `session_id`, `status` (`active` / `cleared`), `rate_limit_source?`, `retry_after_seconds?`, `changed_at` |
 | 8.3.7 | `session_log_location` | O | handler (via daemon watcher) | audit | `run_id`, `session_id`, `node_id`, `agent_type`, `log_path`, `log_format`, `bead_id?` |
 | 8.3.8 | `skills_provisioned` | O | handler (via daemon watcher) | audit, observability | `run_id`, `session_id`, `skills[]` (each: `name`, `source_path`, `version?`), `rejected_skills[]?` (each: `name`, `reject_reason`) |
-| 8.3.9 | `handler_capabilities` | O | handler (via daemon watcher) | orchestrator-core | `run_id`, `session_id`, `protocol_versions_supported[]` |
+| 8.3.9 | `handler_capabilities` | O | handler (via daemon watcher) | orchestrator-core | `run_id`, `session_id`, `protocol_versions_supported[]`, `claude_session_id?` |
 
 > §8.3.8 (`skills_provisioned`). The `skills[]` list names ONLY the skills successfully installed before `agent_ready`; it is the authoritative record of what actually ran. The optional `rejected_skills[]` list names skills that failed pre-provisioning policy checks per [handler-contract.md §4.11.HC-048b] (egress-policy or workspace-escape violation), each entry carrying a `name` and a `reject_reason` string (e.g., `"egress_domain_not_whitelisted"`, `"path_escapes_workspace"`). `rejected_skills[]` is absent when no skills were rejected; an empty `skills[]` with a non-empty `rejected_skills[]` is valid when all required skills failed. Additive extension to §8.3: `rejected_skills[]?` is an optional field; N-1 readers that do not know the field tolerate its presence per the schema-evolution rule of §6.4.
 | 8.3.10 | `agent_warning_silent_hang` | O | handler (via daemon watcher) | orchestrator-core, observability | `run_id`, `session_id`, `threshold_seconds`, `last_progress_event_at`, `fsm_state` |
@@ -532,6 +533,18 @@ The two cross-bus signals of the M2 input driver's submission sub-lifecycle (cod
 
 Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
 
+### 8.22 Eager-refill provenance
+
+The daemon emits this event when eager refill observes a bead that is still open after the commit which claimed work for it. The event records an audit fact. It does not change the bead state.
+
+| # | Type | Dur | Emitter | Typical consumers | Payload fields |
+|---|---|---|---|---|---|
+| 8.22.1 | `stale_open_bead_detected` | O | daemon-core (eager refill) | audit, operator-observability | `bead_id`, `commit_sha` |
+
+> Section Axes (§8.22 Eager-refill provenance): mechanism-tagged, class O. The event is an audit observation. The committed Git result is the durable source of truth. Axes: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`.
+
+Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
+
 ## 4. Normative requirements
 
 ### 4.1 Envelope
@@ -786,7 +799,7 @@ Tags: mechanism
 
 #### EV-025 — Each event type has exactly one owning spec for payload shape
 
-Each event type in §8 MUST have its payload schema declared in §6.3 of this spec. The subsystem spec that emits the event is normative for the **WHEN** (timing and preconditions); this spec is normative for the **SHAPE**. Co-ownership is declared in §6.5 of each emitting spec.
+Each event type in §8 MUST have one payload schema declared in §6.3 of this spec. A cross-bus emitter MUST construct and emit that registered core payload. It MUST NOT emit a raw transport message directly. The subsystem spec that emits the event is normative for the **WHEN** (timing and preconditions). This spec is normative for the **SHAPE**. A migration-only reader MAY decode an older payload shape for replay or reconciliation. It MUST NOT become a second producer shape. Co-ownership is declared in §6.5 of each emitting spec.
 
 Tags: mechanism
 
@@ -1080,16 +1093,60 @@ Every type listed in §8 has a payload whose fields are named in §8's "Payload 
 
 ```yaml
 run_id: <UUID>
-workflow_id: <UUID>
-workflow_version: <String>
+workflow_id: <WorkflowID>                       # logical graph ID; UUID text is legacy input only
+workflow_version: <String>                      # selected DOT graph version
+workflow_mode: <enum: dot>                      # required in payload schema version 2
+review_policy: <enum: reviewed | no_review>     # selected graph's resolved review policy
+workflow_selection_source: <enum: embedded_default | project_default | explicit_ref | legacy_single_label | queue_item_single_mode>
 bead_id: <String> | null
 workspace_path: <String>
 input_ref: <String>
+started_at: <Timestamp>                          # required launch observation
+worker_name: <String> | null                     # required; null for a local run
+worker_os: <String> | null                       # required; null for a local run
 queue_id: <String> | null              # UUIDv7 as string; populated when the run was dispatched from a queued submission per §8.10 / [queue-model.md §4]
 queue_group_index: <Integer> | null    # populated alongside queue_id; identifies the group within the queue
 ```
 
+Before the daemon emits schema version 2, it MUST resolve the input label or reference to a named DOT graph. The `WorkflowDescriptor` records the selected graph. `workflow_selection_source` records how that graph was selected. A legacy `workflow:single` label resolves to the named no-review DOT graph and records `legacy_single_label`. A persisted queue item whose tier-0 `workflow_mode` is `single` resolves to that same graph and records `queue_item_single_mode`. It MUST NOT dispatch an imperative single-workflow path.
+
+`review_policy` is resolver output. It is not a graph-authored value. The resolver
+MUST emit `no_review` only when it selected the registered embedded descriptor
+`{workflow_id="no-review-bead", workflow_version="1.0"}` through
+`legacy_single_label` or `queue_item_single_mode`. Every other selected graph
+MUST yield `reviewed`. The event producer MUST reject a descriptor, policy, and
+selection-source tuple that breaks this rule before it emits `run_started`.
+
 The `queue_id` and `queue_group_index` fields are OPTIONAL additive fields per §6.4 row 1; older readers ignore them. The fields are populated only when the run was dispatched from a queued submission; foreground / single-bead invocations leave both null. The same optional pair appears on `run_completed` and `run_failed` below.
+
+#### `handler_capabilities`
+
+```yaml
+run_id: <UUID>
+session_id: <UUID>                               # harmonik handler session ID
+claude_session_id: <String> | null               # Claude Code session ID, when supplied by the handler
+protocol_versions_supported: <String[]>          # canonical decimal form of each wire supported_versions integer
+```
+
+`run_id`, `session_id`, and `protocol_versions_supported` are required. `claude_session_id` is optional. It is absent when the wire message omits it. The daemon watcher converts the handler wire message into `core.HandlerCapabilitiesPayload` before it emits the event. `supported_versions` on the wire is an integer array. Its durable value is the same ordered set encoded as decimal strings in `protocol_versions_supported`. `registerAgentEvents` remains the sole registry boundary for this core payload. Adding the optional `claude_session_id` field is additive. `handler_capabilities` remains payload version 1 with `PayloadCompatEntry{CurrentVersion: 1, PreviousVersion: 0, AdditiveOnly: true}`. This preserves the existing registered payload field name and avoids a second cross-bus shape.
+
+#### `liveness_halt`
+
+```yaml
+consecutive_zero_cycles: <Integer>
+liveness_no_progress_n: <Integer>
+```
+
+`liveness_halt` is class F. The daemon emits it before it halts the affected liveness path.
+
+#### `stale_open_bead_detected`
+
+```yaml
+bead_id: <String>
+commit_sha: <git SHA>
+```
+
+The payload records the bead and the commit observed by eager refill. It has no run scope.
 
 #### `run_completed`
 
@@ -1636,14 +1693,16 @@ The envelope carries a `schema_version` integer; each payload type carries a per
 
 Migration releases are scheduled at operator pauses per [operator-nfr.md §4.3]. Between-run pause semantics means migration may require drain-to-quiescent; operators are advised to schedule migrations during low-activity windows. Imports [operator-nfr.md §4.5].
 
+**`run_started` version-2 migration.** The daemon's former private lifecycle record was version 1 and carried a daemon-specific subset of fields. The registered core `RunStartedPayload` was also version 1 but did not match that writer shape. Version 2 unifies the emitted record on the core payload above. The registry entry for `run_started` MUST declare current version 2 and previous version 1 with N-1 compatibility. The normal version-2 decode is strict. Replay and startup reconciliation MAY use a tolerant version-1 decoder only to recover run, bead, queue, and worker correlation from old records. Version-1 records with a UUID text `workflow_id` remain readable as legacy text. New writers MUST NOT create that UUID identity. `registerRunLifecycle` and its `PayloadCompatEntry` declaration are the implementation boundary for this migration.
+
 ### 6.5 Co-owned event payloads
 
 This spec owns the payload SHAPE for every type in §8. The WHEN of each emission is owned by the emitting subsystem:
 
-- Run-lifecycle events (§8.1): emission rules in [execution-model.md §6.5]. The optional `workflow_mode` payload field on `run_started` / `run_completed` / `run_failed` is co-owned: this spec normatively declares its placement and enum values per §3 glossary `WorkflowMode`; [execution-model.md §4.3 EM-012a] declares how the resolved value is computed.
+- Run-lifecycle events (§8.1): emission rules in [execution-model.md §6.5]. This spec owns the schema-version-2 `run_started` `WorkflowDescriptor`, resolved mode, review policy, and selection provenance. The workflow resolver owns the selection result that supplies those fields. [execution-model.md §4.3 EM-012a] owns selection precedence. The optional `workflow_mode` payload field on `run_completed` / `run_failed` remains co-owned as before.
 - Review-loop cycle events (§8.1a): emission rules in [execution-model.md §4.3 EM-015d, EM-015e]. All seven entries (`implementer_resumed`, `reviewer_launched`, `reviewer_verdict`, `iteration_cap_hit`, `no_progress_detected`, `review_fixup_stalled`, `review_loop_cycle_complete`) are orchestrator-core-emission-owned; this spec is normative for their payload shape, ordering rule, and durability class. `review_fixup_stalled` (§8.1a.7) replaces `no_progress_detected` on the post-REQUEST_CHANGES no-commit path in both review-loop and DOT modes (hk-m1wqp).
 - Control-point events (§8.2): emission rules in [control-points.md §6.5]. The entries §8.2.10 `control_points_registration_started` (CP §7.1; companion to §8.2.9 `control_points_registered` — the pair brackets the registration batch per CP §7.1's crashed-mid-registration rule), §8.2.11 `verdict_envelope_mismatch` (CP §4.8.CP-041; envelope-hash mismatch on persisted-verdict replay), and §8.2.12 `policy_expression_exceeded_cost` (CP §4.7.CP-034b; cost-ceiling abort, durability pair) are CP-emission-owned. §8.2.13 `gate_definition_drift` (CP §4.7 CP-038a; mechanism-tagged Gate envelope drift detected at replay) and §8.2.14 `gate_redefined_under_cat_6` (CP §4.7 CP-038a; Cat 6 authorized re-evaluation under drifted definition) are orchestrator-core-emission-owned; emission WHEN is governed by [control-points.md §6.5 CP-038a]; this spec is normative for their payload shape and durability class (both class F).
-- Agent / handler events (§8.3), including silent-hang FSM: emission rules in [handler-contract.md §4.1, §4.9, §4.11, §7.1].
+- Agent / handler events (§8.3), including silent-hang FSM: emission rules in [handler-contract.md §4.1, §4.9, §4.11, §7.1]. The daemon watcher owns conversion of handler wire records, including `handler_capabilities`, into their registered core payload before cross-bus emission.
 - Budget events (§8.4): emission rules in [control-points.md §4.5].
 - Workspace events (§8.5): emission rules in [workspace-model.md §4.4, §4.5].
 - Reconciliation events (§8.6): emission rules in [reconciliation/spec.md §4.1, §4.3, §4.5]. The new entries §8.6.11 `reconciliation_dispatch_deduplicated` (RC-002a), §8.6.12 `reconciliation_detector_panic` (RC-020b), and §8.6.13 `reconciliation_verdict_execution_retry` (RC-026a) are RC-emission-owned. §8.6.14 `bead_terminal_transition_recovered` is **(deferred)** per OQ-BI-008 and reserved for future BI-adapter emission; no emitter exists today.
@@ -1658,6 +1717,7 @@ This spec owns the payload SHAPE for every type in §8. The WHEN of each emissio
   receipt identity, and the exact final-only condition for
   `completion_receipt_id`. The optional `queue_id` /
   `queue_group_index` fields on run events remain co-owned as before.
+- Eager-refill provenance (§8.22): daemon eager refill owns the WHEN of `stale_open_bead_detected`. This spec owns the two-field audit payload.
 
 ## 7. Protocols and state machines
 
@@ -1783,8 +1843,9 @@ During bootstrap (before `testing.md` exists) test obligations are named in pros
 - **EV-009 — EV-014b (bus and consumer taxonomy).** Registration tests: two synchronous consumers for the same type fail startup; observer default class; synchronous-halt via fault injection; reentrant synchronous subscription fails startup (EV-010 acyclicity); post-seal `Subscribe` fails; overflow under bounded queue exhibits shed + `bus_overflow` per EV-011a.
 - **EV-015 — EV-020 (durability).** Fsync tests per durability class; kill between boundary events and between an ordinary event and its post-flush; append-only crash-replay.
 - **EV-021 — EV-024 (replay semantics).** Restart rebuilds state from git plus Beads with JSONL unavailable; divergence-evidence read flags `post_crash_window: true` correctly in the lossy-tail window and corroborates against git before flagging.
-- **EV-025 — EV-027 (producer/consumer contract).** Every emitter subsystem's emissions are a subset of §8; internal events do not cross the bus; amendment requires the three artifacts of EV-027.
-- **EV-028 — EV-030 (schema versioning).** N-1 reader test per §6.4 rows; breaking-change detection surfaces typed errors.
+- **EV-025 — EV-027 (producer/consumer contract).** Every emitter subsystem's emissions are a subset of §8; internal events do not cross the bus; every cross-bus emitter converts its local or wire record to the registered core payload; amendment requires the three artifacts of EV-027.
+- **EV-028 — EV-030 (schema versioning).** N-1 reader test per §6.4 rows; breaking-change detection surfaces typed errors. `run_started` tests decode a legacy version-1 record through the tolerant replay path and reject a malformed version-2 record through the strict path.
+- **Step 13 payload ownership.** A DOT run emits exactly one typed `run_started` event after graph resolution. Its payload contains the named `WorkflowDescriptor`, resolved review policy, and selection source. A `workflow:single` label resolves the named no-review graph before emission and does not use an imperative dispatch path. `handler_capabilities` wire input is converted to the registered core payload. `liveness_halt` and `stale_open_bead_detected` construct, validate, register, and decode their §6.3 payloads.
 - **EV-031 (tagging).** Static check: every entry in §8 carries durability class and the registry-side four-axis tags.
 - **EV-032 — EV-034a (Go representation).** Registry tests: post-init registration fails; unknown `Event.type` surfaces `ErrUnknownEventType`; duplicate `source_subsystem` registrations fail startup.
 - **EV-035 — EV-036 (redaction).** Secret-redaction tests.
@@ -1857,6 +1918,8 @@ Default-if-unresolved: Implement `recover_and_log`; `quarantine_consumer` and `f
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-08-02 | 0.7.6 | agent (codename:event-payload-ownership) | **Step 13 no-review binding.** Adds `queue_item_single_mode` as a distinct `workflow_selection_source`. A tier-0 queue item with `workflow_mode=single` maps to the same named no-review graph as a legacy label. `review_policy` is resolver output. Only the registered embedded `no-review-bead` version `1.0` descriptor, selected through one of the two legacy sources, may emit `no_review`. The event producer rejects every other no-review tuple before `run_started`. |
+| 2026-08-02 | 0.7.5 | agent (codename:event-payload-ownership) | **Step 13 event payload ownership.** `run_started` moves to payload version 2. It now records a logical DOT `WorkflowDescriptor` (`workflow_id`, `workflow_version`), `workflow_mode = dot`, the resolved `review_policy`, and `workflow_selection_source`. A `workflow:single` label resolves to the named no-review DOT graph before the event is emitted. The former daemon-private v1 lifecycle record remains readable only through a tolerant replay and reconciliation path. The normal v2 reader is strict. §4.6 now requires every cross-bus emitter to convert local or wire data to one registered core payload. `handler_capabilities` gains a concrete schema and wire-to-core conversion rule. `liveness_halt` and `stale_open_bead_detected` gain missing §6.3 schemas. `stale_open_bead_detected` is added as §8.22 eager-refill provenance. No existing §8 rows are renumbered. |
 | 2026-08-01 | 0.7.4 | agent (hk-3ywqv) | **§8.1.12 `implementer_no_work_suspected` states its emitter as every process-exit harness, not codex alone.** The clause read "a process-exit implementer (codex)", and a reader who took the parenthetical as the scope built the detector inside the codex leg of the commit fallback's harness branch. A `single`-mode Pi run — same clean worktree, same seconds-long phase, same commit-fallback outcome — therefore produced no record at all. The `dot` path was covered only by accident, because it routes every process-exit harness through the codex wrapper. The clause now names the property that decides the emission: the trigger is the harness commit fallback's outcome, and the codex and Pi fallbacks reach the same primitives in `internal/harness/shared/refstrailer.go` and return the same `shared.RefsOutcome`, so one detector reads either. Evidence bullet (g) follows, from "codex-path consumers" to "process-exit-path consumers". No obligation is weakened: both conditions (no commit, a clean worktree, and a phase under the floor) are unchanged, the durability class is unchanged, and the event stays a detector rather than a gate. No requirement IDs added, renumbered, or retired. |
 | 2026-07-30 | 0.7.3 | agent (spec citation cleanup) | **Rotted pointers repaired across `specs/`. No obligation changed by this pass.** Deleted files that were cited as implementation evidence now name the symbol that carries the behavior today. Line-number citations became symbol names, per the repo rule to cite symbols and never line numbers. The retired `review-loop` workflow mode was dropped from every list that presented it as a live selectable mode, because `core.WorkflowMode.Valid()` accepts only `single` and `dot`. Rules that name `review-loop` as a RETIRED value to reject are unchanged, and so are the event `review_loop_cycle_complete` and the review-loop-failure budget, whose symbols still exist. Where a spec named a test as its conformance sensor and that test no longer exists, the text now says so instead of claiming cover it does not have. |
 | 2026-07-27 | 0.7.2 | agent (`queue-transaction-contract`) | Adds optional `completion_receipt_id` to `queue_group_completed`, required exactly for final successful completion and absent otherwise; clarifies Class F as a single normal-path attempt after authoritative queue/receipt durability with no restart synthesis or replay; adds typed Class O non-replayed `queue_cancelled_operator` parseable/corrupt XOR after durable cancellation release. EV-021/EV-022 and all JSONL/EventID/replay/cursor/writer/consumer mechanics remain unchanged. |

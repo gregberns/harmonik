@@ -8,10 +8,10 @@ requirement-prefix: WG
 status: draft
 spec-category: foundation-cross-cutting
 spec-shape: requirements-first
-version: 0.3.2
+version: 0.3.4
 spec-template-version: 1.1
 owner: phase-3-dot
-last-updated: 2026-07-30
+last-updated: 2026-08-02
 depends-on:
   - architecture
   - execution-model
@@ -65,6 +65,7 @@ The substrate is [execution-model.md §4.1 EM-001] (workflow is a named, version
 - **schema version** — the graph-level integer recorded in the DOT artifact per §2 WG-002. Distinct from the workflow's own `version` field (which tracks author intent).
 - **schema_version** (DOT attribute) — the graph-level DOT attribute that carries the schema version value. See §2 WG-002.
 - **start_node** (DOT attribute) — the graph-level DOT attribute that names the entry-point node for a workflow graph. The corresponding parsed record field is `start_node_id`. See §9 WG-027.
+- **workflow_id** (DOT attribute) — the required graph-level identity attribute. It is the source of `WorkflowDescriptor.workflow_id`. It is neither a source path nor a DOT graph name. See §10 WG-055.
 
 ## 4. Node type catalog
 
@@ -511,9 +512,9 @@ A loader MUST apply a **mixed** policy to attributes encountered during DOT pars
 **Strict positions** — an unknown value at one of the following positions is an ingest error; the run MUST NOT start:
 
 - The `type` attribute value on a node (closed enum per §4 WG-001).
-- A reserved attribute name used outside its declared position. The reserved set at v1.0 is: `type`, `agent_type`, `handler_ref`, `gate_ref`, `sub_workflow_ref`, `workflow_version`, `input_mapping`, `idempotency_class`, `axis_tags`, `tool_command`, `timeout`, `transient_exit_codes` (node-level, `non-agentic` tool nodes only; reserved-and-warning at v1 per §4 WG-039; see [handler-contract.md §4.1 HC-063]), `prompt`, `non_committing`, `auto_status` (node-level, implementer-class `agentic` nodes only; accepted deny-side at v1 per §4 WG-053; value domain `{"true","false"}`, non-boolean = ingest error), `model`, `effort`, `policy_ref` (reserved-and-rejected name; see [control-points.md §4.12 CP-056]), `hook_ref`, `guard_ref`, `budget_ref`, `skills_ref`, `freedom_profile_ref`, `schema_version`, `version`, `condition`, `preferred_label`, `weight`, `ordering_key`, `start_node`, `terminal_node_ids`, `context_keys` (graph-level per [handler-contract.md §5.6 HC-062]; see WG-031a), `goal` (graph-level per §4 WG-044), `no_progress_guard` (graph-level per §4 WG-054; value domain `{"strict","capped:N","off"}` where N is a positive integer; an absent or empty value is equivalent to `"strict"`; an invalid value is an ingest error and the run MUST NOT start).
+- A reserved attribute name used outside its declared position. The reserved set at v1.0 is: `type`, `agent_type`, `handler_ref`, `gate_ref`, `sub_workflow_ref`, `workflow_version`, `input_mapping`, `idempotency_class`, `axis_tags`, `tool_command`, `timeout`, `transient_exit_codes` (node-level, `non-agentic` tool nodes only; reserved-and-warning at v1 per §4 WG-039; see [handler-contract.md §4.1 HC-063]), `prompt`, `non_committing`, `auto_status` (node-level, implementer-class `agentic` nodes only; accepted deny-side at v1 per §4 WG-053; value domain `{"true","false"}`, non-boolean = ingest error), `model`, `effort`, `policy_ref` (reserved-and-rejected name; see [control-points.md §4.12 CP-056]), `review_policy` (reserved-and-rejected at every DOT position; the resolver owns this value per WG-056), `hook_ref`, `guard_ref`, `budget_ref`, `skills_ref`, `freedom_profile_ref`, `schema_version`, `version`, `condition`, `preferred_label`, `weight`, `ordering_key`, `start_node`, `terminal_node_ids`, `workflow_id`, `context_keys` (graph-level per [handler-contract.md §5.6 HC-062]; see WG-031a), `goal` (graph-level per §4 WG-044), `no_progress_guard` (graph-level per §4 WG-054; value domain `{"strict","capped:N","off"}` where N is a positive integer; an absent or empty value is equivalent to `"strict"`; an invalid value is an ingest error and the run MUST NOT start).
 
-  Position rules: `tool_command` / `timeout` / `transient_exit_codes` are node-level (`non-agentic` only); `prompt` / `non_committing` / `model` / `effort` are node-level (`agentic` only); `auto_status` is node-level (implementer-class `agentic` only) and its value MUST be drawn from `{"true","false"}` (a non-boolean value is the WG-031 strict value-domain error per §4 WG-053, and the run MUST NOT start); an `auto_status` attribute on any non-implementer-`agentic` position (reviewer-class `agentic`, `non-agentic`, `gate`, `sub-workflow`, edge, or graph level) is a reserved-attribute-out-of-position validation warning (retained in the AST and ignored) per §4 WG-053; `goal` and `no_progress_guard` are graph-level. A name used outside its declared position is the WG-031 strict error and the run MUST NOT start. `class` and `model_stylesheet` are NOT in the reserved set (permissive/informative per WG-043). The WG-045 template-param surface is a load-time text transform, not an attribute, and adds no reserved name.
+  Position rules: `tool_command` / `timeout` / `transient_exit_codes` are node-level (`non-agentic` only); `prompt` / `non_committing` / `model` / `effort` are node-level (`agentic` only); `auto_status` is node-level (implementer-class `agentic` only) and its value MUST be drawn from `{"true","false"}` (a non-boolean value is the WG-031 strict value-domain error per §4 WG-053, and the run MUST NOT start); an `auto_status` attribute on any non-implementer-`agentic` position (reviewer-class `agentic`, `non-agentic`, `gate`, `sub-workflow`, edge, or graph level) is a reserved-attribute-out-of-position validation warning (retained in the AST and ignored) per §4 WG-053; `review_policy` is rejected at every DOT position; `workflow_id`, `goal`, and `no_progress_guard` are graph-level. A name used outside its declared position is the WG-031 strict error and the run MUST NOT start. `class` and `model_stylesheet` are NOT in the reserved set (permissive/informative per WG-043). The WG-045 template-param surface is a load-time text transform, not an attribute, and adds no reserved name.
 - The RHS of an equality in an edge condition, when the RHS names a closed-enum member (per §7, [execution-model.md §4.1 EM-005], or [execution-model.md §4.1 EM-005a]).
 - The LHS of an edge condition (whitelist per §6 WG-014).
 
@@ -538,6 +539,62 @@ A workflow graph MAY carry a graph-level `context_keys` DOT attribute whose valu
 Per [handler-contract.md §5.6 HC-062], the attribute is a graph-level declaration site: a `context_keys` attribute appearing on a node or edge is a reserved-attribute-out-of-position strict error per §10 WG-031.
 
 At v1.0, a loader MUST accept and parse `context_keys`; it MUST NOT validate individual `context.<key>` LHS references in edge conditions against the declared list (type-pinning of declared context keys is still open — see §13 OQ-WG-002). A loader MUST retain the parsed `context_keys` list in the AST for tooling and downstream consumers.
+
+Tags: mechanism, normative
+
+### WG-055 — `workflow_id` is required typed graph identity
+
+Every workflow graph MUST carry one graph-level `workflow_id` attribute. The
+parser MUST validate it and expose it as the typed `Workflow.workflow_id` field
+of [execution-model.md §6.1]. It MUST NOT leave this attribute only in an
+unknown-attribute map.
+
+The accepted grammar is:
+
+```text
+workflow_id ::= named_id | uuid_text
+named_id    ::= [A-Za-z] [A-Za-z0-9-]*
+uuid_text   ::= [0-9a-f]{8} "-" [0-9a-f]{4} "-" [0-9a-f]{4} "-" [0-9a-f]{4} "-" [0-9a-f]{12}
+```
+
+The named form covers the declared graph corpus, including mixed-case
+`spec-R1-R2-cycle`. The UUID form preserves the existing UUID-form graph
+fixture and historic durable records. A UUID form is legacy compatibility. The
+daemon MUST NOT create a UUID to identify a new workflow execution.
+
+A missing, repeated, wrongly positioned, or invalid `workflow_id` is a strict
+parse error. The error MUST name the graph source and the invalid attribute or
+value. The loader MUST reject the graph before it creates a run start event or
+dispatches a node. `Graph.Name` and the graph source filename MUST NOT be used
+as an identity fallback.
+
+The validated value, paired with the graph-level `version`, forms the
+`WorkflowDescriptor` defined by [execution-model.md §6.1]. The descriptor
+records selected graph identity only. It does not contain graph content,
+selection source, mode, or review policy.
+
+Tags: mechanism, normative
+
+### WG-056 — Review policy is a trusted resolver binding
+
+`review_policy` is not a DOT authoring attribute. A loader MUST reject the
+name at every graph, node, and edge position. The resolver derives policy after
+it validates the graph identity and registration.
+
+Only the exact registered embedded descriptor
+`{workflow_id="no-review-bead", workflow_version="1.0"}` may yield
+`review_policy = no_review`. It must be selected through one of the two legacy
+inputs defined by [execution-model.md §4.3 EM-012a]:
+`workflow_selection_source = legacy_single_label` or
+`workflow_selection_source = queue_item_single_mode`. Every other graph,
+including an explicit custom DOT reference, MUST yield `reviewed`.
+
+The no-review graph is `internal/daemon/no-review-bead.dot`. Its byte-identical
+canonical exemplar is `specs/examples/no-review-bead.dot`. The daemon's
+embedded-graph registry MUST register this graph beside `standard-bead.dot`.
+The graph is therefore a named audited workflow, not a self-claim by arbitrary
+DOT input. A tuple of descriptor, policy, and selection source that violates
+this rule is a pre-start validation error.
 
 Tags: mechanism, normative
 
@@ -862,6 +919,8 @@ Tags: mechanism, normative
 
 | date | version | author | change |
 |---|---|---|---|
+| 2026-08-02 | 0.3.4 | agent (codename:event-payload-ownership) | **Step 13 no-review policy binding.** Adds WG-056. `review_policy` is reserved and rejected in DOT. Only the registered embedded `no-review-bead` version `1.0` graph, selected through the legacy label or tier-0 queue-item source, may resolve to `no_review`. The embedded artifact and byte-identical exemplar locations are fixed. |
+| 2026-08-02 | 0.3.3 | agent (codename:event-payload-ownership) | **Step 13 workflow identity.** Adds WG-055. `workflow_id` is now a required typed graph-level attribute with a named-ID or legacy UUID-text grammar. The parser must expose the value in `Workflow.workflow_id`, reject missing or invalid identity before `run_started`, and never use graph name or source filename as a fallback. The `WorkflowDescriptor` records selected graph identity only. `workflow_id` is added to the WG-031 graph-level reserved set. |
 | 2026-07-30 | 0.3.2 | agent (spec citation cleanup) | **Rotted pointers repaired across `specs/`. No obligation changed by this pass.** Deleted files that were cited as implementation evidence now name the symbol that carries the behavior today. Line-number citations became symbol names, per the repo rule to cite symbols and never line numbers. The retired `review-loop` workflow mode was dropped from every list that presented it as a live selectable mode, because `core.WorkflowMode.Valid()` accepts only `single` and `dot`. Rules that name `review-loop` as a RETIRED value to reject are unchanged. Where a spec named a test as its conformance sensor and that test no longer exists, the text now says so instead of claiming cover it does not have. WG-052 additionally records that its named golden test was deleted and that no test replaced it, so that obligation is open and unasserted. |
 | 2026-06-16 | 0.3.1 | agent (hk-p0bj) | **spec-drift fix — new WG-054 (graph-level `no_progress_guard` attribute; value domain {strict,capped:N,off}); WG-031 reserved-set adds `no_progress_guard` (graph-level per §4 WG-054; invalid value = ingest error); WG-031 position-rules add `no_progress_guard` as graph-level. Documents hk-nvd3/cdb6867f. Refs: hk-p0bj.** |
 | 2026-06-13 | 0.3.0 | agent (hk-2j90) | **auto_status v2 — new WG-053 (deny-side outcome-derivation, implementer-class agentic); WG-041 reserved-block REPLACED with accepted/orthogonal framing; WG-031 reserved-set + position-rules add auto_status (value domain {true,false}, non-boolean = ingest error); §16.1 vocab-diff WG-041 row rewritten + WG-053 row added. Documents shipped v1 (hk-oo4 / 5c5b15ef) + adds C2 carrier. Refs: hk-2j90.** |

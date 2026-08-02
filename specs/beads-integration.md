@@ -5,13 +5,13 @@
 title: Beads Integration
 spec-id: beads-integration
 requirement-prefix: BI
-status: reviewed
+status: draft
 spec-category: foundation-cross-cutting
 spec-shape: requirements-first
-version: 0.9.2
+version: 0.9.3
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-07-30
+last-updated: 2026-08-02
 depends-on:
   - architecture
   - execution-model
@@ -155,7 +155,22 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 **AMENDED v0.9.0 (amendment `review-loop-retirement`) — the accepted label set narrows to `{single, dot}`, and the review-floor's mechanism changes from silent demotion to loud failure.** The retired text is quoted at the end of this requirement so a reader can tell a deliberate reversal from an omission.
 
-A bead MAY carry an optional label of the form `workflow:<mode>` where `<mode> ∈ {single, dot}` (`review-loop` RETIRED v0.9.0, tracking [execution-model.md §4.3 EM-015d]). The label's presence asserts a per-task workflow-mode override; its absence defers to lower-precedence tiers (per-project → daemon-level per [process-lifecycle.md §4.1 PL-004a] → built-in fallback `dot`, resolving the embedded `standard-bead.dot` canonical exemplar per [execution-model.md §4.3 EM-012a]). The built-in fallback carries a hard review-floor (EM-012a-FLOOR) whose guarantee is unchanged — a bead resolved below tier 1 is NEVER dispatched without a review gate — delivered by the exemplar graph's own reviewer node; on embedded-artifact load failure (parse failure, missing artifact, schema-version incompatibility, or template-parameter substitution failure) the daemon MUST fail the run with a diagnostic naming the artifact and the load error, and MUST NOT dispatch the bead under any other workflow shape. `single` (the no-review one-handler-per-node shape) is reachable ONLY via an explicit tier-1 per-bead `workflow:single` label (audited via `review_bypassed` per [execution-model.md §4.3 EM-012a]); a bead resolved at the per-project, daemon-level, or built-in-fallback tiers MUST NEVER be dispatched under `single`. The bead-level label is the highest-precedence input in the four-tier workflow-mode resolution chain owned by [execution-model.md §4.3].
+A bead MAY carry an optional label of the form `workflow:<mode>` where `<mode> ∈ {single, dot}` (`review-loop` RETIRED v0.9.0, tracking [execution-model.md §4.3 EM-015d]). The label's presence asserts a per-task workflow-mode override. Its absence defers to lower-precedence tiers (per-project → daemon-level per [process-lifecycle.md §4.1 PL-004a] → built-in fallback `dot`, resolving the embedded `standard-bead.dot` canonical exemplar per [execution-model.md §4.3 EM-012a]). The built-in fallback carries a hard review-floor (EM-012a-FLOOR) whose guarantee is unchanged. A bead resolved below the legacy inputs is NEVER dispatched without a review gate. The exemplar graph provides the reviewer node. On embedded-artifact load failure, the daemon MUST fail the run with a diagnostic. It MUST NOT dispatch another workflow shape.
+
+There are two legacy no-review selection inputs. A tier-1 bead label
+`workflow:single` resolves the registered embedded `no-review-bead` version
+`1.0` graph and records `workflow_selection_source=legacy_single_label`. A
+tier-0 queue item with `workflow_mode=single` resolves that same graph and
+records `workflow_selection_source=queue_item_single_mode`. The queue item
+retains its raw value for legacy audit. Both resolve to execution mode `dot`.
+Neither may invoke an imperative single dispatcher. `single` is not valid at
+the per-project, daemon, or built-in-fallback tiers.
+
+The former `review_bypassed` audit reference is retired for this selection
+path. It is not a registered event in the event-model catalog. The required
+audit is the `run_started` tuple of descriptor, `review_policy=no_review`, and
+one of the two selection sources. The resolver owns that policy binding per
+[execution-model.md §4.3 EM-012a] and [workflow-graph.md §10 WG-056].
 
 **Migration of pre-retirement labels.** A bead still carrying `workflow:review-loop` MUST be handled as an unknown-mode tier-1 input per [execution-model.md §4.3 EM-012a]: tier 1 is treated as absent, `bead_label_conflict` is emitted per [event-model.md §8.8.6] naming the offending label, and resolution continues down the chain to `dot`. The bead is NOT failed. This is the deliberate asymmetry with the project-config surface, which per [process-lifecycle.md §4.1 PL-004a] MUST fail at load on the same value: a config file is operator-authored and read once at boot, whereas a bead label is queue data an operator may not control, and wedging a bead on a retired label would convert a naming change into a stuck queue.
 
@@ -1073,6 +1088,7 @@ Default-if-unresolved: corruption manifests as parse errors on multiple `br` com
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-08-02 | 0.9.3 | agent (codename:event-payload-ownership) | **Step 13 no-review compatibility.** BI-009a now defines two legacy no-review inputs: `workflow:single` and tier-0 queue-item `workflow_mode=single`. Both resolve the registered `no-review-bead` version `1.0` graph to `dot`, with distinct `workflow_selection_source` values. The raw queue value remains for audit. The stale `review_bypassed` reference is retired. |
 | 2026-07-30 | 0.9.2 | agent (spec citation cleanup) | **Rotted pointers repaired across `specs/`. No obligation changed by this pass.** Deleted files that were cited as implementation evidence now name the symbol that carries the behavior today. Line-number citations became symbol names, per the repo rule to cite symbols and never line numbers. The retired `review-loop` workflow mode was dropped from every list that presented it as a live selectable mode, because `core.WorkflowMode.Valid()` accepts only `single` and `dot`. Rules that name `review-loop` as a RETIRED value to reject are unchanged, and so are the event `review_loop_cycle_complete` and the review-loop-failure budget, whose symbols still exist. Where a spec named a test as its conformance sensor and that test no longer exists, the text now says so instead of claiming cover it does not have. |
 | 2026-07-29 | 0.9.1 | agent (delete-and-rewrite program / source-comment harvest) | **INFORMATIVE note added under BI-022: a bare `Refs: <bead_id>` commit-message match is not evidence of completion.** No requirement text changed. BI-022 makes git authoritative for completion, and the note records the measured false positive a bare match produces on a bead worked in several parts — an earlier partial commit carries the same ID, the grep matches, and the bead closes with work outstanding. Live incident: bead `hk-cmry` closed wrongly, and its remaining work was refiled as `hk-zmpd` to escape the match. The pre-dispatch check that ran the grep was removed, and the note names the two run-driver close paths (no-change timeout, no-commit guard) that check for the work itself and so preserve crash-restart recovery. This fact previously lived ONLY in a comment on the `beadRunOne` run driver in `internal/daemon/workloop.go`, which is why it is being written down here. The note also names [execution-model.md §4.13 EM-063] Phase 2 (the daemon's eager-refill pre-screen) and [execution-model.md §4.14 EM-064] tier 2 (the orchestrator's guard before submit) as the two places that still mandate the bare match — flagged rather than amended, because narrowing a normative "already landed" test is an execution-model change and needs adjudication. No requirement IDs added, renumbered, or retired. Refs: hk-f38n. |
 | 2026-07-28 | 0.9.0 | agent (amendment `review-loop-retirement`) | **BI-009a AMENDED: the `workflow:<mode>` label set narrows to `{single, dot}`, and the review-floor restatement changes from silent demotion to loud failure.** Companion to [execution-model.md] v0.10.0 (EM-012a-FLOOR amended; EM-015d / EM-015e retired) and [process-lifecycle.md] v0.7.0 (PL-004a amended). `workflow:review-loop` is no longer an accepted label. The floor's guarantee is unchanged — a bead resolved below tier 1 is never dispatched without a review gate, delivered by the embedded exemplar's own reviewer node — but on embedded-artifact load failure the daemon now FAILS THE RUN with a diagnostic naming the artifact and the error rather than demoting to `review-loop`. **New migration clause:** a bead still carrying `workflow:review-loop` is handled as an unknown-mode tier-1 input per [execution-model.md §4.3 EM-012a] — tier 1 treated as absent, `bead_label_conflict` emitted per [event-model.md §8.8.6], resolution continues to `dot`. The bead is NOT failed. The clause states the reason for the deliberate asymmetry with PL-004a (which MUST fail at load on the same value): a config file is operator-authored and read once at boot, while a bead label is queue data the operator may not control, and failing on it would turn a naming change into a stuck queue. The allowed-mode enum remains owned by [execution-model.md §4.3] and cited by reference; only BI-009a's restatement changed. Retired text quoted in full at the end of BI-009a. No requirement IDs added, renumbered, or retired. |

@@ -48,7 +48,7 @@ func WorkflowModeDefaultOf(deps workLoopDeps) core.WorkflowMode {
 // ExportedRunWorkLoop runs the work loop with the given deps until ctx is
 // cancelled, mirroring runWorkLoop.
 func ExportedRunWorkLoop(ctx context.Context, deps workLoopDeps) error {
-	return runWorkLoop(ctx, deps, coordinatorReapPort{})
+	return runWorkLoop(ctx, deps, coordinatorReapPort{}, eagerRefillPort{})
 }
 
 // ExportedStoreLocalInFlight preloads the split-gate local-in-flight counter on
@@ -265,7 +265,7 @@ func HandlerEnvOf(deps workLoopDeps) []string {
 //
 // Bead ref: hk-45ude, hk-tigaf.4.
 func ExportedEvaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, queueName, queueID string, groupIndex, itemIdx int, success bool) {
-	evaluateGroupAdvanceWithOutcome(ctx, newReapSeamPort(deps), queueName, queueID, groupIndex, itemIdx, success)
+	evaluateGroupAdvanceWithOutcome(ctx, newReapSeamPort(deps, eagerRefillPort{}), queueName, queueID, groupIndex, itemIdx, success)
 }
 
 // ExportedQueueStoreOf returns deps.queueStore. Used by tests to observe the

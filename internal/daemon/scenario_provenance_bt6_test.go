@@ -141,20 +141,20 @@ func bt6FakeBr(t *testing.T, scriptPath, argsFile string) {
 // bt6Deps builds a workLoopDeps wired for stagedBeadGeneratorEval against a real
 // git project and a fake br, with targetBranch="main" so the §6.2 provenance
 // guard is ACTIVE (the guard is skipped only when targetBranch is empty).
-func bt6Deps(t *testing.T, projectDir, brPath string) workLoopDeps {
+func bt6Deps(t *testing.T, projectDir, brPath string) (workLoopDeps, eagerRefillPort) {
 	t.Helper()
 	return workLoopDeps{
-		queueStore:       nil,
-		kerfPath:         "",
-		projectDir:       projectDir,
-		brPath:           brPath,
-		maxConcurrent:    4,
-		runRegistry:      newLocalRunRegistry(),
-		bus:              &noopEmitter{},
-		targetBranch:     "main",
-		followUpLedger:   make(map[string]struct{}),
-		followUpLedgerMu: new(sync.Mutex),
-	}
+			queueStore:    nil,
+			projectDir:    projectDir,
+			brPath:        brPath,
+			maxConcurrent: 4,
+			runRegistry:   newLocalRunRegistry(),
+			bus:           &noopEmitter{},
+			targetBranch:  "main",
+		}, eagerRefillPort{
+			followUpLedger:   make(map[string]struct{}),
+			followUpLedgerMu: new(sync.Mutex),
+		}
 }
 
 // bt6BrCallCount counts CALL lines in argsFile; returns 0 when the file is absent
@@ -204,7 +204,7 @@ func TestScenario_BT6_OwnMergedProvenance_NotOnOriginMain_NoFollowUp(t *testing.
 	brPath := filepath.Join(tmp, "br")
 	bt6FakeBr(t, brPath, argsFile)
 
-	deps := bt6Deps(t, projectDir, brPath)
+	deps, eagerRefill := bt6Deps(t, projectDir, brPath)
 
 	// Sanity: the provenance gate itself reports "not landed" for this bead, so
 	// we know the no-op is the gate firing (not some unrelated guardrail).
@@ -214,7 +214,7 @@ func TestScenario_BT6_OwnMergedProvenance_NotOnOriginMain_NoFollowUp(t *testing.
 	}
 
 	// Drive the REAL §5.4 B generator with a rule-eligible class label.
-	stagedBeadGeneratorEval(context.Background(), deps,
+	stagedBeadGeneratorEval(context.Background(), deps, eagerRefill,
 		core.BeadID("hk-bt6-merged"), []string{class})
 
 	// NEGATIVE assertion: no follow-up bead created.
@@ -225,9 +225,9 @@ func TestScenario_BT6_OwnMergedProvenance_NotOnOriginMain_NoFollowUp(t *testing.
 
 	// And the at-most-once ledger must NOT have recorded the follow-up — the gate
 	// returns before the ledger write, so no key should be present.
-	deps.followUpLedgerMu.Lock()
-	_, recorded := deps.followUpLedger["hk-bt6-merged:"+class]
-	deps.followUpLedgerMu.Unlock()
+	eagerRefill.followUpLedgerMu.Lock()
+	_, recorded := eagerRefill.followUpLedger["hk-bt6-merged:"+class]
+	eagerRefill.followUpLedgerMu.Unlock()
 	if recorded {
 		t.Error("ledger recorded a follow-up for an un-merged bead; the provenance " +
 			"gate must short-circuit before the at-most-once ledger write")
@@ -253,7 +253,7 @@ func TestScenario_BT6_OwnMergedProvenance_OnOriginMain_FollowUpFires(t *testing.
 	brPath := filepath.Join(tmp, "br")
 	bt6FakeBr(t, brPath, argsFile)
 
-	deps := bt6Deps(t, projectDir, brPath)
+	deps, eagerRefill := bt6Deps(t, projectDir, brPath)
 
 	// Sanity: provenance gate confirms the landing before we drive the generator.
 	if !beadOnOriginMain(context.Background(), projectDir, core.BeadID(beadID), "main") {
@@ -261,7 +261,7 @@ func TestScenario_BT6_OwnMergedProvenance_OnOriginMain_FollowUpFires(t *testing.
 			"that was pushed to origin/main")
 	}
 
-	stagedBeadGeneratorEval(context.Background(), deps,
+	stagedBeadGeneratorEval(context.Background(), deps, eagerRefill,
 		core.BeadID(beadID), []string{class})
 
 	// POSITIVE assertion: exactly one follow-up bead created.

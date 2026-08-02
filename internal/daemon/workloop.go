@@ -126,39 +126,12 @@ type workLoopDeps struct {
 	// no cross-repo dispatch is allowed. See docs/cross-repo-dispatch.md.
 	allowedRepos []string
 
-	// kerfPath is the absolute path to the `kerf` CLI binary, or empty when
-	// kerf is not installed. When empty, eagerRefillEval returns immediately
-	// without calling kerf next (EM-062 disabled for this daemon instance).
-	//
-	// Spec ref: specs/execution-model.md §4.13 EM-062, EM-063.
-	// Bead ref: hk-9321v.
-	kerfPath string
-
 	// brPath is the absolute path to the `br` CLI binary, used by the
 	// staged-bead generator to create Phase-2 deploy+verify follow-up beads
 	// (flywheel-motion.md §5.4 B). Empty → generator is disabled.
 	//
 	// Bead ref: hk-f722.
 	brPath string
-
-	// followUpLedger is the at-most-once idempotency guard for the staged-bead
-	// generator (flywheel-motion.md §5.4 B guardrail 4). Keyed on
-	// "<beadID>:<class>"; a hit means a follow-up bead was already emitted this
-	// daemon session for that (bead, class) pair.
-	// Concurrent access is serialised by followUpLedgerMu.
-	//
-	// Bead ref: hk-f722.
-	followUpLedger   map[string]struct{}
-	followUpLedgerMu *sync.Mutex
-
-	// followUpLedgerPath is the absolute path to the durable JSONL ledger file
-	// (.harmonik/follow-up-ledger.jsonl). The file is loaded at daemon boot to
-	// re-seed followUpLedger so restart does not re-emit staged beads that were
-	// already created in a prior session. Empty → disk persistence disabled
-	// (unit-test mode).
-	//
-	// Bead ref: hk-3ndb (AC1 — durable staged-bead ledger).
-	followUpLedgerPath string
 
 	// handlerBinary is the binary to spawn per iteration.  Empty → "claude".
 	handlerBinary string
@@ -1026,13 +999,9 @@ func newWorkLoopDeps(ctx context.Context, cfg Config, bus handlercontract.EventE
 		strandedInProgressResetter: adapter,                               // hk-l2xd1: auto-reset in_progress bead with no run
 		strandedResetProjectHash:   projectHash,                           // hk-l2xd1: idempotency key component
 		strandedResetDaemonNS:      time.Now().UnixNano(),                 // hk-l2xd1: daemon-session epoch for idempotency key scoping
-		kerfPath:                   cfg.KerfPath,                          // hk-9321v: kerf next for EM-062/EM-063 eager-refill
 		brPath:                     cfg.BrPath,                            // hk-f722: staged-bead generator br create
-		followUpLedger:             make(map[string]struct{}),             // hk-f722: at-most-once guard per daemon session
-		followUpLedgerMu:           &sync.Mutex{},
-		followUpLedgerPath:         filepath.Join(cfg.ProjectDir, ".harmonik", followUpLedgerFileName), // hk-3ndb: durable ledger path
-		noAutoPull:                 cfg.NoAutoPull,                                                     // hk-exd7m: queue-only mode for flywheel topology
-		skipBrHistoryRotation:      cfg.SkipBrHistoryRotation,                                          // hk-hypbi: per-close .br_history trim
+		noAutoPull:                 cfg.NoAutoPull,                        // hk-exd7m: queue-only mode for flywheel topology
+		skipBrHistoryRotation:      cfg.SkipBrHistoryRotation,             // hk-hypbi: per-close .br_history trim
 		// mergeQ (RSM-015 merge exclusion domain) is left nil here: runWorkLoop
 		// creates AND owns the production queue (starts its owner, cancels on
 		// return after the drain). A test may inject a pre-started queue via

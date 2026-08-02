@@ -532,10 +532,8 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		agentSpawnSem:              agentSpawnSem,                  // hk-5z1f0: cold-start spawn semaphore (one per daemon)
 		emittedEpics:               make(map[core.BeadID]struct{}), // hk-w6y70: fresh per-test guard
 		emittedEpicsMu:             &sync.Mutex{},
-		workerRegistry:             p.WorkerRegistry, // hk-rs-b8-codesync-3fk0: nil → local run (no SSH steps)
-		brPath:                     p.BrPath,         // hk-f722: staged-bead generator; empty → disabled
-		followUpLedger:             make(map[string]struct{}),
-		followUpLedgerMu:           &sync.Mutex{},
+		workerRegistry:             p.WorkerRegistry,        // hk-rs-b8-codesync-3fk0: nil → local run (no SSH steps)
+		brPath:                     p.BrPath,                // hk-f722: staged-bead generator; empty → disabled
 		spawnSubstrateReadyCh:      p.SpawnSubstrateReadyCh, // hk-bk33: post-boot re-dispatch gate
 		allowedRepos:               p.AllowedRepos,          // hk-xfuc: cross-repo dispatch safelist
 		diskFreeBytesFunc:          p.DiskFreeBytesFunc,     // hk-guez: merge-aware reaper test seam

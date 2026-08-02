@@ -3,9 +3,9 @@ package daemon
 // followup_ledger_ac1.go — durable at-most-once ledger for the staged-bead
 // generator (flywheel-motion.md §5.4 B guardrail 4).
 //
-// The in-memory followUpLedger (workLoopDeps.followUpLedger) prevents
+// The in-memory followUpLedger (eagerRefillPort.followUpLedger) prevents
 // duplicate follow-up beads within a single daemon session, but is re-made on
-// restart (workloop.go). This file provides load/append helpers so the ledger
+// restart. This file provides load/append helpers so the ledger
 // is persisted to .harmonik/follow-up-ledger.jsonl and re-seeded at boot,
 // making the at-most-once guarantee durable across daemon restarts.
 //

@@ -44,8 +44,8 @@ package daemon
 // a successful create. On daemon restart the in-memory followUpLedger is
 // re-made and re-seeded via loadFollowUpLedger. This test runs the generator
 // once (→ exactly one staged bead + one on-disk ledger entry), then SIMULATES A
-// DAEMON RESTART (fresh workLoopDeps whose followUpLedger is re-seeded from the
-// persisted file exactly as daemon boot does) and REPLAYS the same completion:
+// DAEMON RESTART (fresh eagerRefillPort seeded from the persisted file by the
+// boot helper) and REPLAYS the same completion:
 // the generator must be a no-op — STILL exactly one staged bead, no duplicate
 // tail. Because AC1 is landed on main, this case PASSES (it is not skipped).
 //
@@ -74,7 +74,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -227,12 +226,12 @@ func TestScenario_Flywheel_BT5_2_WorkGenOnce(t *testing.T) {
 	scriptPath := filepath.Join(tmp, "br")
 	writeFakeBrArgScript(t, scriptPath, argsFile)
 
-	deps := stagedBeadFixtureDeps(t, projectDir, scriptPath)
+	deps, eagerRefill := stagedBeadFixtureDeps(t, projectDir, scriptPath)
 	ledgerPath := filepath.Join(projectDir, ".harmonik", followUpLedgerFileName)
-	deps.followUpLedgerPath = ledgerPath
+	eagerRefill.followUpLedgerPath = ledgerPath
 
 	// One deploy-class completion.
-	stagedBeadGeneratorEval(context.Background(), deps, "hk-bt5-deploybead", []string{"deploy"})
+	stagedBeadGeneratorEval(context.Background(), deps, eagerRefill, "hk-bt5-deploybead", []string{"deploy"})
 
 	// ── Assert: EXACTLY ONE br create ───────────────────────────────────────
 	if n := bt5CountBrCreateCalls(t, argsFile); n != 1 {
@@ -284,12 +283,9 @@ func TestScenario_Flywheel_BT5_2_WorkGenOnce(t *testing.T) {
 // Round-trip:
 //  1. Run the generator once with a fresh (empty) in-memory ledger + a real
 //     on-disk follow-up-ledger.jsonl → exactly one br create + one disk entry.
-//  2. SIMULATE A DAEMON RESTART: build a brand-new workLoopDeps (fresh
-//     in-memory followUpLedger) and re-seed it from the persisted file via
-//     loadFollowUpLedger — exactly what daemon boot does (workloop.go re-makes
-//     followUpLedger and the durable ledger re-seeds it from
-//     followUpLedgerPath).
-//  3. REPLAY the same deploy-class completion through the post-restart deps.
+//  2. SIMULATE A DAEMON RESTART: build a new EagerRefillPort and load the
+//     persisted file through the boot helper.
+//  3. REPLAY the same deploy-class completion through the post-restart port.
 //     The generator must be a NO-OP — STILL exactly one br create total, no
 //     duplicate deploy+verify tail.
 //
@@ -309,10 +305,10 @@ func TestScenario_Flywheel_BT5_3_LedgerSurvivesRestart(t *testing.T) {
 	const class = "deploy"
 
 	// ── Phase 1: pre-restart daemon stages the follow-up once ───────────────
-	depsBefore := stagedBeadFixtureDeps(t, projectDir, scriptPath)
-	depsBefore.followUpLedgerPath = ledgerPath
+	depsBefore, eagerBefore := stagedBeadFixtureDeps(t, projectDir, scriptPath)
+	eagerBefore.followUpLedgerPath = ledgerPath
 
-	stagedBeadGeneratorEval(ctx, depsBefore, completed, []string{class})
+	stagedBeadGeneratorEval(ctx, depsBefore, eagerBefore, completed, []string{class})
 
 	if n := bt5CountBrCreateCalls(t, argsFile); n != 1 {
 		t.Fatalf("BT5-3 phase 1: expected exactly 1 br create before restart; got %d", n)
@@ -325,29 +321,17 @@ func TestScenario_Flywheel_BT5_3_LedgerSurvivesRestart(t *testing.T) {
 		t.Fatalf("BT5-3 phase 1: key not persisted to disk ledger; got %v", ledger1)
 	}
 
-	// ── Phase 2: simulate daemon RESTART — fresh deps, re-seed from disk ─────
-	// A restart re-makes the in-memory followUpLedger (empty) then re-seeds it
-	// from the durable file. We replicate the boot re-seed here, then assert the
-	// new deps carry the prior key — i.e. the ledger genuinely survived.
-	depsAfter := stagedBeadFixtureDeps(t, projectDir, scriptPath) // fresh empty ledger map
-	depsAfter.followUpLedgerPath = ledgerPath
-	depsAfter.followUpLedger = make(map[string]struct{})
-	depsAfter.followUpLedgerMu = new(sync.Mutex)
-
-	seeded, err := loadFollowUpLedger(ledgerPath)
-	if err != nil {
-		t.Fatalf("BT5-3 restart: loadFollowUpLedger re-seed: %v", err)
-	}
-	for k := range seeded {
-		depsAfter.followUpLedger[k] = struct{}{}
-	}
-	if _, ok := depsAfter.followUpLedger[string(completed)+":"+class]; !ok {
+	// ── Phase 2: simulate daemon RESTART — fresh port, seeded at boot ────────
+	depsAfter, _ := stagedBeadFixtureDeps(t, projectDir, scriptPath)
+	eagerAfter := newEagerRefillPort(Config{ProjectDir: projectDir})
+	loadEagerRefillLedger(&eagerAfter)
+	if _, ok := eagerAfter.followUpLedger[string(completed)+":"+class]; !ok {
 		t.Fatalf("BT5-3 restart: re-seeded ledger lost the prior key %q — durability broken; got %v",
-			string(completed)+":"+class, depsAfter.followUpLedger)
+			string(completed)+":"+class, eagerAfter.followUpLedger)
 	}
 
 	// ── Phase 3: REPLAY the same completion → must be a NO-OP ────────────────
-	stagedBeadGeneratorEval(ctx, depsAfter, completed, []string{class})
+	stagedBeadGeneratorEval(ctx, depsAfter, eagerAfter, completed, []string{class})
 
 	if n := bt5CountBrCreateCalls(t, argsFile); n != 1 {
 		t.Fatalf("BT5-3 phase 3: replay after restart double-emitted — expected STILL exactly 1 br create, got %d (durable at-most-once broken)", n)

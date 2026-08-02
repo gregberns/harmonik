@@ -95,7 +95,6 @@ type windowCleaner interface {
 type reapSeamPort struct {
 	bus                handlercontract.EventEmitter
 	projectDir         string
-	kerfPath           string
 	queueStore         *queuewiring.QueueStore
 	queueLedger        queue.BeadLedger
 	cancelOnQueueDrain context.CancelFunc
@@ -104,15 +103,15 @@ type reapSeamPort struct {
 	concurrencyCtrl    *ConcurrencyController
 	runRegistry        *RunRegistry
 	targetBranch       string
+	eagerRefill        eagerRefillPort
 }
 
 // newReapSeamPort projects the dependencies used by the force-reap completion
 // path. It intentionally preserves nil and zero values from workLoopDeps.
-func newReapSeamPort(deps workLoopDeps) reapSeamPort {
+func newReapSeamPort(deps workLoopDeps, eagerRefill eagerRefillPort) reapSeamPort {
 	return reapSeamPort{
 		bus:                deps.bus,
 		projectDir:         deps.projectDir,
-		kerfPath:           deps.kerfPath,
 		queueStore:         deps.queueStore,
 		queueLedger:        deps.queueLedger,
 		cancelOnQueueDrain: deps.cancelOnQueueDrain,
@@ -121,26 +120,21 @@ func newReapSeamPort(deps workLoopDeps) reapSeamPort {
 		concurrencyCtrl:    deps.concurrencyCtrl,
 		runRegistry:        deps.runRegistry,
 		targetBranch:       deps.targetBranch,
+		eagerRefill:        eagerRefill,
 	}
 }
 
-// runCompletionPort adds the follow-up generator values to the existing reap
-// seam. A dispatched run needs no other work-loop dependency after it starts.
+// runCompletionPort adds the staged-follow-up command path to the existing
+// reap seam. A dispatched run needs no other work-loop dependency after it starts.
 type runCompletionPort struct {
 	reapSeamPort
-	brPath             string
-	followUpLedger     map[string]struct{}
-	followUpLedgerMu   *sync.Mutex
-	followUpLedgerPath string
+	brPath string
 }
 
 func newRunCompletionPort(deps workLoopDeps, reapPort reapSeamPort) runCompletionPort {
 	return runCompletionPort{
-		reapSeamPort:       reapPort,
-		brPath:             deps.brPath,
-		followUpLedger:     deps.followUpLedger,
-		followUpLedgerMu:   deps.followUpLedgerMu,
-		followUpLedgerPath: deps.followUpLedgerPath,
+		reapSeamPort: reapPort,
+		brPath:       deps.brPath,
 	}
 }
 
@@ -401,7 +395,7 @@ func projectActiveGroup(q *queue.Queue) *orchestrator.GroupSnapshot {
 }
 
 //nolint:gocognit,cyclop,funlen // pre-existing: Seam A moved this code out of workloop.go unchanged
-func runWorkLoop(ctx context.Context, deps workLoopDeps, coordinatorReap coordinatorReapPort) error {
+func runWorkLoop(ctx context.Context, deps workLoopDeps, coordinatorReap coordinatorReapPort, eagerRefill eagerRefillPort) error {
 	// wg tracks all in-flight bead goroutines. runWorkLoop waits on this before
 	// returning so callers know all bead work is complete on return.
 	var wg sync.WaitGroup
@@ -471,8 +465,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, coordinatorReap coordin
 	// (RSM-011) plus the dashboard forcing gate and the sentinel movement
 	// governor, both of which are SWITCHABLE subsystems that may be absent. It is
 	// touched only from this goroutine. See loopmaintenance.go.
-	maint := newLoopMaintenance(deps, coordinatorReap, os.Stderr)
-	reapPort := newReapSeamPort(deps)
+	maint := newLoopMaintenance(deps, coordinatorReap, eagerRefill, os.Stderr)
+	reapPort := newReapSeamPort(deps, eagerRefill)
 	completionPort := newRunCompletionPort(deps, reapPort)
 
 	// claimSkipInProgressUntil tracks beads whose pre-claim check observed

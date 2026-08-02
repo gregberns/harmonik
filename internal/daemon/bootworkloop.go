@@ -38,6 +38,8 @@ func (bs *bootState) launchWorkLoop(ctx context.Context, daemonStartTime time.Ti
 		return depsErr
 	}
 	coordinatorReap := newCoordinatorReapPort(bs.cfg)
+	eagerRefill := newEagerRefillPort(bs.cfg)
+	loadEagerRefillLedger(&eagerRefill)                    //nolint:contextcheck // The retained ledger helper is path-only.
 	scheduleStore, scheduleErr := newScheduleStore(bs.cfg) //nolint:contextcheck // Schedule registration is a bootstrap file mutation with no context-aware API.
 	if scheduleErr != nil {
 		return scheduleErr
@@ -46,15 +48,27 @@ func (bs *bootState) launchWorkLoop(ctx context.Context, daemonStartTime time.Ti
 		return injectErr
 	}
 	bs.startBackgroundLoops(ctx, &deps)
-	bs.wireStaleWatcherReapSeams(ctx, &deps)
+	bs.wireStaleWatcherReapSeams(ctx, &deps, eagerRefill)
 
 	loopDone := make(chan error, 1)
 	go func() {
-		loopDone <- runWorkLoop(ctx, deps, coordinatorReap)
+		loopDone <- runWorkLoop(ctx, deps, coordinatorReap, eagerRefill)
 	}()
 	// Block until the work loop exits (either ctx cancelled or fatal error).
 	<-loopDone
 	return nil
+}
+
+func loadEagerRefillLedger(port *eagerRefillPort) {
+	if port.followUpLedgerPath == "" {
+		return
+	}
+	ledger, loadErr := loadFollowUpLedger(port.followUpLedgerPath)
+	if loadErr != nil {
+		log.Printf("warn: daemon.Start: load follow-up ledger: %v", loadErr)
+		return
+	}
+	port.followUpLedger = ledger
 }
 
 // newCoordinatorReapPort builds the periodic coordinator-session reaper's
@@ -74,9 +88,9 @@ func newCoordinatorReapPort(cfg Config) coordinatorReapPort {
 
 // buildWorkLoopDeps constructs the work-loop deps (newWorkLoopDeps), initialises
 // the sentinel governor deps from config (FW1/FW2, hk-y9fn/hk-z1lr), and boot-seeds
-// emittedEpics (C1, hk-o50hy) + the follow-up ledger (AC1, hk-3ndb) from the
-// durable log so a restart does not re-emit. Governor-config errors are fatal only
-// when the operator actually has a .harmonik/config.yaml.
+// emittedEpics (C1, hk-o50hy) from the durable log so a restart does not re-emit.
+// Governor-config errors are fatal only when the operator actually has a
+// .harmonik/config.yaml.
 func (bs *bootState) buildWorkLoopDeps(ctx context.Context, daemonStartTime time.Time, workflowModeDefault core.WorkflowMode) (workLoopDeps, error) {
 	cfg := bs.cfg
 
@@ -95,16 +109,6 @@ func (bs *bootState) buildWorkLoopDeps(ctx context.Context, daemonStartTime time
 	if cfg.JSONLLogPath != "" {
 		deps.emittedEpics = scanEmittedEpics(cfg.JSONLLogPath)
 		deps.emittedEpicsMu = &sync.Mutex{}
-	}
-
-	// AC1 boot-seed (hk-3ndb): load the durable follow-up ledger so a restart does
-	// not re-emit staged beads already created in a prior session. Non-fatal.
-	if deps.followUpLedgerPath != "" {
-		if ledger, loadErr := loadFollowUpLedger(deps.followUpLedgerPath); loadErr != nil {
-			log.Printf("warn: daemon.Start: load follow-up ledger: %v", loadErr)
-		} else {
-			deps.followUpLedger = ledger
-		}
 	}
 
 	return deps, nil
@@ -346,9 +350,9 @@ func (bs *bootState) startWorkerReportLoopIfEnabled(ctx context.Context, reg *wo
 // (hk-mdus1) now that deps (queueStore, emitter) is fully built. Two-phase because
 // the watcher was constructed + started (StartWatcher) far earlier, before
 // workLoopDeps existed.
-func (bs *bootState) wireStaleWatcherReapSeams(ctx context.Context, deps *workLoopDeps) {
+func (bs *bootState) wireStaleWatcherReapSeams(ctx context.Context, deps *workLoopDeps, eagerRefill eagerRefillPort) {
 	cfg := bs.cfg
-	reapPort := newReapSeamPort(*deps)
+	reapPort := newReapSeamPort(*deps, eagerRefill)
 
 	// ForceReap: on a wedged run's force-Unregister, emit a terminal run_failed and
 	// drive the owning queue item terminal so the group advances.

@@ -118,6 +118,9 @@ type loopMaintenance struct {
 	// coordinatorReap holds the periodic coordinator-session reaper inputs.
 	coordinatorReap coordinatorReapPort
 
+	// eagerRefill holds the eager-refill and staged-follow-up inputs.
+	eagerRefill eagerRefillPort
+
 	// dashGate is the dashboard staleness forcing gate, or nil when
 	// `subsystems.dashboard_gate.enabled: false`. Every method tolerates nil.
 	dashGate *dashboardGate
@@ -153,9 +156,10 @@ type loopMaintenance struct {
 // logW is passed straight through. Both sub-constructors already substitute
 // os.Stderr for a nil writer, so a third copy of that guard here would be dead
 // code (the reviewer's point, and it also keeps os out of this file's imports).
-func newLoopMaintenance(deps workLoopDeps, coordinatorReap coordinatorReapPort, logW io.Writer) *loopMaintenance {
+func newLoopMaintenance(deps workLoopDeps, coordinatorReap coordinatorReapPort, eagerRefill eagerRefillPort, logW io.Writer) *loopMaintenance {
 	return &loopMaintenance{
 		coordinatorReap: coordinatorReap,
+		eagerRefill:     eagerRefill,
 		dashGate:        newDashboardGateIfEnabled(deps.projectCfg, logW),
 		governor:        newMovementGovernorIfEnabled(deps, logW),
 	}
@@ -258,7 +262,7 @@ func (m *loopMaintenance) tickBeforeSelect(ctx context.Context, deps workLoopDep
 	//
 	// Spec ref: specs/execution-model.md §4.13 EM-062.
 	// Bead ref: hk-9321v.
-	eagerRefillEval(ctx, newReapSeamPort(deps))
+	eagerRefillEval(ctx, newReapSeamPort(deps, m.eagerRefill))
 
 	// Sentinel movement governor (FW2 hk-z1lr observe / FW3 hk-4toh act). One
 	// call: the mode split, the eval cadence gate (hk-usn8o — each evaluation

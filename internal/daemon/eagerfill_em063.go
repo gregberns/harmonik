@@ -38,7 +38,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/digest"
@@ -57,6 +59,24 @@ import (
 // because the br-ready path filters the label at adapter read time.
 const labelNeedsGreenlight = orchestrator.LabelNeedsGreenlight
 
+// eagerRefillPort holds the eager-refill and staged-follow-up values. It is
+// constructed from Config and composed into completion paths by value.
+type eagerRefillPort struct {
+	kerfPath           string
+	followUpLedger     map[string]struct{}
+	followUpLedgerMu   *sync.Mutex
+	followUpLedgerPath string
+}
+
+func newEagerRefillPort(cfg Config) eagerRefillPort {
+	return eagerRefillPort{
+		kerfPath:           cfg.KerfPath,
+		followUpLedger:     make(map[string]struct{}),
+		followUpLedgerMu:   &sync.Mutex{},
+		followUpLedgerPath: filepath.Join(cfg.ProjectDir, ".harmonik", followUpLedgerFileName),
+	}
+}
+
 // eagerRefillEval implements the EM-062 eager-refill trigger and compute
 // function.
 //
@@ -70,7 +90,7 @@ const labelNeedsGreenlight = orchestrator.LabelNeedsGreenlight
 //
 // Spec ref: specs/execution-model.md §4.13 EM-062.
 func eagerRefillEval(ctx context.Context, port reapSeamPort) {
-	if port.kerfPath == "" {
+	if port.eagerRefill.kerfPath == "" {
 		return
 	}
 	if port.queueStore == nil {
@@ -103,7 +123,7 @@ func eagerRefillEval(ctx context.Context, port reapSeamPort) {
 	deficit := target.Deficit
 
 	limit := orchestrator.OverfetchLimit(deficit)
-	rawCandidates, err := kerfNextBeads(ctx, port.kerfPath, limit)
+	rawCandidates, err := kerfNextBeads(ctx, port.eagerRefill.kerfPath, limit)
 	if err != nil {
 		// kerf not available or returned an error — eager-refill skips silently.
 		return
@@ -379,8 +399,8 @@ func kerfNextBeads(ctx context.Context, kerfPath string, limit int) ([]core.Bead
 // NEVER auto-deployed by this function.
 //
 // Spec ref: flywheel-motion.md §5.4 (B). Bead ref: hk-f722.
-func stagedBeadGeneratorEval(ctx context.Context, deps workLoopDeps, completedBeadID core.BeadID, completedBeadLabels []string) {
-	stagedBeadGeneratorEvalWithPort(ctx, newRunCompletionPort(deps, newReapSeamPort(deps)), completedBeadID, completedBeadLabels)
+func stagedBeadGeneratorEval(ctx context.Context, deps workLoopDeps, eagerRefill eagerRefillPort, completedBeadID core.BeadID, completedBeadLabels []string) {
+	stagedBeadGeneratorEvalWithPort(ctx, newRunCompletionPort(deps, newReapSeamPort(deps, eagerRefill)), completedBeadID, completedBeadLabels)
 }
 
 func stagedBeadGeneratorEvalWithPort(ctx context.Context, port runCompletionPort, completedBeadID core.BeadID, completedBeadLabels []string) {
@@ -437,13 +457,13 @@ func stagedBeadGeneratorEvalWithPort(ctx context.Context, port runCompletionPort
 
 	// Guardrail 4: at-most-once ledger (in-memory check; disk-backed by AC1).
 	ledgerKey := string(completedBeadID) + ":" + matchedClass
-	if port.followUpLedgerMu != nil {
-		port.followUpLedgerMu.Lock()
-		_, exists := port.followUpLedger[ledgerKey]
+	if port.eagerRefill.followUpLedgerMu != nil {
+		port.eagerRefill.followUpLedgerMu.Lock()
+		_, exists := port.eagerRefill.followUpLedger[ledgerKey]
 		if !exists {
-			port.followUpLedger[ledgerKey] = struct{}{}
+			port.eagerRefill.followUpLedger[ledgerKey] = struct{}{}
 		}
-		port.followUpLedgerMu.Unlock()
+		port.eagerRefill.followUpLedgerMu.Unlock()
 		if exists {
 			return
 		}
@@ -478,8 +498,8 @@ func stagedBeadGeneratorEvalWithPort(ctx context.Context, port runCompletionPort
 
 	// AC1 (hk-3ndb): persist the new key to disk after successful br create so
 	// the at-most-once guarantee survives a daemon restart.
-	if port.followUpLedgerPath != "" {
-		if persistErr := appendFollowUpLedger(port.followUpLedgerPath, ledgerKey); persistErr != nil {
+	if port.eagerRefill.followUpLedgerPath != "" {
+		if persistErr := appendFollowUpLedger(port.eagerRefill.followUpLedgerPath, ledgerKey); persistErr != nil {
 			fmt.Fprintf(os.Stderr, "daemon: stagedBeadGeneratorEval: persist ledger key %s: %v\n", ledgerKey, persistErr)
 		}
 	}

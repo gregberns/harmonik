@@ -116,7 +116,7 @@ func TestEM063_Phase1_AlreadyInQueue_PendingExcluded(t *testing.T) {
 	deps := em063FixtureDeps(t, qs)
 
 	candidates := []core.BeadID{"hk-inqueue-01", "hk-inqueue-02", "hk-new-bead"}
-	survivors := preScreenCandidates(context.Background(), deps, candidates, "em063-test-queue")
+	survivors := preScreenCandidates(context.Background(), newReapSeamPort(deps), candidates)
 
 	// Only the bead NOT already in the queue should survive Phase 1.
 	if len(survivors) != 1 {
@@ -155,7 +155,7 @@ func TestEM063_Phase1_AlreadyInQueue_DispatchedExcluded(t *testing.T) {
 	deps := em063FixtureDeps(t, qs)
 
 	candidates := []core.BeadID{"hk-dispatched", "hk-fresh"}
-	survivors := preScreenCandidates(context.Background(), deps, candidates, "em063-dispatched-queue")
+	survivors := preScreenCandidates(context.Background(), newReapSeamPort(deps), candidates)
 
 	if len(survivors) != 1 || survivors[0] != "hk-fresh" {
 		t.Errorf("Phase 1: survivors = %v, want [hk-fresh]", survivors)
@@ -171,7 +171,7 @@ func TestEM063_Phase1_EmptyQueueAllSurvive(t *testing.T) {
 
 	candidates := []core.BeadID{"hk-a", "hk-b", "hk-c"}
 	// Phase 2 git check will not find anything (temp dir has no git history).
-	survivors := preScreenCandidates(context.Background(), deps, candidates, "no-queue")
+	survivors := preScreenCandidates(context.Background(), newReapSeamPort(deps), candidates)
 
 	if len(survivors) != 3 {
 		t.Errorf("Phase 1 with empty queue: survivors = %v, want all 3 candidates", survivors)
@@ -249,7 +249,7 @@ func TestEM063_EagerRefillEval_NoopWhenKerfPathEmpty(t *testing.T) {
 	deps.kerfPath = "" // kerf not installed
 
 	// Must not panic, must not mutate queue.
-	eagerRefillEval(context.Background(), deps)
+	eagerRefillEval(context.Background(), newReapSeamPort(deps))
 
 	// Queue should be unchanged.
 	got := qs.Queue()
@@ -268,7 +268,7 @@ func TestEM063_EagerRefillEval_NoopWhenQueueStoreNil(t *testing.T) {
 	deps.queueStore = nil
 
 	// Must not panic.
-	eagerRefillEval(context.Background(), deps)
+	eagerRefillEval(context.Background(), newReapSeamPort(deps))
 }
 
 // ---------------------------------------------------------------------------

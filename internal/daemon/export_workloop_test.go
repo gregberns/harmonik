@@ -265,7 +265,7 @@ func HandlerEnvOf(deps workLoopDeps) []string {
 //
 // Bead ref: hk-45ude, hk-tigaf.4.
 func ExportedEvaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, queueName, queueID string, groupIndex, itemIdx int, success bool) {
-	evaluateGroupAdvanceWithOutcome(ctx, deps, queueName, queueID, groupIndex, itemIdx, success)
+	evaluateGroupAdvanceWithOutcome(ctx, newReapSeamPort(deps), queueName, queueID, groupIndex, itemIdx, success)
 }
 
 // ExportedQueueStoreOf returns deps.queueStore. Used by tests to observe the

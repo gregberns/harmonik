@@ -241,7 +241,7 @@ func (m *loopMaintenance) tickBeforeSelect(ctx context.Context, deps workLoopDep
 	//
 	// Spec ref: specs/execution-model.md §4.13 EM-062.
 	// Bead ref: hk-9321v.
-	eagerRefillEval(ctx, deps)
+	eagerRefillEval(ctx, newReapSeamPort(deps))
 
 	// Sentinel movement governor (FW2 hk-z1lr observe / FW3 hk-4toh act). One
 	// call: the mode split, the eval cadence gate (hk-usn8o — each evaluation

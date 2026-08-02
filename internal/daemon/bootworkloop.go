@@ -318,6 +318,7 @@ func (bs *bootState) startWorkerReportLoopIfEnabled(ctx context.Context, reg *wo
 // workLoopDeps existed.
 func (bs *bootState) wireStaleWatcherReapSeams(ctx context.Context, deps *workLoopDeps) {
 	cfg := bs.cfg
+	reapPort := newReapSeamPort(*deps)
 
 	// ForceReap: on a wedged run's force-Unregister, emit a terminal run_failed and
 	// drive the owning queue item terminal so the group advances.
@@ -326,7 +327,7 @@ func (bs *bootState) wireStaleWatcherReapSeams(ctx context.Context, deps *workLo
 			"force-reaped: run wedged past cancel grace; concurrency slot reclaimed (hk-mdus1)",
 			handle.QueueID, handle.QueueGroupIndex, nil)
 		if handle.QueueName != "" && handle.QueueID != nil && handle.QueueGroupIndex != nil && handle.QueueItemIndex >= 0 {
-			evaluateGroupAdvanceWithOutcome(ctx, *deps, handle.QueueName, *handle.QueueID, *handle.QueueGroupIndex, handle.QueueItemIndex, false)
+			evaluateGroupAdvanceWithOutcome(ctx, reapPort, handle.QueueName, *handle.QueueID, *handle.QueueGroupIndex, handle.QueueItemIndex, false)
 		}
 	})
 

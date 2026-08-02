@@ -69,27 +69,27 @@ const labelNeedsGreenlight = orchestrator.LabelNeedsGreenlight
 // during the git Phase-2 check are logged to stderr but do not abort the call.
 //
 // Spec ref: specs/execution-model.md §4.13 EM-062.
-func eagerRefillEval(ctx context.Context, deps workLoopDeps) {
-	if deps.kerfPath == "" {
+func eagerRefillEval(ctx context.Context, port reapSeamPort) {
+	if port.kerfPath == "" {
 		return
 	}
-	if deps.queueStore == nil {
+	if port.queueStore == nil {
 		return
 	}
 
-	maxConcurrent := deps.maxConcurrent
-	if deps.concurrencyCtrl != nil {
-		maxConcurrent = deps.concurrencyCtrl.Get()
+	maxConcurrent := port.maxConcurrent
+	if port.concurrencyCtrl != nil {
+		maxConcurrent = port.concurrencyCtrl.Get()
 	}
-	inFlight := deps.runRegistry.Len()
+	inFlight := port.runRegistry.Len()
 
 	// EM-062 deficit decision (M5 slice 3B): project the fleet under the lock,
 	// then let the pure orchestrator.EagerFillTarget pick the first active stream
 	// group short of pending work. snapshotFleet's globalCap/rrCursor/blockedQueues
 	// are selector-only inputs eager-fill never reads — pass maxConcurrent/0/nil.
-	lq := deps.queueStore.LockForMutation()
+	lq := port.queueStore.LockForMutation()
 	target, ok := orchestrator.EagerFillTarget(
-		snapshotFleet(lq, deps.runRegistry, maxConcurrent, 0, nil),
+		snapshotFleet(lq, port.runRegistry, maxConcurrent, 0, nil),
 		maxConcurrent, inFlight,
 	)
 	lq.Done()
@@ -103,7 +103,7 @@ func eagerRefillEval(ctx context.Context, deps workLoopDeps) {
 	deficit := target.Deficit
 
 	limit := orchestrator.OverfetchLimit(deficit)
-	rawCandidates, err := kerfNextBeads(ctx, deps.kerfPath, limit)
+	rawCandidates, err := kerfNextBeads(ctx, port.kerfPath, limit)
 	if err != nil {
 		// kerf not available or returned an error — eager-refill skips silently.
 		return
@@ -113,7 +113,7 @@ func eagerRefillEval(ctx context.Context, deps workLoopDeps) {
 	}
 
 	// EM-063: two-phase pre-screen.
-	survivors := preScreenCandidates(ctx, deps, rawCandidates, targetQueueID)
+	survivors := preScreenCandidates(ctx, port, rawCandidates)
 	if len(survivors) == 0 {
 		return
 	}
@@ -122,7 +122,7 @@ func eagerRefillEval(ctx context.Context, deps workLoopDeps) {
 	survivors = orchestrator.ClampSurvivors(survivors, deficit)
 
 	// Append survivors to the active stream group (QM-040).
-	lq = deps.queueStore.LockForMutation()
+	lq = port.queueStore.LockForMutation()
 	q := lq.LockedQueueByName(queue.NormaliseQueueName(targetQueueName))
 	if q == nil || q.QueueID != targetQueueID {
 		// Queue was replaced or cleared between our check and now — skip.
@@ -139,7 +139,7 @@ func eagerRefillEval(ctx context.Context, deps workLoopDeps) {
 		beadStrs[i] = string(id)
 	}
 
-	_, evts, appendErr := queue.AppendItems(ctx, q, targetGroupPos, beadStrs, deps.queueLedger)
+	_, evts, appendErr := queue.AppendItems(ctx, q, targetGroupPos, beadStrs, port.queueLedger)
 	if appendErr != nil {
 		// Validation error (e.g. wave group) or ledger error — log and continue.
 		fmt.Fprintf(os.Stderr, "daemon: eagerRefillEval: AppendItems queueID=%s: %v\n",
@@ -148,7 +148,7 @@ func eagerRefillEval(ctx context.Context, deps workLoopDeps) {
 		return
 	}
 
-	if err := queue.Persist(ctx, deps.projectDir, q); err != nil {
+	if err := queue.Persist(ctx, port.projectDir, q); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: eagerRefillEval: Persist queueID=%s: %v\n",
 			targetQueueID, err)
 	}
@@ -156,15 +156,24 @@ func eagerRefillEval(ctx context.Context, deps workLoopDeps) {
 	lq.Done()
 
 	// Wake the dispatch loop so it picks up the newly-appended pending items.
-	deps.queueStore.Wake()
+	port.queueStore.Wake()
 
 	// Emit events after releasing the lock.
-	for _, evt := range evts {
+	emitEagerRefillEvents(ctx, port, evts)
+}
+
+// emitEagerRefillEvents emits queue-append events after the queue lock is
+// released. An emission failure is non-fatal because the durable queue update
+// has already completed.
+func emitEagerRefillEvents(ctx context.Context, port reapSeamPort, events []core.Event) {
+	for _, evt := range events {
 		raw, mErr := json.Marshal(evt.Payload)
 		if mErr != nil {
 			raw = evt.Payload
 		}
-		_ = deps.bus.Emit(ctx, core.EventType(evt.Type), raw)
+		if emitErr := port.bus.Emit(ctx, core.EventType(evt.Type), raw); emitErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: eagerRefillEval: emit %s: %v\n", evt.Type, emitErr)
+		}
 	}
 }
 
@@ -179,22 +188,22 @@ func eagerRefillEval(ctx context.Context, deps workLoopDeps) {
 // emitted.
 //
 // Spec ref: specs/execution-model.md §4.13 EM-063.
-func preScreenCandidates(ctx context.Context, deps workLoopDeps, candidates []core.BeadID, targetQueueID string) []core.BeadID {
+func preScreenCandidates(ctx context.Context, port reapSeamPort, candidates []core.BeadID) []core.BeadID {
 	// Phase 1 (pure, M5 slice 3B): build the in-queue set under the lock (effect),
 	// then let orchestrator.ScreenAlreadyQueued drop candidates already present.
-	inQueue := buildInQueueSet(deps, targetQueueID)
+	inQueue := buildInQueueSet(port)
 	phase1Survivors := orchestrator.ScreenAlreadyQueued(candidates, inQueue)
 
 	survivors := make([]core.BeadID, 0, len(phase1Survivors))
 	for _, id := range phase1Survivors {
 		// Phase 2 — already landed on origin/main.
-		landed, commitSHA, gitErr := beadLandedOnOriginMain(ctx, deps.projectDir, deps.targetBranch, string(id))
+		landed, commitSHA, gitErr := beadLandedOnOriginMain(ctx, port.projectDir, port.targetBranch, string(id))
 		if gitErr != nil {
 			// Non-fatal: log and treat as not-landed so we don't spuriously skip.
 			fmt.Fprintf(os.Stderr, "daemon: preScreenCandidates: git check bead=%s: %v\n", id, gitErr)
 		}
 		if landed {
-			emitStaleOpenBeadDetected(ctx, deps, id, commitSHA)
+			emitStaleOpenBeadDetected(ctx, port, id, commitSHA)
 			continue
 		}
 
@@ -210,11 +219,11 @@ func preScreenCandidates(ctx context.Context, deps workLoopDeps, candidates []co
 // pending, dispatched, completed, failed — all mean "already claimed or done."
 //
 // Spec ref: specs/execution-model.md §4.13 EM-063 Phase 1.
-func buildInQueueSet(deps workLoopDeps, targetQueueID string) map[core.BeadID]struct{} {
-	if deps.queueStore == nil {
+func buildInQueueSet(port reapSeamPort) map[core.BeadID]struct{} {
+	if port.queueStore == nil {
 		return nil
 	}
-	lq := deps.queueStore.LockForMutation()
+	lq := port.queueStore.LockForMutation()
 	defer lq.Done()
 
 	result := make(map[core.BeadID]struct{})
@@ -299,7 +308,7 @@ func beadLandedOnOriginMain(ctx context.Context, projectDir, targetBranch, beadI
 // event (EM-063 Phase 2 hit).
 //
 // Spec ref: specs/execution-model.md §4.13 EM-063.
-func emitStaleOpenBeadDetected(ctx context.Context, deps workLoopDeps, beadID core.BeadID, commitSHA string) {
+func emitStaleOpenBeadDetected(ctx context.Context, port reapSeamPort, beadID core.BeadID, commitSHA string) {
 	payload := map[string]string{
 		"bead_id":    string(beadID),
 		"commit_sha": commitSHA,
@@ -308,7 +317,9 @@ func emitStaleOpenBeadDetected(ctx context.Context, deps workLoopDeps, beadID co
 	if err != nil {
 		return
 	}
-	_ = deps.bus.Emit(ctx, core.EventTypeStaleOpenBeadDetected, raw)
+	if emitErr := port.bus.Emit(ctx, core.EventTypeStaleOpenBeadDetected, raw); emitErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: emit stale open bead detected: %v\n", emitErr)
+	}
 }
 
 // kerfNextBeads runs `kerf next --format=json --only=bead --limit N` and

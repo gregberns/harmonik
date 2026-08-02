@@ -35,6 +35,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
+	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/harness/shared"
 	tmuxpkg "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/mergeq"
@@ -85,6 +86,41 @@ const claimSkipInProgressCooldown = 5 * time.Minute
 // completion or daemon exit (hk-j6npz).
 type windowCleaner interface {
 	KillAllWindows(ctx context.Context) error
+}
+
+// reapSeamPort is the complete dependency set of the StaleWatcher force-reap
+// completion path. It is projected before the callback is installed so the
+// callback cannot retain the mutable work-loop dependency bundle.
+type reapSeamPort struct {
+	bus                handlercontract.EventEmitter
+	projectDir         string
+	kerfPath           string
+	queueStore         *queuewiring.QueueStore
+	queueLedger        queue.BeadLedger
+	cancelOnQueueDrain context.CancelFunc
+	cancelOnQueueExit  context.CancelFunc
+	maxConcurrent      int
+	concurrencyCtrl    *ConcurrencyController
+	runRegistry        *RunRegistry
+	targetBranch       string
+}
+
+// newReapSeamPort projects the dependencies used by the force-reap completion
+// path. It intentionally preserves nil and zero values from workLoopDeps.
+func newReapSeamPort(deps workLoopDeps) reapSeamPort {
+	return reapSeamPort{
+		bus:                deps.bus,
+		projectDir:         deps.projectDir,
+		kerfPath:           deps.kerfPath,
+		queueStore:         deps.queueStore,
+		queueLedger:        deps.queueLedger,
+		cancelOnQueueDrain: deps.cancelOnQueueDrain,
+		cancelOnQueueExit:  deps.cancelOnQueueExit,
+		maxConcurrent:      deps.maxConcurrent,
+		concurrencyCtrl:    deps.concurrencyCtrl,
+		runRegistry:        deps.runRegistry,
+		targetBranch:       deps.targetBranch,
+	}
 }
 
 // maxItemAttempts mirrors queue.MaxItemAttempts for use in the workloop and
@@ -415,6 +451,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	// governor, both of which are SWITCHABLE subsystems that may be absent. It is
 	// touched only from this goroutine. See loopmaintenance.go.
 	maint := newLoopMaintenance(deps, os.Stderr)
+	reapPort := newReapSeamPort(deps)
 
 	// claimSkipInProgressUntil tracks beads whose pre-claim check observed
 	// in_progress with an active run. Entries suppress the item from the
@@ -940,7 +977,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 								"daemon: workloop: ShowBead pre-claim (queue-path) %s failed %d times — failing queue item so the group can advance (hk-pina9): %v\n",
 								snapItemBeadID, preClaimAttempts, preClaimErr)
 							markQueueItemFailureReason(ctx, deps, snapQueueName, snapGroupIndex, snapItemIdx, snapItemBeadID, "show_bead_failed")
-							evaluateGroupAdvanceWithOutcome(ctx, deps, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false)
+							evaluateGroupAdvanceWithOutcome(ctx, reapPort, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false)
 							continue
 						}
 						fmt.Fprintf(os.Stderr,
@@ -976,7 +1013,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 						// deferred, pinned) remain deferred-for-ledger-dep to be re-evaluated
 						// on the next poll cycle (hk-3kq05).
 						if preClaimRecord.Status.IsTerminal() {
-							evaluateGroupAdvanceWithOutcome(ctx, deps, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false)
+							evaluateGroupAdvanceWithOutcome(ctx, reapPort, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false)
 						} else {
 							// hk-l2xd1: in_progress with no active run → auto-reset to break
 							// the bead_claim_skipped live-lock that starves sibling queue items.
@@ -1160,7 +1197,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 							fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s failed at reservation: %s\n",
 								snapItemBeadID, reservation.FailureReason)
 						}
-						evaluateGroupAdvanceWithOutcome(ctx, deps, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false)
+						evaluateGroupAdvanceWithOutcome(ctx, reapPort, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false)
 						continue
 
 					case reservationWriteFailed:
@@ -1429,7 +1466,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				}
 				if isBlocked {
 					fmt.Fprintf(os.Stderr, "daemon: workloop: ClaimBead %s bead is blocked (deps or status) — failing queue item (hk-n91y0)\n", beadID)
-					evaluateGroupAdvanceWithOutcome(ctx, deps, capturedQueueName, *queueIDField, *queueGroupIdxFd, queueItemIndex, false)
+					evaluateGroupAdvanceWithOutcome(ctx, reapPort, capturedQueueName, *queueIDField, *queueGroupIdxFd, queueItemIndex, false)
 					continue
 				}
 			}
@@ -1594,7 +1631,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 				if ctx.Err() != nil {
 					// Item stays 'dispatched'; QM-002a handles recovery on restart.
 				} else {
-					evaluateGroupAdvanceWithOutcome(ctx, deps, qname, *qid, *qgidx, itemIdx, runOK)
+					evaluateGroupAdvanceWithOutcome(ctx, reapPort, qname, *qid, *qgidx, itemIdx, runOK)
 				}
 			}
 			// hk-f722 flywheel V9 §5.4 B: on Phase-1 success, emit a staged
@@ -2043,12 +2080,12 @@ func markQueueItemFailureReason(_ context.Context, deps workLoopDeps, queueName 
 // Bead ref: hk-45ude, hk-tigaf.4.
 //
 //nolint:gocognit,cyclop,funlen,gocritic // pre-existing: Seam A moved this code out of workloop.go unchanged
-func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, queueName string, queueID string, groupIndex int, itemIdx int, success bool) {
-	if deps.queueStore == nil {
+func evaluateGroupAdvanceWithOutcome(ctx context.Context, port reapSeamPort, queueName string, queueID string, groupIndex int, itemIdx int, success bool) {
+	if port.queueStore == nil {
 		return
 	}
 
-	lq := deps.queueStore.LockForMutation()
+	lq := port.queueStore.LockForMutation()
 
 	// NQ-B1: resolve the queue BY NAME (capturedQueueName), mirroring the
 	// dispatch path's LockedQueueByName usage. queueName is already normalised
@@ -2138,7 +2175,7 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, que
 		// All groups complete-success → CompleteAndUnlink (QM-003 / QM-053).
 		// This internally sets q.Status = completed and persists before
 		// unlinking queue.json (hk-xsutm).
-		if err := queue.CompleteAndUnlink(ctx, deps.projectDir, q); err != nil {
+		if err := queue.CompleteAndUnlink(ctx, port.projectDir, q); err != nil {
 			fmt.Fprintf(os.Stderr, "daemon: workloop: CompleteAndUnlink queueID=%s: %v\n",
 				queueID, err)
 			// Fall through: still clear in-memory state so the loop isn't stuck.
@@ -2148,22 +2185,22 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, que
 		// lock). NQ-B1: clear the slot for THIS queue's name, not the main-only
 		// ClearQueue shim — otherwise a completed non-"main" queue lingers in the
 		// store and the round-robin selector keeps re-scanning a drained queue.
-		deps.queueStore.ClearQueueByName(queue.NormaliseQueueName(queueName))
+		port.queueStore.ClearQueueByName(queue.NormaliseQueueName(queueName))
 		// hk-icecw: if a drain-cancel is registered (harmonik run path), cancel
 		// the daemon context now so the work loop exits cleanly instead of
 		// idle-spinning waiting for more work.
-		if deps.cancelOnQueueDrain != nil {
-			deps.cancelOnQueueDrain()
+		if port.cancelOnQueueDrain != nil {
+			port.cancelOnQueueDrain()
 		}
 		// hk-8jh26 Fix 1: if a queue-exit cancel is registered, fire it on the
 		// success path too (covers the case where only cancelOnQueueExit is set).
-		if deps.cancelOnQueueExit != nil {
-			deps.cancelOnQueueExit()
+		if port.cancelOnQueueExit != nil {
+			port.cancelOnQueueExit()
 		}
 	} else {
 		// Intermediate state or paused-by-failure: persist the updated queue.json
 		// so on-disk state matches in-memory after each item completion (hk-xsutm).
-		if err := queue.Persist(ctx, deps.projectDir, q); err != nil {
+		if err := queue.Persist(ctx, port.projectDir, q); err != nil {
 			fmt.Fprintf(os.Stderr, "daemon: workloop: Persist queueID=%s after item completion: %v\n",
 				queueID, err)
 			// Non-fatal: in-memory state is still updated; file will resync on next persist.
@@ -2183,15 +2220,15 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, que
 		// with the SetQueue above. Fired unconditionally on run_completed: the
 		// woken loop re-runs EligibleItems + ReevaluateDeferred, which is cheap and
 		// idempotent if no item un-defers.
-		deps.queueStore.Wake()
+		port.queueStore.Wake()
 		// hk-8jh26 Fix 1: if the queue is now paused-by-failure and an exit-cancel
 		// is registered (harmonik run path), cancel the daemon context so the work
 		// loop exits promptly instead of idle-spinning waiting for more work.
 		// pausedByFailure is captured before lq.Done() to avoid a data race with
 		// another goroutine that may call CompleteAndUnlink (which writes q.Status)
 		// after acquiring the lock we just released.
-		if pausedByFailure && deps.cancelOnQueueExit != nil {
-			deps.cancelOnQueueExit()
+		if pausedByFailure && port.cancelOnQueueExit != nil {
+			port.cancelOnQueueExit()
 		}
 	}
 
@@ -2202,7 +2239,7 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, que
 		if err != nil {
 			raw = evt.Payload
 		}
-		_ = deps.bus.Emit(ctx, core.EventType(evt.Type), raw) //nolint:errcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
+		_ = port.bus.Emit(ctx, core.EventType(evt.Type), raw) //nolint:errcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
 	}
 
 	// EM-062: eager-refill fires AFTER all terminal-event processing (merge,
@@ -2211,7 +2248,7 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, que
 	//
 	// Spec ref: specs/execution-model.md §4.13 EM-062.
 	// Bead ref: hk-9321v.
-	eagerRefillEval(ctx, deps)
+	eagerRefillEval(ctx, port)
 }
 
 // ── hk-o85ye: run-session adoption helpers ───────────────────────────────────

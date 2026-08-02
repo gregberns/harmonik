@@ -79,14 +79,13 @@ func runBeadSubcommandViaDaemon(
 	// templateParams is already sealed by the caller (nil when empty).
 	items := make([]queue.Item, len(beadIDs))
 	for i, id := range beadIDs {
-		items[i] = queue.Item{
+		items[i] = queue.NewPendingItem(queue.Item{
 			BeadID:         id,
-			Status:         queue.ItemStatusPending,
 			Context:        extraContext,
 			WorkflowMode:   workflowMode,
 			WorkflowRef:    workflowRef,
 			TemplateParams: templateParams,
-		}
+		})
 	}
 
 	// Open the subscribe connection BEFORE submitting so we cannot miss the
@@ -191,16 +190,22 @@ func viaSubmitOrAppend(
 		Groups        []wireGroup `json:"groups"`
 	}
 
+	submitGroup := queue.NewPendingGroup(queue.Group{
+		GroupIndex: 0,
+		Kind:       groupKind,
+		Items:      items,
+		CreatedAt:  now,
+	})
 	submitBody := submitEnvelope{
 		Op:            "queue-submit",
 		SchemaVersion: 1,
 		Groups: []wireGroup{
 			{
-				GroupIndex: 0,
-				Kind:       groupKind,
-				Status:     queue.GroupStatusPending,
-				Items:      items,
-				CreatedAt:  now,
+				GroupIndex: submitGroup.GroupIndex,
+				Kind:       submitGroup.Kind,
+				Status:     submitGroup.Status,
+				Items:      submitGroup.Items,
+				CreatedAt:  submitGroup.CreatedAt,
 			},
 		},
 	}

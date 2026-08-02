@@ -20,7 +20,7 @@ new_fixture() {
 
 output="$(run_ratchet "$repo_root")"
 grep -q 'baseline direct assignments bravo=20 daemon=14' <<<"$output"
-grep -q 'construction-path writes=5' <<<"$output"
+grep -q 'construction-path writes=3' <<<"$output"
 grep -q 'durable transition edges=8/8' <<<"$output"
 grep -q 'queue-status-writer-ratchet: OK' <<<"$output"
 
@@ -54,7 +54,7 @@ if failed_output="$(run_ratchet "$fixture")"; then
     echo "queue-status-writer-ratchet test: expected construction growth to fail" >&2
     exit 1
 fi
-grep -q 'construction surface grew from 5 to 6' <<<"$failed_output"
+grep -q 'construction surface grew from 3 to 4' <<<"$failed_output"
 
 fixture="$(new_fixture)"
 sed -i.bak 's/queue.Persist(ctx, projectDir, q)/queue.PersistDeleted(ctx, projectDir, q)/' "$fixture/internal/lifecycle/startup_pl005_qm002.go"

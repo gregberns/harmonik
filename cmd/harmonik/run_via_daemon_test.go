@@ -14,10 +14,13 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/gregberns/harmonik/internal/queue"
 )
 
 // socketSafeTempDir returns a temporary directory whose path is short enough
@@ -281,5 +284,66 @@ func TestViaSendRequest_ValidResponse(t *testing.T) {
 	}
 	if !resp.Ok {
 		t.Errorf("resp.Ok = false, want true")
+	}
+}
+
+func TestViaSubmitOrAppendWritesPendingGroup(t *testing.T) {
+	t.Parallel()
+
+	dir := socketSafeTempDir(t)
+	harmonikDir := filepath.Join(dir, ".harmonik")
+	if err := os.MkdirAll(harmonikDir, 0o750); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", filepath.Join(harmonikDir, "daemon.sock"))
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	t.Cleanup(func() {
+		if closeErr := listener.Close(); closeErr != nil {
+			t.Errorf("close listener: %v", closeErr)
+		}
+	})
+
+	received := make(chan []byte, 1)
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer func() {
+			if closeErr := conn.Close(); closeErr != nil {
+				t.Errorf("close daemon connection: %v", closeErr)
+			}
+		}()
+		payload, readErr := io.ReadAll(conn)
+		if readErr != nil {
+			return
+		}
+		received <- payload
+		if encodeErr := json.NewEncoder(conn).Encode(viaSocketResponse{
+			Ok: true, Result: json.RawMessage(`{"queue_id":"q-submit"}`),
+		}); encodeErr != nil {
+			t.Errorf("encode daemon response: %v", encodeErr)
+		}
+	}()
+
+	items := []queue.Item{queue.NewPendingItem(queue.Item{BeadID: "hk-via-submit"})}
+	queueID, groupIndex, appended, exitCode := viaSubmitOrAppend(t.Context(), harmonikDir, items, queue.GroupKindStream)
+	if exitCode != 0 || queueID != "q-submit" || groupIndex != 0 || appended {
+		t.Fatalf("viaSubmitOrAppend = (%q, %d, %t, %d), want successful new group", queueID, groupIndex, appended, exitCode)
+	}
+
+	payload := <-received
+	var envelope struct {
+		Groups []struct {
+			Status queue.GroupStatus `json:"status"`
+		} `json:"groups"`
+	}
+	if unmarshalErr := json.Unmarshal(payload, &envelope); unmarshalErr != nil {
+		t.Fatalf("decode queue-submit payload: %v", unmarshalErr)
+	}
+	if len(envelope.Groups) != 1 || envelope.Groups[0].Status != queue.GroupStatusPending {
+		t.Fatalf("submitted groups = %+v, want one pending group", envelope.Groups)
 	}
 }

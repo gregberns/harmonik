@@ -16,7 +16,7 @@ import (
 const (
 	bravoBaseline        = 20
 	daemonBaseline       = 14
-	constructionBaseline = 5
+	constructionBaseline = 3
 )
 
 type measurement struct {
@@ -294,12 +294,17 @@ func statusFieldsDeep(literal *ast.CompositeLit) int {
 			return true
 		}
 		key, ok := field.Key.(*ast.Ident)
-		if ok && key.Name == "Status" {
+		if ok && key.Name == "Status" && !readsStatus(field.Value) {
 			count++
 		}
 		return true
 	})
 	return count
+}
+
+func readsStatus(expression ast.Expr) bool {
+	selector, ok := expression.(*ast.SelectorExpr)
+	return ok && selector.Sel.Name == "Status"
 }
 
 func fail(format string, args ...any) {

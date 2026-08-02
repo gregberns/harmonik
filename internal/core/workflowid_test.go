@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-
-	"github.com/google/uuid"
 )
 
 func mustParseWorkflowID(t *testing.T, s string) WorkflowID {
@@ -64,18 +62,17 @@ func TestWorkflowID_UnmarshalText_RoundTrip(t *testing.T) {
 
 func TestWorkflowID_UnmarshalText_Invalid(t *testing.T) {
 	var w WorkflowID
-	if err := w.UnmarshalText([]byte("not-a-uuid")); err == nil {
-		t.Error("expected error for invalid UUID, got nil")
+	if err := w.UnmarshalText([]byte("not a workflow ID")); err == nil {
+		t.Error("expected error for invalid workflow ID, got nil")
 	}
 }
 
 func TestWorkflowID_NominalTyping(t *testing.T) {
-	u := uuid.MustParse("0196a1b2-c3d4-7000-8a1b-000000000013")
-	w := WorkflowID(u)
-	back := uuid.UUID(w)
+	w := WorkflowID("standard-bead")
+	back := w.String()
 
-	if back != u {
-		t.Errorf("UUID round-trip failed: %v != %v", back, u)
+	if back != "standard-bead" {
+		t.Errorf("logical ID round-trip failed: %q", back)
 	}
 }
 

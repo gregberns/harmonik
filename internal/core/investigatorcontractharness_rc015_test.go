@@ -55,7 +55,7 @@ func rc75InvestigatorFixtureInvestigatorInput(t *testing.T) InvestigatorInput {
 	return InvestigatorInput{
 		SnapshotToken:         tok,
 		TargetRunID:           RunID(uuid.Must(uuid.NewV7())),
-		TargetWorkflowID:      WorkflowID(uuid.Must(uuid.NewV7())),
+		TargetWorkflowID:      mustParseWorkflowID(t, uuid.Must(uuid.NewV7()).String()),
 		TargetWorkflowVersion: "v1.0.0",
 		TargetBeadID:          &beadIDStr,
 		BeadRecord: &BeadRecord{
@@ -461,7 +461,7 @@ func TestRC018_BudgetExhaustedPayloadIsValid(t *testing.T) {
 
 	payload := BudgetExhaustedPayload{
 		RunID:          RunID(uuid.Must(uuid.NewV7())),
-		WorkflowID:     WorkflowID(uuid.Must(uuid.NewV7())),
+		WorkflowID:     mustParseWorkflowID(t, uuid.Must(uuid.NewV7()).String()),
 		BudgetSeconds:  600,
 		ElapsedSeconds: 601,
 	}
@@ -517,7 +517,7 @@ func TestRC018_BudgetExhaustedPayloadElapsedExceedsBudget(t *testing.T) {
 	// Elapsed must exceed or equal budget to be meaningful (budget exhaustion).
 	payload := BudgetExhaustedPayload{
 		RunID:          RunID(uuid.Must(uuid.NewV7())),
-		WorkflowID:     WorkflowID(uuid.Must(uuid.NewV7())),
+		WorkflowID:     mustParseWorkflowID(t, uuid.Must(uuid.NewV7()).String()),
 		BudgetSeconds:  600,
 		ElapsedSeconds: 601,
 	}
@@ -530,7 +530,7 @@ func TestRC018_BudgetExhaustedPayloadElapsedExceedsBudget(t *testing.T) {
 	// A payload with negative elapsed is structurally invalid.
 	negPayload := BudgetExhaustedPayload{
 		RunID:          RunID(uuid.Must(uuid.NewV7())),
-		WorkflowID:     WorkflowID(uuid.Must(uuid.NewV7())),
+		WorkflowID:     mustParseWorkflowID(t, uuid.Must(uuid.NewV7()).String()),
 		BudgetSeconds:  600,
 		ElapsedSeconds: -1,
 	}

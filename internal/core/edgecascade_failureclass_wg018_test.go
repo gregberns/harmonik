@@ -51,7 +51,7 @@ func wg018FixtureRun(t *testing.T) *Run {
 	t.Helper()
 	return &Run{
 		RunID:           RunID(uuid.Must(uuid.NewV7())),
-		WorkflowID:      WorkflowID(uuid.Must(uuid.NewV7())),
+		WorkflowID:      mustParseWorkflowID(t, uuid.Must(uuid.NewV7()).String()),
 		WorkflowVersion: WorkflowVersion("1.0.0"),
 		Input:           WorkspaceRef("ws-wg018"),
 		WorkflowMode:    WorkflowModeSingle,

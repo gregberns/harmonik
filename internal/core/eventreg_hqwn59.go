@@ -68,7 +68,7 @@ func init() {
 //   - epic_completed (§8.13 hk-w6y70):         O (ordinary — observational; at-most-once per epic)
 //   - working_tree_refresh_failed (EM-054):    O (ordinary — informational; merge already durable)
 func registerRunLifecycle() {
-	mustRegister("run_started", func() EventPayload { return &RunStartedPayload{} })
+	mustRegisterAtVersion("run_started", func() EventPayload { return &RunStartedPayload{} }, 2)
 	mustRegister("run_completed", func() EventPayload { return &RunCompletedPayload{} })
 	mustRegister("run_failed", func() EventPayload { return &RunFailedPayload{} })
 	mustRegister("state_entered", func() EventPayload { return &StateEnteredPayload{} })
@@ -656,5 +656,11 @@ func registerBeadLedgerEvents() {
 func mustRegister(typeName string, ctor func() EventPayload) {
 	if err := RegisterEventType(typeName, ctor); err != nil {
 		panic("core: mustRegister: " + typeName + ": " + err.Error())
+	}
+}
+
+func mustRegisterAtVersion(typeName string, ctor func() EventPayload, version int) {
+	if err := RegisterEventTypeAtVersion(typeName, ctor, version); err != nil {
+		panic("core: mustRegisterAtVersion: " + typeName + ": " + err.Error())
 	}
 }

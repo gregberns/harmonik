@@ -1,7 +1,5 @@
 package core
 
-import "github.com/google/uuid"
-
 // SubWorkflowExpansionPin is the structured pin stored in a Transition
 // record's Evidence map under EvidenceKeySubWorkflowPin on the sub-workflow
 // entry checkpoint.
@@ -77,7 +75,7 @@ func (p SubWorkflowExpansionPin) Valid() bool {
 	if p.SubWorkflowVersion == "" {
 		return false
 	}
-	if uuid.UUID(p.ResolvedWorkflowID) == uuid.Nil {
+	if !p.ResolvedWorkflowID.Valid() {
 		return false
 	}
 	return true

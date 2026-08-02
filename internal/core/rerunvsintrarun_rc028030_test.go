@@ -28,7 +28,7 @@ func rc77RunFixture(t *testing.T, runID RunID) Run {
 	stateID := StateID(uuid.MustParse("018f1e2a-0000-7000-8000-000000006001"))
 	return Run{
 		RunID:           runID,
-		WorkflowID:      WorkflowID(uuid.MustParse("018f1e2a-0000-7000-8000-000000006000")),
+		WorkflowID:      mustParseWorkflowID(t, "018f1e2a-0000-7000-8000-000000006000"),
 		WorkflowVersion: WorkflowVersion("1.0.0"),
 		Input:           WorkspaceRef("/projects/my-project"),
 		WorkflowMode:    WorkflowModeSingle,

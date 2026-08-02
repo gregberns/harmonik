@@ -1,10 +1,6 @@
 package core
 
-import (
-	"testing"
-
-	"github.com/google/uuid"
-)
+import "testing"
 
 // subwfCompositionOnlyFixture returns a Workflow that composes behavior via a
 // sub-workflow node referencing a named sub-workflow, per EM-037.
@@ -21,7 +17,7 @@ func subwfCompositionOnlyFixture(t *testing.T) Workflow {
 
 	subwfNode := subwfCompositionOnlyFixtureSubWorkflowNode(t)
 	return Workflow{
-		WorkflowID:      WorkflowID(uuid.MustParse("01960000-0000-7000-8000-000000005000")),
+		WorkflowID:      mustParseWorkflowID(t, "01960000-0000-7000-8000-000000005000"),
 		Name:            "orchestrator",
 		Version:         "1.0.0",
 		Nodes:           []Node{subwfNode},

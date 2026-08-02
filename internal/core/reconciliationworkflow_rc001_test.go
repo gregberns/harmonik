@@ -1,10 +1,6 @@
 package core
 
-import (
-	"testing"
-
-	"github.com/google/uuid"
-)
+import "testing"
 
 // rc73WorkflowFixtureReconciliation returns a valid reconciliation-class Workflow
 // with workflow_class = reconciliation, used by RC-001..006 structural tests.
@@ -14,7 +10,7 @@ import (
 // specs/reconciliation/schemas.md §6.5 WorkflowClass extension.
 func rc73WorkflowFixtureReconciliation(t *testing.T) Workflow {
 	t.Helper()
-	wfID := WorkflowID(uuid.MustParse("018f1e2a-0000-7000-8000-000000006301"))
+	wfID := mustParseWorkflowID(t, "018f1e2a-0000-7000-8000-000000006301")
 	startNode := Node{
 		NodeID:           NodeID("investigator"),
 		Type:             NodeTypeNonAgentic,
@@ -50,7 +46,7 @@ func rc73WorkflowFixtureReconciliation(t *testing.T) Workflow {
 // workflows in structural tests.
 func rc73WorkflowFixtureOrdinary(t *testing.T) Workflow {
 	t.Helper()
-	wfID := WorkflowID(uuid.MustParse("018f1e2a-0000-7000-8000-000000006302"))
+	wfID := mustParseWorkflowID(t, "018f1e2a-0000-7000-8000-000000006302")
 	startNode := Node{
 		NodeID:           NodeID("start"),
 		Type:             NodeTypeNonAgentic,

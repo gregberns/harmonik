@@ -85,7 +85,7 @@ type PayloadCompatEntry struct {
 // breaking changes, a migration release per ON-018/ON-019.
 var allPayloadCompatEntries = []PayloadCompatEntry{
 	// ── §8.1 Run lifecycle ──────────────────────────────────────────────────
-	{TypeName: "run_started", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: "run_started", CurrentVersion: 2, PreviousVersion: 1, CompatWindowHolds: true, AdditiveOnly: false},
 	{TypeName: "run_completed", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "run_failed", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: "state_entered", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},

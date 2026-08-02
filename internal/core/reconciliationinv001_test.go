@@ -1,10 +1,6 @@
 package core
 
-import (
-	"testing"
-
-	"github.com/google/uuid"
-)
+import "testing"
 
 // rc73InvFixtureWorkflow returns a reconciliation Workflow fixture, reusing the
 // rc73WorkflowFixtureReconciliation helper from reconciliationworkflow_rc001_test.go
@@ -13,7 +9,7 @@ import (
 // Spec ref: specs/reconciliation/spec.md §5 RC-INV-001.
 func rc73InvFixtureWorkflow(t *testing.T) Workflow {
 	t.Helper()
-	wfID := WorkflowID(uuid.MustParse("018f1e2a-0000-7000-8000-000000006310"))
+	wfID := mustParseWorkflowID(t, "018f1e2a-0000-7000-8000-000000006310")
 	startNode := Node{
 		NodeID:           NodeID("inv-investigator"),
 		Type:             NodeTypeNonAgentic,
@@ -49,7 +45,7 @@ func rc73InvFixtureWorkflow(t *testing.T) Workflow {
 // be associated with reconciliation_verdict_* events per RC-INV-001.
 func rc73InvFixtureOrdinaryWorkflow(t *testing.T) Workflow {
 	t.Helper()
-	wfID := WorkflowID(uuid.MustParse("018f1e2a-0000-7000-8000-000000006311"))
+	wfID := mustParseWorkflowID(t, "018f1e2a-0000-7000-8000-000000006311")
 	startNode := Node{
 		NodeID:           NodeID("ordinary-start"),
 		Type:             NodeTypeNonAgentic,
@@ -212,7 +208,7 @@ func TestRCINV001_ExactlyOneVerdictEventPerDispatch(t *testing.T) {
 
 	// Two dispatches for different target runs produce two distinct workflow
 	// instances (different WorkflowIDs).
-	if uuid.UUID(wf1.WorkflowID) == uuid.UUID(wf2.WorkflowID) {
+	if wf1.WorkflowID == wf2.WorkflowID {
 		t.Error("RC-INV-001: two reconciliation workflow fixtures share the same WorkflowID; " +
 			"each dispatch must produce a distinct workflow instance")
 	}

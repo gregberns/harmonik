@@ -69,7 +69,7 @@ func cp011FixtureRun(t *testing.T) *Run {
 	t.Helper()
 	return &Run{
 		RunID:           RunID(uuid.Must(uuid.NewV7())),
-		WorkflowID:      WorkflowID(uuid.Must(uuid.NewV7())),
+		WorkflowID:      mustParseWorkflowID(t, uuid.Must(uuid.NewV7()).String()),
 		WorkflowVersion: WorkflowVersion("0.1.0"),
 		Input:           WorkspaceRef("ws-ref-cp011"),
 		WorkflowMode:    WorkflowModeSingle,

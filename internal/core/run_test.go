@@ -18,7 +18,7 @@ func validRun(t *testing.T) Run {
 	end := now.Add(time.Minute)
 	return Run{
 		RunID:           RunID(uuid.Must(uuid.NewV7())),
-		WorkflowID:      WorkflowID(uuid.Must(uuid.NewV7())),
+		WorkflowID:      mustParseWorkflowID(t, uuid.Must(uuid.NewV7()).String()),
 		WorkflowVersion: WorkflowVersion("1.0.0"),
 		Input:           WorkspaceRef("workspace://project/input"),
 		WorkflowMode:    WorkflowModeSingle,
@@ -93,7 +93,7 @@ func TestRunValid_ZeroWorkflowID(t *testing.T) {
 	t.Parallel()
 
 	r := validRun(t)
-	r.WorkflowID = WorkflowID(uuid.Nil)
+	r.WorkflowID = WorkflowID("")
 	if r.Valid() {
 		t.Error("Valid() = true with zero WorkflowID, want false")
 	}

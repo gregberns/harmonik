@@ -22,7 +22,7 @@ func investigatorInputFixture(t *testing.T) InvestigatorInput {
 			CapturedAtTimestamp: "2026-05-09T12:00:00Z",
 		},
 		TargetRunID:           RunID(uuid.Must(uuid.NewV7())),
-		TargetWorkflowID:      WorkflowID(uuid.Must(uuid.NewV7())),
+		TargetWorkflowID:      mustParseWorkflowID(t, uuid.Must(uuid.NewV7()).String()),
 		TargetWorkflowVersion: "v1.0.0",
 		TargetBeadID:          &beadIDStr,
 		BeadRecord: &BeadRecord{
@@ -94,7 +94,7 @@ func TestInvestigatorInputValid_ZeroTargetWorkflowID(t *testing.T) {
 	t.Parallel()
 
 	inp := investigatorInputFixture(t)
-	inp.TargetWorkflowID = WorkflowID(uuid.Nil)
+	inp.TargetWorkflowID = WorkflowID("")
 	if inp.Valid() {
 		t.Error("Valid() = true with zero TargetWorkflowID, want false")
 	}

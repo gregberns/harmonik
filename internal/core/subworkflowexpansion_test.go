@@ -1,10 +1,6 @@
 package core
 
-import (
-	"testing"
-
-	"github.com/google/uuid"
-)
+import "testing"
 
 // subwfExpandFixturePin returns a valid SubWorkflowExpansionPin for use in
 // SubWorkflowExpansion fixtures (EM-034c).
@@ -12,7 +8,7 @@ func subwfExpandFixturePin() SubWorkflowExpansionPin {
 	return SubWorkflowExpansionPin{
 		SubWorkflowRef:     SubWorkflowRef("workflows/reconciliation-v1"),
 		SubWorkflowVersion: WorkflowVersion("1.0.0"),
-		ResolvedWorkflowID: WorkflowID(uuid.MustParse("01960000-0000-7000-8000-000000000043")),
+		ResolvedWorkflowID: WorkflowID("01960000-0000-7000-8000-000000000043"),
 	}
 }
 
@@ -192,7 +188,7 @@ func TestSubWorkflowExpansionValid_InvalidPin(t *testing.T) {
 	e.Pin = SubWorkflowExpansionPin{
 		SubWorkflowRef:     SubWorkflowRef("workflows/reconciliation-v1"),
 		SubWorkflowVersion: WorkflowVersion("1.0.0"),
-		ResolvedWorkflowID: WorkflowID(uuid.Nil), // nil UUID makes Pin invalid
+		ResolvedWorkflowID: WorkflowID(""), // nil UUID makes Pin invalid
 	}
 	if e.Valid() {
 		t.Error("Valid() = true for expansion with invalid Pin, want false")

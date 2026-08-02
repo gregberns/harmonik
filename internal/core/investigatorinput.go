@@ -119,7 +119,7 @@ func (inp InvestigatorInput) Valid() bool {
 	if uuid.UUID(inp.TargetRunID) == uuid.Nil {
 		return false
 	}
-	if uuid.UUID(inp.TargetWorkflowID) == uuid.Nil {
+	if !inp.TargetWorkflowID.Valid() {
 		return false
 	}
 	if inp.TargetWorkflowVersion == "" {

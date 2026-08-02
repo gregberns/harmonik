@@ -302,10 +302,10 @@ func TestEV029_LookupPayloadCompatEntryMissing(t *testing.T) {
 func TestEV029_ValidateEnvelopeSchemaVersionMatchesRegistry(t *testing.T) {
 	t.Parallel()
 
-	// Use run_started as a representative type registered at v1.
-	e := makeTestEvent("run_started", 1)
+	// Use run_started as a representative type registered at v2.
+	e := makeTestEvent("run_started", 2)
 	if err := ValidateEnvelopeSchemaVersion(e); err != nil {
-		t.Errorf("EV-029/EV-028: ValidateEnvelopeSchemaVersion for run_started at v1 = %v, want nil", err)
+		t.Errorf("EV-029/EV-028: ValidateEnvelopeSchemaVersion for run_started at v2 = %v, want nil", err)
 	}
 }
 

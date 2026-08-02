@@ -1,17 +1,13 @@
 package core
 
-import (
-	"testing"
-
-	"github.com/google/uuid"
-)
+import "testing"
 
 // b3f72WorkflowValid returns a fully-populated Workflow with all required
 // fields set to valid values. Tests mutate individual fields to probe Valid().
 // Bead prefix: b3f72 (per implementer-protocol.md helper-prefix discipline).
 func b3f72WorkflowValid(t *testing.T) Workflow {
 	t.Helper()
-	wfID := WorkflowID(uuid.MustParse("018f1e2a-0000-7000-8000-000000000001"))
+	wfID := mustParseWorkflowID(t, "018f1e2a-0000-7000-8000-000000000001")
 	startNode := Node{
 		NodeID:           NodeID("start"),
 		Type:             NodeTypeNonAgentic,
@@ -63,7 +59,7 @@ func TestWorkflowValid_NilWorkflowID(t *testing.T) {
 	t.Parallel()
 
 	wf := b3f72WorkflowValid(t)
-	wf.WorkflowID = WorkflowID(uuid.Nil)
+	wf.WorkflowID = WorkflowID("")
 	if wf.Valid() {
 		t.Error("Valid() = true with nil WorkflowID (uuid.Nil), want false")
 	}
@@ -367,7 +363,7 @@ func TestWorkflowValid_StartNodeEqualToTerminal(t *testing.T) {
 		Axes:             BaselineAxisTags,
 		ModeTag:          "mechanism",
 	}
-	wfID := WorkflowID(uuid.MustParse("018f1e2a-0000-7000-8000-000000000002"))
+	wfID := mustParseWorkflowID(t, "018f1e2a-0000-7000-8000-000000000002")
 	wf := Workflow{
 		WorkflowID:      wfID,
 		Name:            "trivial",

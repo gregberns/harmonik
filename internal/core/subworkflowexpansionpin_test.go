@@ -3,8 +3,6 @@ package core
 import (
 	"encoding/json"
 	"testing"
-
-	"github.com/google/uuid"
 )
 
 // subworkflowpinFixture returns a valid SubWorkflowExpansionPin for tests.
@@ -12,7 +10,7 @@ func subworkflowpinFixture() SubWorkflowExpansionPin {
 	return SubWorkflowExpansionPin{
 		SubWorkflowRef:     "reconciliation-v1",
 		SubWorkflowVersion: "1.2.3",
-		ResolvedWorkflowID: WorkflowID(uuid.MustParse("01960000-0000-7000-8000-000000000002")),
+		ResolvedWorkflowID: WorkflowID("01960000-0000-7000-8000-000000000002"),
 	}
 }
 
@@ -49,7 +47,7 @@ func TestSubWorkflowExpansionPinValid_NilUUID(t *testing.T) {
 	t.Parallel()
 
 	p := subworkflowpinFixture()
-	p.ResolvedWorkflowID = WorkflowID(uuid.Nil)
+	p.ResolvedWorkflowID = WorkflowID("")
 	if p.Valid() {
 		t.Error("Valid() = true for nil ResolvedWorkflowID, want false")
 	}
@@ -78,7 +76,7 @@ func TestSubWorkflowExpansionPinJSONRoundTrip(t *testing.T) {
 	if decoded.SubWorkflowVersion != original.SubWorkflowVersion {
 		t.Errorf("SubWorkflowVersion: got %q, want %q", decoded.SubWorkflowVersion, original.SubWorkflowVersion)
 	}
-	if uuid.UUID(decoded.ResolvedWorkflowID) != uuid.UUID(original.ResolvedWorkflowID) {
+	if decoded.ResolvedWorkflowID != original.ResolvedWorkflowID {
 		t.Errorf("ResolvedWorkflowID: got %v, want %v", decoded.ResolvedWorkflowID, original.ResolvedWorkflowID)
 	}
 	if !decoded.Valid() {

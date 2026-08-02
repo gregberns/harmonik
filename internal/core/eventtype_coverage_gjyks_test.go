@@ -223,7 +223,8 @@ var allEventTypeCohort = []gjyksEventTypeCohortEntry{
 //
 // What it verifies per entry:
 //  1. Constructor returns a non-nil pointer.
-//  2. An empty JSON object unmarshal succeeds (no required struct fields cause panic).
+//  2. A representative payload unmarshal succeeds. Strict payloads receive a
+//     valid fixture rather than an empty object.
 //  3. The EventType constant string value matches the type name used in eventreg_hqwn59.go
 //     (tested indirectly: the cohort is the same table that register* functions use,
 //     so if a constant is mapped to the wrong string the drift-detection fails at
@@ -249,12 +250,17 @@ func TestAllEventTypeConstantsHaveRegistryEntries(t *testing.T) {
 				t.Fatalf("constructor for %q returned nil", entry.et)
 			}
 
-			// 2. Empty JSON object must unmarshal without error.
-			// This guards against constructors that return types which panic
-			// on zero-value JSON decode (e.g., non-pointer receivers or required
-			// non-nullable fields that the JSON decoder would panic on).
-			if err := json.Unmarshal([]byte(`{}`), got); err != nil {
-				t.Errorf("json.Unmarshal({}) into %T for EventType %q: %v", got, entry.et, err)
+			// 2. A representative payload must unmarshal without error.
+			payload := []byte(`{}`)
+			if entry.et == EventTypeRunStarted {
+				var err error
+				payload, err = json.Marshal(runStartedV2Fixture())
+				if err != nil {
+					t.Fatalf("Marshal run_started fixture: %v", err)
+				}
+			}
+			if err := json.Unmarshal(payload, got); err != nil {
+				t.Errorf("json.Unmarshal representative payload into %T for EventType %q: %v", got, entry.et, err)
 			}
 
 			// 3. The EventType constant must be present in the local constructor map

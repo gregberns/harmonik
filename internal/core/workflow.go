@@ -1,7 +1,5 @@
 package core
 
-import "github.com/google/uuid"
-
 // Workflow is the 11-field named, versioned directed graph that describes a
 // harmonik execution workflow (execution-model.md §6.1 RECORD Workflow,
 // §4.1.EM-001).
@@ -118,7 +116,7 @@ type Workflow struct {
 //   - WorkflowClass, when non-nil, equals "reconciliation"
 //   - SchemaVersion > 0
 func (w Workflow) Valid() bool {
-	if uuid.UUID(w.WorkflowID) == uuid.Nil {
+	if !w.WorkflowID.Valid() {
 		return false
 	}
 	if w.Name == "" {

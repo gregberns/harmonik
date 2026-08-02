@@ -29,7 +29,7 @@ func edgeCascadeFixtureRun(t *testing.T) *Run {
 	t.Helper()
 	return &Run{
 		RunID:           RunID(uuid.Must(uuid.NewV7())),
-		WorkflowID:      WorkflowID(uuid.Must(uuid.NewV7())),
+		WorkflowID:      mustParseWorkflowID(t, uuid.Must(uuid.NewV7()).String()),
 		WorkflowVersion: WorkflowVersion("0.1.0"),
 		Input:           WorkspaceRef("ws-ref-1"),
 		WorkflowMode:    WorkflowModeSingle,
@@ -665,7 +665,7 @@ func TestEdgeCascadeEM041_IdenticalInputsProduceIdenticalOutput(t *testing.T) {
 	buildRun := func() *Run {
 		return &Run{
 			RunID:           RunID(uuid.Must(uuid.NewV7())),
-			WorkflowID:      WorkflowID(uuid.Must(uuid.NewV7())),
+			WorkflowID:      mustParseWorkflowID(t, uuid.Must(uuid.NewV7()).String()),
 			WorkflowVersion: WorkflowVersion("0.1.0"),
 			Input:           WorkspaceRef("ws-ref-1"),
 			WorkflowMode:    WorkflowModeSingle,

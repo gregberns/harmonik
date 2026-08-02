@@ -83,7 +83,7 @@ func (r Run) Valid() bool {
 	if uuid.UUID(r.RunID) == uuid.Nil {
 		return false
 	}
-	if uuid.UUID(r.WorkflowID) == uuid.Nil {
+	if !r.WorkflowID.Valid() {
 		return false
 	}
 	if r.WorkflowVersion == "" {

@@ -1,10 +1,6 @@
 package core
 
-import (
-	"testing"
-
-	"github.com/google/uuid"
-)
+import "testing"
 
 // evidenceFixture returns a populated Evidence map for use in tests.
 func evidenceFixture() Evidence {
@@ -21,7 +17,7 @@ func evidenceSubWorkflowPinFixture() SubWorkflowExpansionPin {
 	return SubWorkflowExpansionPin{
 		SubWorkflowRef:     "reconciliation-v1",
 		SubWorkflowVersion: "1.2.3",
-		ResolvedWorkflowID: WorkflowID(uuid.MustParse("01960000-0000-7000-8000-000000000001")),
+		ResolvedWorkflowID: WorkflowID("01960000-0000-7000-8000-000000000001"),
 	}
 }
 

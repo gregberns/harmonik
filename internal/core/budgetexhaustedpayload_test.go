@@ -13,7 +13,7 @@ func budgetExhaustedPayloadFixture(t *testing.T) BudgetExhaustedPayload {
 	t.Helper()
 	return BudgetExhaustedPayload{
 		RunID:          RunID(uuid.Must(uuid.NewV7())),
-		WorkflowID:     WorkflowID(uuid.Must(uuid.NewV7())),
+		WorkflowID:     mustParseWorkflowID(t, uuid.Must(uuid.NewV7()).String()),
 		BudgetSeconds:  300,
 		ElapsedSeconds: 301,
 	}
@@ -48,7 +48,7 @@ func TestBudgetExhaustedPayloadValid_ZeroWorkflowID(t *testing.T) {
 	t.Parallel()
 
 	p := budgetExhaustedPayloadFixture(t)
-	p.WorkflowID = WorkflowID(uuid.Nil)
+	p.WorkflowID = WorkflowID("")
 	if p.Valid() {
 		t.Error("Valid() = true with zero WorkflowID, want false")
 	}

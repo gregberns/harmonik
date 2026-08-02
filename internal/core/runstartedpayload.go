@@ -1,120 +1,90 @@
 package core
 
-import "github.com/google/uuid"
+import (
+	"encoding/json"
+	"fmt"
+	"time"
 
-// RunStartedPayload is the typed event payload for the run_started event
-// (event-model.md §8.1.1; specs/event-model.md §6.3).
-//
-// The daemon MUST emit run_started AFTER create_run has allocated the run_id
-// AND AFTER the Beads atomic-claim write has persisted (beads-integration.md
-// §4.3 BI-009) AND BEFORE any node in the run is dispatched, per
-// execution-model.md §4.3.EM-015a.
-//
-// # Payload fields (event-model.md §8.1.1)
-//
-// RunID, WorkflowID, WorkflowVersion, and WorkspacePath are always required.
-// BeadID is required only for bead-tied runs (execution-model.md §4.3.EM-014);
-// it is nil for standalone-input runs. InputRef is the workspace reference
-// string carried on the Run at dispatch time.
-//
-// # BeadID optionality
-//
-// BeadID is *BeadID (pointer) to distinguish "run is bead-tied" (non-nil) from
-// "run is not bead-tied" (nil). Set-but-empty is a validation error per Valid().
-//
-// # WorkflowMode optionality
-//
-// WorkflowMode is optional for backward compatibility with v0.3.x consumers
-// per event-model.md §8.1 workflow_mode payload-field rule. When non-nil,
-// the value MUST be a declared WorkflowMode constant.
-//
-// # WorkspacePath and InputRef
-//
-// Both fields are declared as plain strings in the event-model.md §6.3 YAML
-// schema (workspace_path: <String>, input_ref: <String>). No typed alias
-// exists yet; they are kept as string per the typed-alias-deferral pattern.
+	"github.com/google/uuid"
+)
+
+// RunStartedPayload is the version-2 durable payload for run_started. The
+// resolver creates its descriptor, mode, policy, and source before emission.
 type RunStartedPayload struct {
-	// RunID is the stable UUIDv7 run identifier (execution-model.md §6.1).
-	// Required (must not be zero).
-	RunID RunID `json:"run_id"`
-
-	// WorkflowID is the resolved workflow identifier pinned at dispatch time
-	// (execution-model.md §6.1 Run.workflow_id).
-	// Required (must not be zero).
-	WorkflowID WorkflowID `json:"workflow_id"`
-
-	// WorkflowVersion is the pinned version of the workflow at dispatch time
-	// (execution-model.md §6.1 Run.workflow_version).
-	// Required (non-empty).
-	WorkflowVersion WorkflowVersion `json:"workflow_version"`
-
-	// BeadID carries the bead identifier for bead-tied runs
-	// (beads-integration.md §4 BI-017; execution-model.md §4.3.EM-014).
-	// Nil for standalone-input runs. Non-nil and non-empty for bead-tied runs.
-	// Set-but-empty is rejected by Valid().
-	BeadID *BeadID `json:"bead_id,omitempty"`
-
-	// WorkspacePath is the filesystem path of the run's leased workspace
-	// (workspace-model.md §4.1; event-model.md §8.1.1 workspace_path).
-	// Required (non-empty). Plain string per event-model.md §6.3 YAML schema.
-	WorkspacePath string `json:"workspace_path"`
-
-	// InputRef is the workspace reference string carried on the Run at dispatch
-	// (execution-model.md §6.1 Run.input; event-model.md §8.1.1 input_ref).
-	// Required (non-empty). Plain string per event-model.md §6.3 YAML schema.
-	InputRef string `json:"input_ref"`
-
-	// WorkflowMode surfaces the resolved dispatch shape for this run
-	// (event-model.md §8.1 workflow_mode payload-field rule;
-	// execution-model.md §4.3.EM-012a). Optional for backward compatibility
-	// with v0.3.x consumers. When non-nil must be a valid WorkflowMode constant.
-	WorkflowMode *WorkflowMode `json:"workflow_mode,omitempty"`
-
-	// QueueID is the daemon-minted UUIDv7 (as a string) identifying the queue
-	// submission from which this run was dispatched per queue-model.md §4.2
-	// QM-011 and event-model.md §6.3. Nil when the run was not dispatched from
-	// the queue surface (foreground / single-bead / reconciliation-issued runs).
-	// TODO: replace *string with a typed QueueID alias once that alias is minted
-	// (tracked in hk-gkljz follow-up; see implementer-protocol.md §Typed-alias-deferral).
-	QueueID *string `json:"queue_id,omitempty"`
-
-	// QueueGroupIndex identifies the group within the queue from which this run
-	// was dispatched per queue-model.md §4.3 QM-012 and event-model.md §6.3.
-	// Nil under the same conditions as QueueID.
-	QueueGroupIndex *int `json:"queue_group_index,omitempty"`
+	RunID                   RunID                   `json:"run_id"`
+	WorkflowID              WorkflowID              `json:"workflow_id"`
+	WorkflowVersion         WorkflowVersion         `json:"workflow_version"`
+	WorkflowMode            WorkflowMode            `json:"workflow_mode"`
+	ReviewPolicy            ReviewPolicy            `json:"review_policy"`
+	WorkflowSelectionSource WorkflowSelectionSource `json:"workflow_selection_source"`
+	BeadID                  *BeadID                 `json:"bead_id,omitempty"`
+	WorkspacePath           string                  `json:"workspace_path"`
+	InputRef                string                  `json:"input_ref"`
+	StartedAt               time.Time               `json:"started_at"`
+	WorkerName              *string                 `json:"worker_name"`
+	WorkerOS                *string                 `json:"worker_os"`
+	QueueID                 *string                 `json:"queue_id,omitempty"`
+	QueueGroupIndex         *int                    `json:"queue_group_index,omitempty"`
 }
 
-// Valid reports whether p is a well-formed RunStartedPayload.
-//
-// Rules per event-model.md §8.1.1 and execution-model.md §4.3.EM-015a:
-//   - RunID must not be the zero UUID.
-//   - WorkflowID must not be the zero UUID.
-//   - WorkflowVersion must be non-empty.
-//   - BeadID, when non-nil, must dereference to a non-empty value.
-//   - WorkspacePath must be non-empty.
-//   - InputRef must be non-empty.
-//   - WorkflowMode, when non-nil, must be a declared WorkflowMode constant.
+// Descriptor returns the immutable graph identity carried by p.
+func (p RunStartedPayload) Descriptor() WorkflowDescriptor {
+	return WorkflowDescriptor{WorkflowID: p.WorkflowID, WorkflowVersion: p.WorkflowVersion}
+}
+
+// UnmarshalJSON accepts only a complete version-2 start record. Historical
+// version-1 reads belong to the replay compatibility boundary, not this type.
+func (p *RunStartedPayload) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for _, name := range []string{"worker_name", "worker_os"} {
+		if _, ok := fields[name]; !ok {
+			return fmt.Errorf("invalid version-2 run_started payload: missing %s", name)
+		}
+	}
+	type wire RunStartedPayload
+	var decoded wire
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	next := RunStartedPayload(decoded)
+	if !next.Valid() {
+		return fmt.Errorf("invalid version-2 run_started payload")
+	}
+	*p = next
+	return nil
+}
+
+// Valid reports whether p is a complete version-2 start record.
 func (p RunStartedPayload) Valid() bool {
-	if uuid.UUID(p.RunID) == uuid.Nil {
+	if uuid.UUID(p.RunID) == uuid.Nil || !p.Descriptor().Valid() {
 		return false
 	}
-	if uuid.UUID(p.WorkflowID) == uuid.Nil {
+	if p.WorkflowMode != WorkflowModeDot || !p.ReviewPolicy.Valid() || !p.WorkflowSelectionSource.Valid() {
 		return false
 	}
-	if p.WorkflowVersion == "" {
+	if !validRunStartedPolicyBinding(p.Descriptor(), p.ReviewPolicy, p.WorkflowSelectionSource) {
 		return false
 	}
 	if p.BeadID != nil && *p.BeadID == "" {
 		return false
 	}
-	if p.WorkspacePath == "" {
+	if p.WorkspacePath == "" || p.InputRef == "" || p.StartedAt.IsZero() {
 		return false
 	}
-	if p.InputRef == "" {
-		return false
-	}
-	if p.WorkflowMode != nil && !p.WorkflowMode.Valid() {
+	if (p.QueueID == nil) != (p.QueueGroupIndex == nil) || (p.QueueGroupIndex != nil && *p.QueueGroupIndex < 0) {
 		return false
 	}
 	return true
+}
+
+func validRunStartedPolicyBinding(d WorkflowDescriptor, policy ReviewPolicy, source WorkflowSelectionSource) bool {
+	noReviewDescriptor := d.WorkflowID == WorkflowID("no-review-bead") && d.WorkflowVersion == WorkflowVersion("1.0")
+	legacySource := source == WorkflowSelectionLegacySingleLabel || source == WorkflowSelectionQueueItemSingleMode
+	if policy == ReviewPolicyNoReview {
+		return noReviewDescriptor && legacySource
+	}
+	return policy == ReviewPolicyReviewed && !(noReviewDescriptor && legacySource)
 }

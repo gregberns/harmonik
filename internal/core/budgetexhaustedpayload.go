@@ -46,7 +46,7 @@ func (b BudgetExhaustedPayload) Valid() bool {
 	if b.RunID == RunID(uuid.Nil) {
 		return false
 	}
-	if b.WorkflowID == WorkflowID(uuid.Nil) {
+	if !b.WorkflowID.Valid() {
 		return false
 	}
 	if b.BudgetSeconds < 0 {

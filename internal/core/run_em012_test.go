@@ -54,7 +54,7 @@ func runFixtureMinimalRun(t *testing.T) Run {
 	t.Helper()
 	return Run{
 		RunID:           RunID(uuid.Must(uuid.NewV7())),
-		WorkflowID:      WorkflowID(uuid.Must(uuid.NewV7())),
+		WorkflowID:      mustParseWorkflowID(t, uuid.Must(uuid.NewV7()).String()),
 		WorkflowVersion: WorkflowVersion("1.0.0"),
 		Input:           WorkspaceRef("workspace://project/fixture-input"),
 		WorkflowMode:    WorkflowModeSingle,
@@ -75,7 +75,7 @@ func runFixtureTerminalRun(t *testing.T) Run {
 	beadID := BeadID("bead-em012-terminal")
 	return Run{
 		RunID:           RunID(uuid.Must(uuid.NewV7())),
-		WorkflowID:      WorkflowID(uuid.Must(uuid.NewV7())),
+		WorkflowID:      mustParseWorkflowID(t, uuid.Must(uuid.NewV7()).String()),
 		WorkflowVersion: WorkflowVersion("2.3.1"),
 		Input:           WorkspaceRef("workspace://project/terminal-input"),
 		WorkflowMode:    WorkflowModeSingle,
@@ -312,7 +312,7 @@ func TestRunEM012_RunCarriesExactlyOneWorkflowID(t *testing.T) {
 	r := runFixtureMinimalRun(t)
 
 	// A non-zero WorkflowID is required.
-	if uuid.UUID(r.WorkflowID) == uuid.Nil {
+	if !r.WorkflowID.Valid() {
 		t.Error("EM-012: runFixtureMinimalRun returned a zero WorkflowID; fixture must assign a non-zero WorkflowID")
 	}
 	if !r.Valid() {
@@ -320,7 +320,7 @@ func TestRunEM012_RunCarriesExactlyOneWorkflowID(t *testing.T) {
 	}
 
 	// Zero WorkflowID → invalid: the singleton is unset.
-	r.WorkflowID = WorkflowID(uuid.Nil)
+	r.WorkflowID = WorkflowID("")
 	if r.Valid() {
 		t.Error("EM-012: Run.Valid() = true with zero WorkflowID, want false (singleton workflow must be set)")
 	}
@@ -433,7 +433,7 @@ func runFixtureWMRun(t *testing.T, mode WorkflowMode) Run {
 	t.Helper()
 	return Run{
 		RunID:           RunID(uuid.Must(uuid.NewV7())),
-		WorkflowID:      WorkflowID(uuid.Must(uuid.NewV7())),
+		WorkflowID:      mustParseWorkflowID(t, uuid.Must(uuid.NewV7()).String()),
 		WorkflowVersion: WorkflowVersion("1.0.0"),
 		Input:           WorkspaceRef("workspace://project/wm-input"),
 		WorkflowMode:    mode,

@@ -133,8 +133,7 @@ func runFixtureEm012SpecContent(t *testing.T) string {
 //
 // Required canonical identifiers (removal or renaming is a breaking change):
 //   - "run_id"            — stable run identifier
-//   - "workflow_id"       — resolved workflow
-//   - "workflow_version"  — pinned version at dispatch time
+//   - "WorkflowDescriptor" — resolved workflow identity and pinned version
 //   - "input"             — workspace reference (NOT inline payload)
 //   - "workflow_mode"     — dispatch shape; resolved at claim time; defaults to single
 //   - "state"             — current run state
@@ -153,8 +152,7 @@ func TestRunEM012_SpecContainsRequiredFields(t *testing.T) {
 		hint string
 	}{
 		{"run_id", "EM-012 must name run_id as the stable run identifier"},
-		{"workflow_id", "EM-012 must name workflow_id (the resolved workflow)"},
-		{"workflow_version", "EM-012 must name workflow_version (pinned at dispatch)"},
+		{"WorkflowDescriptor", "EM-012 must name the resolved workflow descriptor"},
 		{"input", "EM-012 must name input (workspace reference)"},
 		{"workflow_mode", "EM-012 must name workflow_mode (dispatch shape; resolved at claim time; defaults to single)"},
 		{"state", "EM-012 must name state (current run state)"},

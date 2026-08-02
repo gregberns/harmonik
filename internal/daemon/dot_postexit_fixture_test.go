@@ -323,7 +323,7 @@ func runDotFixtureBead(t *testing.T, beadID core.BeadID, opts dotFixtureOpts) do
 	ledger := &dotFixtureLedger{stubBeadLedger: &stubBeadLedger{}, description: opts.BeadDescription, labels: opts.BeadLabels}
 	bus := &stubEventCollector{}
 
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:         ledger,
 		AllowedRepos:      opts.AllowedRepos,
 		ProjectCfg:        opts.ProjectCfg,

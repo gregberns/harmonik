@@ -240,7 +240,7 @@ func TestTunnelPort_ARemoteRunGivesItsPortReservationBackWhenItEnds(t *testing.T
 	params.WorkerRegistry = workerReg
 	params.WorktreeFactory = worktreeFactory
 	params.LaunchSpecBuilder = claude.BuildLaunchSpec
-	deps := ExportedWorkLoopDeps(params)
+	deps := ExportedTestRuntime(params)
 
 	env := remotefixRunEnv(deps, remotefixBead("hk-portlease-ordinary", "tunnel port give-back probe"))
 
@@ -321,7 +321,7 @@ func TestTunnelPort_ARunRefusedAtTheReadinessGateStillGivesItsPortBack(t *testin
 	params.AdapterRegistry2 = runplanacqSealedRegistry(t)
 	params.WorkerRegistry = workerReg
 	params.WorktreeFactory = worktreeFactory
-	deps := ExportedWorkLoopDeps(params)
+	deps := ExportedTestRuntime(params)
 
 	bead := remotefixBead("hk-portlease-readiness", "readiness-gate refusal port probe")
 	env := remotefixRunEnv(deps, bead)
@@ -393,7 +393,7 @@ func TestTunnelPort_ARunRefusedForItsSocketPathStillGivesItsPortBack(t *testing.
 	params.AdapterRegistry2 = runplanacqSealedRegistry(t)
 	params.WorkerRegistry = workerReg
 	params.WorktreeFactory = worktreeFactory
-	deps := ExportedWorkLoopDeps(params)
+	deps := ExportedTestRuntime(params)
 
 	bead := remotefixBead("hk-portlease-sockpath", "socket-path refusal port probe")
 	env := remotefixRunEnv(deps, bead)

@@ -1,8 +1,8 @@
 package daemon
 
-// export_workloopdeps_test.go — workLoopDeps test-seam constructors for internal/daemon.
+// export_workloopdeps_test.go — testRuntime test-seam constructors for internal/daemon.
 //
-// Split out of export_test.go (RT19.1) so the five workLoopDeps shims that form
+// Split out of export_test.go (RT19.1) so the five testRuntime shims that form
 // RT15's entire future edit surface live in one bounded file: 157 daemon_test
 // files reference them, so isolating them means RT15 later edits this ~560-line
 // file rather than the 2,895-line export_test.go. Same package (daemon), so all
@@ -12,6 +12,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,12 +29,13 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
+	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/workers"
 )
 
-// WorkLoopDepsParams carries the parameters for ExportedWorkLoopDeps so callers
+// TestRuntimeParams carries the parameters for ExportedTestRuntime so callers
 // can supply only the fields they care about; zero values use safe defaults.
-type WorkLoopDepsParams struct {
+type TestRuntimeParams struct {
 	// BrAdapter is the stub bead ledger.  Required.
 	BrAdapter beadLedger
 
@@ -54,19 +56,19 @@ type WorkLoopDepsParams struct {
 
 	// WorkflowModeDefault is the daemon-level default workflow mode per
 	// PL-004a.  Zero value is normalised to WorkflowModeSingle in
-	// ExportedWorkLoopDeps, mirroring daemon.Start step 0 behaviour.
+	// ExportedTestRuntime, mirroring daemon.Start step 0 behaviour.
 	//
 	// Bead ref: hk-7om2q.8.
 	WorkflowModeDefault core.WorkflowMode
 
 	// MaxConcurrent is the ceiling on simultaneously in-flight bead goroutines.
 	// Zero value is normalised to 1 (single-threaded default) mirroring
-	// newWorkLoopDeps behaviour. Set to >1 to exercise concurrent dispatch in
+	// newTestRuntime behaviour. Set to >1 to exercise concurrent dispatch in
 	// tests (hk-e61c3.2).
 	MaxConcurrent int
 
 	// RunRegistry is the in-flight run registry for the work loop. When nil,
-	// ExportedWorkLoopDeps creates a fresh NewRunRegistry(). Supply an explicit
+	// ExportedTestRuntime creates a fresh NewRunRegistry(). Supply an explicit
 	// registry when the test needs to inspect or control it directly.
 	//
 	// Bead ref: hk-e61c3.2.
@@ -74,7 +76,7 @@ type WorkLoopDepsParams struct {
 
 	// AdapterRegistry is the sealed adapter registry forwarded into
 	// handler.NewHandler as a latent seam (hk-gql20.16). When nil,
-	// ExportedWorkLoopDeps creates a fresh empty registry — tests do not
+	// ExportedTestRuntime creates a fresh empty registry — tests do not
 	// need adapters registered because Launch does not consult the registry.
 	AdapterRegistry *handlercontract.AdapterRegistry
 
@@ -82,7 +84,7 @@ type WorkLoopDepsParams struct {
 	// RegisterHookSession / CloseHookSession / WaitForOutcome calls (hk-gql20.21,
 	// hk-kqdpf.1).
 	//
-	// When nil, ExportedWorkLoopDeps installs a real hookSessionStore (via
+	// When nil, ExportedTestRuntime installs a real hookSessionStore (via
 	// newHookSessionStore). Shell-fixture tests whose handlers exit without a
 	// real Stop-hook relay will hit the 3-second stopHookGrace window in
 	// waitWithSocketGrace before proceeding on exit code.
@@ -138,9 +140,9 @@ type WorkLoopDepsParams struct {
 	// Bead ref: hk-bfvk7.
 	ProjectCfg projectconfig.ProjectConfig
 
-	// HarnessRegistry, when non-nil, is forwarded into workLoopDeps.harnessRegistry
+	// HarnessRegistry, when non-nil, is forwarded into testRuntime.harnessRegistry
 	// as the per-agent-type Harness route table. When nil, harnessRegistry is left
-	// nil in workLoopDeps — the completion-mode check defaults to
+	// nil in testRuntime — the completion-mode check defaults to
 	// CompletionEventStreamThenQuit (backward-compat: waitAgentReady always runs).
 	//
 	// Supply a non-nil value to exercise the hk-f6g7 ProcessExit-skips-waitAgentReady
@@ -237,7 +239,7 @@ type WorkLoopDepsParams struct {
 
 	// StrandedResetDaemonNS is the daemon-session epoch threaded into ResetBead
 	// idempotency keys when StrandedInProgressResetter is set (hk-l2xd1).
-	// Zero is valid (becomes the epoch at ExportedWorkLoopDeps call time in
+	// Zero is valid (becomes the epoch at ExportedTestRuntime call time in
 	// production; tests that check the idempotency key shape set this explicitly).
 	//
 	// Bead ref: hk-l2xd1.
@@ -273,7 +275,7 @@ type WorkLoopDepsParams struct {
 	ConcurrencyCtrl *ConcurrencyController
 
 	// TargetBranch is the branch merged into by lockedMergeRunBranchToMain.
-	// Empty string is normalised to "main" (same as newWorkLoopDeps).
+	// Empty string is normalised to "main" (same as newTestRuntime).
 	//
 	// Bead ref: hk-6r6xv.
 	TargetBranch string
@@ -301,13 +303,13 @@ type WorkLoopDepsParams struct {
 	// WorktreeCreateMu, when non-nil, is threaded into WorktreeRootConfig for
 	// remote bead runs so that workspace.CreateWorktree serialises the
 	// git-worktree-add + HEAD-resolve retry loop (hk-5qp7z). When nil,
-	// ExportedWorkLoopDeps installs a fresh mutex (mirrors production default).
+	// ExportedTestRuntime installs a fresh mutex (mirrors production default).
 	WorktreeCreateMu *sync.Mutex
 
 	// AgentSpawnSem, when non-nil, is the cold-start spawn semaphore (ONE per
 	// daemon; per-worker only because v1 admits a single worker)
 	// (cap 3) that bounds concurrent remote claude cold-starts (hk-5z1f0). When
-	// nil, ExportedWorkLoopDeps installs a fresh cap-3 channel (production default).
+	// nil, ExportedTestRuntime installs a fresh cap-3 channel (production default).
 	AgentSpawnSem chan struct{}
 
 	// WorkerRegistry, when non-nil, enables the DD1 remote code-sync path in
@@ -322,7 +324,7 @@ type WorkLoopDepsParams struct {
 	BrPath string
 
 	// SpawnSubstrateReadyCh, when non-nil, is forwarded to
-	// workLoopDeps.spawnSubstrateReadyCh so tests can assert that dispatch is
+	// testRuntime.spawnSubstrateReadyCh so tests can assert that dispatch is
 	// gated on spawn-substrate readiness after a simulated restart-backoff boot
 	// (hk-bk33). When nil the gate is disabled (safe default for tests that do
 	// not exercise this path).
@@ -338,7 +340,7 @@ type WorkLoopDepsParams struct {
 	// Bead ref: hk-xfuc.
 	AllowedRepos []string
 
-	// Runner, when non-nil, is threaded into workLoopDeps.runner and used as the
+	// Runner, when non-nil, is threaded into testRuntime.runner and used as the
 	// fallback dotRunner on the DOT run path when no remote worker is selected
 	// (hk-hd2w6). Inject a *tmuxPkg.RecordingRunner to capture Command calls in
 	// the contract test.
@@ -352,10 +354,10 @@ type WorkLoopDepsParams struct {
 	DefaultHarness core.AgentType
 }
 
-// ExportedWorkLoopDeps constructs a workLoopDeps from the supplied params and
+// ExportedTestRuntime constructs a testRuntime from the supplied params and
 // a real handler.Handler bound to the provided bus.  Use in tests to bypass
-// newWorkLoopDeps (which requires a real br binary).
-func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
+// newTestRuntime (which requires a real br binary).
+func ExportedTestRuntime(p TestRuntimeParams) testRuntime {
 	binary := p.HandlerBinary
 	if binary == "" {
 		binary = "claude"
@@ -392,7 +394,7 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 	}
 
 	// LaunchSpecBuilder and WorktreeFactory: pass the caller-supplied value
-	// (which may be nil) directly to workLoopDeps. When nil, beadRunOne uses
+	// (which may be nil) directly to testRuntime. When nil, beadRunOne uses
 	// the production nil-guards to wire buildClaudeLaunchSpec and
 	// productionWorktreeFactory respectively (hk-ngw3d).
 	lsb := p.LaunchSpecBuilder
@@ -403,13 +405,13 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 	// race on refs/heads/main (hk-4f5ua); single-bead tests leave it nil.
 	mergeQ := p.MergeQueue
 
-	// WorktreeCreateMu: default to a fresh mutex (mirrors newWorkLoopDeps, hk-5qp7z).
+	// WorktreeCreateMu: default to a fresh mutex (mirrors newTestRuntime, hk-5qp7z).
 	worktreeCreateMu := p.WorktreeCreateMu
 	if worktreeCreateMu == nil {
 		worktreeCreateMu = &sync.Mutex{}
 	}
 
-	// AgentSpawnSem: default to a fresh cap-3 semaphore (mirrors newWorkLoopDeps, hk-5z1f0).
+	// AgentSpawnSem: default to a fresh cap-3 semaphore (mirrors newTestRuntime, hk-5z1f0).
 	agentSpawnSem := p.AgentSpawnSem
 	if agentSpawnSem == nil {
 		agentSpawnSem = make(chan struct{}, 3)
@@ -423,51 +425,47 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		submitWakeC = p.QueueStore.WakeCh()
 	}
 
-	return workLoopDeps{
-		brAdapter:               p.BrAdapter,
-		bus:                     p.Bus,
-		intentLogDir:            p.IntentLogDir,
-		projectDir:              p.ProjectDir,
-		handlerBinary:           binary,
-		handlerArgs:             p.HandlerArgs,
-		handlerEnv:              nil,
-		brTimeoutCfg:            brcli.TimeoutConfig{},
-		tidGen:                  core.NewTransitionIDGenerator(),
-		workflowModeDefault:     wmd,
-		runRegistry:             reg,
-		testCapacity:            newCapacityPort(maxConcurrent, p.ConcurrencyCtrl),
-		cpRegistry:              p.CPRegistry, // hk-karlz: ControlPoint registry for gate-node dispatch
-		hookStore:               hookStore,
-		launchSpecBuilder:       lsb,
-		worktreeFactory:         wtf,
-		adapterRegistry:         p.AdapterRegistry2,
-		harnessRegistry:         p.HarnessRegistry, // hk-f6g7: ProcessExit completion-mode check
-		substrate:               p.Substrate,
-		agentReadyTimeout:       p.AgentReadyTimeout,
-		remoteAgentReadyTimeout: p.RemoteAgentReadyTimeout,
-		projectCfg:              p.ProjectCfg,
-		queueStore:              p.QueueStore,
-		testQueueSurface:        newQueueSurfacePort(submitWakeC, p.QueueLedger),
-		testDispatchGates:       newDispatchGatesPort(p.Bus, p.HandlerPauseController, p.OperatorPauseCtrl, p.DecisionBlocker),
-		testNoAutoPull:          p.NoAutoPull,
-		localInFlight:           new(atomic.Int32), // hk-hs7ex: split gate — fresh counter for each test
-		skipBrHistoryRotation:   true,              // hk-hypbi: tests use temp dirs without real .br_history
-		targetBranch:            bootconfig.ResolveTargetBranch(p.TargetBranch),
-		protectBranches:         p.ProtectBranches,
-		mergeQ:                  mergeQ,
-		worktreeCreateMu:        worktreeCreateMu,
-		agentSpawnSem:           agentSpawnSem,                  // hk-5z1f0: cold-start spawn semaphore (one per daemon)
-		emittedEpics:            make(map[core.BeadID]struct{}), // hk-w6y70: fresh per-test guard
-		emittedEpicsMu:          &sync.Mutex{},
-		workerRegistry:          p.WorkerRegistry, // hk-rs-b8-codesync-3fk0: nil → local run (no SSH steps)
-		brPath:                  p.BrPath,         // hk-f722: staged-bead generator; empty → disabled
-		allowedRepos:            p.AllowedRepos,   // hk-xfuc: cross-repo dispatch safelist
-		runner:                  p.Runner,         // hk-hd2w6: Config.Runner injection seam
-		defaultHarness:          p.DefaultHarness, // hk-ytzj2: tier-4 global harness default
-	}
+	env := runloop.RunEnv{ProjectDir: p.ProjectDir, TargetBranch: bootconfig.ResolveTargetBranch(p.TargetBranch), BrPath: p.BrPath, ProtectBranches: p.ProtectBranches, AllowedRepos: p.AllowedRepos, WorkflowModeDefault: wmd, DefaultHarness: p.DefaultHarness, ProjectCfg: p.ProjectCfg, HandlerBinary: binary, HandlerArgs: p.HandlerArgs, IntentLogDir: p.IntentLogDir, AgentReadyTimeout: p.AgentReadyTimeout, RemoteAgentReadyTimeout: p.RemoteAgentReadyTimeout, BrTimeoutCfg: brcli.TimeoutConfig{}}
+	ports := newStaticRunPorts(p.BrAdapter, p.Bus, env.IntentLogDir, env.BrTimeoutCfg, env.ProjectDir, true, mergeQ, p.CPRegistry, nil)
+	handles := newSharedHandles(reg, new(atomic.Int32), agentSpawnSem, p.WorkerRegistry, p.QueueStore, env.ProjectDir, p.HarnessRegistry, p.AdapterRegistry2, hookStore, p.Substrate, nil, core.NewTransitionIDGenerator(), make(map[core.BeadID]struct{}), &sync.Mutex{}, p.BrAdapter, p.Runner, wtf, worktreeCreateMu)
+	return testRuntime{env: env, ports: ports, handles: handles, ledger: p.BrAdapter, queueStore: p.QueueStore, runRegistry: reg, substratePort: p.Substrate, mergeQueue: mergeQ, launchBuilder: lsb, capacity: newCapacityPort(maxConcurrent, p.ConcurrencyCtrl), queueSurface: newQueueSurfacePort(submitWakeC, p.QueueLedger), dispatchGates: newDispatchGatesPort(p.Bus, p.HandlerPauseController, p.OperatorPauseCtrl, p.DecisionBlocker), noAutoPull: p.NoAutoPull}
 }
 
-func testLoopLifecyclePort(p WorkLoopDepsParams) loopLifecyclePort {
+// newTestRuntime builds the same typed test edge as the public fixture while
+// retaining the production constructor's input checks for tests that need them.
+func newTestRuntime(_ context.Context, cfg Config, bus handlercontract.EventEmitter, workflowModeDefault core.WorkflowMode, registry *handlercontract.AdapterRegistry, store hookStoreIface) (testRuntime, error) {
+	if cfg.BrPath == "" {
+		return testRuntime{}, fmt.Errorf("daemon: newTestRuntime: Config.BrPath is empty")
+	}
+	if cfg.ProjectDir == "" {
+		return testRuntime{}, fmt.Errorf("daemon: newTestRuntime: Config.ProjectDir is empty")
+	}
+	if registry == nil {
+		return testRuntime{}, fmt.Errorf("daemon: newTestRuntime: adapterRegistry is nil")
+	}
+	adapter, err := brcli.NewForProject(cfg.BrPath, cfg.ProjectDir)
+	if err != nil {
+		return testRuntime{}, fmt.Errorf("daemon: newTestRuntime: brcli.NewForProject: %w", err)
+	}
+	return ExportedTestRuntime(TestRuntimeParams{
+		BrAdapter:           adapter,
+		Bus:                 bus,
+		ProjectDir:          cfg.ProjectDir,
+		HandlerBinary:       cfg.HandlerBinary,
+		HandlerArgs:         cfg.HandlerArgs,
+		IntentLogDir:        lifecycle.BeadsIntentsDir(cfg.ProjectDir),
+		WorkflowModeDefault: workflowModeDefault,
+		AdapterRegistry2:    registry,
+		HookStore:           store,
+		ProjectCfg:          cfg.ProjectCfg,
+		Substrate:           cfg.Substrate,
+		BrPath:              cfg.BrPath,
+		TargetBranch:        cfg.TargetBranch,
+		DefaultHarness:      cfg.DefaultHarness,
+	}), nil
+}
+
+func testLoopLifecyclePort(p TestRuntimeParams) loopLifecyclePort {
 	return loopLifecyclePort{
 		cancelOnQueueDrain:    p.CancelOnQueueDrain,
 		cancelOnQueueExit:     p.CancelOnQueueExit,
@@ -476,7 +474,7 @@ func testLoopLifecyclePort(p WorkLoopDepsParams) loopLifecyclePort {
 	}
 }
 
-func testLedgerRepairPort(p WorkLoopDepsParams) ledgerRepairPort {
+func testLedgerRepairPort(p TestRuntimeParams) ledgerRepairPort {
 	return ledgerRepairPort{
 		staleBlockerCloser:         p.StaleBlockerCloser,
 		strandedInProgressResetter: p.StrandedInProgressResetter,
@@ -485,26 +483,26 @@ func testLedgerRepairPort(p WorkLoopDepsParams) ledgerRepairPort {
 	}
 }
 
-// ExportedWorkLoopDepsPtr returns a pointer to a workLoopDeps so tests can
+// ExportedTestRuntimePtr returns a pointer to a testRuntime so tests can
 // mutate an injected loop dependency after construction. Callers must not pass
 // the pointer to ExportedRunWorkLoop (the loop takes the struct by value).
 //
 // Bead ref: hk-guez.
-func ExportedWorkLoopDepsPtr(p WorkLoopDepsParams) *workLoopDeps {
-	d := ExportedWorkLoopDeps(p)
+func ExportedTestRuntimePtr(p TestRuntimeParams) *testRuntime {
+	d := ExportedTestRuntime(p)
 	return &d
 }
 
-// WorkLoopDepsWithProjectCfg returns a copy of params with ProjectCfg set to cfg.
+// RuntimeParamsWithProjectCfg returns a copy of params with ProjectCfg set to cfg.
 // Used by integration tests to inject a non-zero ProjectConfig into the work loop.
 //
 // Bead ref: hk-bfvk7.
-func WorkLoopDepsWithProjectCfg(p WorkLoopDepsParams, cfg projectconfig.ProjectConfig) WorkLoopDepsParams {
+func RuntimeParamsWithProjectCfg(p TestRuntimeParams, cfg projectconfig.ProjectConfig) TestRuntimeParams {
 	p.ProjectCfg = cfg
 	return p
 }
 
-// ExportedNewWorkLoopDepsWithStore exposes newWorkLoopDeps for tests in package
+// ExportedNewTestRuntimeWithStore exposes newTestRuntime for tests in package
 // daemon_test. The hookStore parameter is typed as *hookSessionStore (an exported
 // concrete type via HookSessionStoreExported alias) so that callers in daemon_test
 // can pass daemon.ExportedNewHookSessionStore() without naming the unexported
@@ -514,6 +512,6 @@ func WorkLoopDepsWithProjectCfg(p WorkLoopDepsParams, cfg projectconfig.ProjectC
 // should use exec.LookPath("br") to guard.
 //
 // Bead ref: hk-nvrvp.
-func ExportedNewWorkLoopDepsWithStore(cfg Config, bus handlercontract.EventEmitter, workflowModeDefault core.WorkflowMode, registry *handlercontract.AdapterRegistry, store *hookSessionStore) (workLoopDeps, error) {
-	return newWorkLoopDeps(context.Background(), cfg, bus, workflowModeDefault, registry, store)
+func ExportedNewTestRuntimeWithStore(cfg Config, bus handlercontract.EventEmitter, workflowModeDefault core.WorkflowMode, registry *handlercontract.AdapterRegistry, store *hookSessionStore) (testRuntime, error) {
+	return newTestRuntime(context.Background(), cfg, bus, workflowModeDefault, registry, store)
 }

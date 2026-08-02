@@ -134,7 +134,7 @@ func runGateEfficacyWorkLoop(t *testing.T, beadID core.BeadID, scenarioBody stri
 	ledger = &stubBeadLedger{ready: []core.BeadID{beadID}}
 	collector = &stubEventCollector{}
 
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
 		ProjectDir:       projectDir,

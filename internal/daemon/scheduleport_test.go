@@ -14,7 +14,7 @@ func TestSchedulePort_SharesLoadedStoreWithQuiesceArbiter(t *testing.T) {
 	if err := store.Load(); err != nil {
 		t.Fatalf("load store: %v", err)
 	}
-	port := newSchedulePort(workLoopDeps{projectDir: t.TempDir()}, store, nil)
+	port := newSchedulePort("", t.TempDir(), nil, store, nil)
 	arbiter := &QuiesceArbiter{}
 	arbiter.SetScheduleStore(port.store)
 

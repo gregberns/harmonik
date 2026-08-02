@@ -80,7 +80,7 @@ func TestOperatorPause_BrReadyPath_HoldOnPaused(t *testing.T) {
 		t.Fatalf("HandleOperatorPause: %v", err)
 	}
 
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:         ledger,
 		Bus:               bus,
 		ProjectDir:        projectDir,

@@ -163,7 +163,7 @@ func TestRunFailed_BeadResetToOpen_s20z(t *testing.T) {
 	ledger := newRfs20zLedger_s20z(beadID)
 	collector := &stubEventCollector{}
 
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:           ledger,
 		Bus:                 collector,
 		ProjectDir:          projectDir,

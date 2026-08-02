@@ -29,7 +29,7 @@ package daemon_test
 // The tier-4 fallback fires when `deps.workflowModeDefault` is invalid/absent.
 // In production, daemon.Start REQUIRES a valid WorkflowModeDefault (line 659 of
 // start.go); the tier-4 path in resolveWorkflowMode is a defensive safety net.
-// ExportedWorkLoopDeps normalises a zero WorkflowModeDefault to WorkflowModeSingle
+// ExportedTestRuntime normalises a zero WorkflowModeDefault to WorkflowModeSingle
 // (mirroring the historical test-seam behaviour); to exercise tier-4 we call
 // ExportedResolveWorkflowMode directly with an empty daemonDefault.
 //
@@ -384,7 +384,7 @@ func TestScenario_EM012a_StandardBeadDotHappyPath(t *testing.T) {
 
 	collector := &stubEventCollector{}
 	ledger := &stubBeadLedger{}
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:           ledger,
 		Bus:                 collector,
 		ProjectDir:          projectDir,

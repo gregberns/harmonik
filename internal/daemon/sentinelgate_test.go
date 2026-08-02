@@ -10,7 +10,7 @@ package daemon_test
 // constraint was a declared gap for one reason only. The gate is
 // m.sentinelBlocksDispatch, which delegates to movementGovernor.dispatchBlocked,
 // which returns false on a nil governor. The test seam passes a governor port
-// separately from workLoopDeps, so tests can build a loop in which this gate
+// separately from testRuntime, so tests can build a loop in which this gate
 // can fire without restoring a nil-state OFF model.
 //
 // # Why these tests need no ACT mode and no crew spawn
@@ -132,7 +132,7 @@ func TestSentinelGate_QueuePathHoldsWhileTheGovernorTripIsPending(t *testing.T) 
 		// reclaim or `go clean -cache` subprocesses that would touch this machine.
 		var tickMu sync.Mutex
 		tickCount := 0
-		deps := daemon.ExportedWorkLoopDeps(params)
+		deps := daemon.ExportedTestRuntime(params)
 		diskReclaim := daemon.ExportedDiskReclaimPortForTesting(deps, time.Nanosecond,
 			func(string) (uint64, error) {
 				tickMu.Lock()
@@ -259,7 +259,7 @@ func TestSentinelGate_ReadyPathHoldsWhileTheGovernorTripIsPending(t *testing.T) 
 		// Per-tick witness, same shape as the queue-path test above.
 		var tickMu sync.Mutex
 		tickCount := 0
-		deps := daemon.ExportedWorkLoopDeps(params)
+		deps := daemon.ExportedTestRuntime(params)
 		diskReclaim := daemon.ExportedDiskReclaimPortForTesting(deps, time.Nanosecond,
 			func(string) (uint64, error) {
 				tickMu.Lock()
@@ -404,7 +404,7 @@ func TestSentinelGate_GovernorTickArmsTheTripBeforeTheGateReadsIt(t *testing.T) 
 		params.BrAdapter = ledger
 		params.DecisionBlocker = blocker
 		governorState := sentinelGateGovernorState()
-		deps := daemon.ExportedWorkLoopDeps(params)
+		deps := daemon.ExportedTestRuntime(params)
 
 		var snapshot *queue.Queue
 		runAdmissionLoop(t, qs,

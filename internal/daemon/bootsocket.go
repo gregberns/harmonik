@@ -114,7 +114,7 @@ func (bs *bootState) registerAdaptersAndHookStore() error {
 	bs.handlerPauseCtrl.SetAdapter(claudeCodeAdapter)
 
 	// Hook-session store (hk-gql20.21): forwarded to RunSocketListener and into
-	// workLoopDeps. The pure session-store state machine lives in internal/hook;
+	// legacy aggregate. The pure session-store state machine lives in internal/hook;
 	// newDaemonHookStore composes it with the bus emitter used by the rate-limit
 	// routing path (hk-lqtzq). bus.Seal has run, so the emitter is used for Emit
 	// (delivery, not subscription), which is valid post-Seal.

@@ -420,11 +420,11 @@ func admissionParkedItem(id core.BeadID) queue.Item {
 //
 // NoAutoPull is left to the caller: the queue-path tests set it so the br-ready
 // fallback cannot supply dispatch input, and the br-ready test clears it.
-func admissionDeps(t *testing.T, ledger *admissionLedger, qs *queuewiring.QueueStore, qLedger queue.BeadLedger, noAutoPull bool, pause *daemon.HandlerPauseController) daemon.WorkLoopDepsParams {
+func admissionDeps(t *testing.T, ledger *admissionLedger, qs *queuewiring.QueueStore, qLedger queue.BeadLedger, noAutoPull bool, pause *daemon.HandlerPauseController) daemon.TestRuntimeParams {
 	t.Helper()
 	projectDir, _ := workloopFixtureProjectDir(t)
 	workloopFixtureGitRepo(t, projectDir)
-	return daemon.WorkLoopDepsParams{
+	return daemon.TestRuntimeParams{
 		BrAdapter:              ledger,
 		Bus:                    &stubEventCollector{},
 		ProjectDir:             projectDir,
@@ -446,7 +446,7 @@ func admissionDeps(t *testing.T, ledger *admissionLedger, qs *queuewiring.QueueS
 // moves active queues to cancelled and clears the in-memory store, which erases
 // exactly the state these tests read.
 //
-// runLoop is a closure rather than a deps argument because workLoopDeps is
+// runLoop is a closure rather than a deps argument because testRuntime is
 // unexported, so no helper outside package daemon can name it in a signature.
 func runAdmissionLoop(t *testing.T, qs *queuewiring.QueueStore, runLoop func(context.Context), inspect func()) {
 	t.Helper()
@@ -498,7 +498,7 @@ func TestAdmissionOrder_DiskLowLatchSkipsClaim(t *testing.T) {
 	ledger := newAdmissionLedger()
 	qs := daemon.ExportedNewQueueStore()
 	qs.SetQueue(admissionQueue("main", queue.Item{BeadID: beadID, Status: queue.ItemStatusPending}))
-	deps := daemon.ExportedWorkLoopDeps(admissionDeps(t, ledger, qs, &admissionQueueLedger{}, true, nil))
+	deps := daemon.ExportedTestRuntime(admissionDeps(t, ledger, qs, &admissionQueueLedger{}, true, nil))
 
 	var callsMu sync.Mutex
 	probeCalls := 0
@@ -649,7 +649,7 @@ func TestAdmissionOrder_CooldownRunsBeforePreClaimShowBead(t *testing.T) {
 		params := admissionDeps(t, ledger, qs, qLedger, true, nil)
 		params.RunRegistry = reg
 		params.StrandedInProgressResetter = resetter
-		deps := daemon.ExportedWorkLoopDeps(params)
+		deps := daemon.ExportedTestRuntime(params)
 		diskReclaim := daemon.ExportedDiskReclaimPortForTesting(deps, time.Nanosecond,
 			func(string) (uint64, error) {
 				tickMu.Lock()
@@ -759,7 +759,7 @@ func TestAdmissionOrder_GreenlightRunsAfterPreClaimShowBead(t *testing.T) {
 			queue.Item{BeadID: beadID, Status: queue.ItemStatusPending},
 			admissionParkedItem(parkedID),
 		))
-		deps := daemon.ExportedWorkLoopDeps(admissionDeps(t, ledger, qs, &admissionQueueLedger{}, true, nil))
+		deps := daemon.ExportedTestRuntime(admissionDeps(t, ledger, qs, &admissionQueueLedger{}, true, nil))
 
 		var snapshot *queue.Queue
 		runAdmissionLoop(t, qs,
@@ -870,7 +870,7 @@ func TestAdmissionOrder_CrossQueueDedupPrecedesTheClaim(t *testing.T) {
 	qs.SetQueue(alpha)
 	qs.SetQueue(beta)
 
-	deps := daemon.ExportedWorkLoopDeps(admissionDeps(t, ledger, qs, &admissionQueueLedger{}, true, nil))
+	deps := daemon.ExportedTestRuntime(admissionDeps(t, ledger, qs, &admissionQueueLedger{}, true, nil))
 
 	var betaSnapshot, alphaSnapshot *queue.Queue
 	runAdmissionLoop(t, qs,
@@ -954,7 +954,7 @@ func TestAdmissionOrder_AttemptsBoundStaysFusedToTheStamp(t *testing.T) {
 			queue.Item{BeadID: beadID, Status: queue.ItemStatusPending},
 			admissionParkedItem(parkedID),
 		))
-		deps := daemon.ExportedWorkLoopDeps(admissionDeps(t, ledger, qs, &admissionQueueLedger{}, true, nil))
+		deps := daemon.ExportedTestRuntime(admissionDeps(t, ledger, qs, &admissionQueueLedger{}, true, nil))
 
 		var snapshot *queue.Queue
 		runAdmissionLoop(t, qs,
@@ -1078,7 +1078,7 @@ func TestAdmissionOrder_ReadyPathBoundsAttemptsBeforeHandlerPause(t *testing.T) 
 		bus := &stubEventCollector{}
 		params := admissionDeps(t, ledger, qs, &admissionQueueLedger{}, false, pause)
 		params.Bus = bus
-		deps := daemon.ExportedWorkLoopDeps(params)
+		deps := daemon.ExportedTestRuntime(params)
 
 		runAdmissionLoop(t, qs,
 			func(c context.Context) {
@@ -1198,7 +1198,7 @@ func TestAdmissionOrder_TerminalDedupLeavesAWakeTokenPending(t *testing.T) {
 	params := admissionDeps(t, ledger, qs, &admissionQueueLedger{}, true, nil)
 	params.StopDispatchCtx = stopCtx
 	params.CancelOnQueueExit = stopDispatch
-	deps := daemon.ExportedWorkLoopDeps(params)
+	deps := daemon.ExportedTestRuntime(params)
 
 	// The control: empty the wake channel so any token observed at the end was put
 	// there by the run.
@@ -1319,7 +1319,7 @@ func TestAdmissionOrder_LocalCapGuardReadsThePreIncrementCount(t *testing.T) {
 	qLedger := &admissionQueueLedger{}
 	params := admissionDeps(t, ledger, qs, qLedger, true, nil)
 	params.MaxConcurrent = gateMax
-	deps := daemon.ExportedWorkLoopDeps(params)
+	deps := daemon.ExportedTestRuntime(params)
 
 	// One slot below the cap. No worker registry, so the primary split gate at
 	// Step 2 passes on the local branch alone and the secondary local-cap guard is

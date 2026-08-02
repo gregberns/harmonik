@@ -6,7 +6,7 @@ package daemon_test
 // integration-branch productization work (hk-eun55).
 //
 // Most of these tests run a bead through the REAL work loop
-// (daemon.ExportedRunWorkLoop + daemon.ExportedWorkLoopDeps, the same
+// (daemon.ExportedRunWorkLoop + daemon.ExportedTestRuntime, the same
 // composition seam the production dispatch path uses) and assert the
 // load-bearing branch-protection guarantees landed by hk-mkxw1 / hk-6r6xv /
 // hk-ncwb3 / hk-sul12:
@@ -171,7 +171,7 @@ func branchGuardRunBead(
 	ledger := &branchGuardDescribedLedger{mergeToMainRecordingLedger: recording, description: description}
 	collector := &stubEventCollector{}
 
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
 		ProjectDir:       projectDir,

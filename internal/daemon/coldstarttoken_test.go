@@ -9,7 +9,7 @@ package daemon
 // There are TWO spawn tokens in this daemon and they never overlap.
 //
 //   - The COLD-START token, held here. One channel for the whole daemon,
-//     capacity 3, built in newWorkLoopDeps and reached through
+//     capacity 3, built in newTestRuntime and reached through
 //     SharedHandles.AgentSpawnSem. beadRunOne takes one immediately before the
 //     remote agent launch and gives it back as soon as the readiness phase
 //     settles. A LOCAL run never takes one.
@@ -268,7 +268,7 @@ type coldstartOptions struct {
 
 // coldstartRun is one prepared call of beadRunOne.
 type coldstartRun struct {
-	deps        workLoopDeps
+	deps        testRuntime
 	env         runloop.RunEnv
 	preSelected *workers.Worker
 	token       chan struct{}
@@ -332,7 +332,7 @@ func coldstartPrepare(t *testing.T, opt coldstartOptions) *coldstartRun {
 	params.AgentSpawnSem = opt.token
 	params.AgentReadyTimeout = opt.readyTimeout
 	params.RemoteAgentReadyTimeout = opt.readyTimeout
-	deps := ExportedWorkLoopDeps(params)
+	deps := ExportedTestRuntime(params)
 
 	env := remotefixRunEnv(deps, remotefixBead("hk-coldstart-probe", "cold-start token probe"))
 
@@ -384,17 +384,17 @@ func (r *coldstartRun) waitAtTakeSite(t *testing.T) {
 func coldstartProductionToken(t *testing.T) chan struct{} {
 	t.Helper()
 	bus := eventbus.NewBusImpl()
-	deps, err := newWorkLoopDeps(t.Context(),
+	deps, err := newTestRuntime(t.Context(),
 		Config{ProjectDir: t.TempDir(), HandlerBinary: "/bin/sh", BrPath: "/bin/true"},
 		bus, "", handlercontract.NewAdapterRegistry(), nil)
 	if err != nil {
-		t.Fatalf("coldstartProductionToken: newWorkLoopDeps: %v", err)
+		t.Fatalf("coldstartProductionToken: newTestRuntime: %v", err)
 	}
-	if deps.agentSpawnSem == nil {
+	if deps.handles.AgentSpawnSem == nil {
 		t.Fatal("the production constructor left the cold-start channel nil, so every remote run " +
 			"is ungated and the capacity below bounds nothing")
 	}
-	return deps.agentSpawnSem
+	return deps.handles.AgentSpawnSem
 }
 
 // coldstartFill puts n tokens in the channel, standing for n sibling runs that
@@ -787,11 +787,11 @@ func TestColdStartToken_TheTokenComesBackWhenReadinessTimesOut(t *testing.T) {
 // out" leaves room, so the parked case fails. Neither subtest alone says
 // anything about the number.
 //
-// The channel comes from newWorkLoopDeps rather than from this file. A fixture
+// The channel comes from newTestRuntime rather than from this file. A fixture
 // that made its own channel of three would keep passing after somebody changed
 // the production capacity, which is the only thing this test exists to notice.
 //
-// Mutation: change the capacity in newWorkLoopDeps from 3 to 2, and again to 4.
+// Mutation: change the capacity in newTestRuntime from 3 to 2, and again to 4.
 // BOTH subtests go red both times, because each also checks that the channel
 // reaches capacity exactly when a capacity of 3 says it should.
 func TestColdStartToken_ThreeRemoteColdStartsMayRunAtOnceAndAFourthWaits(t *testing.T) {

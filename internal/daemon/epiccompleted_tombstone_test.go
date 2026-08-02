@@ -15,7 +15,7 @@ package daemon
 //   - the same epic with one tombstoned child and one OPEN child stays silent.
 //
 // This is an internal (package daemon) test: it drives the unexported
-// maybeEmitEpicCompleted and builds workLoopDeps through ExportedWorkLoopDeps.
+// maybeEmitEpicCompleted and builds testRuntime through ExportedTestRuntime.
 // It carries no build tag on purpose — the scenario-tier coverage of this helper
 // in epiccompleted_scenario_hktfxjp_test.go does not run in check-fast or
 // check-short, and this behaviour is cheap enough to gate on every commit.
@@ -145,11 +145,11 @@ func epictombParentEdge(child, parent core.BeadID) core.DependencyEdge {
 	}
 }
 
-func epictombDeps(t *testing.T, ledger beadLedger, bus *epictombCapturingBus) workLoopDeps {
+func epictombDeps(t *testing.T, ledger beadLedger, bus *epictombCapturingBus) testRuntime {
 	t.Helper()
 	// AdapterRegistry2 stays nil: this path touches only the ledger, the bus and
 	// the emittedEpics guard.
-	return ExportedWorkLoopDeps(WorkLoopDepsParams{
+	return ExportedTestRuntime(TestRuntimeParams{
 		BrAdapter:     ledger,
 		Bus:           bus,
 		ProjectDir:    t.TempDir(),

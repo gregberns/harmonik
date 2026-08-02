@@ -196,7 +196,7 @@ type Config struct {
 
 	// Substrate is the optional tmux substrate for handler.Launch.
 	//
-	// When non-nil it is injected into workLoopDeps.substrate so that each bead
+	// When non-nil it is injected into legacy aggregate.substrate so that each bead
 	// dispatch spawns a new tmux window instead of forking a subprocess directly
 	// via exec.CommandContext.
 	//
@@ -635,7 +635,7 @@ type daemonTestHooks struct {
 	// (RSM-015) so a test can share/inspect the exclusion domain across concurrent
 	// beadRunOne goroutines. The injected queue MUST already be Start()ed by the
 	// test. The zero value (nil) leaves production's own queue (created in
-	// newWorkLoopDeps, started in runWorkLoop) in place.
+	// direct composition, started in runWorkLoop) in place.
 	mergeQ *mergeq.Queue
 }
 

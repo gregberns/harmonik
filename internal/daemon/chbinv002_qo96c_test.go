@@ -268,7 +268,7 @@ func TestCHBINV002_SessionContainsExactlyOneTerminalEvent(t *testing.T) {
 	//    from the relay). The work loop is the handler-process's emitter of the
 	//    single terminal event.
 	//
-	//    ExportedWorkLoopDeps uses a real hookSessionStore (hk-ngw3d); the work
+	//    ExportedTestRuntime uses a real hookSessionStore (hk-ngw3d); the work
 	//    loop hits the 3-second stopHookGrace window after handler exit before
 	//    proceeding on exit code. The handler exits non-zero → ReopenBead.
 	//    The bus (collector) captures all emitted events including agent_failed
@@ -290,7 +290,7 @@ func TestCHBINV002_SessionContainsExactlyOneTerminalEvent(t *testing.T) {
 		t.Fatalf("chbInv002: write handler script: %v", err)
 	}
 
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:     ledger,
 		Bus:           collector,
 		ProjectDir:    projectDir,

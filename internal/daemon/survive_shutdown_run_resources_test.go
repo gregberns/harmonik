@@ -539,7 +539,7 @@ func surviveRunDriveWith(t *testing.T, opts surviveRunOpts) *surviveRunOutcome {
 		t.Fatalf("surviveRun: subscribe the run_started mode reader: %v", subErr)
 	}
 
-	params := WorkLoopDepsParams{
+	params := TestRuntimeParams{
 		BrAdapter:        out.ledger,
 		Bus:              bus,
 		ProjectDir:       projectDir,
@@ -575,7 +575,7 @@ func surviveRunDriveWith(t *testing.T, opts surviveRunOpts) *surviveRunOutcome {
 		params.WorkflowModeDefault = core.WorkflowModeDot
 	}
 
-	deps := ExportedWorkLoopDeps(params)
+	deps := ExportedTestRuntime(params)
 
 	bead := core.BeadRecord{
 		BeadID:   core.BeadID("hk-survive-run-probe"),
@@ -583,7 +583,7 @@ func surviveRunDriveWith(t *testing.T, opts surviveRunOpts) *surviveRunOutcome {
 		BeadType: "task",
 		Status:   core.CoarseStatusOpen,
 	}
-	env := deps.runEnv(runID, bead, "", nil, nil, 0, "", "", nil, false, "", core.AgentType(""))
+	env := deps.runEnv(runID, bead, "", "", core.AgentType(""))
 	runBeadOneTest(ctx, deps, env, "", nil, false)
 
 	mu.Lock()

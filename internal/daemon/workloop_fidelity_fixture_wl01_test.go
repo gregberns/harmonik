@@ -10,7 +10,7 @@ import (
 )
 
 // wl01Trace records the external effects this characterization freezes. It is
-// deliberately smaller than workLoopDeps: tests name semantic effects only.
+// deliberately smaller than testRuntime: tests name semantic effects only.
 type wl01Trace struct {
 	mu     sync.Mutex
 	events []string

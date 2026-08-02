@@ -24,7 +24,7 @@ package daemon
 //
 // This is an internal (package daemon) test because it drives the unexported
 // emit helpers (emitBeadClosedAndMaybeEpic / maybeEmitEpicCompleted), the
-// unexported epicCompletedPayload, and ExportedWorkLoopDeps — none of which are
+// unexported epicCompletedPayload, and ExportedTestRuntime — none of which are
 // reachable from package daemon_test.
 //
 // # Helper-prefix discipline
@@ -202,17 +202,17 @@ func hktfxjpParentEdge(child, parent core.BeadID) core.DependencyEdge {
 	}
 }
 
-// hktfxjpDeps builds a workLoopDeps wired to the stub ledger + capturing bus,
-// with a fresh (empty) emittedEpics guard, via ExportedWorkLoopDeps. An optional
+// hktfxjpDeps builds a testRuntime wired to the stub ledger + capturing bus,
+// with a fresh (empty) emittedEpics guard, via ExportedTestRuntime. An optional
 // seed map pre-populates the guard (used by the AC-5 boot-seed sub-test).
-func hktfxjpDeps(t *testing.T, ledger beadLedger, bus handlercontract.EventEmitter, seed map[core.BeadID]struct{}) workLoopDeps {
+func hktfxjpDeps(t *testing.T, ledger beadLedger, bus handlercontract.EventEmitter, seed map[core.BeadID]struct{}) testRuntime {
 	t.Helper()
 	// AdapterRegistry2 is intentionally left nil: maybeEmitEpicCompleted /
 	// emitBeadClosedAndMaybeEpic only touch brAdapter, bus, and the emittedEpics
 	// guard — they never reach beadRunOne/waitAgentReady, which is the only
 	// consumer of adapterRegistry. (NewSealedAdapterRegistryForTest lives in
 	// package daemon_test and is unreachable from this internal-package file.)
-	deps := ExportedWorkLoopDeps(WorkLoopDepsParams{
+	deps := ExportedTestRuntime(TestRuntimeParams{
 		BrAdapter:     ledger,
 		Bus:           bus,
 		ProjectDir:    t.TempDir(),
@@ -220,8 +220,8 @@ func hktfxjpDeps(t *testing.T, ledger beadLedger, bus handlercontract.EventEmitt
 		IntentLogDir:  t.TempDir(),
 	})
 	if seed != nil {
-		deps.emittedEpics = seed
-		deps.emittedEpicsMu = &sync.Mutex{}
+		deps.handles.EmittedEpics = seed
+		deps.handles.EmittedEpicsMu = &sync.Mutex{}
 	}
 	return deps
 }

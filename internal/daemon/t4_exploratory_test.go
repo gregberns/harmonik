@@ -42,11 +42,11 @@ func t4FixtureSetup(t *testing.T) string {
 	return projectDir
 }
 
-// t4FixtureDeps constructs ExportedWorkLoopDeps for T4 tests with a
+// t4FixtureDeps constructs ExportedTestRuntime for T4 tests with a
 // configurable ledger and handler.
-func t4FixtureDeps(t *testing.T, projectDir string, ledger *t4StubLedger, handlerBinary string, handlerArgs []string) daemon.WorkLoopDepsParams {
+func t4FixtureDeps(t *testing.T, projectDir string, ledger *t4StubLedger, handlerBinary string, handlerArgs []string) daemon.TestRuntimeParams {
 	t.Helper()
-	return daemon.WorkLoopDepsParams{
+	return daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              &stubEventCollector{},
 		ProjectDir:       projectDir,
@@ -174,7 +174,7 @@ func TestT4_EmptyQueue(t *testing.T) {
 		ready: nil, // no ready beads
 	}
 
-	deps := daemon.ExportedWorkLoopDeps(t4FixtureDeps(t, projectDir, ledger, "/bin/sh", []string{"-c", "exit 0"}))
+	deps := daemon.ExportedTestRuntime(t4FixtureDeps(t, projectDir, ledger, "/bin/sh", []string{"-c", "exit 0"}))
 
 	// Run the loop for a short period — should poll, find nothing, sleep, repeat.
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -250,7 +250,7 @@ func TestT4_ClaimConflict(t *testing.T) {
 	ledger.claimErr = errors.New("t4: simulated external claim conflict")
 
 	collector := &stubEventCollector{}
-	depsParams := daemon.WorkLoopDepsParams{
+	depsParams := daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
 		ProjectDir:       projectDir,
@@ -259,7 +259,7 @@ func TestT4_ClaimConflict(t *testing.T) {
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	}
-	deps := daemon.ExportedWorkLoopDeps(depsParams)
+	deps := daemon.ExportedTestRuntime(depsParams)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -366,7 +366,7 @@ exit 0
 	}
 
 	collector := &stubEventCollector{}
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:     requeueLedger,
 		Bus:           collector,
 		ProjectDir:    projectDir,
@@ -485,7 +485,7 @@ func TestT4_CloseBeadError(t *testing.T) {
 	}
 
 	collector := &stubEventCollector{}
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
 		ProjectDir:       projectDir,
@@ -591,7 +591,7 @@ func TestT4_ConcurrentLoops(t *testing.T) {
 	collector1 := &stubEventCollector{}
 	collector2 := &stubEventCollector{}
 
-	deps1 := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps1 := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        sharedLedger,
 		Bus:              collector1,
 		ProjectDir:       projectDir,
@@ -600,7 +600,7 @@ func TestT4_ConcurrentLoops(t *testing.T) {
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
-	deps2 := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps2 := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        sharedLedger,
 		Bus:              collector2,
 		ProjectDir:       projectDir,
@@ -708,7 +708,7 @@ func TestT4_EventOrderingOnCloseError(t *testing.T) {
 		collector: collector,
 	}
 
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:     ledger,
 		Bus:           collector,
 		ProjectDir:    projectDir,

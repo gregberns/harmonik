@@ -375,7 +375,7 @@ type StaleWatcher struct {
 	// forceReapPtr / runDeadPtr publish the two optional daemon-wired seams
 	// (hk-mdus1) race-free. They are stored at construction from cfg and may be
 	// re-published later via SetForceReap / SetRunProcessDead (two-phase wiring:
-	// the callbacks depend on workLoopDeps, which is built after StartWatcher).
+	// the callbacks depend on legacy aggregate, which is built after StartWatcher).
 	forceReapPtr atomic.Pointer[forceReapCB]
 	runDeadPtr   atomic.Pointer[runDeadCB]
 }

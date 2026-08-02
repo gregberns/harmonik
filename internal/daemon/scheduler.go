@@ -33,6 +33,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
@@ -109,7 +110,7 @@ func newLoopLifecyclePort(cfg Config) loopLifecyclePort {
 }
 
 // ledgerRepairPort owns the two claim-failure repair paths. It is a value port
-// so neither repair path retains workLoopDeps after composition.
+// so neither repair path retains legacy aggregate after composition.
 type ledgerRepairPort struct {
 	staleBlockerCloser         lifecycle.BeadCat3cCloser
 	strandedInProgressResetter strandedInProgressResetter
@@ -117,19 +118,19 @@ type ledgerRepairPort struct {
 	strandedResetDaemonNS      int64
 }
 
-func newLedgerRepairPort(deps workLoopDeps) ledgerRepairPort {
+func newLedgerRepairPort(adapter beadLedger, projectDir string) ledgerRepairPort {
 	var closer lifecycle.BeadCat3cCloser
-	if value, ok := deps.brAdapter.(lifecycle.BeadCat3cCloser); ok {
+	if value, ok := adapter.(lifecycle.BeadCat3cCloser); ok {
 		closer = value
 	}
 	var resetter strandedInProgressResetter
-	if value, ok := deps.brAdapter.(strandedInProgressResetter); ok {
+	if value, ok := adapter.(strandedInProgressResetter); ok {
 		resetter = value
 	}
 	return ledgerRepairPort{
 		staleBlockerCloser:         closer,
 		strandedInProgressResetter: resetter,
-		strandedResetProjectHash:   lifecycle.ComputeProjectHash(deps.projectDir),
+		strandedResetProjectHash:   lifecycle.ComputeProjectHash(projectDir),
 		strandedResetDaemonNS:      time.Now().UnixNano(),
 	}
 }
@@ -152,23 +153,19 @@ type reapSeamPort struct {
 }
 
 // newReapSeamPort projects the dependencies used by the force-reap completion
-// path. It intentionally preserves nil and zero values from workLoopDeps.
-func newReapSeamPort(deps workLoopDeps, loopLifecycle loopLifecyclePort, eagerRefill eagerRefillPort) reapSeamPort {
-	return newReapSeamPortWithPorts(deps, loopLifecycle, deps.testCapacity, deps.testQueueSurface, eagerRefill)
-}
-
-func newReapSeamPortWithPorts(deps workLoopDeps, loopLifecycle loopLifecyclePort, capacity capacityPort, queueSurface queueSurfacePort, eagerRefill eagerRefillPort) reapSeamPort {
+// path. It intentionally preserves nil and zero values from legacy aggregate.
+func newReapSeamPort(bus handlercontract.EventEmitter, projectDir, targetBranch string, queueStore *queuewiring.QueueStore, runRegistry *RunRegistry, loopLifecycle loopLifecyclePort, capacity capacityPort, queueSurface queueSurfacePort, eagerRefill eagerRefillPort) reapSeamPort {
 	return reapSeamPort{
-		bus:                deps.bus,
-		projectDir:         deps.projectDir,
-		queueStore:         deps.queueStore,
+		bus:                bus,
+		projectDir:         projectDir,
+		queueStore:         queueStore,
 		queueLedger:        queueSurface.queueLedger,
 		cancelOnQueueDrain: loopLifecycle.cancelOnQueueDrain,
 		cancelOnQueueExit:  loopLifecycle.cancelOnQueueExit,
 		maxConcurrent:      capacity.maxConcurrent,
 		concurrencyCtrl:    capacity.concurrencyCtrl,
-		runRegistry:        deps.runRegistry,
-		targetBranch:       deps.targetBranch,
+		runRegistry:        runRegistry,
+		targetBranch:       targetBranch,
 		eagerRefill:        eagerRefill,
 	}
 }
@@ -180,10 +177,10 @@ type runCompletionPort struct {
 	brPath string
 }
 
-func newRunCompletionPort(deps workLoopDeps, reapPort reapSeamPort) runCompletionPort {
+func newRunCompletionPort(brPath string, reapPort reapSeamPort) runCompletionPort {
 	return runCompletionPort{
 		reapSeamPort: reapPort,
-		brPath:       deps.brPath,
+		brPath:       brPath,
 	}
 }
 
@@ -444,7 +441,7 @@ func projectActiveGroup(q *queue.Queue) *orchestrator.GroupSnapshot {
 }
 
 //nolint:gocognit,cyclop,funlen // pre-existing: Seam A moved this code out of workloop.go unchanged
-func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifecyclePort, ledgerRepair ledgerRepairPort, scheduleInput schedulePort, coordinatorReap coordinatorReapPort, diskReclaim diskReclaimPort, eagerRefill eagerRefillPort, governor governorPort, governorEnabled bool, capacity capacityPort, queueSurface queueSurfacePort, dispatchGates dispatchGatesPort, noAutoPull bool) error {
+func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.RunPorts, handles runloop.SharedHandles, ledger beadLedger, queueStore *queuewiring.QueueStore, runRegistry *RunRegistry, substratePort handler.Substrate, mergeQueue *mergeq.Queue, launchBuilder func(context.Context, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error), loopLifecycle loopLifecyclePort, ledgerRepair ledgerRepairPort, scheduleInput schedulePort, coordinatorReap coordinatorReapPort, diskReclaim diskReclaimPort, eagerRefill eagerRefillPort, governor governorPort, governorEnabled bool, capacity capacityPort, queueSurface queueSurfacePort, dispatchGates dispatchGatesPort, noAutoPull bool) error {
 	// wg tracks all in-flight bead goroutines. runWorkLoop waits on this before
 	// returning so callers know all bead work is complete on return.
 	var wg sync.WaitGroup
@@ -462,12 +459,13 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 	// spawn a second owner goroutine draining the same intake channel (concurrent
 	// critical sections + a double close(done) panic on shutdown) — the double-Start
 	// bug this ownership split exists to prevent.
-	if deps.mergeQ == nil {
-		deps.mergeQ = mergeq.New(nil)
+	if mergeQueue == nil {
+		mergeQueue = mergeq.New(nil)
 		mergeQCtx, mergeQCancel := context.WithCancel(context.Background())
-		deps.mergeQ.Start(mergeQCtx)
+		mergeQueue.Start(mergeQCtx)
 		defer mergeQCancel()
 	}
+	basePorts.Merge = newMergePort(mergeQueue)
 
 	// effectiveMax: 0-value → 1 to preserve the single-threaded default.
 	effectiveMax := capacity.maxConcurrent
@@ -506,9 +504,9 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 	// (RSM-011) plus the dashboard forcing gate and the sentinel movement
 	// governor, both of which are SWITCHABLE subsystems that may be absent. It is
 	// touched only from this goroutine. See loopmaintenance.go.
-	maint := newLoopMaintenance(deps, loopLifecycle, scheduleInput, coordinatorReap, diskReclaim, eagerRefill, governor, governorEnabled, capacity, queueSurface, dispatchGates, os.Stderr)
-	reapPort := newReapSeamPortWithPorts(deps, loopLifecycle, capacity, queueSurface, eagerRefill)
-	completionPort := newRunCompletionPort(deps, reapPort)
+	maint := newLoopMaintenance(baseEnv.ProjectCfg, loopLifecycle, scheduleInput, coordinatorReap, diskReclaim, eagerRefill, governor, governorEnabled, capacity, queueSurface, dispatchGates, os.Stderr)
+	reapPort := newReapSeamPort(basePorts.Emitter, baseEnv.ProjectDir, baseEnv.TargetBranch, queueStore, runRegistry, loopLifecycle, capacity, queueSurface, eagerRefill)
+	completionPort := newRunCompletionPort(baseEnv.BrPath, reapPort)
 
 	// claimSkipInProgressUntil tracks beads whose pre-claim check observed
 	// in_progress with an active run. Entries suppress the item from the
@@ -581,7 +579,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 		case <-drainDone:
 			// All in-flight goroutines drained cleanly.
 		case <-time.After(shutdownDrainTimeout):
-			remaining := deps.runRegistry.Len()
+			remaining := runRegistry.Len()
 			fmt.Fprintf(os.Stderr,
 				"daemon: workloop: shutdown: drain timeout after %v with %d run(s) still in-flight; exiting (QM-002a recovers on next start)\n",
 				shutdownDrainTimeout, remaining)
@@ -589,10 +587,10 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 		// Kill any tmux windows spawned during this run. deps.substrate is nil
 		// when tmux hosting is not used (exec.CommandContext path); the type
 		// assertion is a no-op in that case.
-		if wc, ok := deps.substrate.(windowCleaner); ok {
+		if wc, ok := substratePort.(windowCleaner); ok {
 			_ = wc.KillAllWindows(context.Background()) //nolint:errcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
 		}
-		drainCancelledQueue(context.Background(), deps)
+		drainCancelledQueue(context.Background(), queueStore, baseEnv.ProjectDir)
 		return nil
 	}
 
@@ -616,9 +614,9 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 	// (before QM-002a so their queue items get reverted to pending).
 	// Live sessions need a monitor goroutine: when Claude eventually exits, reset
 	// the bead and revert the queue item so the dispatch loop re-dispatches it.
-	if deps.projectDir != "" {
-		if tmuxAdp := extractTmuxAdapterFromSubstrate(deps.substrate); tmuxAdp != nil {
-			if liveRecs, listErr := runpkg.List(deps.projectDir); listErr == nil {
+	if baseEnv.ProjectDir != "" {
+		if tmuxAdp := extractTmuxAdapterFromSubstrate(substratePort); tmuxAdp != nil {
+			if liveRecs, listErr := runpkg.List(baseEnv.ProjectDir); listErr == nil {
 				for _, rec := range liveRecs {
 					//nolint:copyloopvar // pre-existing: Seam A moved this code out of workloop.go unchanged
 					rec := rec // capture loop variable
@@ -630,7 +628,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 					wg.Add(1)
 					go func() {
 						defer wg.Done()
-						adoptLiveRunSession(ctx, deps, rec, tmuxAdp)
+						adoptLiveRunSession(ctx, ledger, baseEnv, queueStore, handles.TIDGen, rec, tmuxAdp)
 					}()
 				}
 			}
@@ -680,10 +678,10 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 		tickVerdict, tickAdmitErr := orchestrator.AdmitAtTick(orchestrator.AdmissionInput{
 			Path:          orchestrator.PathAny,
 			GateMax:       gateMax,
-			LocalInFlight: int(deps.localInFlight.Load()),
+			LocalInFlight: int(handles.LocalInFlight.Load()),
 			// HasFreeSlot is a non-consuming peek (internal/workers Registry), so
 			// asking on every tick reserves nothing and changes no state.
-			WorkerHasFreeSlot: deps.workerRegistry != nil && deps.workerRegistry.HasFreeSlot(),
+			WorkerHasFreeSlot: handles.Workers != nil && handles.Workers.HasFreeSlot(),
 		})
 		if tickAdmitErr != nil {
 			wg.Wait()
@@ -705,7 +703,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 		// is meant to skip all three for the tick. Its verdict — the set of
 		// captain-curated queues withheld from NEW item dispatch — is consulted by
 		// selectNextQueue below (Step 3).
-		selObs := maint.tickBeforeSelect(ctx, deps, time.Now())
+		selObs := maint.tickBeforeSelect(ctx, baseEnv.ProjectDir, basePorts.Emitter, reapPort, governorInputPort{projectDir: baseEnv.ProjectDir, brPath: baseEnv.BrPath, ledger: ledger}, time.Now())
 
 		// Step 3: dispatch source — queue-pull or br-ready fallback.
 		//
@@ -739,7 +737,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 		)
 		queueItemIndex = -1 // sentinel: not queue-dispatched
 
-		if deps.queueStore != nil {
+		if queueStore != nil {
 			// Phase 1 — snapshot queue state under write lock.
 			//
 			// The previous pattern called deps.queueStore.Queue() (which immediately
@@ -792,9 +790,9 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 				// hk-gf59k S2-F-S2-2: the return value says whether any item is STILL
 				// deferred after the pass, so the idle path can use a bounded poll
 				// rather than an indefinite wait (see hasDeferredItems use below).
-				hasDeferredItems := reevaluateDeferredQueues(ctx, deps, queueSurface, dispatchGates)
+				hasDeferredItems := reevaluateDeferredQueues(ctx, queueStore, baseEnv.ProjectDir, queueSurface, dispatchGates)
 
-				lq := deps.queueStore.LockForMutation()
+				lq := queueStore.LockForMutation()
 
 				// Bootstrap any queue whose first group is still pending. A
 				// freshly-submitted/loaded queue persists group 0 as pending and nothing
@@ -817,7 +815,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 					if hasActiveGroup {
 						continue
 					}
-					if ok, evts := activateFirstPendingGroupLocked(ctx, deps, lq, q); ok {
+					if ok, evts := activateFirstPendingGroupLocked(ctx, baseEnv.ProjectDir, lq, q); ok {
 						bootstrapped = true
 						bootstrapEvents = append(bootstrapEvents, evts...)
 					}
@@ -832,7 +830,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 						if mErr != nil {
 							raw = evt.Payload
 						}
-						_ = deps.bus.Emit(ctx, core.EventType(evt.Type), raw) //nolint:errcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
+						_ = basePorts.Emitter.Emit(ctx, core.EventType(evt.Type), raw) //nolint:errcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
 					}
 					continue
 				}
@@ -850,7 +848,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 				// reflects the queue-owner's permanent concurrency intent, not the current tuner
 				// state; scaling it with the tuner would under-count eligible queues in the
 				// round-robin even when the global gate is the binding constraint.
-				sel, ok := selectNextQueue(lq, deps.runRegistry, effectiveMax, rrCursor, selObs.blockedQueues)
+				sel, ok := selectNextQueue(lq, runRegistry, effectiveMax, rrCursor, selObs.blockedQueues)
 				// Capture queue count while the lock is still held so we can
 				// distinguish "zero queues loaded" from "queues exist but all
 				// paused/at-cap" after lq.Done() releases the lock (hk-mgoo7).
@@ -1021,7 +1019,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 						itemIdx:    snapItemIdx,
 						beadID:     snapItemBeadID,
 					}
-					rec, preClaimErr := deps.brAdapter.ShowBead(ctx, snapItemBeadID)
+					rec, preClaimErr := ledger.ShowBead(ctx, snapItemBeadID)
 					if preClaimErr != nil {
 						if dispatchCtx.Err() != nil {
 							return exitClean()
@@ -1033,7 +1031,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 							fmt.Fprintf(os.Stderr,
 								"daemon: workloop: ShowBead pre-claim (queue-path) %s failed %d times — failing queue item so the group can advance (hk-pina9): %v\n",
 								snapItemBeadID, preClaimAttempts, preClaimErr)
-							markQueueItemFailureReason(ctx, deps, snapQueueName, snapGroupIndex, snapItemIdx, snapItemBeadID, "show_bead_failed")
+							markQueueItemFailureReason(ctx, queueStore, snapQueueName, snapGroupIndex, snapItemIdx, snapItemBeadID, "show_bead_failed")
 							evaluateGroupAdvanceWithOutcome(ctx, reapPort, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false)
 							continue
 						}
@@ -1062,7 +1060,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 							DetectedAt:     time.Now().UTC().Format(time.RFC3339),
 						}
 						if raw, mErr := json.Marshal(skipPayload); mErr == nil {
-							_ = deps.bus.Emit(ctx, core.EventTypeBeadClaimSkipped, raw) //nolint:errcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
+							_ = basePorts.Emitter.Emit(ctx, core.EventTypeBeadClaimSkipped, raw) //nolint:errcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
 						}
 						// BI-013c terminal path: closed/tombstone beads are done — fail the
 						// queue item directly via evaluateGroupAdvanceWithOutcome so the group
@@ -1081,10 +1079,10 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 							// bead to open so the next tick claims it normally.
 							if preClaimRecord.Status == core.CoarseStatusInProgress &&
 								ledgerRepair.strandedInProgressResetter != nil &&
-								!deps.runRegistry.HasBeadRun(snapItemBeadID) &&
-								!strandedBeadHasOnDiskRun(deps.projectDir, snapItemBeadID) {
+								!runRegistry.HasBeadRun(snapItemBeadID) &&
+								!strandedBeadHasOnDiskRun(baseEnv.ProjectDir, snapItemBeadID) {
 								if resetErr := ledgerRepair.strandedInProgressResetter.ResetBead(
-									ctx, deps.intentLogDir, deps.brTimeoutCfg,
+									ctx, baseEnv.IntentLogDir, baseEnv.BrTimeoutCfg,
 									snapItemBeadID,
 									ledgerRepair.strandedResetProjectHash,
 									ledgerRepair.strandedResetDaemonNS,
@@ -1123,8 +1121,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 								claimSkipInProgressUntil[snapItemBeadID] = now.Add(claimSkipInProgressCooldown)
 							}
 							// Set the queue item to deferred-for-ledger-dep under the write lock.
-							if deps.queueStore != nil {
-								lq := deps.queueStore.LockForMutation()
+							if queueStore != nil {
+								lq := queueStore.LockForMutation()
 								liveQ := lq.LockedQueueByName(snapQueueName)
 								if liveQ != nil {
 									for gi := range liveQ.Groups {
@@ -1141,7 +1139,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 										}
 									}
 									lq.LockedSetQueueByName(snapQueueName, liveQ)
-									if persistErr := queue.Persist(ctx, deps.projectDir, liveQ); persistErr != nil {
+									if persistErr := queue.Persist(ctx, baseEnv.ProjectDir, liveQ); persistErr != nil {
 										fmt.Fprintf(os.Stderr, "daemon: workloop: Persist bead_claim_skipped deferred-for-ledger-dep queueID=%s: %v\n",
 											liveQ.QueueID, persistErr)
 									}
@@ -1191,7 +1189,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 					Path:           orchestrator.PathQueue,
 					BeadID:         string(snapItemBeadID),
 					GateMax:        gateMax,
-					LocalInFlight:  int(deps.localInFlight.Load()),
+					LocalInFlight:  int(handles.LocalInFlight.Load()),
 					QueueLocalOnly: capturedQueueLocalOnly,
 				})
 				if beforeStampErr != nil {
@@ -1230,7 +1228,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 					reservedRunID = core.RunID(runUUID)
 					runIDReserved = true
 
-					reservation := reserveQueueItem(ctx, deps, queueReservation{
+					reservation := reserveQueueItem(ctx, queueStore, baseEnv.ProjectDir, queueReservation{
 						QueueName:  snapQueueName,
 						GroupIndex: snapGroupIndex,
 						ItemIndex:  snapItemIdx,
@@ -1328,7 +1326,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 			}
 
 			// No queue active — fall back to br-ready poll.
-			readyRecords, err := deps.brAdapter.Ready(ctx)
+			readyRecords, err := ledger.Ready(ctx)
 			if err != nil {
 				// Treat poll errors as transient: log and backoff.
 				if dispatchCtx.Err() != nil {
@@ -1425,7 +1423,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 			runID = core.RunID(runUUID)
 		}
 
-		claimTID, tidErr := deps.tidGen.Next()
+		claimTID, tidErr := handles.TIDGen.Next()
 		if tidErr != nil {
 			wg.Wait()
 			return fmt.Errorf("daemon: workloop: generate claim TransitionID: %w", tidErr)
@@ -1447,7 +1445,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 			// Queue-path items are already exclusively owned by this loop (set to
 			// dispatched under write lock), so the guard is skipped there; their
 			// label hydration is handled below after the claim write.
-			showRecord, showErr := deps.brAdapter.ShowBead(ctx, beadID)
+			showRecord, showErr := ledger.ShowBead(ctx, beadID)
 			if showErr != nil {
 				if dispatchCtx.Err() != nil {
 					return exitClean()
@@ -1494,7 +1492,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 		case <-dispatchCtx.Done():
 			return exitClean()
 		}
-		claimErr := deps.brAdapter.ClaimBead(ctx, deps.intentLogDir, deps.brTimeoutCfg, runID, claimTID, beadID)
+		claimErr := ledger.ClaimBead(ctx, baseEnv.IntentLogDir, baseEnv.BrTimeoutCfg, runID, claimTID, beadID)
 		// Release the semaphore immediately after the write completes.
 		<-claimSem
 		if claimErr != nil {
@@ -1511,12 +1509,12 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 			// Detection: check both the error message from br claim (which includes
 			// "cannot claim blocked issue" when deps are open) AND the ShowBead
 			// status. A bead can be status=open but still unclaimable due to deps.
-			if queueItemIndex >= 0 && deps.queueStore != nil && queueIDField != nil && queueGroupIdxFd != nil {
+			if queueItemIndex >= 0 && queueStore != nil && queueIDField != nil && queueGroupIdxFd != nil {
 				claimErrStr := claimErr.Error()
 				isBlocked := strings.Contains(claimErrStr, "cannot claim blocked issue") ||
 					strings.Contains(claimErrStr, "blocked")
 				if !isBlocked {
-					if showRecord, showErr := deps.brAdapter.ShowBead(ctx, beadID); showErr == nil &&
+					if showRecord, showErr := ledger.ShowBead(ctx, beadID); showErr == nil &&
 						showRecord.Status == core.CoarseStatusBlocked {
 						isBlocked = true
 					}
@@ -1536,11 +1534,11 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 			}
 			// hk-rnsjs: if the bead is blocked by stale dependencies already in
 			// main, auto-close them so the next workloop retry can claim the bead.
-			autoCloseStaleBlockersOnClaimFailure(ctx, deps, ledgerRepair, beadID)
+			autoCloseStaleBlockersOnClaimFailure(ctx, ledger, baseEnv.ProjectDir, baseEnv.BrTimeoutCfg, ledgerRepair, beadID)
 			// On queue-path: revert the item back to pending so the loop can retry.
 			// NQ-B1: target the selected queue by name (capturedQueueName).
-			if queueItemIndex >= 0 && deps.queueStore != nil {
-				lq := deps.queueStore.LockForMutation()
+			if queueItemIndex >= 0 && queueStore != nil {
+				lq := queueStore.LockForMutation()
 				liveQ := lq.LockedQueueByName(capturedQueueName)
 				if liveQ != nil {
 					for gi := range liveQ.Groups {
@@ -1556,7 +1554,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 					}
 					lq.LockedSetQueueByName(capturedQueueName, liveQ)
 					// Persist the claim-failure revert (hk-xsutm).
-					if persistErr := queue.Persist(ctx, deps.projectDir, liveQ); persistErr != nil {
+					if persistErr := queue.Persist(ctx, baseEnv.ProjectDir, liveQ); persistErr != nil {
 						fmt.Fprintf(os.Stderr, "daemon: workloop: Persist claim-revert queueID=%s: %v\n",
 							liveQ.QueueID, persistErr)
 					}
@@ -1576,7 +1574,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 		// Hydration failure is non-fatal: log to stderr and proceed with nil labels
 		// (resolveWorkflowMode falls through to tier-3/4 as before the fix).
 		if queueItemIndex >= 0 {
-			showRecord, showErr := deps.brAdapter.ShowBead(ctx, beadID)
+			showRecord, showErr := ledger.ShowBead(ctx, beadID)
 			if showErr != nil {
 				fmt.Fprintf(os.Stderr, "daemon: workloop: ShowBead label-hydrate %s error (labels nil, falling through): %v\n", beadID, showErr)
 			} else {
@@ -1633,7 +1631,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 			StartedAt:       time.Now(),
 			Cancel:          runCancel,
 		}
-		deps.runRegistry.Register(runID, dispatchedHandle)
+		runRegistry.Register(runID, dispatchedHandle)
 		if diskReclaim.cacheReapMu != nil {
 			diskReclaim.cacheReapMu.RUnlock()
 		}
@@ -1643,16 +1641,16 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 		// tick. Pre-select a worker based on per-item routing flags. If non-nil, this
 		// run executes remotely and does NOT increment localInFlight.
 		var preSelectedWorker *workers.Worker
-		if !capturedLocalOnly && deps.workerRegistry != nil {
+		if !capturedLocalOnly && handles.Workers != nil {
 			if capturedWorkerTarget != "" {
-				preSelectedWorker = deps.workerRegistry.SelectWorkerByName(capturedWorkerTarget)
+				preSelectedWorker = handles.Workers.SelectWorkerByName(capturedWorkerTarget)
 			} else {
-				preSelectedWorker = deps.workerRegistry.SelectWorker()
+				preSelectedWorker = handles.Workers.SelectWorker()
 			}
 		}
 		isLocalDispatch := preSelectedWorker == nil
-		if isLocalDispatch && deps.localInFlight != nil {
-			deps.localInFlight.Add(1)
+		if isLocalDispatch && handles.LocalInFlight != nil {
+			handles.LocalInFlight.Add(1)
 		} else if !isLocalDispatch {
 			// hk-4tjt6: tag as remote so LenForQueueLocal excludes it from the
 			// per-queue Workers ceiling gate in selectNextQueue.
@@ -1660,11 +1658,11 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, loopLifecycle loopLifec
 		}
 
 		wg.Add(1)
-		env := deps.runEnv(runID, beadRecord, capturedQueueName, capturedQueueID,
+		env := runEnvWithDispatch(baseEnv, runID, beadRecord, capturedQueueName, capturedQueueID,
 			capturedQueueGroupIdx, capturedItemIndex, capturedWFMode, capturedWFRef,
 			capturedTmplParams, capturedLocalOnly, capturedWorkerTarget, capturedDefaultHarness)
-		rp, handles := deps.buildRunBundles(env)
-		go runDispatchedBead(runCtx, ctx, env, rp, handles, completionPort, capturedCtx,
+		rp, runHandles := buildRunBundles(basePorts, handles, env, launchBuilder)
+		go runDispatchedBead(runCtx, ctx, env, rp, runHandles, completionPort, capturedCtx,
 			preSelectedWorker, isLocalDispatch, &wg, runCancel)
 	}
 }
@@ -1707,11 +1705,11 @@ func runDispatchedBead(runCtx, daemonCtx context.Context, env runloop.RunEnv, rp
 // that do not set this field).
 //
 // Bead ref: hk-rnsjs.
-func autoCloseStaleBlockersOnClaimFailure(ctx context.Context, deps workLoopDeps, repair ledgerRepairPort, beadID core.BeadID) {
+func autoCloseStaleBlockersOnClaimFailure(ctx context.Context, ledger beadLedger, projectDir string, timeout brcli.TimeoutConfig, repair ledgerRepairPort, beadID core.BeadID) {
 	if repair.staleBlockerCloser == nil {
 		return
 	}
-	record, err := deps.brAdapter.ShowBead(ctx, beadID)
+	record, err := ledger.ShowBead(ctx, beadID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: workloop: autoCloseStaleBlockers ShowBead %s: %v\n", beadID, err)
 		return
@@ -1734,11 +1732,11 @@ func autoCloseStaleBlockersOnClaimFailure(ctx context.Context, deps workLoopDeps
 		}
 	}
 	for blockerID := range seen {
-		if !shared.MainHistoryHasRefsTrailer(ctx, deps.projectDir, blockerID) {
+		if !shared.MainHistoryHasRefsTrailer(ctx, projectDir, blockerID) {
 			continue
 		}
 		fmt.Fprintf(os.Stderr, "daemon: workloop: claim-failure auto-close stale blocker %s (subsumed in main, unblocks %s)\n", blockerID, beadID)
-		if closeErr := repair.staleBlockerCloser.SweepCloseBead(ctx, deps.brTimeoutCfg, blockerID); closeErr != nil {
+		if closeErr := repair.staleBlockerCloser.SweepCloseBead(ctx, timeout, blockerID); closeErr != nil {
 			fmt.Fprintf(os.Stderr, "daemon: workloop: SweepCloseBead stale blocker %s: %v\n", blockerID, closeErr)
 		}
 	}
@@ -1769,26 +1767,26 @@ func autoCloseStaleBlockersOnClaimFailure(ctx context.Context, deps workLoopDeps
 //
 // Spec ref: specs/queue-model.md §8 (shutdown drain).
 // Bead ref: hk-ppt32, hk-u6m4l.
-func drainCancelledQueue(ctx context.Context, deps workLoopDeps) {
-	if deps.queueStore == nil {
+func drainCancelledQueue(ctx context.Context, queueStore *queuewiring.QueueStore, projectDir string) {
+	if queueStore == nil {
 		return
 	}
 	// Snapshot all queues under the read lock. drainCancelledQueue is called
 	// after wg.Wait() so there are no concurrent mutations; AllQueues is safe
 	// here and avoids holding the write lock across I/O.
-	snapshot := deps.queueStore.AllQueues()
+	snapshot := queueStore.AllQueues()
 	for name, q := range snapshot {
 		if q == nil || q.Status != queue.QueueStatusActive {
 			continue
 		}
 		// Queue is still active: transition to cancelled and archive.
-		if err := queue.CancelQueueOnShutdown(ctx, deps.projectDir, q); err != nil {
+		if err := queue.CancelQueueOnShutdown(ctx, projectDir, q); err != nil {
 			fmt.Fprintf(os.Stderr, "daemon: workloop: drainCancelledQueue queueID=%s name=%q: %v\n",
 				q.QueueID, name, err)
 			// Continue draining other queues even if one fails.
 		}
 		// Clear in-memory state for this queue.
-		deps.queueStore.ClearQueueByName(name)
+		queueStore.ClearQueueByName(name)
 	}
 }
 
@@ -1886,7 +1884,7 @@ func hasEnabledScheduledJob(s *schedule.Store) bool {
 //
 // Spec ref: specs/queue-model.md §5 QM-031; §8 QM-063.
 // Bead ref: hk-tigaf.4 (NQ-B1).
-func activateFirstPendingGroupLocked(ctx context.Context, deps workLoopDeps, lq *queuewiring.LockedQueueStore, q *queue.Queue) (bool, []core.Event) {
+func activateFirstPendingGroupLocked(ctx context.Context, projectDir string, lq *queuewiring.LockedQueueStore, q *queue.Queue) (bool, []core.Event) {
 	if q == nil {
 		return false, nil
 	}
@@ -1917,7 +1915,7 @@ func activateFirstPendingGroupLocked(ctx context.Context, deps workLoopDeps, lq 
 	}
 
 	q.Groups[groupPos].Status = newStatus
-	if err := queue.Persist(ctx, deps.projectDir, q); err != nil {
+	if err := queue.Persist(ctx, projectDir, q); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: workloop: activateFirstPendingGroupLocked Persist queueID=%s: %v\n",
 			q.QueueID, err)
 		events = nil // describe only durable state
@@ -1944,12 +1942,12 @@ func activateFirstPendingGroupLocked(ctx context.Context, deps workLoopDeps, lq 
 //
 // Spec ref: specs/queue-model.md §2.8; §3.1 QM-001.
 // Bead ref: hk-nbjht, hk-gf59k.
-func reevaluateDeferredQueues(ctx context.Context, deps workLoopDeps, queueSurface queueSurfacePort, dispatchGates dispatchGatesPort) bool {
-	if deps.queueStore == nil {
+func reevaluateDeferredQueues(ctx context.Context, queueStore *queuewiring.QueueStore, projectDir string, queueSurface queueSurfacePort, dispatchGates dispatchGatesPort) bool {
+	if queueStore == nil {
 		return false
 	}
 	anyDeferred := false
-	for name, loaded := range deps.queueStore.AllQueues() {
+	for name, loaded := range queueStore.AllQueues() {
 		observed := loaded
 		// A nil ledger has no blocker facts to offer, so the pass reads the
 		// queue and changes nothing (see queueSurfacePort.queueLedger).
@@ -1958,7 +1956,7 @@ func reevaluateDeferredQueues(ctx context.Context, deps workLoopDeps, queueSurfa
 			// Reading a failed transaction as "no deferred items left" would
 			// send the idle path to an indefinite wait on a queue that still
 			// has work waiting on a blocker.
-			if post := commitDeferredReevaluation(ctx, deps, queueSurface, dispatchGates, name); post != nil {
+			if post := commitDeferredReevaluation(ctx, queueStore, projectDir, queueSurface, dispatchGates, name); post != nil {
 				observed = post
 			}
 		}
@@ -1977,14 +1975,14 @@ func reevaluateDeferredQueues(ctx context.Context, deps workLoopDeps, queueSurfa
 // Every branch continues the tick. A queue that cannot be re-evaluated or
 // written must not stop the loop dispatching the other queues, and §2.8 makes
 // the next tick run this pass again.
-func commitDeferredReevaluation(ctx context.Context, deps workLoopDeps, queueSurface queueSurfacePort, dispatchGates dispatchGatesPort, name string) *queue.Queue {
-	snapshot := deps.queueStore.Snapshot(name)
+func commitDeferredReevaluation(ctx context.Context, queueStore *queuewiring.QueueStore, projectDir string, queueSurface queueSurfacePort, dispatchGates dispatchGatesPort, name string) *queue.Queue {
+	snapshot := queueStore.Snapshot(name)
 	if snapshot.Queue == nil {
 		return nil
 	}
-	result := deps.queueStore.Transact(ctx, queuewiring.TransactionRequest{
+	result := queueStore.Transact(ctx, queuewiring.TransactionRequest{
 		Snapshot:      snapshot,
-		ProjectDir:    deps.projectDir,
+		ProjectDir:    projectDir,
 		OperationKind: queue.OperationMaintenance,
 		Mutate: func(q *queue.Queue) error {
 			g := firstActiveGroup(q)
@@ -2081,11 +2079,11 @@ func hasDeferredItem(q *queue.Queue) bool {
 // bearing half of the pair.
 //
 // Bead ref: hk-pina9.
-func markQueueItemFailureReason(_ context.Context, deps workLoopDeps, queueName string, groupIndex, itemIdx int, beadID core.BeadID, reason string) {
-	if deps.queueStore == nil {
+func markQueueItemFailureReason(_ context.Context, queueStore *queuewiring.QueueStore, queueName string, groupIndex, itemIdx int, beadID core.BeadID, reason string) {
+	if queueStore == nil {
 		return
 	}
-	lq := deps.queueStore.LockForMutation()
+	lq := queueStore.LockForMutation()
 	defer lq.Done()
 	q := lq.LockedQueueByName(queue.NormaliseQueueName(queueName))
 	if q == nil {
@@ -2316,7 +2314,7 @@ func extractTmuxAdapterFromSubstrate(sub handler.Substrate) tmuxpkg.Adapter {
 // (another daemon shutdown) — the next boot's adoption pass handles it again.
 //
 //nolint:gocognit,cyclop // pre-existing: Seam A moved this code out of workloop.go unchanged
-func adoptLiveRunSession(ctx context.Context, deps workLoopDeps, rec runpkg.Record, adapter tmuxpkg.Adapter) {
+func adoptLiveRunSession(ctx context.Context, ledger beadLedger, env runloop.RunEnv, queueStore *queuewiring.QueueStore, tidGen *core.TransitionIDGenerator, rec runpkg.Record, adapter tmuxpkg.Adapter) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
@@ -2353,26 +2351,26 @@ func adoptLiveRunSession(ctx context.Context, deps workLoopDeps, rec runpkg.Reco
 		fmt.Fprintf(os.Stderr, "daemon: adoptLiveRunSession: parse runID %q: %v\n", rec.RunID, parseErr)
 	} else {
 		adoptRunID := core.RunID(runUUID)
-		reopenTID, _ := deps.tidGen.Next()                                                                                                                                                     //nolint:errcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
-		if reopenErr := deps.brAdapter.ReopenBead(bgCtx, deps.intentLogDir, deps.brTimeoutCfg, adoptRunID, reopenTID, core.BeadID(rec.BeadID), "run_session_adopted_dead"); reopenErr != nil { //nolint:contextcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
+		reopenTID, _ := tidGen.Next()                                                                                                                                                //nolint:errcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
+		if reopenErr := ledger.ReopenBead(bgCtx, env.IntentLogDir, env.BrTimeoutCfg, adoptRunID, reopenTID, core.BeadID(rec.BeadID), "run_session_adopted_dead"); reopenErr != nil { //nolint:contextcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
 			fmt.Fprintf(os.Stderr, "daemon: adoptLiveRunSession: ReopenBead %s: %v\n", rec.BeadID, reopenErr)
 		}
 	}
 
 	// Revert the queue item from dispatched → pending so the dispatch loop picks it up.
-	if rec.QueueName != "" && rec.QueueID != "" && rec.GroupIndex >= 0 && rec.ItemIndex >= 0 && deps.queueStore != nil {
+	if rec.QueueName != "" && rec.QueueID != "" && rec.GroupIndex >= 0 && rec.ItemIndex >= 0 && queueStore != nil {
 		qname := queue.NormaliseQueueName(rec.QueueName)
-		lq := deps.queueStore.LockForMutation()
+		lq := queueStore.LockForMutation()
 		q := lq.LockedQueueByName(qname)
 		if q != nil && rec.GroupIndex < len(q.Groups) && rec.ItemIndex < len(q.Groups[rec.GroupIndex].Items) {
 			item := &q.Groups[rec.GroupIndex].Items[rec.ItemIndex]
 			if string(item.BeadID) == rec.BeadID && item.Status == queue.ItemStatusDispatched {
 				item.Status = queue.ItemStatusPending
 				item.RunID = nil
-				if persistErr := queue.Persist(bgCtx, deps.projectDir, q); persistErr != nil { //nolint:contextcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
+				if persistErr := queue.Persist(bgCtx, env.ProjectDir, q); persistErr != nil { //nolint:contextcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
 					fmt.Fprintf(os.Stderr, "daemon: adoptLiveRunSession: persist queue %q: %v\n", rec.QueueName, persistErr)
 				} else {
-					deps.queueStore.Wake()
+					queueStore.Wake()
 				}
 			}
 		}
@@ -2380,8 +2378,8 @@ func adoptLiveRunSession(ctx context.Context, deps workLoopDeps, rec runpkg.Reco
 	}
 
 	// Remove the registry entry now that the session is gone.
-	if deps.projectDir != "" {
-		_ = runpkg.Remove(deps.projectDir, rec.RunID) //nolint:errcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
+	if env.ProjectDir != "" {
+		_ = runpkg.Remove(env.ProjectDir, rec.RunID) //nolint:errcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
 	}
 }
 

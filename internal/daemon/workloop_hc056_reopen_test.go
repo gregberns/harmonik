@@ -197,7 +197,7 @@ func TestWorkLoop_HC056Timeout_ReopenAndRepickup(t *testing.T) {
 	collector := &stubEventCollector{}
 	reg := hc056ReopenMakeRegistry(t)
 
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:         ledger,
 		Bus:               collector,
 		ProjectDir:        projectDir,

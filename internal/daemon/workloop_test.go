@@ -313,7 +313,7 @@ func TestWorkLoop_DispatchClosesBead(t *testing.T) {
 	collector := &stubEventCollector{}
 
 	// The handler binary will be sh -c 'exit 0' — exits immediately with code 0.
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
 		ProjectDir:       projectDir,
@@ -410,7 +410,7 @@ func TestWorkLoop_FailedHandlerReopensBead(t *testing.T) {
 	}
 	collector := &stubEventCollector{}
 
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
 		ProjectDir:       projectDir,
@@ -600,7 +600,7 @@ func TestWorkLoop_TwoConcurrentBeads(t *testing.T) {
 
 	// Handler: sleep briefly so both goroutines are simultaneously in-flight,
 	// then exit 0 so both beads are closed.
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
 		ProjectDir:       projectDir,
@@ -751,7 +751,7 @@ func TestWorkLoop_CloseBeadError_EmitsRunFailed(t *testing.T) {
 	collector := &stubEventCollector{}
 
 	// Handler exits 0 so the loop attempts CloseBead.
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
 		ProjectDir:       projectDir,
@@ -933,7 +933,7 @@ func TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency(t *testing.T) {
 	collector := &stubEventCollector{}
 
 	// Handler exits immediately — we want all 10 beads to process quickly.
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
 		ProjectDir:       projectDir,

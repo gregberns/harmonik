@@ -62,7 +62,7 @@ import (
 //
 // projectDir, bus, and runRegistry are ambient daemon values that this port's
 // helpers need. Copying them here prevents the disk path from reaching back
-// into workLoopDeps.
+// into legacy aggregate.
 type diskReclaimPort struct {
 	projectDir                string
 	bus                       handlercontract.EventEmitter
@@ -77,11 +77,11 @@ type diskReclaimPort struct {
 // newDiskReclaimPort projects the disk path's dependencies once at the
 // composition seam. The fresh lock is shared with every run registration for
 // this work loop.
-func newDiskReclaimPort(deps workLoopDeps) diskReclaimPort {
+func newDiskReclaimPort(projectDir string, bus handlercontract.EventEmitter, runRegistry *RunRegistry) diskReclaimPort {
 	return diskReclaimPort{
-		projectDir:  deps.projectDir,
-		bus:         deps.bus,
-		runRegistry: deps.runRegistry,
+		projectDir:  projectDir,
+		bus:         bus,
+		runRegistry: runRegistry,
 		cacheReapMu: &sync.RWMutex{},
 	}
 }

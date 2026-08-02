@@ -72,7 +72,7 @@ func TestReservationWriteFailure_NeverClaimsAndNeverLaunches(t *testing.T) {
 	ledger := &countingLedger{readyResult: []core.BeadRecord{}}
 	bus := &stubEventCollector{}
 
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              bus,
 		ProjectDir:       projectDir,

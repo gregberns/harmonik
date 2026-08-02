@@ -138,7 +138,7 @@ func TestQueueCancel_TransitionsToCancelled(t *testing.T) {
 	ledger := &stubBeadLedger{}
 	bus := &stubEventCollector{}
 
-	p := daemon.WorkLoopDepsParams{
+	p := daemon.TestRuntimeParams{
 		BrAdapter:     ledger,
 		Bus:           bus,
 		ProjectDir:    projectDir,
@@ -150,7 +150,7 @@ func TestQueueCancel_TransitionsToCancelled(t *testing.T) {
 		AdapterRegistry2: NewEmptySealedAdapterRegistryForTest(t),
 		QueueStore:       qs,
 	}
-	deps := daemon.ExportedWorkLoopDeps(p)
+	deps := daemon.ExportedTestRuntime(p)
 
 	// Cancel the context immediately — simulates SIGINT before any dispatch.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -252,7 +252,7 @@ func TestQueueCancel_AlreadyTerminal_NoOp(t *testing.T) {
 	ledger := &stubBeadLedger{}
 	bus := &stubEventCollector{}
 
-	p := daemon.WorkLoopDepsParams{
+	p := daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              bus,
 		ProjectDir:       projectDir,
@@ -262,7 +262,7 @@ func TestQueueCancel_AlreadyTerminal_NoOp(t *testing.T) {
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		QueueStore:       qs,
 	}
-	deps := daemon.ExportedWorkLoopDeps(p)
+	deps := daemon.ExportedTestRuntime(p)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -352,7 +352,7 @@ func TestQueueCancel_NamedQueue_ArchivedOnShutdown(t *testing.T) {
 	ledger := &stubBeadLedger{}
 	bus := &stubEventCollector{}
 
-	p := daemon.WorkLoopDepsParams{
+	p := daemon.TestRuntimeParams{
 		BrAdapter:     ledger,
 		Bus:           bus,
 		ProjectDir:    projectDir,
@@ -364,7 +364,7 @@ func TestQueueCancel_NamedQueue_ArchivedOnShutdown(t *testing.T) {
 		AdapterRegistry2: NewEmptySealedAdapterRegistryForTest(t),
 		QueueStore:       qs,
 	}
-	deps := daemon.ExportedWorkLoopDeps(p)
+	deps := daemon.ExportedTestRuntime(p)
 
 	// Cancel immediately — simulates SIGINT before any dispatch.
 	ctx, cancel := context.WithCancel(context.Background())

@@ -5,8 +5,8 @@ package daemon_test
 //
 // # What this file proves
 //
-//  1. WorkLoopDepsParams.DefaultHarness is carried through ExportedWorkLoopDeps
-//     into workLoopDeps.defaultHarness so the dispatch path passes it as
+//  1. TestRuntimeParams.DefaultHarness is carried through ExportedTestRuntime
+//     into testRuntime.defaultHarness so the dispatch path passes it as
 //     resolveHarness's tier-4 global default.
 //
 //  2. The embedded standard-bead.dot REVIEW node carries harness="claude-code"
@@ -26,7 +26,7 @@ import (
 )
 
 // TestDefaultHarnessWiring_FieldCarriedThroughDeps verifies that
-// WorkLoopDepsParams.DefaultHarness is stored in workLoopDeps.defaultHarness
+// TestRuntimeParams.DefaultHarness is stored in testRuntime.defaultHarness
 // so the dispatch path forwards it to resolveHarness as the tier-4 global
 // default (hk-ytzj2 fix part 1).
 func TestDefaultHarnessWiring_FieldCarriedThroughDeps(t *testing.T) {
@@ -47,14 +47,14 @@ func TestDefaultHarnessWiring_FieldCarriedThroughDeps(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+			deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 				Bus:            eventbus.NewBusImpl(),
 				DefaultHarness: tc.harness,
 			})
 
 			got := daemon.ExportedWorkLoopDefaultHarness(deps)
 			if got != tc.harness {
-				t.Errorf("defaultHarness = %q; want %q (not wired from WorkLoopDepsParams.DefaultHarness)",
+				t.Errorf("defaultHarness = %q; want %q (not wired from TestRuntimeParams.DefaultHarness)",
 					got, tc.harness)
 			}
 		})

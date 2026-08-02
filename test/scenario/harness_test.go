@@ -374,7 +374,7 @@ func scenarioFixturePollSocket(sockPath string, budget time.Duration) bool {
 // not import internal/daemon's test-only stubs.
 
 // The stubScenarioLedger and stubScenarioCollector below are used by scenarios
-// that exercise the work loop via ExportedWorkLoopDeps / ExportedRunWorkLoop
+// that exercise the work loop via ExportedTestRuntime / ExportedRunWorkLoop
 // rather than daemon.Start. Scenarios that test the full Start path use the
 // real daemon.Config with BrPath="" (skips the work loop).
 

@@ -47,8 +47,8 @@ type (
 // and waitWithSocketGrace. The concrete *hookSessionStore implements it (its
 // embedded *hook.SessionStore promotes every method). The interface itself moved
 // to internal/runloop (LIFT L0) because SharedHandles — which carries it — now
-// lives there; this alias keeps the daemon's uses (the workLoopDeps.hookStore
-// field, newWorkLoopDeps, waitWithSocketGrace, the test stubs) spelled with the
+// lives there; this alias keeps the daemon's uses (the legacy aggregate.hookStore
+// field, direct composition, waitWithSocketGrace, the test stubs) spelled with the
 // local name. See internal/runloop/ports.go (bead ref hk-kqdpf.1).
 type hookStoreIface = runloop.HookStore
 

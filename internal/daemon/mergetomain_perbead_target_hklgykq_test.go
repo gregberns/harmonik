@@ -117,7 +117,7 @@ func TestMergeToMain_PerBeadIntegrationTargetLandsOnBranch(t *testing.T) {
 	ledger := &perBeadTargetDescribedLedger{mergeToMainRecordingLedger: recording, description: body}
 	collector := &stubEventCollector{}
 
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
 		ProjectDir:       projectDir,

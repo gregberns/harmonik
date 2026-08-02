@@ -282,7 +282,7 @@ func TestScenario_WorkLoop_HandlerFatalTripsGate(t *testing.T) {
 	// stubEventCollector records events emitted by the work loop.
 	bus := &stubEventCollector{}
 
-	p := daemon.WorkLoopDepsParams{
+	p := daemon.TestRuntimeParams{
 		BrAdapter:              ledger,
 		Bus:                    bus,
 		ProjectDir:             projectDir,
@@ -293,7 +293,7 @@ func TestScenario_WorkLoop_HandlerFatalTripsGate(t *testing.T) {
 		AdapterRegistry2:       NewSealedAdapterRegistryForTest(t),
 		HandlerPauseController: ctrl,
 	}
-	deps := daemon.ExportedWorkLoopDeps(p)
+	deps := daemon.ExportedTestRuntime(p)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()

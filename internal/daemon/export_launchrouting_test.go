@@ -105,7 +105,7 @@ func ExportedCodexProcessExitLaunchSpecBuilder(scriptPath string) func(context.C
 // package daemon_test. It returns a builder that resolves the harness via the
 // four-tier precedence walk and the HarnessRegistry, then (for the claude
 // harness) delegates to buildClaudeLaunchSpec. The returned closure has the same
-// shape as the workLoopDeps.launchSpecBuilder hook.
+// shape as the testRuntime.launchSpecBuilder hook.
 //
 // Bead ref: hk-hj9ld.
 func ExportedRoutedLaunchSpecBuilder(
@@ -120,8 +120,8 @@ func ExportedRoutedLaunchSpecBuilder(
 }
 
 // ExportedObservedRoutedLaunchSpecBuilder returns the REAL production
-// routedLaunchSpecBuilder in the INTERNAL workLoopDeps.launchSpecBuilder shape
-// (so it can be installed via WorkLoopDepsParams.LaunchSpecBuilder), wrapped in
+// routedLaunchSpecBuilder in the INTERNAL testRuntime.launchSpecBuilder shape
+// (so it can be installed via TestRuntimeParams.LaunchSpecBuilder), wrapped in
 // a call observer. It is exactly the builder beadRunOne installs in production
 // (workloop.go: routedLaunchSpecBuilder(reg, beadRecord, "", "", defaultHarness,
 // bus)), so a test can assert whether a downstream dispatch site CONSULTED it or

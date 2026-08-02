@@ -228,7 +228,7 @@ func TestRunPlan_EveryRefusalTakesNothing(t *testing.T) {
 				body = tc.body(projectDir)
 			}
 
-			deps := ExportedWorkLoopDeps(WorkLoopDepsParams{
+			deps := ExportedTestRuntime(TestRuntimeParams{
 				BrAdapter:        ledger,
 				Bus:              eventbus.NewBusImpl(),
 				ProjectDir:       projectDir,
@@ -258,7 +258,7 @@ func TestRunPlan_EveryRefusalTakesNothing(t *testing.T) {
 				Description: body,
 			}
 
-			env := deps.runEnv(runID, bead, "", nil, nil, 0, "", "", nil, false, "", core.AgentType(""))
+			env := deps.runEnv(runID, bead, "", "", core.AgentType(""))
 			succeeded := runBeadOneTest(ctx, deps, env, "", preSelected, false)
 
 			// The refusal fired, and named its cause.

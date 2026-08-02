@@ -654,7 +654,7 @@ func TestT3_StaleWorktreeOrphanSweep(t *testing.T) {
 // between ClaimBead and handler Launch. The work loop should detect ctx.Done()
 // and still call ReopenBead for the claimed bead.
 //
-// This test uses the stub-adapter path (ExportedWorkLoopDeps / ExportedRunWorkLoop)
+// This test uses the stub-adapter path (ExportedTestRuntime / ExportedRunWorkLoop)
 // to inject a controlled bead ledger that pauses between claim and launch.
 func TestT3_SignalBeforeHandlerLaunch(t *testing.T) {
 	projectDir, _ := t3FixtureProjectDir(t)
@@ -686,7 +686,7 @@ func TestT3_SignalBeforeHandlerLaunch(t *testing.T) {
 	}()
 
 	intentDir := filepath.Join(projectDir, ".harmonik", "beads-intents")
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              bus,
 		ProjectDir:       projectDir,

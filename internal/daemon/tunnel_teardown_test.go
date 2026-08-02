@@ -125,7 +125,7 @@ func TestTunnelTeardown_ARemoteRunKillsItsReverseTunnelWhenItEnds(t *testing.T) 
 	params.WorkerRegistry = workerReg
 	params.WorktreeFactory = worktreeFactory
 	params.LaunchSpecBuilder = claude.BuildLaunchSpec
-	deps := ExportedWorkLoopDeps(params)
+	deps := ExportedTestRuntime(params)
 
 	env := remotefixRunEnv(deps, remotefixBead("hk-tunnel-teardown-probe", "reverse tunnel teardown probe"))
 

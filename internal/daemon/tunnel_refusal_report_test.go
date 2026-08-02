@@ -195,7 +195,7 @@ func TestTunnelRefusal_SocketPathOnTheFallbackWorkerPath(t *testing.T) {
 	params.AdapterRegistry2 = runplanacqSealedRegistry(t)
 	params.WorkerRegistry = reg
 	params.WorktreeFactory = worktreeFactory
-	deps := ExportedWorkLoopDeps(params)
+	deps := ExportedTestRuntime(params)
 
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
@@ -274,7 +274,7 @@ func TestTunnelRefusal_ReadinessGateReportsAndReopens(t *testing.T) {
 	params.AdapterRegistry2 = runplanacqSealedRegistry(t)
 	params.WorkerRegistry = reg
 	params.WorktreeFactory = worktreeFactory
-	deps := ExportedWorkLoopDeps(params)
+	deps := ExportedTestRuntime(params)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

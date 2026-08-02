@@ -56,6 +56,7 @@ import (
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/runloop"
 )
 
 // ---------------------------------------------------------------------------
@@ -138,19 +139,17 @@ func bt6FakeBr(t *testing.T, scriptPath, argsFile string) {
 	}
 }
 
-// bt6Deps builds a workLoopDeps wired for stagedBeadGeneratorEval against a real
+// bt6Deps builds a testRuntime wired for stagedBeadGeneratorEval against a real
 // git project and a fake br, with targetBranch="main" so the §6.2 provenance
 // guard is ACTIVE (the guard is skipped only when targetBranch is empty).
-func bt6Deps(t *testing.T, projectDir, brPath string) (workLoopDeps, eagerRefillPort) {
+func bt6Deps(t *testing.T, projectDir, brPath string) (testRuntime, eagerRefillPort) {
 	t.Helper()
-	return workLoopDeps{
-			queueStore:   nil,
-			projectDir:   projectDir,
-			brPath:       brPath,
-			testCapacity: newCapacityPort(4, nil),
-			runRegistry:  newLocalRunRegistry(),
-			bus:          &noopEmitter{},
-			targetBranch: "main",
+	return testRuntime{
+			queueStore:  nil,
+			env:         runloop.RunEnv{ProjectDir: projectDir, BrPath: brPath, TargetBranch: "main"},
+			ports:       runloop.RunPorts{Emitter: &noopEmitter{}},
+			capacity:    newCapacityPort(4, nil),
+			runRegistry: newLocalRunRegistry(),
 		}, eagerRefillPort{
 			followUpLedger:   make(map[string]struct{}),
 			followUpLedgerMu: new(sync.Mutex),
@@ -214,7 +213,7 @@ func TestScenario_BT6_OwnMergedProvenance_NotOnOriginMain_NoFollowUp(t *testing.
 	}
 
 	// Drive the REAL §5.4 B generator with a rule-eligible class label.
-	stagedBeadGeneratorEval(context.Background(), deps, eagerRefill,
+	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill,
 		core.BeadID("hk-bt6-merged"), []string{class})
 
 	// NEGATIVE assertion: no follow-up bead created.
@@ -261,7 +260,7 @@ func TestScenario_BT6_OwnMergedProvenance_OnOriginMain_FollowUpFires(t *testing.
 			"that was pushed to origin/main")
 	}
 
-	stagedBeadGeneratorEval(context.Background(), deps, eagerRefill,
+	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill,
 		core.BeadID(beadID), []string{class})
 
 	// POSITIVE assertion: exactly one follow-up bead created.

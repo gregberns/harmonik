@@ -51,12 +51,19 @@ import (
 )
 
 // governorPort is the movement governor's configuration and per-daemon mutable
-// state. It is built at boot and held by loopMaintenance, not workLoopDeps.
+// state. It is built at boot and held by loopMaintenance, not legacy aggregate.
 type governorPort struct {
 	state         *sentinel.GovernorState
 	config        sentinel.Config
 	mode          string
 	phase2Classes []string
+}
+
+// governorInputPort is the small read-only input to one governor tick.
+type governorInputPort struct {
+	projectDir string
+	brPath     string
+	ledger     beadLedger
 }
 
 // movementGovernor is the movement governor's per-loop mutable state. It is
@@ -129,7 +136,7 @@ func (g *movementGovernor) dispatchBlocked(dispatchGates dispatchGatesPort) bool
 // Cadence-gating is load-bearing, not politeness: each evaluation scans
 // events.jsonl, and running it on every 2 s poll tick cost 25–50% daemon CPU on
 // large logs (hk-usn8o).
-func (g *movementGovernor) tick(ctx context.Context, deps workLoopDeps, schedule schedulePort, dispatchGates dispatchGatesPort) {
+func (g *movementGovernor) tick(ctx context.Context, input governorInputPort, schedule schedulePort, dispatchGates dispatchGatesPort) {
 	if g == nil {
 		return
 	}
@@ -138,22 +145,22 @@ func (g *movementGovernor) tick(ctx context.Context, deps workLoopDeps, schedule
 	// mode string evaluates nothing — same as the two inline guards it replaces.
 	switch g.port.mode {
 	case "", "observe":
-		if !g.dueForEval(deps, now) {
+		if !g.dueForEval(now) {
 			return
 		}
-		g.tickObserve(ctx, deps, dispatchGates, now)
+		g.tickObserve(ctx, input, dispatchGates, now)
 	case "act":
-		if !g.dueForEval(deps, now) {
+		if !g.dueForEval(now) {
 			return
 		}
-		g.tickAct(ctx, deps, schedule, dispatchGates, now)
+		g.tickAct(ctx, input, schedule, dispatchGates, now)
 	}
 }
 
 // dueForEval reports whether the eval cadence has elapsed, stamping lastEval
 // when it has. Zero or negative configured cadence falls back to the compiled
 // default.
-func (g *movementGovernor) dueForEval(deps workLoopDeps, now time.Time) bool {
+func (g *movementGovernor) dueForEval(now time.Time) bool {
 	cadence := g.port.config.EvalCadence
 	if cadence <= 0 {
 		cadence = sentinel.DefaultSentinelEvalCadence
@@ -168,8 +175,8 @@ func (g *movementGovernor) dueForEval(deps workLoopDeps, now time.Time) bool {
 // tickObserve is FW2: evaluate and emit governor_signal, nothing more.
 //
 // OBSERVE-ONLY CONTRACT: no trip, no halt, no dispatch side-effects.
-func (g *movementGovernor) tickObserve(ctx context.Context, deps workLoopDeps, dispatchGates dispatchGatesPort, now time.Time) {
-	in, _ := g.gatherInput(ctx, deps, dispatchGates, now)
+func (g *movementGovernor) tickObserve(ctx context.Context, input governorInputPort, dispatchGates dispatchGatesPort, now time.Time) {
+	in, _ := g.gatherInput(ctx, input, dispatchGates, now)
 	sig := sentinel.Evaluate(ctx, g.port.state, in, g.port.config)
 	governorEmitSignal(ctx, dispatchGates, sig)
 }
@@ -182,8 +189,8 @@ func (g *movementGovernor) tickObserve(ctx context.Context, deps workLoopDeps, d
 // .harmonik/decision_acks/ (the EV-043a anchor) AND updates the in-memory
 // DecisionBlocker, so dispatchBlocked() gates all dispatch while a trip is
 // pending. Config default is "observe"; operators opt into "act" explicitly.
-func (g *movementGovernor) tickAct(ctx context.Context, deps workLoopDeps, schedule schedulePort, dispatchGates dispatchGatesPort, now time.Time) {
-	in, readyBeadIDs := g.gatherInput(ctx, deps, dispatchGates, now)
+func (g *movementGovernor) tickAct(ctx context.Context, input governorInputPort, schedule schedulePort, dispatchGates dispatchGatesPort, now time.Time) {
+	in, readyBeadIDs := g.gatherInput(ctx, input, dispatchGates, now)
 	sig := sentinel.Evaluate(ctx, g.port.state, in, g.port.config)
 	governorEmitSignal(ctx, dispatchGates, sig)
 
@@ -191,9 +198,9 @@ func (g *movementGovernor) tickAct(ctx context.Context, deps workLoopDeps, sched
 	case sig.Level == sentinel.ActivationHalt:
 		g.onHalt(ctx, dispatchGates, sig)
 	case sig.Level == sentinel.ActivationActive && sig.SuppressedBy == "":
-		g.onTrip(ctx, deps, schedule, dispatchGates, now, readyBeadIDs, in.HasUndeployedTail)
+		g.onTrip(ctx, input, schedule, dispatchGates, now, readyBeadIDs, in.HasUndeployedTail)
 	case sig.Level == sentinel.ActivationDormant && g.pendingAckToken != "":
-		g.onClear(ctx, deps, dispatchGates, now)
+		g.onClear(ctx, input, dispatchGates, now)
 	}
 }
 
@@ -221,9 +228,9 @@ func (g *movementGovernor) onHalt(ctx context.Context, dispatchGates dispatchGat
 // externally acknowledged it between ticks; when that happened, clear the
 // in-memory token and the DecisionBlocker so this pass emits a fresh trip for
 // re-adjudication (spec §2.2 clause 2).
-func (g *movementGovernor) onTrip(ctx context.Context, deps workLoopDeps, schedule schedulePort, dispatchGates dispatchGatesPort, now time.Time, readyBeadIDs []string, hasUndeployedTail bool) {
+func (g *movementGovernor) onTrip(ctx context.Context, input governorInputPort, schedule schedulePort, dispatchGates dispatchGatesPort, now time.Time, readyBeadIDs []string, hasUndeployedTail bool) {
 	if g.pendingAckToken != "" {
-		if externallyAcked, checkErr := sentinel.IsTripAcknowledged(deps.projectDir, g.pendingAckToken); checkErr == nil && externallyAcked {
+		if externallyAcked, checkErr := sentinel.IsTripAcknowledged(input.projectDir, g.pendingAckToken); checkErr == nil && externallyAcked {
 			if dispatchGates.decisionBlocker != nil {
 				dispatchGates.decisionBlocker.Acknowledge(decisionAckSubjectKindQueue, sentinelSubjectIDACT, g.pendingAckToken)
 			}
@@ -233,7 +240,7 @@ func (g *movementGovernor) onTrip(ctx context.Context, deps workLoopDeps, schedu
 	// Idempotent: EmitTrip returns the existing ack_token if one is pending.
 	if g.pendingAckToken == "" {
 		tok, tripErr := sentinel.EmitTrip(ctx, sentinel.TripInput{
-			ProjectDir:        deps.projectDir,
+			ProjectDir:        input.projectDir,
 			ReadyBeadIDs:      readyBeadIDs,
 			HasUndeployedTail: hasUndeployedTail,
 			Now:               now,
@@ -247,7 +254,7 @@ func (g *movementGovernor) onTrip(ctx context.Context, deps workLoopDeps, schedu
 			}
 		}
 	}
-	g.spawnAdversary(ctx, deps, schedule)
+	g.spawnAdversary(ctx, input.projectDir, schedule)
 }
 
 // spawnAdversary is FW4 (hk-jsvc): spawn a fresh-context adversary crew to
@@ -258,7 +265,7 @@ func (g *movementGovernor) onTrip(ctx context.Context, deps workLoopDeps, schedu
 // whenever the socket subtree is absent. Its comms querier is nil in unit-test
 // mode. A nil crew handler means no adversary. A nil comms querier gives an
 // empty online set, so overlap checks fail open as they did before extraction.
-func (g *movementGovernor) spawnAdversary(ctx context.Context, deps workLoopDeps, schedule schedulePort) {
+func (g *movementGovernor) spawnAdversary(ctx context.Context, projectDir string, schedule schedulePort) {
 	if schedule.crewHandler == nil {
 		return
 	}
@@ -272,7 +279,7 @@ func (g *movementGovernor) spawnAdversary(ctx context.Context, deps workLoopDeps
 		onlineAgents = map[string]struct{}{}
 	}
 	if _, spawnErr := sentinel.SpawnAdversary(ctx, sentinel.AdversaryInput{
-		ProjectDir: deps.projectDir,
+		ProjectDir: projectDir,
 	}, schedule.crewHandler, onlineAgents); spawnErr != nil {
 		fmt.Fprintf(g.logW, "daemon: workloop: sentinel: SpawnAdversary failed (non-fatal): %v\n", spawnErr) //nolint:errcheck // best-effort stderr status log
 	}
@@ -286,10 +293,10 @@ func (g *movementGovernor) spawnAdversary(ctx context.Context, deps workLoopDeps
 // RecordLegitimateHalt), skip ClearTrip so we do not stack a spurious
 // governor_movement event on top of the existing legitimate_halt clear — but
 // always release the in-memory token and the DecisionBlocker so dispatch resumes.
-func (g *movementGovernor) onClear(ctx context.Context, deps workLoopDeps, dispatchGates dispatchGatesPort, now time.Time) {
-	alreadyAcked, _ := sentinel.IsTripAcknowledged(deps.projectDir, g.pendingAckToken) //nolint:errcheck // an unreadable ack file reads as "not acknowledged"; ClearTrip below is then the authority
+func (g *movementGovernor) onClear(ctx context.Context, input governorInputPort, dispatchGates dispatchGatesPort, now time.Time) {
+	alreadyAcked, _ := sentinel.IsTripAcknowledged(input.projectDir, g.pendingAckToken) //nolint:errcheck // an unreadable ack file reads as "not acknowledged"; ClearTrip below is then the authority
 	if !alreadyAcked {
-		if clearErr := sentinel.ClearTrip(ctx, deps.projectDir, g.pendingAckToken, now); clearErr != nil {
+		if clearErr := sentinel.ClearTrip(ctx, input.projectDir, g.pendingAckToken, now); clearErr != nil {
 			fmt.Fprintf(g.logW, "daemon: workloop: sentinel: ClearTrip failed (non-fatal): %v\n", clearErr) //nolint:errcheck // best-effort stderr status log
 			return                                                                                          // preserve pendingAckToken for retry on the next eval
 		}
@@ -306,11 +313,11 @@ func (g *movementGovernor) onClear(ctx context.Context, deps workLoopDeps, dispa
 //
 // Both signals fail soft: a `br` error means "no ready beads" / "no undeployed
 // tail" rather than an aborted evaluation, matching the inline behaviour.
-func (g *movementGovernor) gatherInput(ctx context.Context, deps workLoopDeps, dispatchGates dispatchGatesPort, now time.Time) (input sentinel.GovernorInput, readyBeadIDs []string) {
+func (g *movementGovernor) gatherInput(ctx context.Context, source governorInputPort, dispatchGates dispatchGatesPort, now time.Time) (input sentinel.GovernorInput, readyBeadIDs []string) {
 	// hasReadyBeads: ≥1 unblocked open bead exists (flywheel-motion.md §1.3).
 	// Left nil (not an empty slice) when there is nothing ready, so the ACT-mode
 	// trip payload marshals ready_bead_ids exactly as it did inline.
-	if readyRecs, readyErr := deps.brAdapter.Ready(ctx); readyErr == nil {
+	if readyRecs, readyErr := source.ledger.Ready(ctx); readyErr == nil {
 		for _, rec := range readyRecs {
 			readyBeadIDs = append(readyBeadIDs, string(rec.BeadID))
 		}
@@ -319,12 +326,12 @@ func (g *movementGovernor) gatherInput(ctx context.Context, deps workLoopDeps, d
 	// HasUndeployedTail: a closed Phase-2-class bead is present (§1.3, §5.2).
 	// Skip the br call entirely when no Phase-2 classes are configured.
 	var hasUndeployedTail bool
-	if len(g.port.phase2Classes) > 0 && deps.brPath != "" {
-		hasUndeployedTail, _ = digest.BuildHasUndeployedTail(ctx, deps.brPath, g.port.phase2Classes) //nolint:errcheck // fails soft: a br error reads as "no undeployed tail", never an aborted evaluation
+	if len(g.port.phase2Classes) > 0 && source.brPath != "" {
+		hasUndeployedTail, _ = digest.BuildHasUndeployedTail(ctx, source.brPath, g.port.phase2Classes) //nolint:errcheck // fails soft: a br error reads as "no undeployed tail", never an aborted evaluation
 	}
 
 	return sentinel.GovernorInput{
-		ProjectDir:        deps.projectDir,
+		ProjectDir:        source.projectDir,
 		Now:               now,
 		HasReadyBeads:     len(readyBeadIDs) > 0,
 		HasUndeployedTail: hasUndeployedTail,

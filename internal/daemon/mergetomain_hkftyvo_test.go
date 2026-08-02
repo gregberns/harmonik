@@ -387,7 +387,7 @@ func TestMergeToMain_SuccessPath(t *testing.T) {
 	collector := &stubEventCollector{}
 
 	// The handler exits 0 immediately — triggers the auto-close heuristic (branch 2).
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
 		ProjectDir:       projectDir,
@@ -552,7 +552,7 @@ func TestMergeToMain_NonFFReopen(t *testing.T) {
 	}
 
 	// Handler exits 0 — triggers the auto-close heuristic branch.
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
 		ProjectDir:       projectDir,

@@ -260,7 +260,7 @@ func TestDeferredReevaluation_WritesThroughTheTransactionDomain(t *testing.T) {
 		))
 
 		params := admissionDeps(t, ledger, qs, qLedger, true, nil)
-		deps := daemon.ExportedWorkLoopDeps(params)
+		deps := daemon.ExportedTestRuntime(params)
 
 		queueFilePath := filepath.Join(params.ProjectDir, ".harmonik", "queues", "main.json")
 		obs := observation{genBefore: qs.Snapshot("main").Generation}

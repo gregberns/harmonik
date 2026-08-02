@@ -195,9 +195,10 @@ func ExportedBeadAlreadySubsumedInMain(ctx context.Context, projectDir string, b
 }
 
 // ExportedAutoCloseStaleBlockersOnClaimFailure exposes
-// autoCloseStaleBlockersOnClaimFailure for unit tests via WorkLoopDepsParams.
+// autoCloseStaleBlockersOnClaimFailure for unit tests via TestRuntimeParams.
 //
 // Bead: hk-rnsjs.
-func ExportedAutoCloseStaleBlockersOnClaimFailure(ctx context.Context, p WorkLoopDepsParams, beadID core.BeadID) {
-	autoCloseStaleBlockersOnClaimFailure(ctx, ExportedWorkLoopDeps(p), testLedgerRepairPort(p), beadID)
+func ExportedAutoCloseStaleBlockersOnClaimFailure(ctx context.Context, p TestRuntimeParams, beadID core.BeadID) {
+	runtime := ExportedTestRuntime(p)
+	autoCloseStaleBlockersOnClaimFailure(ctx, runtime.ledger, runtime.env.IntentLogDir, runtime.env.BrTimeoutCfg, testLedgerRepairPort(p), beadID)
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
+	"github.com/gregberns/harmonik/internal/runloop"
 )
 
 func TestWireStaleWatcherReapSeams_ForceReapPersistsGroupAdvance(t *testing.T) {
@@ -37,9 +38,9 @@ func TestWireStaleWatcherReapSeams_ForceReapPersistsGroupAdvance(t *testing.T) {
 
 	queueStore := queuewiring.NewQueueStore()
 	queueStore.SetQueue(q)
-	deps := workLoopDeps{
-		bus:         &noopEmitter{},
-		projectDir:  projectDir,
+	deps := testRuntime{
+		env:         runloop.RunEnv{ProjectDir: projectDir},
+		ports:       runloop.RunPorts{Emitter: &noopEmitter{}},
 		queueStore:  queueStore,
 		runRegistry: newLocalRunRegistry(),
 	}
@@ -68,7 +69,7 @@ func TestWireStaleWatcherReapSeams_ForceReapPersistsGroupAdvance(t *testing.T) {
 		bus:          bus,
 		staleWatcher: watcher,
 	}
-	bs.wireStaleWatcherReapSeams(context.Background(), &deps, loopLifecyclePort{}, deps.testCapacity, deps.testQueueSurface, eagerRefillPort{})
+	bs.wireStaleWatcherReapSeams(context.Background(), deps.ports.Emitter, deps.env.ProjectDir, deps.env.TargetBranch, deps.queueStore, deps.runRegistry, loopLifecyclePort{}, deps.capacity, deps.queueSurface, eagerRefillPort{})
 
 	forceReap := watcher.forceReapFn()
 	if forceReap == nil {

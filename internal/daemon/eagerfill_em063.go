@@ -399,8 +399,8 @@ func kerfNextBeads(ctx context.Context, kerfPath string, limit int) ([]core.Bead
 // NEVER auto-deployed by this function.
 //
 // Spec ref: flywheel-motion.md §5.4 (B). Bead ref: hk-f722.
-func stagedBeadGeneratorEval(ctx context.Context, deps workLoopDeps, eagerRefill eagerRefillPort, completedBeadID core.BeadID, completedBeadLabels []string) {
-	stagedBeadGeneratorEvalWithPort(ctx, newRunCompletionPort(deps, newReapSeamPort(deps, loopLifecyclePort{}, eagerRefill)), completedBeadID, completedBeadLabels)
+func stagedBeadGeneratorEval(ctx context.Context, brPath string, reapPort reapSeamPort, completedBeadID core.BeadID, completedBeadLabels []string) {
+	stagedBeadGeneratorEvalWithPort(ctx, newRunCompletionPort(brPath, reapPort), completedBeadID, completedBeadLabels)
 }
 
 func stagedBeadGeneratorEvalWithPort(ctx context.Context, port runCompletionPort, completedBeadID core.BeadID, completedBeadLabels []string) {

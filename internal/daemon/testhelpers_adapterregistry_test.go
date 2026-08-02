@@ -4,10 +4,10 @@ package daemon_test
 // construction in daemon tests.
 //
 // Background (hk-d8u1y): workloop.go and reviewloop.go no longer nil-guard
-// deps.adapterRegistry. Every test that builds WorkLoopDepsParams must wire a
+// deps.adapterRegistry. Every test that builds TestRuntimeParams must wire a
 // non-nil sealed registry so the production code path is exercised.
 //
-// Use NewSealedAdapterRegistryForTest in every WorkLoopDepsParams that previously
+// Use NewSealedAdapterRegistryForTest in every TestRuntimeParams that previously
 // omitted AdapterRegistry2 (or passed nil).
 //
 // Bead ref: hk-d8u1y.

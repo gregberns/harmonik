@@ -15,7 +15,7 @@
 // runloop-freeze-gate forbids re-declaring these symbols back in daemon). The
 // concrete adapters that satisfy these interfaces (daemonLedger, daemonMerge,
 // daemonGate, daemonBudget, daemonRunRegistry, …) and the constructors that
-// assemble the bundles stay in internal/daemon, close over *workLoopDeps, and
+// assemble the bundles stay in internal/daemon, close over *testRuntime, and
 // are compiler-checked against these interfaces with var _ assertions.
 //
 // Idiom mirror: internal/keeper/ports.go (structural narrow interfaces;
@@ -81,7 +81,7 @@ type BeadLedger interface {
 // HookStore is the interface over hook-session state used by the work loop
 // and waitWithSocketGrace. The concrete *hookSessionStore implements it (its
 // embedded *hook.SessionStore promotes every method); tests may supply a
-// lightweight stub via workLoopDeps to avoid the 3-second stopHookGrace window.
+// lightweight stub via testRuntime to avoid the 3-second stopHookGrace window.
 //
 // Bead ref: hk-kqdpf.1.
 type HookStore interface {
@@ -232,7 +232,7 @@ type RunRegistryPort interface {
 
 // RunPorts is the behavioral-dependency bundle of the run shell (ports-design
 // §1). Narrow, structural. beadRunOne and the reviewloop/dot helpers reach their
-// daemon dependencies through this bundle rather than the raw workLoopDeps.
+// daemon dependencies through this bundle rather than the raw testRuntime.
 //
 // Worktree, Launch and LaunchBuilder are assembled per-run inside beadRunOne
 // (they need the resolved remote-branch context and the pre-built routed spec
@@ -273,7 +273,7 @@ type RunEnv struct {
 	ProjectCfg          projectconfig.ProjectConfig
 
 	// Immutable daemon-level launch/handler config, straight copies of the
-	// same-named workLoopDeps fields (RT18-W). Populated in runEnv(); the run
+	// same-named testRuntime fields (RT18-W). Populated in runEnv(); the run
 	// path reads them here after the RT18 signature drop replaces deps with env.
 	HandlerBinary           string
 	HandlerArgs             []string

@@ -14,7 +14,7 @@ import (
 
 // ExportedMaintState is an opaque test handle over the runWorkLoop-local
 // loopMaintenanceState (RSM-011: the periodic-maintenance value fields were
-// lifted off workLoopDeps). Tests create one via ExportedNewMaintState and
+// lifted off testRuntime). Tests create one via ExportedNewMaintState and
 // thread it through ExportedRunPeriodicDiskCheck so per-run state (diskLow,
 // last-probe timestamps) persists across calls, as it did on deps before.
 type ExportedMaintState struct{ m loopMaintenanceState }
@@ -57,11 +57,11 @@ func ExportedDiskCheckSetCheckInterval(port *diskReclaimPort, d time.Duration) {
 // work-loop values, then installs all test seams. The caller passes the value
 // to ExportedRunWorkLoopWithDiskReclaim so the disk probe and registration use
 // the same cache-reap mutex.
-func ExportedDiskReclaimPortForTesting(deps workLoopDeps, interval time.Duration,
+func ExportedDiskReclaimPortForTesting(deps testRuntime, interval time.Duration,
 	freeBytes func(string) (uint64, error), goClean func() error,
 	reclaim func(context.Context, string, []string) error, cacheReapMu *sync.RWMutex,
 ) diskReclaimPort {
-	port := newDiskReclaimPort(deps)
+	port := deps.diskReclaim()
 	port.diskCheckIntervalOverride = interval
 	port.diskFreeBytesFunc = freeBytes
 	port.goCacheCleanFunc = goClean
@@ -75,8 +75,8 @@ func ExportedDiskReclaimPortForTesting(deps workLoopDeps, interval time.Duration
 // newTestDiskReclaimPort keeps broad work-loop tests independent of the host
 // filesystem. Disk-specific tests use ExportedDiskReclaimPortForTesting to
 // select their own probe result and cleanup seams.
-func newTestDiskReclaimPort(deps workLoopDeps) diskReclaimPort {
-	port := newDiskReclaimPort(deps)
+func newTestDiskReclaimPort(deps testRuntime) diskReclaimPort {
+	port := deps.diskReclaim()
 	port.diskFreeBytesFunc = func(string) (uint64, error) { return 1 << 62, nil }
 	port.goCacheCleanFunc = func() error { return nil }
 	port.worktreeReclaimFunc = func(context.Context, string, []string) error { return nil }

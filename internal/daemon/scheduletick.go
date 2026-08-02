@@ -102,14 +102,14 @@ type schedulePort struct {
 // newSchedulePort projects the schedule path's dependencies at the composition
 // seam. The caller supplies the one loaded store that both the tick and quiesce
 // arbiter use.
-func newSchedulePort(deps workLoopDeps, store *schedule.Store, crewHandler crewStarter) schedulePort {
+func newSchedulePort(daemonBinaryPath, projectDir string, handlerEnv []string, store *schedule.Store, crewHandler crewStarter) schedulePort {
 	port := schedulePort{
 		store:           store,
 		crewHandler:     crewHandler,
-		commsWhoQuerier: shellCommsWho(deps.daemonBinaryPath, deps.projectDir),
-		commsSend:       shellCommsSend(deps.daemonBinaryPath, deps.projectDir),
-		projectDir:      deps.projectDir,
-		handlerEnv:      deps.handlerEnv,
+		commsWhoQuerier: shellCommsWho(daemonBinaryPath, projectDir),
+		commsSend:       shellCommsSend(daemonBinaryPath, projectDir),
+		projectDir:      projectDir,
+		handlerEnv:      handlerEnv,
 	}
 	if store != nil {
 		port.wakeC = store.WakeCh()

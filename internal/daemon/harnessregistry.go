@@ -112,7 +112,7 @@ func emitModelSelected(
 	_ = bus.Emit(ctx, core.EventTypeModelSelected, b)
 }
 
-// routedLaunchSpecBuilder returns a launchSpecBuilder (the workLoopDeps hook
+// routedLaunchSpecBuilder returns a launchSpecBuilder (the legacy aggregate hook
 // shape: func(ctx, shared.LaunchCtx) (handler.LaunchSpec, shared.LaunchArtifacts, error))
 // that routes through resolveHarness + reg.ForAgent before building the spec.
 //

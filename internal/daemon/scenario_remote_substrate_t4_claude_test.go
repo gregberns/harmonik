@@ -392,7 +392,7 @@ func TestScenario_RemoteSubstrate_ClaudeSlice_RemoteWorker_E2E(t *testing.T) {
 	collector := &stubEventCollector{}
 	ledger := newT4Ledger(bead)
 
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:  ledger,
 		Bus:        collector,
 		ProjectDir: projectDir,

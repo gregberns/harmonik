@@ -9,7 +9,7 @@ package daemon_test
 //   - A REAL beads SQLite DB seeded via `br init` + `br create`.
 //   - A REAL daemon.Start call (not stub deps) with HandlerBinary pointing at
 //     a tiny /bin/sh wrapper script that exits 0 immediately.
-//   - Real brcli.Adapter calls through daemon.Start → newWorkLoopDeps.
+//   - Real brcli.Adapter calls through daemon.Start → newTestRuntime.
 //
 // The test passes a cancellable context to daemon.Start (hk-7oz2f) so that
 // the work loop can be stopped cleanly without sending SIGINT to the test

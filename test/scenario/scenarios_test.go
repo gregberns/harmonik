@@ -18,7 +18,7 @@ package scenario
 // Scenarios that need the full daemon socket binding use daemon.Start (in-process)
 // with BrPath="" (skips the work loop) to test just the socket + trust paths.
 //
-// Scenarios that need the work loop (Fix 3) use daemon.ExportedWorkLoopDeps +
+// Scenarios that need the work loop (Fix 3) use daemon.ExportedTestRuntime +
 // daemon.ExportedRunWorkLoop with stub ledgers, matching the pattern in
 // internal/daemon/t2_scenarios_test.go.
 //

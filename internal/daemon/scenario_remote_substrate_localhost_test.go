@@ -33,12 +33,12 @@ package daemon_test
 //   3. asserts the bead reaches a terminal state and inspects box A's main.
 //
 // Harness lineage: mirrors scenario_multibead_mergeconflict_serial_hktijaj_test.go
-// — same in-process ExportedWorkLoopDeps + ExportedRunWorkLoop driver, same
+// — same in-process ExportedTestRuntime + ExportedRunWorkLoop driver, same
 // real-throwaway-git-repos-under-t.TempDir pattern, same FIFO recording ledger,
 // same `/bin/sh -c "exit 0"` stub handler (the worktree factory makes the commit,
 // not a real claude subprocess), same skipRealDaemonE2EInShort + t.Parallel.
 // The ONLY additions are: a second (worker) clone, a workers.Registry wired into
-// WorkLoopDepsParams.WorkerRegistry, an SSHRunner-backed worktree factory, and
+// TestRuntimeParams.WorkerRegistry, an SSHRunner-backed worktree factory, and
 // an `ssh localhost true` pre-flight guard.
 //
 // Bead: hk-rs-b12-e2e-localhost. Refs (the merged feature): hk-rs-b6-healthcheck-isda,
@@ -454,7 +454,7 @@ func TestScenario_RemoteSubstrate_Localhost_E2E(t *testing.T) {
 	collector := &stubEventCollector{}
 	ledger := newRSB12Ledger([]core.BeadID{bead})
 
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
 		ProjectDir:       projectDir,
@@ -645,7 +645,7 @@ func TestScenario_RemoteSubstrate_NoWorker_RunStartedWorkerNameEmpty(t *testing.
 	collector := &stubEventCollector{}
 	ledger := newRSB12Ledger([]core.BeadID{bead})
 
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
 		ProjectDir:       projectDir,

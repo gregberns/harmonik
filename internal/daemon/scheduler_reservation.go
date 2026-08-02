@@ -108,8 +108,8 @@ type reservationResult struct {
 //
 // Spec ref: specs/queue-model.md §3.1 QM-001.
 // Bead ref: hk-a11re, hk-dorz9, hk-6pspu, hk-xsutm.
-func reserveQueueItem(ctx context.Context, deps workLoopDeps, res queueReservation) reservationResult {
-	snapshot := deps.queueStore.Snapshot(res.QueueName)
+func reserveQueueItem(ctx context.Context, queueStore *queuewiring.QueueStore, projectDir string, res queueReservation) reservationResult {
+	snapshot := queueStore.Snapshot(res.QueueName)
 	if snapshot.Queue == nil {
 		return reservationResult{Verdict: reservationRetryLater, Outcome: queue.OutcomeRejected}
 	}
@@ -118,9 +118,9 @@ func reserveQueueItem(ctx context.Context, deps workLoopDeps, res queueReservati
 		conflictingQueue string
 		maxAttemptsHit   bool
 	)
-	result := deps.queueStore.Transact(ctx, queuewiring.TransactionRequest{
+	result := queueStore.Transact(ctx, queuewiring.TransactionRequest{
 		Snapshot:      snapshot,
-		ProjectDir:    deps.projectDir,
+		ProjectDir:    projectDir,
 		OperationKind: queue.OperationReservation,
 		Precondition:  crossQueueDuplicateGuard(res.BeadID, &conflictingQueue),
 		Mutate: func(q *queue.Queue) error {
@@ -161,7 +161,7 @@ func reserveQueueItem(ctx context.Context, deps workLoopDeps, res queueReservati
 		// The bead is already in flight elsewhere. Fail this duplicate in its
 		// own write so the group advances instead of stalling on an item that
 		// will never run here.
-		failed := failQueueItem(ctx, deps, res, "cross_queue_duplicate")
+		failed := failQueueItem(ctx, queueStore, projectDir, res, "cross_queue_duplicate")
 		failed.ConflictingQueue = conflictingQueue
 		return failed
 
@@ -249,14 +249,14 @@ func holdsBeadInFlight(q *queue.Queue, beadID core.BeadID) bool {
 // failQueueItem marks one queue item failed with reason and commits that
 // through the store transaction. It does not charge an attempt: callers use it
 // for failures the item did not cause, such as losing a cross-queue race.
-func failQueueItem(ctx context.Context, deps workLoopDeps, res queueReservation, reason string) reservationResult {
-	snapshot := deps.queueStore.Snapshot(res.QueueName)
+func failQueueItem(ctx context.Context, queueStore *queuewiring.QueueStore, projectDir string, res queueReservation, reason string) reservationResult {
+	snapshot := queueStore.Snapshot(res.QueueName)
 	if snapshot.Queue == nil {
 		return reservationResult{Verdict: reservationRetryLater, Outcome: queue.OutcomeRejected}
 	}
-	result := deps.queueStore.Transact(ctx, queuewiring.TransactionRequest{
+	result := queueStore.Transact(ctx, queuewiring.TransactionRequest{
 		Snapshot:      snapshot,
-		ProjectDir:    deps.projectDir,
+		ProjectDir:    projectDir,
 		OperationKind: queue.OperationAdvance,
 		Mutate: func(q *queue.Queue) error {
 			item := activeQueueItem(q, res.GroupIndex, res.ItemIndex, res.BeadID)

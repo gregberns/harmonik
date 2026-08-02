@@ -171,7 +171,7 @@ func TestScenario_CommitGateCapTerminates_hki8g59(t *testing.T) {
 
 	collector := &stubEventCollector{}
 	ledger := &stubBeadLedger{}
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:           ledger,
 		Bus:                 collector,
 		ProjectDir:          projectDir,

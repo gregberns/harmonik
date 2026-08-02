@@ -42,7 +42,9 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/handlercontract"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
 // periodicCoordinatorReapInterval is the default minimum interval between
@@ -62,7 +64,7 @@ type coordinatorReapPort struct {
 }
 
 // loopMaintenanceState holds the periodic-maintenance value fields owned solely
-// by the runWorkLoop goroutine (RSM-011). They were lifted off workLoopDeps
+// by the runWorkLoop goroutine (RSM-011). They were lifted off legacy aggregate
 // because that bundle is copied by value into every run goroutine, where a
 // mutation of a value field is a silent no-op (PF §3 hazard). They now live
 // inside loopMaintenance, which runWorkLoop owns and holds by pointer.
@@ -170,7 +172,7 @@ type loopMaintenance struct {
 // logW is passed straight through. Both sub-constructors already substitute
 // os.Stderr for a nil writer, so a third copy of that guard here would be dead
 // code (the reviewer's point, and it also keeps os out of this file's imports).
-func newLoopMaintenance(deps workLoopDeps, lifecycle loopLifecyclePort, schedule schedulePort, coordinatorReap coordinatorReapPort, diskReclaim diskReclaimPort, eagerRefill eagerRefillPort, governor governorPort, governorEnabled bool, capacity capacityPort, queueSurface queueSurfacePort, dispatchGates dispatchGatesPort, logW io.Writer) *loopMaintenance {
+func newLoopMaintenance(projectCfg projectconfig.ProjectConfig, lifecycle loopLifecyclePort, schedule schedulePort, coordinatorReap coordinatorReapPort, diskReclaim diskReclaimPort, eagerRefill eagerRefillPort, governor governorPort, governorEnabled bool, capacity capacityPort, queueSurface queueSurfacePort, dispatchGates dispatchGatesPort, logW io.Writer) *loopMaintenance {
 	return &loopMaintenance{
 		lifecycle:       lifecycle,
 		coordinatorReap: coordinatorReap,
@@ -180,7 +182,7 @@ func newLoopMaintenance(deps workLoopDeps, lifecycle loopLifecyclePort, schedule
 		capacity:        capacity,
 		queueSurface:    queueSurface,
 		dispatchGates:   dispatchGates,
-		dashGate:        newDashboardGateIfEnabled(deps.projectCfg, logW),
+		dashGate:        newDashboardGateIfEnabled(projectCfg, logW),
 		governor:        newMovementGovernorIfEnabled(governor, governorEnabled, logW),
 	}
 }
@@ -267,13 +269,13 @@ func (m *loopMaintenance) reapCoordinatorSessions(ctx context.Context) {
 // halt from this pass would make the daemon exit one dispatch earlier than it
 // does now. If that one-tick delay is ever judged wrong, change it on purpose and
 // say so. Do not acquire it by moving the field.
-func (m *loopMaintenance) tickBeforeSelect(ctx context.Context, deps workLoopDeps, now time.Time) maintenanceObservation {
+func (m *loopMaintenance) tickBeforeSelect(ctx context.Context, projectDir string, bus handlercontract.EventEmitter, reapPort reapSeamPort, governorInput governorInputPort, now time.Time) maintenanceObservation {
 	// Dashboard staleness forcing gate (hk-xg6rw). The gate's own rate limit,
 	// transition-edge event emission, and blocked-queue set live in dashboardGate
 	// (dashboardgate.go). The verdict is returned below and consulted by
 	// selectNextQueue to withhold NEW item dispatch on captain-curated queues
 	// only. No-op when the subsystem is switched off.
-	m.dashGate.tick(ctx, deps, now)
+	m.dashGate.tick(ctx, projectDir, bus, now)
 
 	// EM-062: eager-refill fires on every poll tick (as well as after every
 	// run_terminal event in evaluateGroupAdvanceWithOutcome). This ensures that a
@@ -282,14 +284,14 @@ func (m *loopMaintenance) tickBeforeSelect(ctx context.Context, deps workLoopDep
 	//
 	// Spec ref: specs/execution-model.md §4.13 EM-062.
 	// Bead ref: hk-9321v.
-	eagerRefillEval(ctx, newReapSeamPortWithPorts(deps, m.lifecycle, m.capacity, m.queueSurface, m.eagerRefill))
+	eagerRefillEval(ctx, reapPort)
 
 	// Sentinel movement governor (FW2 hk-z1lr observe / FW3 hk-4toh act). One
 	// call: the mode split, the eval cadence gate (hk-usn8o — each evaluation
 	// scans events.jsonl), the trip/clear/halt handling and the adversary spawn
 	// all live in movementGovernor (movementgovernor.go). No-op — and never
 	// constructed — when the subsystem is switched off.
-	m.governor.tick(ctx, deps, m.schedule, m.dispatchGates)
+	m.governor.tick(ctx, governorInput, m.schedule, m.dispatchGates)
 
 	return maintenanceObservation{blockedQueues: m.dashGate.blockedQueueSet()}
 }

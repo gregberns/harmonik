@@ -152,19 +152,19 @@ func TestBeadRunOne_FallbackWorkerSelectionTakesTheSlotAndGivesItBack(t *testing
 			params.AdapterRegistry2 = runplanacqSealedRegistry(t)
 			params.WorkerRegistry = reg
 			params.WorktreeFactory = worktreeFactory
-			deps := ExportedWorkLoopDeps(params)
+			deps := ExportedTestRuntime(params)
 
 			// The dispatch loop increments the local count before it starts a run
 			// it believes is local, and hands localSlotHeld=true to the run that
 			// owes it back. Without this the give-back site has nothing to give
 			// and the test measures nothing.
 			ExportedStoreLocalInFlight(deps, 1)
-			if got := deps.localInFlight.Load(); got != 1 {
+			if got := deps.handles.LocalInFlight.Load(); got != 1 {
 				t.Fatalf("setup: localInFlight = %d; want 1", got)
 			}
 
 			bead := remotefixBead("hk-fallbackwrk-probe", "fallback worker selection probe")
-			env := deps.runEnv(core.RunID(uuid.New()), bead, fallbackwrkQueue, nil, nil, 0, "", "", nil, false, tc.workerTarget, core.AgentType(""))
+			env := deps.runEnv(core.RunID(uuid.New()), bead, fallbackwrkQueue, tc.workerTarget, core.AgentType(""))
 
 			// The reading point. AllocatePort is the first call on the remote
 			// tunnel path, so it runs after the fallback block and only when the
@@ -177,7 +177,7 @@ func TestBeadRunOne_FallbackWorkerSelectionTakesTheSlotAndGivesItBack(t *testing
 			tunnelpkg.AllocatePort = func() (int, error) {
 				seen.reached = true
 				seen.workerInFlight = reg.InFlight()
-				seen.localInFlight = deps.localInFlight.Load()
+				seen.localInFlight = deps.handles.LocalInFlight.Load()
 				if h, ok := deps.runRegistry.Get(env.RunID); ok {
 					seen.remote = h.Remote.Load()
 				}
@@ -239,7 +239,7 @@ func TestBeadRunOne_FallbackWorkerSelectionTakesTheSlotAndGivesItBack(t *testing
 			}
 			// And exactly once. A give-back at both sites drives the count
 			// negative and opens the gate wider than the daemon's own ceiling.
-			if got := deps.localInFlight.Load(); got != 0 {
+			if got := deps.handles.LocalInFlight.Load(); got != 0 {
 				t.Errorf("localInFlight after the run = %d; want 0. The count was given back twice", got)
 			}
 

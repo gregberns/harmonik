@@ -27,6 +27,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/projectconfig"
+	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/workflow/dot"
 )
 
@@ -115,13 +116,13 @@ func (b *recordingBusDaemon) Emit(_ context.Context, et core.EventType, payload 
 }
 
 // swMakeRunner builds a dotSubWorkflowRunner backed by a recordingBusDaemon
-// and a minimal workLoopDeps. The parentGraph is used for acyclicity checking.
+// and a minimal testRuntime. The parentGraph is used for acyclicity checking.
 func swMakeRunner(t *testing.T, bus *recordingBusDaemon, projectDir string, parentGraph *dot.Graph) *dotSubWorkflowRunner {
 	t.Helper()
 	run := swTestRun(t)
-	deps := workLoopDeps{
-		bus:        bus,
-		projectDir: projectDir,
+	deps := testRuntime{
+		env:   runloop.RunEnv{ProjectDir: projectDir},
+		ports: runloop.RunPorts{Emitter: bus},
 	}
 	iterCount := 1
 	sessID := ""

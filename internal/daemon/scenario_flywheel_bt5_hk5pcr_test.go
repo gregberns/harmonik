@@ -231,7 +231,7 @@ func TestScenario_Flywheel_BT5_2_WorkGenOnce(t *testing.T) {
 	eagerRefill.followUpLedgerPath = ledgerPath
 
 	// One deploy-class completion.
-	stagedBeadGeneratorEval(context.Background(), deps, eagerRefill, "hk-bt5-deploybead", []string{"deploy"})
+	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill, "hk-bt5-deploybead", []string{"deploy"})
 
 	// ── Assert: EXACTLY ONE br create ───────────────────────────────────────
 	if n := bt5CountBrCreateCalls(t, argsFile); n != 1 {
@@ -308,7 +308,7 @@ func TestScenario_Flywheel_BT5_3_LedgerSurvivesRestart(t *testing.T) {
 	depsBefore, eagerBefore := stagedBeadFixtureDeps(t, projectDir, scriptPath)
 	eagerBefore.followUpLedgerPath = ledgerPath
 
-	stagedBeadGeneratorEval(ctx, depsBefore, eagerBefore, completed, []string{class})
+	stagedBeadGeneratorEvalForTest(ctx, depsBefore, eagerBefore, completed, []string{class})
 
 	if n := bt5CountBrCreateCalls(t, argsFile); n != 1 {
 		t.Fatalf("BT5-3 phase 1: expected exactly 1 br create before restart; got %d", n)
@@ -331,7 +331,7 @@ func TestScenario_Flywheel_BT5_3_LedgerSurvivesRestart(t *testing.T) {
 	}
 
 	// ── Phase 3: REPLAY the same completion → must be a NO-OP ────────────────
-	stagedBeadGeneratorEval(ctx, depsAfter, eagerAfter, completed, []string{class})
+	stagedBeadGeneratorEvalForTest(ctx, depsAfter, eagerAfter, completed, []string{class})
 
 	if n := bt5CountBrCreateCalls(t, argsFile); n != 1 {
 		t.Fatalf("BT5-3 phase 3: replay after restart double-emitted — expected STILL exactly 1 br create, got %d (durable at-most-once broken)", n)

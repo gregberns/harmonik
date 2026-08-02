@@ -265,7 +265,7 @@ func TestRunPlan_HookSocketRefusalTakesNothing(t *testing.T) {
 	ledger := &runplanacqLedger{}
 	bus := &runplanBus{}
 
-	deps := ExportedWorkLoopDeps(WorkLoopDepsParams{
+	deps := ExportedTestRuntime(TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              bus,
 		ProjectDir:       projectDir,
@@ -290,7 +290,7 @@ func TestRunPlan_HookSocketRefusalTakesNothing(t *testing.T) {
 		Status:   core.CoarseStatusOpen,
 	}
 
-	env := deps.runEnv(runID, bead, "", nil, nil, 0, "", "", nil, false, "", core.AgentType(""))
+	env := deps.runEnv(runID, bead, "", "", core.AgentType(""))
 	if succeeded := runBeadOneTest(ctx, deps, env, "", preSelected, false); succeeded {
 		t.Error("beadRunOne reported success for a refused bead")
 	}

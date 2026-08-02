@@ -8,19 +8,24 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/daemon/bootconfig"
 	"github.com/gregberns/harmonik/internal/digest"
 	"github.com/gregberns/harmonik/internal/eventbus"
+	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/queuewiring"
 	runpkg "github.com/gregberns/harmonik/internal/run"
+	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/schedule"
 	"github.com/gregberns/harmonik/internal/sentinel"
+	"github.com/gregberns/harmonik/internal/substrate"
 	"github.com/gregberns/harmonik/internal/workers"
 )
 
@@ -35,48 +40,112 @@ func (bs *bootState) launchWorkLoop(ctx context.Context, daemonStartTime time.Ti
 		return nil
 	}
 
-	deps, depsErr := bs.buildWorkLoopDeps(ctx, workflowModeDefault)
-	if depsErr != nil {
-		return depsErr
+	cfg := bs.cfg
+	if cfg.ProjectDir == "" {
+		return fmt.Errorf("daemon.Start: work loop deps: Config.ProjectDir is empty; required for worktree creation")
 	}
+	if bs.adapterReg == nil {
+		return fmt.Errorf("daemon.Start: work loop deps: adapterRegistry is nil; required by waitAgentReady")
+	}
+	ledger, ledgerErr := brcli.NewForProject(cfg.BrPath, cfg.ProjectDir)
+	if ledgerErr != nil {
+		return fmt.Errorf("daemon.Start: work loop deps: brcli.NewForProject: %w", ledgerErr)
+	}
+	harnessRegistry, harnessErr := newHarnessRegistry(cfg.ProjectCfg.Harnesses.Pi)
+	if harnessErr != nil {
+		return fmt.Errorf("daemon.Start: work loop deps: newHarnessRegistry: %w", harnessErr)
+	}
+	var workerEmit workers.EmitFunc
+	if bs.bus != nil {
+		workerEmit = bs.bus.Emit
+	}
+	workerRegistry := workers.BuildRegistry(ctx, cfg.Workers, workerEmit)
+	if cfg.WorkerRegistryObserver != nil {
+		cfg.WorkerRegistryObserver(workerRegistry)
+	}
+	handlerBinary := cfg.HandlerBinary
+	if handlerBinary == "" {
+		handlerBinary = "claude"
+	}
+	daemonBinaryPath := cfg.DaemonBinaryPath
+	if daemonBinaryPath == "" {
+		daemonBinaryPath = "harmonik"
+	}
+	projectHash := lifecycle.ComputeProjectHash(cfg.ProjectDir)
+	handlerEnv := append([]string{lifecycle.ProvenanceEnvVar(projectHash)}, cfg.HandlerEnv...)
+	intentLogDir := lifecycle.BeadsIntentsDir(cfg.ProjectDir)
+	targetBranch := bootconfig.ResolveTargetBranch(cfg.TargetBranch)
+	runRegistry := bs.sharedRunRegistry
+	if runRegistry == nil {
+		runRegistry = newLocalRunRegistry()
+	}
+	localInFlight := new(atomic.Int32)
+	worktreeCreateMu := &sync.Mutex{}
+	agentSpawnSem := make(chan struct{}, 3)
+	emittedEpics := make(map[core.BeadID]struct{})
+	if cfg.JSONLLogPath != "" {
+		emittedEpics = scanEmittedEpics(cfg.JSONLLogPath)
+	}
+	emittedEpicsMu := &sync.Mutex{}
+	var injectedWorktreeFactory func(context.Context, string, string, string) (string, func(), error)
+	if bs.hooks.worktreeFactory != nil {
+		injectedWorktreeFactory = bs.hooks.worktreeFactory
+	}
+	mergeQueue := bs.hooks.mergeQ
+	baseEnv := runloop.RunEnv{ProjectDir: cfg.ProjectDir, TargetBranch: targetBranch, BrPath: cfg.BrPath, ProtectBranches: cfg.ProtectBranches, AllowedRepos: cfg.ProjectCfg.Daemon.AllowedRepos, WorkflowModeDefault: workflowModeDefault, DefaultHarness: cfg.DefaultHarness, ProjectCfg: cfg.ProjectCfg, HandlerBinary: handlerBinary, HandlerArgs: cfg.HandlerArgs, HandlerEnv: handlerEnv, DaemonBinaryPath: daemonBinaryPath, IntentLogDir: intentLogDir, AgentReadyTimeout: cfg.AgentReadyTimeout, RemoteAgentReadyTimeout: cfg.RemoteAgentReadyTimeout, SandboxCfg: cfg.ProjectCfg.Sandbox, BrTimeoutCfg: brcli.TimeoutConfig{}}
+	basePorts := newStaticRunPorts(ledger, bs.bus, intentLogDir, baseEnv.BrTimeoutCfg, cfg.ProjectDir, cfg.SkipBrHistoryRotation, mergeQueue, cfg.CPRegistry, substrate.SystemClock{})
+	handles := newSharedHandles(runRegistry, localInFlight, agentSpawnSem, workerRegistry, bs.qs, cfg.ProjectDir, harnessRegistry, bs.adapterReg, bs.hookStore, cfg.Substrate, cfg.ReviewerSubstrate, core.NewTransitionIDGenerator(), emittedEpics, emittedEpicsMu, ledger, cfg.Runner, injectedWorktreeFactory, worktreeCreateMu)
 	lifecyclePort := newLoopLifecyclePort(bs.cfg)
-	ledgerRepair := newLedgerRepairPort(deps)
+	ledgerRepair := newLedgerRepairPort(ledger, cfg.ProjectDir)
 	governor, governorEnabled, governorErr := newGovernorPort(bs.cfg, daemonStartTime)
 	if governorErr != nil {
 		return governorErr
 	}
 	coordinatorReap := newCoordinatorReapPort(bs.cfg)
-	diskReclaim := newDiskReclaimPort(deps)
+	diskReclaim := newDiskReclaimPort(cfg.ProjectDir, bs.bus, runRegistry)
 	eagerRefill := newEagerRefillPort(bs.cfg)
 	loadEagerRefillLedger(&eagerRefill)                    //nolint:contextcheck // The retained ledger helper is path-only.
 	scheduleStore, scheduleErr := newScheduleStore(bs.cfg) //nolint:contextcheck // Schedule registration is a bootstrap file mutation with no context-aware API.
 	if scheduleErr != nil {
 		return scheduleErr
 	}
-	if injectErr := bs.injectWorkLoopDeps(ctx, &deps, &lifecyclePort, bootBackoffDelay); injectErr != nil {
-		return injectErr
+	if bs.queueHandlerAdapter != nil {
+		bs.queueHandlerAdapter.SetWorkerToggleFunc(func(name string, enabled bool) (string, error) {
+			if workerRegistry == nil {
+				return "", fmt.Errorf("no such worker %q: no remote worker configured (.harmonik/workers.yaml is empty)", name)
+			}
+			return workerRegistry.SetEnabledByName(name, enabled)
+		})
+	}
+	if bootBackoffDelay > 0 {
+		if prober, ok := cfg.Substrate.(substrateSpawnReadier); ok {
+			readyCh := make(chan struct{})
+			go func() {
+				defer close(readyCh)
+				if probeErr := prober.ProbeSpawnReady(ctx); probeErr != nil {
+					log.Printf("warn: daemon.Start: spawn-substrate readiness probe (non-fatal): %v", probeErr)
+				}
+			}()
+			lifecyclePort.spawnSubstrateReadyCh = readyCh
+		}
 	}
 	maxConcurrent := bs.cfg.MaxConcurrent
 	if maxConcurrent <= 0 {
 		maxConcurrent = 1
 	}
 	capacity := newCapacityPort(maxConcurrent, bs.concurrencyCtrl)
-	queueAdapter, ok := deps.brAdapter.(*brcli.Adapter)
-	if !ok {
-		return fmt.Errorf("daemon.Start: queue ledger: unexpected br adapter %T", deps.brAdapter)
-	}
-	queueSurface := newQueueSurfacePort(bs.qs.WakeCh(), queuewiring.NewBRQueueLedger(queueAdapter))
+	queueSurface := newQueueSurfacePort(bs.qs.WakeCh(), queuewiring.NewBRQueueLedger(ledger))
 	dispatchGates := newDispatchGatesPort(bs.bus, bs.handlerPauseCtrl, bs.opPauseCtrl, bs.decisionBlocker)
-	schedulePort := newSchedulePort(deps, scheduleStore, bs.crewHandler)
+	schedulePort := newSchedulePort(daemonBinaryPath, cfg.ProjectDir, handlerEnv, scheduleStore, bs.crewHandler)
 	// `harmonik sleep` suspends enabled jobs; `wake --all` restores them
 	// through this same store.
 	bs.quiesceArbiter.SetScheduleStore(schedulePort.store)
-	bs.startBackgroundLoops(ctx, &deps)
-	bs.wireStaleWatcherReapSeams(ctx, &deps, lifecyclePort, capacity, queueSurface, eagerRefill)
+	bs.startBackgroundLoops(ctx, workerRegistry)
+	bs.wireStaleWatcherReapSeams(ctx, bs.bus, cfg.ProjectDir, targetBranch, bs.qs, runRegistry, lifecyclePort, capacity, queueSurface, eagerRefill)
 
 	loopDone := make(chan error, 1)
 	go func() {
-		loopDone <- runWorkLoop(ctx, deps, lifecyclePort, ledgerRepair, schedulePort, coordinatorReap, diskReclaim, eagerRefill, governor, governorEnabled, capacity, queueSurface, dispatchGates, bs.cfg.NoAutoPull)
+		loopDone <- runWorkLoop(ctx, baseEnv, basePorts, handles, ledger, bs.qs, runRegistry, cfg.Substrate, mergeQueue, nil, lifecyclePort, ledgerRepair, schedulePort, coordinatorReap, diskReclaim, eagerRefill, governor, governorEnabled, capacity, queueSurface, dispatchGates, cfg.NoAutoPull)
 	}()
 	// Block until the work loop exits (either ctx cancelled or fatal error).
 	<-loopDone
@@ -108,27 +177,6 @@ func newCoordinatorReapPort(cfg Config) coordinatorReapPort {
 		projectHash: lifecycle.ComputeProjectHash(cfg.ProjectDir),
 		adapter:     adapter,
 	}
-}
-
-// buildWorkLoopDeps constructs the work-loop deps (newWorkLoopDeps) and
-// boot-seeds emittedEpics (C1, hk-o50hy) from the durable log so a restart does
-// not re-emit.
-func (bs *bootState) buildWorkLoopDeps(ctx context.Context, workflowModeDefault core.WorkflowMode) (workLoopDeps, error) {
-	cfg := bs.cfg
-
-	deps, depsErr := newWorkLoopDeps(ctx, cfg, bs.bus, workflowModeDefault, bs.adapterReg, bs.hookStore)
-	if depsErr != nil {
-		return workLoopDeps{}, fmt.Errorf("daemon.Start: work loop deps: %w", depsErr)
-	}
-
-	// C1 boot-seed (hk-o50hy): populate emittedEpics from the durable event log so
-	// a restart does not re-emit epic_completed for an already-completed epic (AC-5).
-	if cfg.JSONLLogPath != "" {
-		deps.emittedEpics = scanEmittedEpics(cfg.JSONLLogPath)
-		deps.emittedEpicsMu = &sync.Mutex{}
-	}
-
-	return deps, nil
 }
 
 // newGovernorPort constructs the governor's configuration and mutable state.
@@ -166,7 +214,7 @@ func newGovernorPort(cfg Config, daemonStartTime time.Time) (governorPort, bool,
 
 // scanEmittedEpics reads the durable event log and returns the set of epic IDs
 // that already emitted epic_completed, so a restart does not re-emit (C1, AC-5,
-// hk-o50hy). Extracted from buildWorkLoopDeps for giant-retirement boot-config B6.
+// hk-o50hy). Extracted from direct-root build for giant-retirement boot-config B6.
 func scanEmittedEpics(jsonlLogPath string) map[core.BeadID]struct{} {
 	seed := make(map[core.BeadID]struct{})
 	for ev := range eventbus.ScanAfter(jsonlLogPath, core.EventID{}) {
@@ -199,67 +247,12 @@ func newScheduleStore(cfg Config) (*schedule.Store, error) {
 	return store, nil
 }
 
-// injectWorkLoopDeps wires shared run handles and boot-only seams into the
-// work-loop dependencies. The dispatch ports are built later in launchWorkLoop.
-// The schedule path has its own SchedulePort.
-func (bs *bootState) injectWorkLoopDeps(ctx context.Context, deps *workLoopDeps, loopLifecycle *loopLifecyclePort, bootBackoffDelay time.Duration) error {
-	cfg := bs.cfg
-
-	// Queue store is a shared run handle. Its wake channel and ledger belong to
-	// QueueSurfacePort, which launchWorkLoop builds after this injection.
-	deps.queueStore = bs.qs
-
-	// Live worker enable/disable toggle (hk-xjbvi): the closure captures the SAME
-	// registry the dispatch path reads via SelectWorker.
-	if bs.queueHandlerAdapter != nil {
-		workerReg := deps.workerRegistry
-		bs.queueHandlerAdapter.SetWorkerToggleFunc(func(name string, enabled bool) (string, error) {
-			if workerReg == nil {
-				return "", fmt.Errorf("no such worker %q: no remote worker configured (.harmonik/workers.yaml is empty)", name)
-			}
-			return workerReg.SetEnabledByName(name, enabled)
-		})
-	}
-
-	// Shared RunRegistry so the work loop + policy goroutine share one snapshot (hk-37zy8).
-	deps.runRegistry = bs.sharedRunRegistry
-
-	// Test-only overrides (WithWorktreeFactory / WithMergeQueue).
-	if bs.hooks.worktreeFactory != nil {
-		deps.worktreeFactory = bs.hooks.worktreeFactory
-	}
-	// Inject the test-only merge-queue override when set via WithMergeQueue
-	// (RSM-015, 9eceafc0). Nil (the default) keeps production's own queue from
-	// newWorkLoopDeps/runWorkLoop, so production merges stay serialised through
-	// the exclusion domain.
-	if bs.hooks.mergeQ != nil {
-		deps.mergeQ = bs.hooks.mergeQ
-	}
-
-	// hk-bk33: spawn-substrate readiness gate for post-boot re-dispatch. runWorkLoop
-	// waits on this channel before the first dispatch tick after a restart-backoff.
-	if bootBackoffDelay > 0 {
-		if prober, ok := cfg.Substrate.(substrateSpawnReadier); ok {
-			readyCh := make(chan struct{})
-			go func() {
-				defer close(readyCh)
-				if probeErr := prober.ProbeSpawnReady(ctx); probeErr != nil {
-					log.Printf("warn: daemon.Start: spawn-substrate readiness probe (non-fatal): %v", probeErr)
-				}
-			}()
-			loopLifecycle.spawnSubstrateReadyCh = readyCh
-		}
-	}
-
-	return nil
-}
-
 // startBackgroundLoops starts the post-Seal background goroutines: the quiesce
 // arbiter, the idle-crew reaper (SD-3, hk-s2eac), the periodic branch reaper
 // (hk-2i36s), the scheduled reconciliation detector (RC-020a, hk-63oh.21), and the
 // recurring worker-report poll (WR3, hk-jn3u). It also emits the composition-root
 // wiring audit log (HARMONIK_DEBUG_WIRING=1, hk-4mupj).
-func (bs *bootState) startBackgroundLoops(ctx context.Context, deps *workLoopDeps) {
+func (bs *bootState) startBackgroundLoops(ctx context.Context, workerRegistry *workers.Registry) {
 	cfg := bs.cfg
 
 	bs.quiesceArbiter.Start(ctx)
@@ -300,7 +293,7 @@ func (bs *bootState) startBackgroundLoops(ctx context.Context, deps *workLoopDep
 
 	// WR3 (hk-jn3u): recurring worker-report poll, subject to subsystem
 	// partitioning (see startWorkerReportLoopIfEnabled).
-	bs.startWorkerReportLoopIfEnabled(ctx, deps.workerRegistry)
+	bs.startWorkerReportLoopIfEnabled(ctx, workerRegistry)
 }
 
 // startWorkerReportLoopIfEnabled applies subsystem partitioning to the WR3
@@ -334,10 +327,10 @@ func (bs *bootState) startWorkerReportLoopIfEnabled(ctx context.Context, reg *wo
 // wireStaleWatcherReapSeams wires the StaleWatcher force-reap watchdog seams
 // (hk-mdus1) now that deps (queueStore, emitter) is fully built. Two-phase because
 // the watcher was constructed + started (StartWatcher) far earlier, before
-// workLoopDeps existed.
-func (bs *bootState) wireStaleWatcherReapSeams(ctx context.Context, deps *workLoopDeps, loopLifecycle loopLifecyclePort, capacity capacityPort, queueSurface queueSurfacePort, eagerRefill eagerRefillPort) {
+// legacy aggregate existed.
+func (bs *bootState) wireStaleWatcherReapSeams(ctx context.Context, bus handlercontract.EventEmitter, projectDir, targetBranch string, queueStore *queuewiring.QueueStore, runRegistry *RunRegistry, loopLifecycle loopLifecyclePort, capacity capacityPort, queueSurface queueSurfacePort, eagerRefill eagerRefillPort) {
 	cfg := bs.cfg
-	reapPort := newReapSeamPortWithPorts(*deps, loopLifecycle, capacity, queueSurface, eagerRefill)
+	reapPort := newReapSeamPort(bus, projectDir, targetBranch, queueStore, runRegistry, loopLifecycle, capacity, queueSurface, eagerRefill)
 
 	// ForceReap: on a wedged run's force-Unregister, emit a terminal run_failed and
 	// drive the owning queue item terminal so the group advances.

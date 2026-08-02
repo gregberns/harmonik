@@ -8,7 +8,7 @@ package daemon
 //
 // Tier 1 — per-bead workflow:<mode> label (beads-integration.md §4.3 BI-009a)
 // Tier 2 — per-project config (reserved no-op; always absent)
-// Tier 3 — daemon default (workLoopDeps.workflowModeDefault per hk-7om2q.8)
+// Tier 3 — daemon default (legacy aggregate.workflowModeDefault per hk-7om2q.8)
 // Tier 4 — hard fallback: dot (hk-30vlb)
 //
 // The resolved value MUST be sealed into the Run record before dispatch and
@@ -40,7 +40,7 @@ const dotRefLabelPrefix = "dot:"
 // resolveWorkflowMode implements the EM-012a four-tier precedence walk.
 //
 //   - bead      — carries the labels from the ready-work record (BI-013)
-//   - daemon    — the daemon-level default cached in workLoopDeps (tier 3)
+//   - daemon    — the daemon-level default cached in legacy aggregate (tier 3)
 //   - bus / ctx — used to emit bead_label_conflict when tier-1 is ambiguous
 //
 // Returns the resolved WorkflowMode. The returned value is always a valid

@@ -18,7 +18,7 @@ func newCapacityPort(maxConcurrent int, concurrencyCtrl *ConcurrencyController) 
 }
 
 // queueSurfacePort holds the queue-specific inputs of the dispatch loop. The
-// QueueStore remains a shared run handle on workLoopDeps.
+// QueueStore remains a shared run handle on legacy aggregate.
 type queueSurfacePort struct {
 	submitWakeC <-chan struct{}
 	queueLedger queue.BeadLedger
@@ -49,17 +49,4 @@ func newDispatchGatesPort(bus handlercontract.EventEmitter, handlerPauseControll
 		operatorPauseCtrl:       operatorPauseCtrl,
 		decisionBlocker:         decisionBlocker,
 	}
-}
-
-// newDispatchGatesPortFromDeps is the test-export bridge for callers that
-// still construct workLoopDeps directly. Production builds the port at boot.
-func newDispatchGatesPortFromDeps(deps workLoopDeps) dispatchGatesPort {
-	port := deps.testDispatchGates
-	if port.heldEventDedup == nil {
-		port.heldEventDedup = make(map[string]struct{})
-	}
-	if port.queueWriteErrorReported == nil {
-		port.queueWriteErrorReported = make(map[string]struct{})
-	}
-	return port
 }

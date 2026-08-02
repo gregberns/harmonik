@@ -232,7 +232,7 @@ func TestScenario_RemoteSubstrate_Localhost_DOT_E2E(t *testing.T) {
 	collector := &stubEventCollector{}
 	ledger := newRSB12Ledger([]core.BeadID{bead})
 
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:           ledger,
 		Bus:                 collector,
 		ProjectDir:          projectDir,

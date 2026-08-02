@@ -18,7 +18,7 @@ package daemon
 //
 // Scope, stated plainly so the log is not read as more than it is: this covers
 // the singletons bootState holds.  A dropped bus.Subscribe, a dropped
-// StartWatcher call, and a dropped workLoopDeps field all remain invisible
+// StartWatcher call, and a dropped legacy aggregate field all remain invisible
 // here — those are wiring ACTIONS rather than constructed values, and nothing
 // in this file detects them.
 //

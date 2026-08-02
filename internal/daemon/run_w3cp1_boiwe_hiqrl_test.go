@@ -98,7 +98,7 @@ func TestMultiBead_TwoBeadsCompleteBothClose(t *testing.T) {
 	qs.SetQueue(q)
 	ledger := &stubBeadLedger{}
 
-	p := daemon.WorkLoopDepsParams{
+	p := daemon.TestRuntimeParams{
 		BrAdapter:          ledger,
 		Bus:                bus,
 		ProjectDir:         projectDir,
@@ -111,7 +111,7 @@ func TestMultiBead_TwoBeadsCompleteBothClose(t *testing.T) {
 		WorktreeFactory:    emptyCommitWorktreeFactory, // satisfy no-commit guard (hk-mmh8f) without race
 		CancelOnQueueDrain: cancelDrain,
 	}
-	deps := daemon.ExportedWorkLoopDeps(p)
+	deps := daemon.ExportedTestRuntime(p)
 
 	testCtx, testCancel := context.WithTimeout(drainCtx, 30*time.Second)
 	defer testCancel()
@@ -186,7 +186,7 @@ func TestMultiBead_MaxConcurrentOne(t *testing.T) {
 	qs.SetQueue(q)
 	ledger := &stubBeadLedger{}
 
-	p := daemon.WorkLoopDepsParams{
+	p := daemon.TestRuntimeParams{
 		BrAdapter:          ledger,
 		Bus:                bus,
 		ProjectDir:         projectDir,
@@ -199,7 +199,7 @@ func TestMultiBead_MaxConcurrentOne(t *testing.T) {
 		WorktreeFactory:    emptyCommitWorktreeFactory, // satisfy no-commit guard (hk-mmh8f) without race
 		CancelOnQueueDrain: cancelDrain,
 	}
-	deps := daemon.ExportedWorkLoopDeps(p)
+	deps := daemon.ExportedTestRuntime(p)
 
 	testCtx, testCancel := context.WithTimeout(drainCtx, 30*time.Second)
 	defer testCancel()
@@ -306,7 +306,7 @@ func TestExtraContext_WorkloopSingleBead(t *testing.T) {
 	qs.SetQueue(q)
 	ledger := &stubBeadLedger{}
 
-	p := daemon.WorkLoopDepsParams{
+	p := daemon.TestRuntimeParams{
 		BrAdapter:          ledger,
 		Bus:                bus,
 		ProjectDir:         projectDir,
@@ -318,7 +318,7 @@ func TestExtraContext_WorkloopSingleBead(t *testing.T) {
 		WorktreeFactory:    emptyCommitWorktreeFactory, // satisfy no-commit guard (hk-mmh8f) without race
 		CancelOnQueueDrain: cancelDrain,
 	}
-	deps := daemon.ExportedWorkLoopDeps(p)
+	deps := daemon.ExportedTestRuntime(p)
 
 	testCtx, testCancel := context.WithTimeout(drainCtx, 20*time.Second)
 	defer testCancel()
@@ -450,12 +450,12 @@ func TestQueueItemWorkflowMode_WorkloopHonoursItemMode(t *testing.T) {
 	qs.SetQueue(q)
 	ledger := &stubBeadLedger{}
 
-	// The real hookSessionStore installed by ExportedWorkLoopDeps will wait up
+	// The real hookSessionStore installed by ExportedTestRuntime will wait up
 	// to stopHookGrace (3s) in WaitForOutcome. The handler exits 0; without a
 	// real verdict file the run exits via its error path and reopens
 	// the bead. Either closed or reopened is acceptable: both confirm the bead
 	// reached a terminal state via per-item-mode dispatch (hk-ngw3d).
-	p := daemon.WorkLoopDepsParams{
+	p := daemon.TestRuntimeParams{
 		BrAdapter:          ledger,
 		Bus:                bus,
 		ProjectDir:         projectDir,
@@ -467,7 +467,7 @@ func TestQueueItemWorkflowMode_WorkloopHonoursItemMode(t *testing.T) {
 		AdapterRegistry2:   NewSealedAdapterRegistryForTest(t),
 		CancelOnQueueExit:  cancelExit, // failure/error path (BLOCK/error)
 	}
-	deps := daemon.ExportedWorkLoopDeps(p)
+	deps := daemon.ExportedTestRuntime(p)
 
 	testCtx, testCancel := context.WithTimeout(exitCtx, 30*time.Second)
 	defer testCancel()
@@ -541,7 +541,7 @@ func TestSmoke_MultiBead_MaxConcurrent2_BothComplete(t *testing.T) {
 	qs.SetQueue(q)
 	ledger := &stubBeadLedger{}
 
-	p := daemon.WorkLoopDepsParams{
+	p := daemon.TestRuntimeParams{
 		BrAdapter:          ledger,
 		Bus:                bus,
 		ProjectDir:         projectDir,
@@ -554,7 +554,7 @@ func TestSmoke_MultiBead_MaxConcurrent2_BothComplete(t *testing.T) {
 		WorktreeFactory:    emptyCommitWorktreeFactory, // satisfy no-commit guard (hk-mmh8f) without race
 		CancelOnQueueDrain: cancelDrain,
 	}
-	deps := daemon.ExportedWorkLoopDeps(p)
+	deps := daemon.ExportedTestRuntime(p)
 
 	testCtx, testCancel := context.WithTimeout(drainCtx, 30*time.Second)
 	defer testCancel()

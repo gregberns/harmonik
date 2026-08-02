@@ -27,7 +27,7 @@ package daemon_test
 //       interleave / no clobbered update-ref).
 //
 // Both halves are driven through the in-process work-loop driver
-// (ExportedWorkLoopDeps + ExportedRunWorkLoop) against REAL throwaway git
+// (ExportedTestRuntime + ExportedRunWorkLoop) against REAL throwaway git
 // repos under t.TempDir(). No daemon.Start, no tmux, no claude subprocess —
 // the handler is `/bin/sh -c "exit 0"` so the auto-close heuristic branch
 // runs lockedMergeRunBranchToMain for real. This mirrors the lighter harness
@@ -411,7 +411,7 @@ func TestScenario_MultiBead_ConflictSkipsButOthersProceed(t *testing.T) {
 		return wtPath, cleanup, nil
 	}
 
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
 		ProjectDir:       projectDir,
@@ -555,7 +555,7 @@ func TestScenario_MultiBead_SerializedNCompletion(t *testing.T) {
 		return wtPath, cleanup, nil
 	}
 
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
 		ProjectDir:       projectDir,

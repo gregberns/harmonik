@@ -22,6 +22,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/dashboard"
 	"github.com/gregberns/harmonik/internal/digest"
+	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
@@ -91,13 +92,13 @@ func (g *dashboardGate) blockedQueueSet() map[string]bool {
 //
 // Spec ref: plans/2026-07-03-operator-dashboard/DESIGN.md §4.
 // Bead ref: hk-xg6rw.
-func (g *dashboardGate) tick(ctx context.Context, deps workLoopDeps, now time.Time) {
+func (g *dashboardGate) tick(ctx context.Context, projectDir string, bus handlercontract.EventEmitter, now time.Time) {
 	if g == nil || now.Sub(g.lastEval) < dashboardGateEvalInterval {
 		return
 	}
 	g.lastEval = now
 
-	result, gateErr := evaluateDashboardGate(deps.projectDir, now)
+	result, gateErr := evaluateDashboardGate(projectDir, now)
 	if gateErr != nil {
 		// Fail loud (the DESIGN §4 no-hardcoded-threshold mandate) but not fatal:
 		// the result already degrades to Blocked=true, the fail-safe direction.
@@ -121,7 +122,7 @@ func (g *dashboardGate) tick(ctx context.Context, deps workLoopDeps, now time.Ti
 			DetectedAt:       now.UTC().Format(time.RFC3339),
 		}
 		if raw, mErr := json.Marshal(payload); mErr == nil {
-			_ = deps.bus.Emit(ctx, core.EventTypeDashboardStale, raw) //nolint:errcheck // best-effort observability emit
+			_ = bus.Emit(ctx, core.EventTypeDashboardStale, raw) //nolint:errcheck // best-effort observability emit
 		}
 	case !result.Blocked && g.wasBlocked:
 		g.wasBlocked = false
@@ -131,7 +132,7 @@ func (g *dashboardGate) tick(ctx context.Context, deps workLoopDeps, now time.Ti
 			DetectedAt: now.UTC().Format(time.RFC3339),
 		}
 		if raw, mErr := json.Marshal(payload); mErr == nil {
-			_ = deps.bus.Emit(ctx, core.EventTypeDashboardRefreshed, raw) //nolint:errcheck // best-effort observability emit
+			_ = bus.Emit(ctx, core.EventTypeDashboardRefreshed, raw) //nolint:errcheck // best-effort observability emit
 		}
 	}
 }

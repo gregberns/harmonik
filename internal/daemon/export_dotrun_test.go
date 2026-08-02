@@ -51,7 +51,7 @@ type DotWorkflowResultExported struct {
 // agent_ready, exactly as the single-mode and review-loop paths do).
 func ExportedDriveDotWorkflow(
 	ctx context.Context,
-	deps workLoopDeps,
+	deps testRuntime,
 	runID core.RunID,
 	beadID core.BeadID,
 	wtPath string,
@@ -75,7 +75,7 @@ func ExportedDriveDotWorkflow(
 // context injection (e.g. node role= surfacing, hk-m5lmo).
 func ExportedDriveDotWorkflowFull(
 	ctx context.Context,
-	deps workLoopDeps,
+	deps testRuntime,
 	runID core.RunID,
 	beadID core.BeadID,
 	beadTitle string,
@@ -110,7 +110,7 @@ func ExportedDriveDotWorkflowFull(
 // Bead ref: hk-01vs0.
 func ExportedExecuteCognitionGate(
 	ctx context.Context,
-	deps workLoopDeps,
+	deps testRuntime,
 	runID core.RunID,
 	cp core.ControlPoint,
 	wtPath string,
@@ -128,7 +128,7 @@ func ExportedExecuteCognitionGate(
 		WorkflowMode: core.WorkflowModeDot,
 		Context:      map[string]any{},
 	}
-	env := deps.runEnv(runID, beadRecord, "", nil, nil, 0, "", "", nil, false, "", queueDefault)
+	env := deps.runEnv(runID, beadRecord, "", "", queueDefault)
 	rp, handles := deps.buildRunBundles(env)
 	_, err := executeCognitionGate(
 		ctx, env, rp, handles, runID, run, cp, *dp, wtPath, "",
@@ -145,7 +145,7 @@ func ExportedExecuteCognitionGate(
 // runner into the DOT agentic-node shared.LaunchCtx (hk-3sus).
 func ExportedDriveDotWorkflowWithRunner(
 	ctx context.Context,
-	deps workLoopDeps,
+	deps testRuntime,
 	runID core.RunID,
 	beadID core.BeadID,
 	beadTitle string,
@@ -170,7 +170,7 @@ func ExportedDriveDotWorkflowWithRunner(
 // per-node model/effort override vs. run-level default (hk-q8nqr).
 func ExportedDriveDotWorkflowWithModelEffort(
 	ctx context.Context,
-	deps workLoopDeps,
+	deps testRuntime,
 	runID core.RunID,
 	beadID core.BeadID,
 	beadTitle string,

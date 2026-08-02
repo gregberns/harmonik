@@ -137,7 +137,7 @@ func TestStripRunContext_NeverLandsOnMain(t *testing.T) {
 	ledger := newMergeToMainRecordingLedger(beadID)
 	collector := &stubEventCollector{}
 
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
 		ProjectDir:       projectDir,

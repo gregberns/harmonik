@@ -7,8 +7,8 @@ set -euo pipefail
 #
 # The DOT run path reaches its event bus through EmitterPort — the type alias
 # that (as of P2 LIFT L0) lives in internal/runloop/ports.go, structurally reached
-# in internal/daemon via the (*workLoopDeps).emitterPort() constructor — not
-# through the workLoopDeps bus field. RT16 converted 108 direct field reads on
+# in internal/daemon via the direct newEmitterPort constructor — not through a
+# raw dependency field. RT16 converted 108 direct field reads on
 # the six MOVER files to port reads. RT18 then re-signed the consumers around
 # RunPorts, P2 split dot_cascade.go into core/helpers, and LIFT L6 moved
 # runbridge.go into internal/runloop. The ownership table below pins those
@@ -241,8 +241,8 @@ done
 #     check. Turning it into `type EmitterPort handlercontract.EventEmitter`
 #     would compile at some call sites and silently change others.
 # P2 LIFT L0 moved the EmitterPort alias and the RunPorts.Emitter field to
-# internal/runloop/ports.go (the run-path port SURFACE). The daemon KEEPS the
-# emitterPort() constructor (daemon → runloop direction), now returning
+# internal/runloop/ports.go (the run-path port SURFACE). The daemon keeps the
+# newEmitterPort constructor (daemon → runloop direction), returning
 # runloop.EmitterPort. The alias-ness argument is unchanged — it just lives one
 # package over — so these three assertions follow the symbols to their new homes.
 if ! grep -qE '^type EmitterPort = handlercontract\.EventEmitter$' internal/runloop/ports.go; then
@@ -250,8 +250,8 @@ if ! grep -qE '^type EmitterPort = handlercontract\.EventEmitter$' internal/runl
     echo "  in internal/runloop/ports.go. RT16's zero-risk argument rests on it being an ALIAS." >&2
     HITS=$((HITS + 1))
 fi
-if ! grep -q 'func (deps \*workLoopDeps) emitterPort() runloop.EmitterPort' internal/daemon/runports.go; then
-    echo "runloop-emitter-gate: (*workLoopDeps).emitterPort is gone — re-derive this gate" >&2
+if ! grep -q 'func newEmitterPort(bus handlercontract.EventEmitter) runloop.EmitterPort' internal/daemon/runports.go; then
+	echo "runloop-emitter-gate: newEmitterPort no longer builds runloop.EmitterPort — re-derive this gate" >&2
     HITS=$((HITS + 1))
 fi
 if ! grep -qE '^\s*Emitter\s+EmitterPort$' internal/runloop/ports.go; then
@@ -268,9 +268,10 @@ fi
 #     PORT_RE is the MEASURED post-RT18/LIFT set of spellings, not an anticipated
 #     one. count_code_matches excludes comments, exact counts reject stale/dummy
 #     accesses, and every listed path is fail-closed on rename or deletion.
-PORT_RE='\brp\.Emitter\b|\bports\.Emitter\b'
+PORT_RE='\brp\.Emitter\b|\bports\.Emitter\b|\bbasePorts\.Emitter\b'
 declare -a PORT_SITES=(
-    "internal/daemon/workloop.go            4"  # beadRunOne x2; close + epic helpers x2
+    "internal/daemon/workloop.go            3"  # beadRunOne; close + epic helpers
+    "internal/daemon/runports.go            1"  # buildRunBundles routes the emitter to the launch builder
     # agentlaunch.go 1 -> 2 on 2026-08-01: the post-exit collapse gave the file a
     # SECOND owner, runAgentPostExit, which holds the lifecycle transition, the
     # implementer_phase_complete emit and the no-work detector that beadRunOne and
@@ -303,10 +304,10 @@ done
 # surviving or dummy access elsewhere in the same file from masking one owner
 # that bypassed the port.
 declare -a PORT_SYMBOL_SITES=(
-    "internal/daemon/workloop.go|^func \\(deps \\*workLoopDeps\\) buildRunBundles\\(|buildRunBundles|1"
     "internal/daemon/workloop.go|^func beadRunOne\\(|beadRunOne|1"
     "internal/daemon/workloop.go|^func emitBeadClosedAndMaybeEpic\\(|emitBeadClosedAndMaybeEpic|1"
     "internal/daemon/workloop.go|^func maybeEmitEpicCompleted\\(|maybeEmitEpicCompleted|1"
+    "internal/daemon/runports.go|^func buildRunBundles\\(|buildRunBundles|1"
     "internal/daemon/agentlaunch.go|^func runAgentLaunch\\(|runAgentLaunch|1"
     "internal/daemon/agentlaunch.go|^func runAgentPostExit\\(|runAgentPostExit|1"
     "internal/daemon/dot_cascade_core.go|^func driveDotWorkflow\\(|driveDotWorkflow|1"

@@ -54,7 +54,7 @@ type buspartCase struct {
 // PerQueueSpendMeter and QueueOperatorEventConsumer are deliberately NOT here:
 // both hold queue state, so switching either off changes queue behaviour and
 // each needs its own decision. StaleWatcher and QuiesceArbiter are not here
-// either: both are reached from inside injectWorkLoopDeps and
+// either: both are reached from inside the retired work-loop injection path and
 // startBackgroundLoops, which the composition-root step rewrites, so gating them
 // is that step's work rather than this one's.
 //

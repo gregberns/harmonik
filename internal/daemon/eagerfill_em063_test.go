@@ -36,6 +36,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
+	"github.com/gregberns/harmonik/internal/runloop"
 )
 
 // ---------------------------------------------------------------------------
@@ -74,17 +75,17 @@ func em063FixtureStreamQueueWithBeads(beadIDs ...string) *queue.Queue {
 	}
 }
 
-// em063FixtureDeps builds a minimal workLoopDeps with only the fields
+// em063FixtureDeps builds a minimal testRuntime with only the fields
 // required by preScreenCandidates and eagerRefillEval.
-func em063FixtureDeps(t *testing.T, qs *queuewiring.QueueStore) workLoopDeps {
+func em063FixtureDeps(t *testing.T, qs *queuewiring.QueueStore) testRuntime {
 	t.Helper()
-	return workLoopDeps{
-		queueStore:       qs,
-		projectDir:       t.TempDir(),
-		testCapacity:     newCapacityPort(4, nil),
-		testQueueSurface: newQueueSurfacePort(nil, nil),
-		runRegistry:      newLocalRunRegistry(),
-		bus:              &noopEmitter{},
+	return testRuntime{
+		queueStore:   qs,
+		env:          runloop.RunEnv{ProjectDir: t.TempDir()},
+		ports:        runloop.RunPorts{Emitter: &noopEmitter{}},
+		capacity:     newCapacityPort(4, nil),
+		queueSurface: newQueueSurfacePort(nil, nil),
+		runRegistry:  newLocalRunRegistry(),
 	}
 }
 
@@ -127,7 +128,7 @@ func TestRunCompletionPort_CarriesEagerRefillValues(t *testing.T) {
 		followUpLedgerMu:   new(sync.Mutex),
 		followUpLedgerPath: "/project/.harmonik/follow-up-ledger.jsonl",
 	}
-	completion := newRunCompletionPort(workLoopDeps{brPath: "/tools/br"}, newReapSeamPort(workLoopDeps{}, loopLifecyclePort{}, eager))
+	completion := newRunCompletionPort("/tools/br", newReapSeamPort(nil, "", "", nil, nil, loopLifecyclePort{}, capacityPort{}, queueSurfacePort{}, eager))
 	if completion.brPath != "/tools/br" || completion.eagerRefill.kerfPath != eager.kerfPath {
 		t.Fatal("completion port did not retain its command and eager-refill values")
 	}
@@ -163,7 +164,7 @@ func TestEM063_Phase1_AlreadyInQueue_PendingExcluded(t *testing.T) {
 	deps := em063FixtureDeps(t, qs)
 
 	candidates := []core.BeadID{"hk-inqueue-01", "hk-inqueue-02", "hk-new-bead"}
-	survivors := preScreenCandidates(context.Background(), newReapSeamPort(deps, loopLifecyclePort{}, eagerRefillPort{}), candidates)
+	survivors := preScreenCandidates(context.Background(), deps.reap(eagerRefillPort{}), candidates)
 
 	// Only the bead NOT already in the queue should survive Phase 1.
 	if len(survivors) != 1 {
@@ -202,7 +203,7 @@ func TestEM063_Phase1_AlreadyInQueue_DispatchedExcluded(t *testing.T) {
 	deps := em063FixtureDeps(t, qs)
 
 	candidates := []core.BeadID{"hk-dispatched", "hk-fresh"}
-	survivors := preScreenCandidates(context.Background(), newReapSeamPort(deps, loopLifecyclePort{}, eagerRefillPort{}), candidates)
+	survivors := preScreenCandidates(context.Background(), deps.reap(eagerRefillPort{}), candidates)
 
 	if len(survivors) != 1 || survivors[0] != "hk-fresh" {
 		t.Errorf("Phase 1: survivors = %v, want [hk-fresh]", survivors)
@@ -218,7 +219,7 @@ func TestEM063_Phase1_EmptyQueueAllSurvive(t *testing.T) {
 
 	candidates := []core.BeadID{"hk-a", "hk-b", "hk-c"}
 	// Phase 2 git check will not find anything (temp dir has no git history).
-	survivors := preScreenCandidates(context.Background(), newReapSeamPort(deps, loopLifecyclePort{}, eagerRefillPort{}), candidates)
+	survivors := preScreenCandidates(context.Background(), deps.reap(eagerRefillPort{}), candidates)
 
 	if len(survivors) != 3 {
 		t.Errorf("Phase 1 with empty queue: survivors = %v, want all 3 candidates", survivors)
@@ -295,7 +296,7 @@ func TestEM063_EagerRefillEval_NoopWhenKerfPathEmpty(t *testing.T) {
 	deps := em063FixtureDeps(t, qs)
 
 	// Must not panic, must not mutate queue.
-	eagerRefillEval(context.Background(), newReapSeamPort(deps, loopLifecyclePort{}, eagerRefillPort{}))
+	eagerRefillEval(context.Background(), deps.reap(eagerRefillPort{}))
 
 	// Queue should be unchanged.
 	got := qs.Queue()
@@ -313,7 +314,7 @@ func TestEM063_EagerRefillEval_NoopWhenQueueStoreNil(t *testing.T) {
 	deps.queueStore = nil
 
 	// Must not panic.
-	eagerRefillEval(context.Background(), newReapSeamPort(deps, loopLifecyclePort{}, eagerRefillPort{kerfPath: "/some/kerf"}))
+	eagerRefillEval(context.Background(), deps.reap(eagerRefillPort{kerfPath: "/some/kerf"}))
 }
 
 // ---------------------------------------------------------------------------
@@ -367,15 +368,19 @@ func writeFakeBrArgScript(t *testing.T, scriptPath, argsFile string) {
 }
 
 // stagedBeadFixtureDeps builds the completion values for staged-bead tests.
-func stagedBeadFixtureDeps(t *testing.T, projectDir, brPath string) (workLoopDeps, eagerRefillPort) {
+func stagedBeadFixtureDeps(t *testing.T, projectDir, brPath string) (testRuntime, eagerRefillPort) {
 	t.Helper()
 	deps := em063FixtureDeps(t, nil)
-	deps.projectDir = projectDir
-	deps.brPath = brPath
+	deps.env.ProjectDir = projectDir
+	deps.env.BrPath = brPath
 	return deps, eagerRefillPort{
 		followUpLedger:   make(map[string]struct{}),
 		followUpLedgerMu: new(sync.Mutex),
 	}
+}
+
+func stagedBeadGeneratorEvalForTest(ctx context.Context, runtime testRuntime, eager eagerRefillPort, beadID core.BeadID, labels []string) {
+	stagedBeadGeneratorEval(ctx, runtime.env.BrPath, runtime.reap(eager), beadID, labels)
 }
 
 // TestStagedBeadGenerator_NoopWhenBrPathEmpty verifies guardrail: empty brPath
@@ -387,7 +392,7 @@ func TestStagedBeadGenerator_NoopWhenBrPathEmpty(t *testing.T) {
 
 	deps, eagerRefill := stagedBeadFixtureDeps(t, projectDir, "")
 	// Must not panic and must not call br (no file to write to since brPath is empty).
-	stagedBeadGeneratorEval(context.Background(), deps, eagerRefill, "hk-abc", []string{"deploy"})
+	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill, "hk-abc", []string{"deploy"})
 }
 
 // TestStagedBeadGenerator_NoopWhenNoPhase2Classes verifies guardrail 1:
@@ -405,7 +410,7 @@ func TestStagedBeadGenerator_NoopWhenNoPhase2Classes(t *testing.T) {
 	writeFakeBrScript(t, scriptPath, argsFile)
 
 	deps, eagerRefill := stagedBeadFixtureDeps(t, projectDir, scriptPath)
-	stagedBeadGeneratorEval(context.Background(), deps, eagerRefill, "hk-abc", []string{"myclass"})
+	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill, "hk-abc", []string{"myclass"})
 
 	// argsFile must not exist (br was never called).
 	if _, statErr := os.Stat(argsFile); statErr == nil {
@@ -427,7 +432,7 @@ func TestStagedBeadGenerator_NoopWhenLabelsMismatch(t *testing.T) {
 
 	deps, eagerRefill := stagedBeadFixtureDeps(t, projectDir, scriptPath)
 	// Labels: "bugfix", "chore" — neither matches "deploy".
-	stagedBeadGeneratorEval(context.Background(), deps, eagerRefill, "hk-abc", []string{"bugfix", "chore"})
+	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill, "hk-abc", []string{"bugfix", "chore"})
 
 	if _, statErr := os.Stat(argsFile); statErr == nil {
 		t.Error("br was called despite no matching Phase-2 label; expected no-op")
@@ -447,7 +452,7 @@ func TestStagedBeadGenerator_CreatesBead(t *testing.T) {
 	writeFakeBrArgScript(t, scriptPath, argsFile)
 
 	deps, eagerRefill := stagedBeadFixtureDeps(t, projectDir, scriptPath)
-	stagedBeadGeneratorEval(context.Background(), deps, eagerRefill, "hk-xyz", []string{"deploy", "other"})
+	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill, "hk-xyz", []string{"deploy", "other"})
 
 	data, err := os.ReadFile(argsFile)
 	if err != nil {
@@ -480,7 +485,7 @@ func TestStagedBeadGenerator_AppliesNeedsGreenlightLabel(t *testing.T) {
 	writeFakeBrArgScript(t, scriptPath, argsFile)
 
 	deps, eagerRefill := stagedBeadFixtureDeps(t, projectDir, scriptPath)
-	stagedBeadGeneratorEval(context.Background(), deps, eagerRefill, "hk-gltest", []string{"deploy"})
+	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill, "hk-gltest", []string{"deploy"})
 
 	data, err := os.ReadFile(argsFile)
 	if err != nil {
@@ -506,9 +511,9 @@ func TestStagedBeadGenerator_AtMostOnce(t *testing.T) {
 
 	deps, eagerRefill := stagedBeadFixtureDeps(t, projectDir, scriptPath)
 	// First call: should create the bead.
-	stagedBeadGeneratorEval(context.Background(), deps, eagerRefill, "hk-xyz", []string{"deploy"})
+	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill, "hk-xyz", []string{"deploy"})
 	// Second call with the same bead + class: must be a no-op.
-	stagedBeadGeneratorEval(context.Background(), deps, eagerRefill, "hk-xyz", []string{"deploy"})
+	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill, "hk-xyz", []string{"deploy"})
 
 	data, err := os.ReadFile(argsFile)
 	if err != nil {
@@ -545,7 +550,7 @@ func TestStagedBeadGenerator_DurableLedger_SkipsOnPreseededKey(t *testing.T) {
 	eagerRefill.followUpLedger["hk-xyz:deploy"] = struct{}{}
 
 	// This call must be a no-op because the key is already in the ledger.
-	stagedBeadGeneratorEval(context.Background(), deps, eagerRefill, "hk-xyz", []string{"deploy"})
+	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill, "hk-xyz", []string{"deploy"})
 
 	if _, statErr := os.Stat(argsFile); statErr == nil {
 		t.Error("br was called despite key being pre-seeded in ledger (durable restart guard)")
@@ -569,7 +574,7 @@ func TestStagedBeadGenerator_DurableLedger_PersistsToDisk(t *testing.T) {
 	ledgerPath := filepath.Join(tmp, followUpLedgerFileName)
 	eagerRefill.followUpLedgerPath = ledgerPath
 
-	stagedBeadGeneratorEval(context.Background(), deps, eagerRefill, "hk-persist", []string{"deploy"})
+	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill, "hk-persist", []string{"deploy"})
 
 	// br must have been called.
 	if _, statErr := os.Stat(argsFile); statErr != nil {
@@ -599,7 +604,7 @@ func TestStagedBeadGenerator_NoopWhenAtCeiling(t *testing.T) {
 	writeFakeBrScript(t, scriptPath, argsFile)
 
 	deps, eagerRefill := stagedBeadFixtureDeps(t, projectDir, scriptPath)
-	deps.testCapacity.maxConcurrent = 1
+	deps.capacity.maxConcurrent = 1
 
 	// Register a fake in-flight run to saturate the ceiling.
 	deps.runRegistry.Register(core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000099")), &RunHandle{
@@ -607,7 +612,7 @@ func TestStagedBeadGenerator_NoopWhenAtCeiling(t *testing.T) {
 		StartedAt: time.Now(),
 	})
 
-	stagedBeadGeneratorEval(context.Background(), deps, eagerRefill, "hk-xyz", []string{"deploy"})
+	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill, "hk-xyz", []string{"deploy"})
 
 	if _, statErr := os.Stat(argsFile); statErr == nil {
 		t.Error("br was called at WIP==max_concurrent; expected no-op (guardrail 3)")
@@ -672,8 +677,8 @@ func TestStagedBeadGenerator_NoopWhenProvenanceAbsent(t *testing.T) {
 	writeFakeBrScript(t, scriptPath, argsFile)
 
 	deps, eagerRefill := stagedBeadFixtureDeps(t, projectDir, scriptPath)
-	deps.targetBranch = "main"
-	stagedBeadGeneratorEval(context.Background(), deps, eagerRefill, "hk-xyz", []string{"deploy"})
+	deps.env.TargetBranch = "main"
+	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill, "hk-xyz", []string{"deploy"})
 
 	if _, statErr := os.Stat(argsFile); statErr == nil {
 		t.Error("br was called despite Refs: hk-xyz absent from origin/main; want no-op (§6.2 provenance guard)")
@@ -695,8 +700,8 @@ func TestStagedBeadGenerator_FiresWhenProvenancePresent(t *testing.T) {
 	writeFakeBrScript(t, scriptPath, argsFile)
 
 	deps, eagerRefill := stagedBeadFixtureDeps(t, projectDir, scriptPath)
-	deps.targetBranch = "main"
-	stagedBeadGeneratorEval(context.Background(), deps, eagerRefill, "hk-xyz", []string{"deploy"})
+	deps.env.TargetBranch = "main"
+	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill, "hk-xyz", []string{"deploy"})
 
 	if _, statErr := os.Stat(argsFile); statErr != nil {
 		t.Errorf("br was not called despite Refs: hk-xyz present on origin/main: %v", statErr)
@@ -721,7 +726,7 @@ func TestStagedBeadGenerator_FiresAtMaxMinusOne(t *testing.T) {
 	writeFakeBrScript(t, scriptPath, argsFile)
 
 	deps, eagerRefill := stagedBeadFixtureDeps(t, projectDir, scriptPath)
-	deps.testCapacity.maxConcurrent = 3
+	deps.capacity.maxConcurrent = 3
 
 	// Register 2 in-flight runs: Len() == 2 == maxConcurrent-1 → one slot free.
 	deps.runRegistry.Register(core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000001")), &RunHandle{
@@ -733,7 +738,7 @@ func TestStagedBeadGenerator_FiresAtMaxMinusOne(t *testing.T) {
 		StartedAt: time.Now(),
 	})
 
-	stagedBeadGeneratorEval(context.Background(), deps, eagerRefill, "hk-xyz", []string{"deploy"})
+	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill, "hk-xyz", []string{"deploy"})
 
 	if _, statErr := os.Stat(argsFile); statErr != nil {
 		t.Errorf("br was NOT called at WIP==maxConcurrent-1; expected creation (one slot free): %v", statErr)
@@ -762,9 +767,9 @@ func TestStagedBeadGenerator_MultiClassSameBead_DifferentLedgerKeys(t *testing.T
 
 	deps, eagerRefill := stagedBeadFixtureDeps(t, projectDir, scriptPath)
 	// First call: matches "deploy" (first label in the slice that is a Phase-2 class).
-	stagedBeadGeneratorEval(context.Background(), deps, eagerRefill, "hk-abc", []string{"deploy"})
+	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill, "hk-abc", []string{"deploy"})
 	// Second call: matches "smoke".
-	stagedBeadGeneratorEval(context.Background(), deps, eagerRefill, "hk-abc", []string{"smoke"})
+	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill, "hk-abc", []string{"smoke"})
 
 	// Both ledger keys must be present.
 	eagerRefill.followUpLedgerMu.Lock()
@@ -809,8 +814,8 @@ func TestStagedBeadGenerator_MultiBeadSameClass_DifferentLedgerKeys(t *testing.T
 	writeFakeBrScript(t, scriptPath, argsFile)
 
 	deps, eagerRefill := stagedBeadFixtureDeps(t, projectDir, scriptPath)
-	stagedBeadGeneratorEval(context.Background(), deps, eagerRefill, "hk-alpha", []string{"deploy"})
-	stagedBeadGeneratorEval(context.Background(), deps, eagerRefill, "hk-beta", []string{"deploy"})
+	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill, "hk-alpha", []string{"deploy"})
+	stagedBeadGeneratorEvalForTest(context.Background(), deps, eagerRefill, "hk-beta", []string{"deploy"})
 
 	eagerRefill.followUpLedgerMu.Lock()
 	_, hasAlpha := eagerRefill.followUpLedger["hk-alpha:deploy"]

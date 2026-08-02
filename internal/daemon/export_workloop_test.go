@@ -32,59 +32,59 @@ import (
 // ExportedWorkLoopDefaultHarness returns the defaultHarness field from deps so
 // tests can assert Config.DefaultHarness is correctly wired into the dispatch
 // path (hk-ytzj2).
-func ExportedWorkLoopDefaultHarness(deps workLoopDeps) core.AgentType {
-	return deps.defaultHarness
+func ExportedWorkLoopDefaultHarness(deps testRuntime) core.AgentType {
+	return deps.env.DefaultHarness
 }
 
 // WorkflowModeDefaultOf returns the workflowModeDefault field from deps.
 // This is the test-seam accessor for the claim path (T-WM-009) to observe
-// the cached daemon-level default without exporting workLoopDeps itself.
+// the cached daemon-level default without exporting testRuntime itself.
 //
 // Spec ref: specs/process-lifecycle.md §4.1 PL-004a.
 // Bead ref: hk-7om2q.8.
-func WorkflowModeDefaultOf(deps workLoopDeps) core.WorkflowMode {
-	return deps.workflowModeDefault
+func WorkflowModeDefaultOf(deps testRuntime) core.WorkflowMode {
+	return deps.env.WorkflowModeDefault
 }
 
 // ExportedRunWorkLoop runs the work loop with the given deps until ctx is
 // cancelled, mirroring runWorkLoop.
-func ExportedRunWorkLoop(ctx context.Context, deps workLoopDeps) error {
-	return runWorkLoop(ctx, deps, loopLifecyclePort{}, newLedgerRepairPort(deps), schedulePort{}, coordinatorReapPort{}, newTestDiskReclaimPort(deps), eagerRefillPort{}, governorPort{}, false, deps.testCapacity, deps.testQueueSurface, newDispatchGatesPortFromDeps(deps), deps.testNoAutoPull)
+func ExportedRunWorkLoop(ctx context.Context, deps testRuntime) error {
+	return runTestWorkLoop(ctx, deps, loopLifecyclePort{}, deps.ledgerRepair(), newTestDiskReclaimPort(deps), governorPort{}, false, deps.capacity, deps.queueSurface, newDispatchGatesPortFromDeps(deps), deps.noAutoPull)
 }
 
 // ExportedRunWorkLoopWithTestPorts runs the loop with lifecycle and repair
-// values supplied by WorkLoopDepsParams. It keeps those owner ports outside the
+// values supplied by TestRuntimeParams. It keeps those owner ports outside the
 // main test dependency bundle.
-func ExportedRunWorkLoopWithTestPorts(ctx context.Context, deps workLoopDeps, p WorkLoopDepsParams) error {
-	return runWorkLoop(ctx, deps, testLoopLifecyclePort(p), testLedgerRepairPort(p), schedulePort{}, coordinatorReapPort{}, newTestDiskReclaimPort(deps), eagerRefillPort{}, governorPort{}, false, deps.testCapacity, deps.testQueueSurface, newDispatchGatesPortFromDeps(deps), p.NoAutoPull)
+func ExportedRunWorkLoopWithTestPorts(ctx context.Context, deps testRuntime, p TestRuntimeParams) error {
+	return runTestWorkLoop(ctx, deps, testLoopLifecyclePort(p), testLedgerRepairPort(p), newTestDiskReclaimPort(deps), governorPort{}, false, deps.capacity, deps.queueSurface, newDispatchGatesPortFromDeps(deps), p.NoAutoPull)
 }
 
 // ExportedRunWorkLoopWithDiskReclaim runs the work loop with a caller-built
 // disk port. Tests use it to prove the disk latch stops admission without any
 // real cache clean or worktree reclaim.
-func ExportedRunWorkLoopWithDiskReclaim(ctx context.Context, deps workLoopDeps, diskReclaim diskReclaimPort) error {
-	return runWorkLoop(ctx, deps, loopLifecyclePort{}, newLedgerRepairPort(deps), schedulePort{}, coordinatorReapPort{}, diskReclaim, eagerRefillPort{}, governorPort{}, false, deps.testCapacity, deps.testQueueSurface, newDispatchGatesPortFromDeps(deps), deps.testNoAutoPull)
+func ExportedRunWorkLoopWithDiskReclaim(ctx context.Context, deps testRuntime, diskReclaim diskReclaimPort) error {
+	return runTestWorkLoop(ctx, deps, loopLifecyclePort{}, deps.ledgerRepair(), diskReclaim, governorPort{}, false, deps.capacity, deps.queueSurface, newDispatchGatesPortFromDeps(deps), deps.noAutoPull)
 }
 
 // ExportedRunWorkLoopWithDiskReclaimAndTestPorts combines the disk test seam
 // with test-owned lifecycle and ledger-repair ports.
-func ExportedRunWorkLoopWithDiskReclaimAndTestPorts(ctx context.Context, deps workLoopDeps, diskReclaim diskReclaimPort, p WorkLoopDepsParams) error {
-	return runWorkLoop(ctx, deps, testLoopLifecyclePort(p), testLedgerRepairPort(p), schedulePort{}, coordinatorReapPort{}, diskReclaim, eagerRefillPort{}, governorPort{}, false, deps.testCapacity, deps.testQueueSurface, newDispatchGatesPortFromDeps(deps), p.NoAutoPull)
+func ExportedRunWorkLoopWithDiskReclaimAndTestPorts(ctx context.Context, deps testRuntime, diskReclaim diskReclaimPort, p TestRuntimeParams) error {
+	return runTestWorkLoop(ctx, deps, testLoopLifecyclePort(p), testLedgerRepairPort(p), diskReclaim, governorPort{}, false, deps.capacity, deps.queueSurface, newDispatchGatesPortFromDeps(deps), p.NoAutoPull)
 }
 
 // ExportedRunWorkLoopWithGovernor runs the work loop with an enabled governor
 // port. Tests use it to exercise the sentinel dispatch gate without restoring
-// governor values to workLoopDeps.
-func ExportedRunWorkLoopWithGovernor(ctx context.Context, deps workLoopDeps, state *sentinel.GovernorState) error {
-	return runWorkLoop(ctx, deps, loopLifecyclePort{}, newLedgerRepairPort(deps), schedulePort{}, coordinatorReapPort{}, newTestDiskReclaimPort(deps), eagerRefillPort{}, governorPort{state: state}, true, deps.testCapacity, deps.testQueueSurface, newDispatchGatesPortFromDeps(deps), deps.testNoAutoPull)
+// governor values to testRuntime.
+func ExportedRunWorkLoopWithGovernor(ctx context.Context, deps testRuntime, state *sentinel.GovernorState) error {
+	return runTestWorkLoop(ctx, deps, loopLifecyclePort{}, deps.ledgerRepair(), newTestDiskReclaimPort(deps), governorPort{state: state}, true, deps.capacity, deps.queueSurface, newDispatchGatesPortFromDeps(deps), deps.noAutoPull)
 }
 
 // ExportedRunWorkLoopWithGovernorAndDiskReclaim combines the two maintenance
-// test seams without placing either port back on workLoopDeps.
-func ExportedRunWorkLoopWithGovernorAndDiskReclaim(ctx context.Context, deps workLoopDeps,
+// test seams without placing either port back on testRuntime.
+func ExportedRunWorkLoopWithGovernorAndDiskReclaim(ctx context.Context, deps testRuntime,
 	state *sentinel.GovernorState, diskReclaim diskReclaimPort,
 ) error {
-	return runWorkLoop(ctx, deps, loopLifecyclePort{}, newLedgerRepairPort(deps), schedulePort{}, coordinatorReapPort{}, diskReclaim, eagerRefillPort{}, governorPort{state: state}, true, deps.testCapacity, deps.testQueueSurface, newDispatchGatesPortFromDeps(deps), deps.testNoAutoPull)
+	return runTestWorkLoop(ctx, deps, loopLifecyclePort{}, deps.ledgerRepair(), diskReclaim, governorPort{state: state}, true, deps.capacity, deps.queueSurface, newDispatchGatesPortFromDeps(deps), deps.noAutoPull)
 }
 
 // ExportedStoreLocalInFlight preloads the split-gate local-in-flight counter on
@@ -94,8 +94,8 @@ func ExportedRunWorkLoopWithGovernorAndDiskReclaim(ctx context.Context, deps wor
 // ExportedRunWorkLoop(deps).
 //
 // Bead ref: hk-l5saf.
-func ExportedStoreLocalInFlight(deps workLoopDeps, n int32) {
-	deps.localInFlight.Store(n)
+func ExportedStoreLocalInFlight(deps testRuntime, n int32) {
+	deps.handles.LocalInFlight.Store(n)
 }
 
 // The three launch-spec builder shims (ExportedBuildLaunchSpecImplementerInitial /
@@ -106,7 +106,7 @@ func ExportedStoreLocalInFlight(deps workLoopDeps, n int32) {
 // runBeadOneTest mirrors the runWorkLoop goroutine caller for white-box tests:
 // it registers the run's handle, builds the per-run bundles (including the
 // RT18.11 launch-builder resolution that used to live inside beadRunOne) and
-// invokes beadRunOne, so a test that constructs a workLoopDeps + RunEnv drives a
+// invokes beadRunOne, so a test that constructs a testRuntime + RunEnv drives a
 // single bead run exactly as production does.
 //
 // The Register/Unregister pair mirrors the dispatch loop in scheduler.go, which
@@ -116,7 +116,7 @@ func ExportedStoreLocalInFlight(deps workLoopDeps, n int32) {
 // the resolved agent type, the session lifecycle machine, the abort flag, the
 // captured-output fact the exit disposition reads — were dead in every white-box
 // test while being live in production.
-func runBeadOneTest(ctx context.Context, deps workLoopDeps, env runloop.RunEnv, extraContext string, preSelected *workers.Worker, localSlotHeld bool) bool { //nolint:unparam // mirrors beadRunOne's parameter list for parity; current callers all pass "" for extraContext
+func runBeadOneTest(ctx context.Context, deps testRuntime, env runloop.RunEnv, extraContext string, preSelected *workers.Worker, localSlotHeld bool) bool { //nolint:unparam // mirrors beadRunOne's parameter list for parity; current callers all pass "" for extraContext
 	deps.runRegistry.Register(env.RunID, &RunHandle{
 		BeadID:          env.BeadRecord.BeadID,
 		QueueName:       env.QueueName,
@@ -137,8 +137,8 @@ func runBeadOneTest(ctx context.Context, deps workLoopDeps, env runloop.RunEnv, 
 // so the launch builder is resolved (routed / claude fallback) and threaded onto
 // rp.LaunchBuilder exactly as production does, and a fixture-injected
 // launchSpecBuilder still reaches the review/DOT sub-drivers.
-func runBundlesFromDeps(deps workLoopDeps, runID core.RunID) (runloop.RunEnv, runloop.RunPorts, runloop.SharedHandles) {
-	env := deps.runEnv(runID, core.BeadRecord{}, "", nil, nil, 0, "", "", nil, false, "", core.AgentType(""))
+func runBundlesFromDeps(deps testRuntime, runID core.RunID) (runloop.RunEnv, runloop.RunPorts, runloop.SharedHandles) {
+	env := deps.runEnv(runID, core.BeadRecord{}, "", "", core.AgentType(""))
 	rp, handles := deps.buildRunBundles(env)
 	return env, rp, handles
 }
@@ -284,8 +284,8 @@ func ExportedInputBufferName(sub handler.Substrate) string {
 
 // HandlerEnvOf returns the handlerEnv field from deps.
 // Used by tests to assert HARMONIK_PROJECT_HASH injection (hk-nvrvp).
-func HandlerEnvOf(deps workLoopDeps) []string {
-	return deps.handlerEnv
+func HandlerEnvOf(deps testRuntime) []string {
+	return deps.env.HandlerEnv
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -300,15 +300,15 @@ func HandlerEnvOf(deps workLoopDeps) []string {
 // "" for the main queue (it normalises to "main").
 //
 // Bead ref: hk-45ude, hk-tigaf.4.
-func ExportedEvaluateGroupAdvanceWithOutcome(ctx context.Context, deps workLoopDeps, queueName, queueID string, groupIndex, itemIdx int, success bool) {
-	evaluateGroupAdvanceWithOutcome(ctx, newReapSeamPort(deps, loopLifecyclePort{}, eagerRefillPort{}), queueName, queueID, groupIndex, itemIdx, success)
+func ExportedEvaluateGroupAdvanceWithOutcome(ctx context.Context, deps testRuntime, queueName, queueID string, groupIndex, itemIdx int, success bool) {
+	evaluateGroupAdvanceWithOutcome(ctx, deps.reap(eagerRefillPort{}), queueName, queueID, groupIndex, itemIdx, success)
 }
 
 // ExportedQueueStoreOf returns deps.queueStore. Used by tests to observe the
 // active queue after work-loop cycles in hk-45ude queue-dispatch tests.
 //
 // Bead ref: hk-45ude.
-func ExportedQueueStoreOf(deps workLoopDeps) *queuewiring.QueueStore {
+func ExportedQueueStoreOf(deps testRuntime) *queuewiring.QueueStore {
 	return deps.queueStore
 }
 

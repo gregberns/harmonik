@@ -9,6 +9,7 @@ import (
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/lifecycle"
+	"github.com/gregberns/harmonik/internal/runloop"
 )
 
 func TestWorkLoopOwnerPorts_ProjectLifecycleAndLedgerRepair(t *testing.T) {
@@ -33,7 +34,7 @@ func TestWorkLoopOwnerPorts_ProjectLifecycleAndLedgerRepair(t *testing.T) {
 
 	adapter := &ownerPortLedger{}
 	projectDir := t.TempDir()
-	repairPort := newLedgerRepairPort(workLoopDeps{brAdapter: adapter, projectDir: projectDir})
+	repairPort := newLedgerRepairPort(adapter, projectDir)
 	if repairPort.staleBlockerCloser != adapter || repairPort.strandedInProgressResetter != adapter {
 		t.Fatal("ledger repair port did not retain the adapter repair interfaces")
 	}
@@ -50,17 +51,18 @@ func TestWorkLoopOwnerPorts_WaitsForSpawnReadiness(t *testing.T) {
 
 	spawnReady := make(chan struct{})
 	adapter := &ownerPortLedger{readyCalled: make(chan struct{}, 1)}
-	deps := workLoopDeps{
-		brAdapter:     adapter,
-		runRegistry:   newLocalRunRegistry(),
-		localInFlight: new(atomic.Int32),
-		testCapacity:  newCapacityPort(1, nil),
+	deps := testRuntime{
+		env:         runloop.RunEnv{ProjectDir: t.TempDir()},
+		handles:     runloop.SharedHandles{LocalInFlight: new(atomic.Int32)},
+		ledger:      adapter,
+		runRegistry: newLocalRunRegistry(),
+		capacity:    newCapacityPort(1, nil),
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- runWorkLoop(ctx, deps, loopLifecyclePort{spawnSubstrateReadyCh: spawnReady}, newLedgerRepairPort(deps), schedulePort{}, coordinatorReapPort{}, newTestDiskReclaimPort(deps), eagerRefillPort{}, governorPort{}, false, deps.testCapacity, deps.testQueueSurface, newDispatchGatesPortFromDeps(deps), deps.testNoAutoPull)
+		done <- runTestWorkLoop(ctx, deps, loopLifecyclePort{spawnSubstrateReadyCh: spawnReady}, deps.ledgerRepair(), newTestDiskReclaimPort(deps), governorPort{}, false, deps.capacity, deps.queueSurface, newDispatchGatesPortFromDeps(deps), deps.noAutoPull)
 	}()
 
 	select {

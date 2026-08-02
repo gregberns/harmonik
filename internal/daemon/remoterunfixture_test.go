@@ -176,7 +176,7 @@ func remotefixIdleTunnel(ctx context.Context, _ string, _ ...string) *exec.Cmd {
 // Two things about how it fails, because neither is what you would guess and a
 // fixture this one is copied from should not teach the guess:
 //
-//   - Nil does NOT refuse at construction. ExportedWorkLoopDeps assigns the
+//   - Nil does NOT refuse at construction. ExportedTestRuntime assigns the
 //     field straight through with no guard and no default, unlike AgentSpawnSem
 //     a few lines above it. The nil guard lives in the
 //     production constructor, which no fixture goes through. So nil panics
@@ -186,9 +186,9 @@ func remotefixIdleTunnel(ctx context.Context, _ string, _ ...string) *exec.Cmd {
 //     resolved agent type degrades to a synthetic ready, which collapses the
 //     readiness window instead of failing. A test about the readiness window
 //     then passes while measuring nothing.
-func remotefixParams(t *testing.T, projectDir string) WorkLoopDepsParams {
+func remotefixParams(t *testing.T, projectDir string) TestRuntimeParams {
 	t.Helper()
-	return WorkLoopDepsParams{
+	return TestRuntimeParams{
 		ProjectDir:    projectDir,
 		HandlerBinary: "/bin/sh",
 		HandlerArgs:   []string{"-c", "exit 0"},
@@ -214,6 +214,6 @@ func remotefixBead(id core.BeadID, title string) core.BeadRecord {
 // deps.runEnv takes eleven positional arguments, ten of which every fixture here
 // leaves at their zero value. Spelling them out per file is how a fixture ends up
 // depending on an argument it never meant to set.
-func remotefixRunEnv(deps workLoopDeps, bead core.BeadRecord) runloop.RunEnv {
-	return deps.runEnv(core.RunID(uuid.New()), bead, "", nil, nil, 0, "", "", nil, false, "", core.AgentType(""))
+func remotefixRunEnv(deps testRuntime, bead core.BeadRecord) runloop.RunEnv {
+	return deps.runEnv(core.RunID(uuid.New()), bead, "", "", core.AgentType(""))
 }

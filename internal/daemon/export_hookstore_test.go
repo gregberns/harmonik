@@ -64,8 +64,8 @@ func ExportedHookWaitForOutcome(ctx context.Context, s *hookSessionStore, runID,
 // ExportedHookStoreOf returns the hookStore field from deps.
 // Used by integration tests to inspect store state after dispatching
 // hook-relay envelopes through a running socket listener (hk-gql20.21).
-func ExportedHookStoreOf(deps workLoopDeps) hookStoreIface {
-	return deps.hookStore
+func ExportedHookStoreOf(deps testRuntime) hookStoreIface {
+	return deps.handles.HookStore
 }
 
 // ExportedHookSetAgentReadyCallback exposes SetAgentReadyCallback for tests

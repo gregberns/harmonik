@@ -14,6 +14,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
+	"github.com/gregberns/harmonik/internal/runloop"
 )
 
 // The reservation is the one write that decides whether a dispatch happened.
@@ -50,8 +51,12 @@ func reservationFixture(t *testing.T, queueName string, beadID core.BeadID) (str
 	return projectDir, store, q
 }
 
-func reservationDeps(projectDir string, store *queuewiring.QueueStore) workLoopDeps {
-	return workLoopDeps{projectDir: projectDir, queueStore: store}
+func reservationDeps(projectDir string, store *queuewiring.QueueStore) testRuntime {
+	return testRuntime{env: runloop.RunEnv{ProjectDir: projectDir}, queueStore: store}
+}
+
+func reserveQueueItemForTest(ctx context.Context, runtime testRuntime, reservation queueReservation) reservationResult {
+	return reserveQueueItem(ctx, runtime.queueStore, runtime.env.ProjectDir, reservation)
 }
 
 func newReservationRunID(t *testing.T) core.RunID {
@@ -91,7 +96,7 @@ func TestReserveQueueItem_StampsStatusAndRunIDInOneWrite(t *testing.T) {
 	projectDir, store, _ := reservationFixture(t, queueName, beadID)
 	runID := newReservationRunID(t)
 
-	got := reserveQueueItem(context.Background(), reservationDeps(projectDir, store), queueReservation{
+	got := reserveQueueItemForTest(context.Background(), reservationDeps(projectDir, store), queueReservation{
 		QueueName: queueName, GroupIndex: 0, ItemIndex: 0, BeadID: beadID, RunID: runID,
 	})
 
@@ -132,7 +137,7 @@ func TestReserveQueueItem_WriteFailureAbandonsDispatch(t *testing.T) {
 		}
 	})
 
-	got := reserveQueueItem(context.Background(), reservationDeps(projectDir, store), queueReservation{
+	got := reserveQueueItemForTest(context.Background(), reservationDeps(projectDir, store), queueReservation{
 		QueueName: queueName, GroupIndex: 0, ItemIndex: 0, BeadID: beadID, RunID: newReservationRunID(t),
 	})
 
@@ -179,7 +184,7 @@ func TestReserveQueueItem_RefusesBeadInFlightFromAnotherQueue(t *testing.T) {
 		}},
 	})
 
-	got := reserveQueueItem(context.Background(), reservationDeps(projectDir, store), queueReservation{
+	got := reserveQueueItemForTest(context.Background(), reservationDeps(projectDir, store), queueReservation{
 		QueueName: queueName, GroupIndex: 0, ItemIndex: 0, BeadID: beadID, RunID: newReservationRunID(t),
 	})
 
@@ -212,7 +217,7 @@ func TestReserveQueueItem_AttemptBoundFailsItemDurably(t *testing.T) {
 	q.Groups[0].Items[0].Attempts = maxItemAttempts - 1
 	store.SetQueueByName(queueName, q)
 
-	got := reserveQueueItem(context.Background(), reservationDeps(projectDir, store), queueReservation{
+	got := reserveQueueItemForTest(context.Background(), reservationDeps(projectDir, store), queueReservation{
 		QueueName: queueName, GroupIndex: 0, ItemIndex: 0, BeadID: beadID, RunID: newReservationRunID(t),
 	})
 
@@ -243,7 +248,7 @@ func TestReserveQueueItem_ItemNoLongerPendingRetriesLater(t *testing.T) {
 	q.Groups[0].Items[0].Status = queue.ItemStatusCompleted
 	store.SetQueueByName(queueName, q)
 
-	got := reserveQueueItem(context.Background(), reservationDeps(projectDir, store), queueReservation{
+	got := reserveQueueItemForTest(context.Background(), reservationDeps(projectDir, store), queueReservation{
 		QueueName: queueName, GroupIndex: 0, ItemIndex: 0, BeadID: beadID, RunID: newReservationRunID(t),
 	})
 
@@ -299,7 +304,7 @@ func (e *recordingEmitter) EmitWithRunID(ctx context.Context, _ core.RunID, even
 // spec asks for could not even be built.
 func TestReportQueueWriteError_EmitsBothEventsQM001Requires(t *testing.T) {
 	emitter := &recordingEmitter{}
-	deps := workLoopDeps{bus: emitter, testDispatchGates: newDispatchGatesPort(emitter, nil, nil, nil)}
+	deps := testRuntime{ports: runloop.RunPorts{Emitter: emitter}, dispatchGates: newDispatchGatesPort(emitter, nil, nil, nil)}
 
 	reportQueueWriteError(context.Background(), newDispatchGatesPortFromDeps(deps), "main", reservationResult{
 		Verdict: reservationWriteFailed,
@@ -355,7 +360,7 @@ func TestReportQueueWriteError_EmitsBothEventsQM001Requires(t *testing.T) {
 // of thousands of copies of itself.
 func TestReportQueueWriteError_ReportsOncePerQueue(t *testing.T) {
 	emitter := &recordingEmitter{}
-	deps := workLoopDeps{bus: emitter, testDispatchGates: newDispatchGatesPort(emitter, nil, nil, nil)}
+	deps := testRuntime{ports: runloop.RunPorts{Emitter: emitter}, dispatchGates: newDispatchGatesPort(emitter, nil, nil, nil)}
 	failure := reservationResult{Verdict: reservationWriteFailed, Outcome: queue.OutcomeNotCommitted}
 
 	for range 5 {
@@ -374,7 +379,7 @@ func TestReportQueueWriteError_ReportsOncePerQueue(t *testing.T) {
 
 // A nil bus must not panic the dispatch loop; the stderr message still goes out.
 func TestReportQueueWriteError_NilBusIsSafe(t *testing.T) {
-	reportQueueWriteError(context.Background(), newDispatchGatesPortFromDeps(workLoopDeps{}), "main", reservationResult{
+	reportQueueWriteError(context.Background(), newDispatchGatesPortFromDeps(testRuntime{}), "main", reservationResult{
 		Outcome: queue.OutcomeCommitIndeterminate,
 	})
 }
@@ -398,7 +403,7 @@ func TestReserveQueueItem_QuarantinedQueueStaysLoud(t *testing.T) {
 		}
 	})
 
-	first := reserveQueueItem(context.Background(), deps, queueReservation{
+	first := reserveQueueItemForTest(context.Background(), deps, queueReservation{
 		QueueName: queueName, GroupIndex: 0, ItemIndex: 0, BeadID: beadID, RunID: newReservationRunID(t),
 	})
 	if first.Verdict != reservationWriteFailed {
@@ -410,7 +415,7 @@ func TestReserveQueueItem_QuarantinedQueueStaysLoud(t *testing.T) {
 	if err := os.Chmod(queuesDir, 0o700); err != nil { //nolint:gosec // restoring write access to prove the quarantine is sticky
 		t.Fatalf("chmod queues dir: %v", err)
 	}
-	second := reserveQueueItem(context.Background(), deps, queueReservation{
+	second := reserveQueueItemForTest(context.Background(), deps, queueReservation{
 		QueueName: queueName, GroupIndex: 0, ItemIndex: 0, BeadID: beadID, RunID: newReservationRunID(t),
 	})
 	if second.Verdict != reservationWriteFailed {

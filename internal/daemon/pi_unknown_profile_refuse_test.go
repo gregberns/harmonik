@@ -135,7 +135,7 @@ func TestPi_UnknownProfile_WorkloopRefusesLaunch(t *testing.T) {
 		},
 	}
 
-	deps := ExportedWorkLoopDeps(WorkLoopDepsParams{
+	deps := ExportedTestRuntime(TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              eventbus.NewBusImpl(), // no assertions on emitted events; a real bus avoids a nil-interface panic
 		ProjectDir:       t.TempDir(),
@@ -163,7 +163,7 @@ func TestPi_UnknownProfile_WorkloopRefusesLaunch(t *testing.T) {
 	// Drive beadRunOne DIRECTLY — the smallest seam that reaches the
 	// resolvePiProfile refuse gate at workloop.go:3099-3109, bypassing the
 	// whole work loop (mirrors workloop_gate_n5md3_test.go).
-	runBeadOneTest(ctx, deps, deps.runEnv(runID, beadRecord, "", nil, nil, 0, "", "", nil, false, "", core.AgentType("")),
+	runBeadOneTest(ctx, deps, deps.runEnv(runID, beadRecord, "", "", core.AgentType("")),
 		"", nil, false)
 
 	calls := ledger.calls()

@@ -374,7 +374,7 @@ func TestWorkflowModeDefault_ZeroValueIsStartupError(t *testing.T) {
 // Config.WorkflowModeDefault is set to "review-loop", the value is cached and
 // observable via the WorkflowModeDefaultOf test-seam accessor.
 //
-// This test exercises the ExportedWorkLoopDeps path (which mirrors the
+// This test exercises the ExportedTestRuntime path (which mirrors the
 // normalisation logic in daemon.Start step 0) to validate the accessor without
 // a full daemon.Start call that would require a live br binary.
 //
@@ -383,7 +383,7 @@ func TestWorkflowModeDefault_ZeroValueIsStartupError(t *testing.T) {
 func TestWorkflowModeDefault_ReviewLoopObservableViaAccessor(t *testing.T) {
 	t.Parallel()
 
-	params := daemon.WorkLoopDepsParams{
+	params := daemon.TestRuntimeParams{
 		BrAdapter:           &wmdStubLedger{},
 		Bus:                 &wmdNoopBus{},
 		ProjectDir:          t.TempDir(),
@@ -393,7 +393,7 @@ func TestWorkflowModeDefault_ReviewLoopObservableViaAccessor(t *testing.T) {
 		WorkflowModeDefault: core.WorkflowModeDot,
 	}
 
-	deps := daemon.ExportedWorkLoopDeps(params)
+	deps := daemon.ExportedTestRuntime(params)
 	got := daemon.WorkflowModeDefaultOf(deps)
 
 	if got != core.WorkflowModeDot {
@@ -409,7 +409,7 @@ func TestWorkflowModeDefault_ReviewLoopObservableViaAccessor(t *testing.T) {
 func TestWorkflowModeDefault_SingleObservableViaAccessor(t *testing.T) {
 	t.Parallel()
 
-	params := daemon.WorkLoopDepsParams{
+	params := daemon.TestRuntimeParams{
 		BrAdapter:           &wmdStubLedger{},
 		Bus:                 &wmdNoopBus{},
 		ProjectDir:          t.TempDir(),
@@ -419,7 +419,7 @@ func TestWorkflowModeDefault_SingleObservableViaAccessor(t *testing.T) {
 		WorkflowModeDefault: core.WorkflowModeSingle,
 	}
 
-	deps := daemon.ExportedWorkLoopDeps(params)
+	deps := daemon.ExportedTestRuntime(params)
 	got := daemon.WorkflowModeDefaultOf(deps)
 
 	if got != core.WorkflowModeSingle {
@@ -429,14 +429,14 @@ func TestWorkflowModeDefault_SingleObservableViaAccessor(t *testing.T) {
 
 // TestWorkflowModeDefault_ZeroNormalisedToSingleViaAccessor asserts that the
 // zero value (empty string) is normalised to WorkflowModeSingle in
-// ExportedWorkLoopDeps, mirroring daemon.Start step 0 normalisation.
+// ExportedTestRuntime, mirroring daemon.Start step 0 normalisation.
 //
 // Spec ref: specs/process-lifecycle.md §4.1 PL-004a.
 // Bead ref: hk-7om2q.8.
 func TestWorkflowModeDefault_ZeroNormalisedToSingleViaAccessor(t *testing.T) {
 	t.Parallel()
 
-	params := daemon.WorkLoopDepsParams{
+	params := daemon.TestRuntimeParams{
 		BrAdapter:           &wmdStubLedger{},
 		Bus:                 &wmdNoopBus{},
 		ProjectDir:          t.TempDir(),
@@ -446,7 +446,7 @@ func TestWorkflowModeDefault_ZeroNormalisedToSingleViaAccessor(t *testing.T) {
 		WorkflowModeDefault: "", // zero value
 	}
 
-	deps := daemon.ExportedWorkLoopDeps(params)
+	deps := daemon.ExportedTestRuntime(params)
 	got := daemon.WorkflowModeDefaultOf(deps)
 
 	if got != core.WorkflowModeSingle {
@@ -567,7 +567,7 @@ func TestWorkflowModeDefault_UnknownValueRejectedAtStartup(t *testing.T) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // wmdStubLedger is a no-op beadLedger for workflow-mode-default tests that
-// exercise ExportedWorkLoopDeps without running the work loop.
+// exercise ExportedTestRuntime without running the work loop.
 type wmdStubLedger struct{}
 
 func (s *wmdStubLedger) Ready(_ context.Context) ([]core.BeadRecord, error) { return nil, nil }

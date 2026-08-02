@@ -113,7 +113,7 @@ func TestScenario_NoAutoPull_ZeroRunsStarted_EM066(t *testing.T) {
 	}
 	bus := &stubEventCollector{}
 
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              bus,
 		ProjectDir:       projectDir,
@@ -188,7 +188,7 @@ func TestScenario_AutoPull_BrReadyFallbackFires_EM066(t *testing.T) {
 	}
 	bus := &stubEventCollector{}
 
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              bus,
 		ProjectDir:       projectDir,
@@ -271,7 +271,7 @@ func TestScenario_BrReadyOperatorPauseGate_EM067(t *testing.T) {
 		t.Fatalf("em067: HandleOperatorPause: %v", err)
 	}
 
-	deps := daemon.ExportedWorkLoopDeps(daemon.WorkLoopDepsParams{
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:         ledger,
 		Bus:               bus,
 		ProjectDir:        projectDir,

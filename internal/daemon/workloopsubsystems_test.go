@@ -31,6 +31,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/sentinel"
 )
 
@@ -142,7 +143,7 @@ func TestSubsystemPartition_DashboardGate_DefaultRuns(t *testing.T) {
 	}
 
 	bus := &wlsubBus{}
-	gate.tick(context.Background(), workLoopDeps{projectDir: root, bus: bus}, time.Now())
+	gate.tick(context.Background(), root, bus, time.Now())
 
 	if !gate.blockedQueueSet()["curated"] {
 		t.Errorf("blockedQueueSet() = %v; want the captain-curated queue %q blocked by the never-written dashboard.json",
@@ -172,7 +173,7 @@ subsystems:
 
 	bus := &wlsubBus{}
 	// The loop calls these unconditionally; on an absent gate they must be inert.
-	gate.tick(context.Background(), workLoopDeps{projectDir: root, bus: bus}, time.Now())
+	gate.tick(context.Background(), root, bus, time.Now())
 
 	if got := gate.blockedQueueSet(); got != nil {
 		t.Errorf("blockedQueueSet() = %v after the subsystem was switched off; want nil (no queue may be withheld by an absent gate)", got)
@@ -190,11 +191,11 @@ subsystems:
 // ─────────────────────────────────────────────────────────────────────────────
 
 // wlsubGovernorDeps builds the work-loop values the governor reads.
-func wlsubGovernorDeps(root string, bus *wlsubBus, ledger *wlsubCountingLedger) workLoopDeps {
-	return workLoopDeps{
-		projectDir: root,
-		bus:        bus,
-		brAdapter:  ledger,
+func wlsubGovernorDeps(root string, bus *wlsubBus, ledger *wlsubCountingLedger) testRuntime {
+	return testRuntime{
+		env:    runloop.RunEnv{ProjectDir: root},
+		ports:  runloop.RunPorts{Emitter: bus},
+		ledger: ledger,
 	}
 }
 
@@ -208,18 +209,16 @@ func wlsubGovernorPort() governorPort {
 func TestSubsystemPartition_MovementGovernor_DefaultRuns(t *testing.T) {
 	t.Parallel()
 
-	pc, root := subpartLoadConfig(t, "schema_version: 1\n")
+	_, root := subpartLoadConfig(t, "schema_version: 1\n")
 	bus := &wlsubBus{}
 	ledger := &wlsubCountingLedger{}
 	deps := wlsubGovernorDeps(root, bus, ledger)
-	deps.projectCfg = pc
-
 	governor := newMovementGovernorIfEnabled(wlsubGovernorPort(), true, io.Discard)
 	if governor == nil {
 		t.Fatal("newMovementGovernorIfEnabled = nil with no subsystems: block; want a constructed governor (absent config must not disable anything)")
 	}
 
-	governor.tick(context.Background(), deps, schedulePort{}, newDispatchGatesPortFromDeps(deps))
+	governor.tick(context.Background(), governorInputPort{projectDir: deps.env.ProjectDir, ledger: deps.ledger}, schedulePort{}, newDispatchGatesPortFromDeps(deps))
 
 	if got := ledger.readyCalls(); got != 1 {
 		t.Errorf("brAdapter.Ready called %d times; want 1 (the governor's per-evaluation shell-out must happen when it is enabled)", got)
@@ -231,7 +230,7 @@ func TestSubsystemPartition_MovementGovernor_DefaultRuns(t *testing.T) {
 	// The eval-cadence gate is load-bearing, not politeness: evaluating on every
 	// 2 s poll tick cost 25–50% daemon CPU on large event logs (hk-usn8o). A
 	// second immediate tick, far inside the default cadence, must do nothing.
-	governor.tick(context.Background(), deps, schedulePort{}, newDispatchGatesPortFromDeps(deps))
+	governor.tick(context.Background(), governorInputPort{projectDir: deps.env.ProjectDir, ledger: deps.ledger}, schedulePort{}, newDispatchGatesPortFromDeps(deps))
 	if got := ledger.readyCalls(); got != 1 {
 		t.Errorf("brAdapter.Ready called %d times after a second immediate tick; want still 1 (the eval cadence must suppress it)", got)
 	}
@@ -245,7 +244,7 @@ func TestSubsystemPartition_MovementGovernor_DefaultRuns(t *testing.T) {
 func TestSubsystemPartition_MovementGovernor_DisabledIsAbsent(t *testing.T) {
 	t.Parallel()
 
-	pc, root := subpartLoadConfig(t, `
+	_, root := subpartLoadConfig(t, `
 schema_version: 1
 subsystems:
   movement_governor:
@@ -254,8 +253,6 @@ subsystems:
 	bus := &wlsubBus{}
 	ledger := &wlsubCountingLedger{}
 	deps := wlsubGovernorDeps(root, bus, ledger)
-	deps.projectCfg = pc
-
 	governor := newMovementGovernorIfEnabled(wlsubGovernorPort(), false, io.Discard)
 	if governor != nil {
 		t.Fatal("newMovementGovernorIfEnabled returned a governor with subsystems.movement_governor.enabled: false; it must be ABSENT, not constructed")
@@ -263,7 +260,7 @@ subsystems:
 
 	// The loop calls these unconditionally; on an absent governor they are inert.
 	for range 5 {
-		governor.tick(context.Background(), deps, schedulePort{}, newDispatchGatesPortFromDeps(deps))
+		governor.tick(context.Background(), governorInputPort{projectDir: deps.env.ProjectDir, ledger: deps.ledger}, schedulePort{}, newDispatchGatesPortFromDeps(deps))
 	}
 	if governor.halted() {
 		t.Error("halted() = true on an absent governor; only the governor itself can request the G-liveness halt")
@@ -294,8 +291,8 @@ func TestSubsystemPartition_MovementGovernor_DisabledReleasesDispatchGate(t *tes
 
 	enabledPC, enabledRoot := subpartLoadConfig(t, "schema_version: 1\n")
 	enabledDeps := wlsubGovernorDeps(enabledRoot, &wlsubBus{}, &wlsubCountingLedger{})
-	enabledDeps.projectCfg = enabledPC
-	enabledDeps.testDispatchGates = newDispatchGatesPort(nil, nil, nil, blocker)
+	_ = enabledPC
+	enabledDeps.dispatchGates = newDispatchGatesPort(nil, nil, nil, blocker)
 
 	enabled := newMovementGovernorIfEnabled(wlsubGovernorPort(), true, io.Discard)
 	if !enabled.dispatchBlocked(newDispatchGatesPortFromDeps(enabledDeps)) {
@@ -309,8 +306,8 @@ subsystems:
     enabled: false
 `)
 	disabledDeps := wlsubGovernorDeps(disabledRoot, &wlsubBus{}, &wlsubCountingLedger{})
-	disabledDeps.projectCfg = disabledPC
-	disabledDeps.testDispatchGates = newDispatchGatesPort(nil, nil, nil, blocker)
+	_ = disabledPC
+	disabledDeps.dispatchGates = newDispatchGatesPort(nil, nil, nil, blocker)
 
 	disabled := newMovementGovernorIfEnabled(wlsubGovernorPort(), false, io.Discard)
 	if disabled.dispatchBlocked(newDispatchGatesPortFromDeps(disabledDeps)) {
@@ -376,7 +373,7 @@ func TestSubsystemPartition_MovementGovernor_NoConfigStillObservesWithoutLivenes
 	ledger := &wlsubCountingLedger{}
 	deps := wlsubGovernorDeps(root, bus, ledger)
 	governor := newMovementGovernorIfEnabled(port, enabled, io.Discard)
-	governor.tick(context.Background(), deps, schedulePort{}, newDispatchGatesPortFromDeps(deps))
+	governor.tick(context.Background(), governorInputPort{projectDir: deps.env.ProjectDir, ledger: deps.ledger}, schedulePort{}, newDispatchGatesPortFromDeps(deps))
 
 	if got := ledger.readyCalls(); got != 1 {
 		t.Errorf("brAdapter.Ready called %d times, want 1 so no-config still observes", got)
@@ -393,7 +390,7 @@ func TestSubsystemPartition_MovementGovernor_NoConfigStillObservesWithoutLivenes
 	// threshold into a halt.
 	port.mode = "act"
 	actGovernor := newMovementGovernorIfEnabled(port, enabled, io.Discard)
-	actGovernor.tick(context.Background(), deps, schedulePort{}, newDispatchGatesPortFromDeps(deps))
+	actGovernor.tick(context.Background(), governorInputPort{projectDir: deps.env.ProjectDir, ledger: deps.ledger}, schedulePort{}, newDispatchGatesPortFromDeps(deps))
 	if actGovernor.halted() {
 		t.Error("zero liveness threshold armed a halt in ACT mode")
 	}

@@ -177,13 +177,13 @@ func swDispatchRunID(t *testing.T) core.RunID {
 	return rlFixtureRunID(t)
 }
 
-// swDispatchDeps builds a minimal workLoopDeps wired to the given event
+// swDispatchDeps builds a minimal testRuntime wired to the given event
 // collector, project directory (where child DOT files live), and /bin/sh
 // for the shell handler.
-func swDispatchDeps(t *testing.T, collector *stubEventCollector, projectDir string) daemon.WorkLoopDepsParams {
+func swDispatchDeps(t *testing.T, collector *stubEventCollector, projectDir string) daemon.TestRuntimeParams {
 	t.Helper()
 	ledger := &stubBeadLedger{}
-	return daemon.WorkLoopDepsParams{
+	return daemon.TestRuntimeParams{
 		BrAdapter:           ledger,
 		Bus:                 collector,
 		ProjectDir:          projectDir,
@@ -218,7 +218,7 @@ func TestScenario_SubWorkflowDispatch_InPlaceNoRunID(t *testing.T) {
 	}
 
 	collector := &stubEventCollector{}
-	deps := daemon.ExportedWorkLoopDeps(swDispatchDeps(t, collector, projectDir))
+	deps := daemon.ExportedTestRuntime(swDispatchDeps(t, collector, projectDir))
 
 	runID := swDispatchRunID(t)
 
@@ -308,7 +308,7 @@ func TestScenario_SubWorkflowDispatch_TerminalOutcomeEscapes_Success(t *testing.
 	}
 
 	collector := &stubEventCollector{}
-	deps := daemon.ExportedWorkLoopDeps(swDispatchDeps(t, collector, projectDir))
+	deps := daemon.ExportedTestRuntime(swDispatchDeps(t, collector, projectDir))
 
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
@@ -377,7 +377,7 @@ func TestScenario_SubWorkflowDispatch_TerminalOutcomeEscapes_Fail(t *testing.T) 
 	}
 
 	collector := &stubEventCollector{}
-	deps := daemon.ExportedWorkLoopDeps(swDispatchDeps(t, collector, projectDir))
+	deps := daemon.ExportedTestRuntime(swDispatchDeps(t, collector, projectDir))
 
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()

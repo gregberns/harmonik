@@ -20,7 +20,10 @@ import (
 func sidecarRecordFixtureValid(t *testing.T) SessionMetadataSidecar {
 	t.Helper()
 	runID := core.RunID(uuid.MustParse("0196e300-0000-7000-8000-000000000001"))
-	wfID := core.WorkflowID(uuid.MustParse("0196e300-0000-7000-8000-000000000002"))
+	wfID, err := core.NewWorkflowID("0196e300-0000-7000-8000-000000000002")
+	if err != nil {
+		t.Fatalf("NewWorkflowID: %v", err)
+	}
 	beadID := core.BeadID("hk-8mwo.63")
 	return SessionMetadataSidecar{
 		RunID:         runID,
@@ -54,7 +57,7 @@ func TestWM063_SidecarRecord7Fields(t *testing.T) {
 	if s.AgentType == "" {
 		t.Error("WM-063: AgentType is empty")
 	}
-	if s.WorkflowID == (core.WorkflowID{}) {
+	if !s.WorkflowID.Valid() {
 		t.Error("WM-063: WorkflowID is zero")
 	}
 	if s.LaunchedAt == "" {
@@ -133,7 +136,7 @@ func TestWM063_ValidRejectsZeroWorkflowID(t *testing.T) {
 	t.Parallel()
 
 	s := sidecarRecordFixtureValid(t)
-	s.WorkflowID = core.WorkflowID{}
+	s.WorkflowID = ""
 	if err := s.Valid(); err == nil {
 		t.Error("WM-063: Valid() with zero WorkflowID = nil; want error")
 	}

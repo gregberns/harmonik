@@ -19,7 +19,10 @@ import (
 func launchspecFixtureValid(t *testing.T) handlercontract.LaunchSpec {
 	t.Helper()
 	runID := core.RunID(uuid.MustParse("0196e100-0000-7000-8000-000000000001"))
-	wfID := core.WorkflowID(uuid.MustParse("0196e100-0000-7000-8000-000000000002"))
+	wfID, err := core.NewWorkflowID("0196e100-0000-7000-8000-000000000002")
+	if err != nil {
+		t.Fatalf("NewWorkflowID: %v", err)
+	}
 	beadID := "hk-8i31.74"
 	// snapshot_token is String|None per HC-006: encode the SnapshotToken as JSON.
 	tokEncoded, err := handlercontract.MarshalSnapshotToken(core.SnapshotToken{
@@ -79,7 +82,7 @@ func TestLaunchSpec_RequiredFields(t *testing.T) {
 	if spec.RunID == (core.RunID{}) {
 		t.Error("HC-006: RunID is zero; want non-zero")
 	}
-	if spec.WorkflowID == (core.WorkflowID{}) {
+	if !spec.WorkflowID.Valid() {
 		t.Error("HC-006: WorkflowID is zero; want non-zero")
 	}
 	if spec.NodeID == "" {
@@ -165,7 +168,7 @@ func TestLaunchSpec_ValidZeroWorkflowID(t *testing.T) {
 	t.Parallel()
 
 	spec := launchspecFixtureValid(t)
-	spec.WorkflowID = core.WorkflowID{}
+	spec.WorkflowID = ""
 	if err := spec.Valid(); err == nil {
 		t.Error("HC-006: Valid() with zero WorkflowID = nil; want error")
 	}

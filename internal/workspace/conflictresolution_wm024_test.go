@@ -162,7 +162,11 @@ func wm024FixtureRunID() core.RunID {
 
 // wm024FixtureWorkflowID returns a test workflow ID.
 func wm024FixtureWorkflowID() core.WorkflowID {
-	return core.WorkflowID(uuid.MustParse("0196b200-0000-7000-8000-000000024001"))
+	id, err := core.NewWorkflowID("0196b200-0000-7000-8000-000000024001")
+	if err != nil {
+		panic(err)
+	}
+	return id
 }
 
 // wm024FixtureParams returns a well-formed ConflictResolverLaunchSpecParams
@@ -283,7 +287,7 @@ func TestBuildConflictResolverLaunchSpec_MissingRequired(t *testing.T) {
 	t.Run("zero-WorkflowID", func(t *testing.T) {
 		t.Parallel()
 		p := wm024FixtureParams()
-		p.WorkflowID = core.WorkflowID{}
+		p.WorkflowID = ""
 		if _, err := BuildConflictResolverLaunchSpec(p); err == nil {
 			t.Error("want error for zero WorkflowID")
 		}

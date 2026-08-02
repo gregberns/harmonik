@@ -20,9 +20,13 @@ import (
 // deliveryFixtureValidSpec returns a minimal valid LaunchSpec for delivery tests.
 func deliveryFixtureValidSpec(t *testing.T) *handlercontract.LaunchSpec {
 	t.Helper()
+	workflowID, err := core.NewWorkflowID("0196f200-0000-7000-8000-000000000002")
+	if err != nil {
+		t.Fatalf("NewWorkflowID: %v", err)
+	}
 	return &handlercontract.LaunchSpec{
 		RunID:               core.RunID(uuid.MustParse("0196f200-0000-7000-8000-000000000001")),
-		WorkflowID:          core.WorkflowID(uuid.MustParse("0196f200-0000-7000-8000-000000000002")),
+		WorkflowID:          workflowID,
 		NodeID:              core.NodeID("impl-node-1"),
 		AgentType:           core.AgentType("claude-code"),
 		WorkspacePath:       "/tmp/test-ws",

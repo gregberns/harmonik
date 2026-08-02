@@ -117,7 +117,6 @@ func TestL5saf_LocalOnlyItemNotStrandedByCapGuard(t *testing.T) {
 		// its stranding position, which is how this was found. A high reading
 		// also keeps the reclaim pass and `go clean -cache` from running as real
 		// subprocesses against this machine's shared build cache.
-		DiskFreeBytesFunc: func(string) (uint64, error) { return 1 << 62, nil },
 	})
 
 	// Preload local saturation: localInFlight == gateMax. The split gate then

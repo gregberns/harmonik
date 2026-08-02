@@ -727,47 +727,6 @@ type workLoopDeps struct {
 	// goroutine would be a silent no-op (PF §3 hazard). Keeping them off the
 	// bundle makes the ownership (the single work-loop goroutine) structural.
 
-	// diskCheckIntervalOverride overrides diskCheckInterval for tests.
-	// Zero → diskCheckInterval (10 min).
-	//
-	// Bead ref: hk-sxlb.
-	diskCheckIntervalOverride time.Duration
-
-	// diskFreeBytesFunc, when non-nil, replaces the diskFreeBytes call inside
-	// runPeriodicDiskCheck.  Tests use this to control the apparent free-space
-	// reading without touching the real filesystem.
-	//
-	// Bead ref: hk-guez.
-	diskFreeBytesFunc func(path string) (uint64, error)
-
-	// goCacheCleanFunc, when non-nil, replaces "go clean -cache" execution
-	// inside runPeriodicDiskCheck.  Tests use this to capture or stub the
-	// reaper without side-effects on the build cache.
-	//
-	// Bead ref: hk-guez.
-	goCacheCleanFunc func() error
-
-	// cacheReapMu, when non-nil, is the reap↔dispatch exclusion lock (hk-y3frr).
-	// The cache reaper acquires a Write lock for the ENTIRE duration of
-	// `go clean -cache` (up to 5 min); each Register call acquires a Read lock
-	// for the duration of the map insert.  This ensures no run can be registered
-	// while the reaper is deleting the shared go-build cache, and the reaper
-	// cannot start while a dispatch is in progress.
-	//
-	// Production: always a non-nil *sync.RWMutex (newWorkLoopDeps).
-	// Tests may supply their own via WorkLoopDepsParams.CacheReapMu.
-	//
-	// Bead ref: hk-y3frr.
-	cacheReapMu *sync.RWMutex
-
-	// worktreeReclaimFunc, when non-nil, replaces the `git worktree remove`
-	// sequence in reclaimStaleWorktrees. Tests inject this to capture which
-	// stale paths would have been removed without touching the real filesystem.
-	// When nil, the production git-worktree-remove+prune sequence is used.
-	//
-	// Bead ref: hk-5uezz.
-	worktreeReclaimFunc func(ctx context.Context, projectDir string, stalePaths []string) error
-
 	// sandboxCfg holds the sandbox: block from .harmonik/config.yaml (hk-6596l).
 	// When Backend == "" the block was absent and no sandboxing occurs. When
 	// Backend == "srt", beadRunOne wires SrtSpawnConfig onto the perRunSubstrate
@@ -976,7 +935,6 @@ func newWorkLoopDeps(ctx context.Context, cfg Config, bus handlercontract.EventE
 		// WithMergeQueue, which runWorkLoop then leaves untouched (hk-yyso7).
 		worktreeCreateMu: &sync.Mutex{},                  // hk-5qp7z: global worktree-create serialisation for remote runs
 		agentSpawnSem:    make(chan struct{}, 3),         // hk-5z1f0: cold-start spawn semaphore (cap 3, remote-only). ONE per daemon; per-worker only because v1 admits one worker — see the take site.
-		cacheReapMu:      &sync.RWMutex{},                // hk-y3frr: reap↔dispatch exclusion
 		emittedEpics:     make(map[core.BeadID]struct{}), // hk-w6y70: at-most-once guard per daemon session
 		emittedEpicsMu:   &sync.Mutex{},
 		targetBranch:     bootconfig.ResolveTargetBranch(cfg.TargetBranch),

@@ -420,10 +420,6 @@ func admissionParkedItem(id core.BeadID) queue.Item {
 //
 // NoAutoPull is left to the caller: the queue-path tests set it so the br-ready
 // fallback cannot supply dispatch input, and the br-ready test clears it.
-//
-// DiskFreeBytesFunc reports far above the watermark on purpose. Below it the
-// periodic disk check runs stale-worktree reclaim and `go clean -cache` as real
-// subprocesses, which would wipe this machine's shared Go build cache.
 func admissionDeps(t *testing.T, ledger *admissionLedger, qs *queuewiring.QueueStore, qLedger queue.BeadLedger, noAutoPull bool, pause *daemon.HandlerPauseController) daemon.WorkLoopDepsParams {
 	t.Helper()
 	projectDir, _ := workloopFixtureProjectDir(t)
@@ -440,7 +436,6 @@ func admissionDeps(t *testing.T, ledger *admissionLedger, qs *queuewiring.QueueS
 		QueueLedger:            qLedger,
 		NoAutoPull:             noAutoPull,
 		HandlerPauseController: pause,
-		DiskFreeBytesFunc:      func(string) (uint64, error) { return 1 << 62, nil },
 	}
 }
 
@@ -490,6 +485,70 @@ func runAdmissionLoop(t *testing.T, qs *queuewiring.QueueStore, runLoop func(con
 		t.Error("work loop did not exit within 15s after context cancel")
 	}
 	<-pumpDone
+}
+
+// TestAdmissionOrder_DiskLowLatchSkipsClaim proves the Stage 5 disk port does
+// more than make claiming absent. The counted probe shows maintenance ran. The
+// low result sets the latch, and the latch keeps ClaimBead out of the queue
+// path. Both cleanup seams are stubs, so this test cannot touch shared caches
+// or remove a worktree.
+func TestAdmissionOrder_DiskLowLatchSkipsClaim(t *testing.T) {
+	const beadID core.BeadID = "hk-stage5-disk-low-latch"
+
+	ledger := newAdmissionLedger()
+	qs := daemon.ExportedNewQueueStore()
+	qs.SetQueue(admissionQueue("main", queue.Item{BeadID: beadID, Status: queue.ItemStatusPending}))
+	deps := daemon.ExportedWorkLoopDeps(admissionDeps(t, ledger, qs, &admissionQueueLedger{}, true, nil))
+
+	var callsMu sync.Mutex
+	probeCalls := 0
+	goCleanCalls := 0
+	reclaimCalls := 0
+	diskReclaim := daemon.ExportedDiskReclaimPortForTesting(deps, time.Nanosecond,
+		func(string) (uint64, error) {
+			callsMu.Lock()
+			probeCalls++
+			callsMu.Unlock()
+			return 0, nil
+		},
+		func() error {
+			callsMu.Lock()
+			goCleanCalls++
+			callsMu.Unlock()
+			return nil
+		},
+		func(context.Context, string, []string) error {
+			callsMu.Lock()
+			reclaimCalls++
+			callsMu.Unlock()
+			return nil
+		},
+		nil,
+	)
+
+	runAdmissionLoop(t, qs,
+		func(ctx context.Context) {
+			daemon.ExportedRunWorkLoopWithDiskReclaim(ctx, deps, diskReclaim) //nolint:errcheck,gosec // G104: background loop; returns on ctx cancel
+		},
+		func() {},
+	)
+
+	callsMu.Lock()
+	probes, cleans, reclaims := probeCalls, goCleanCalls, reclaimCalls
+	callsMu.Unlock()
+	if probes == 0 {
+		t.Fatal("disk probe did not run; zero ClaimBead calls alone would not prove the latch")
+	}
+	if cleans == 0 {
+		t.Error("low-disk probe did not reach the stubbed go-cache cleanup seam")
+	}
+	if reclaims != 0 {
+		t.Errorf("worktree reclaim stub called %d time(s), want 0 with no stale worktrees", reclaims)
+	}
+	if claims := ledger.claimCount(beadID); claims != 0 {
+		t.Errorf("disk-low latch allowed ClaimBead %d time(s), want 0", claims)
+	}
+	ledger.assertNoRunPathCalls(t)
 }
 
 // admissionFirstItem returns the item under test out of a snapshot, or fails the
@@ -590,20 +649,22 @@ func TestAdmissionOrder_CooldownRunsBeforePreClaimShowBead(t *testing.T) {
 		params := admissionDeps(t, ledger, qs, qLedger, true, nil)
 		params.RunRegistry = reg
 		params.StrandedInProgressResetter = resetter
-		params.DiskFreeBytesFunc = func(string) (uint64, error) {
-			tickMu.Lock()
-			tickCount++
-			tickMu.Unlock()
-			return 1 << 62, nil
-		}
-
-		depsPtr := daemon.ExportedWorkLoopDepsPtr(params)
-		daemon.ExportedDiskCheckSetCheckInterval(depsPtr, time.Nanosecond)
-		deps := *depsPtr
+		deps := daemon.ExportedWorkLoopDeps(params)
+		diskReclaim := daemon.ExportedDiskReclaimPortForTesting(deps, time.Nanosecond,
+			func(string) (uint64, error) {
+				tickMu.Lock()
+				tickCount++
+				tickMu.Unlock()
+				return 1 << 62, nil
+			},
+			func() error { return nil },
+			func(context.Context, string, []string) error { return nil },
+			nil,
+		)
 
 		runAdmissionLoop(t, qs,
 			func(c context.Context) {
-				daemon.ExportedRunWorkLoop(c, deps) //nolint:errcheck,gosec // G104: background loop; returns on ctx cancel
+				daemon.ExportedRunWorkLoopWithDiskReclaim(c, deps, diskReclaim) //nolint:errcheck,gosec // G104: background loop; returns on ctx cancel
 			},
 			func() {},
 		)

@@ -118,6 +118,10 @@ type loopMaintenance struct {
 	// coordinatorReap holds the periodic coordinator-session reaper inputs.
 	coordinatorReap coordinatorReapPort
 
+	// diskReclaim holds the disk probe and reactive reclaim inputs. It is also
+	// passed to the dispatch registration seam so both use one cache-reap lock.
+	diskReclaim diskReclaimPort
+
 	// eagerRefill holds the eager-refill and staged-follow-up inputs.
 	eagerRefill eagerRefillPort
 
@@ -155,9 +159,10 @@ type loopMaintenance struct {
 // logW is passed straight through. Both sub-constructors already substitute
 // os.Stderr for a nil writer, so a third copy of that guard here would be dead
 // code (the reviewer's point, and it also keeps os out of this file's imports).
-func newLoopMaintenance(deps workLoopDeps, coordinatorReap coordinatorReapPort, eagerRefill eagerRefillPort, governor governorPort, governorEnabled bool, logW io.Writer) *loopMaintenance {
+func newLoopMaintenance(deps workLoopDeps, coordinatorReap coordinatorReapPort, diskReclaim diskReclaimPort, eagerRefill eagerRefillPort, governor governorPort, governorEnabled bool, logW io.Writer) *loopMaintenance {
 	return &loopMaintenance{
 		coordinatorReap: coordinatorReap,
+		diskReclaim:     diskReclaim,
 		eagerRefill:     eagerRefill,
 		dashGate:        newDashboardGateIfEnabled(deps.projectCfg, logW),
 		governor:        newMovementGovernorIfEnabled(governor, governorEnabled, logW),
@@ -205,7 +210,7 @@ func (m *loopMaintenance) tickBeforeDispatch(ctx context.Context, deps *workLoop
 	// `go clean -cache` even when disk was healthy. It was REMOVED and must not
 	// be restored (hk-gjbpp); full rationale in the file-level comment on
 	// diskcheck_hksxlb.go.
-	runPeriodicDiskCheck(ctx, deps, &m.state)
+	runPeriodicDiskCheck(ctx, m.diskReclaim, &m.state)
 
 	return maintenanceObservation{diskLow: m.state.diskLow}
 }

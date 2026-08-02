@@ -42,6 +42,7 @@ func (bs *bootState) launchWorkLoop(ctx context.Context, daemonStartTime time.Ti
 		return governorErr
 	}
 	coordinatorReap := newCoordinatorReapPort(bs.cfg)
+	diskReclaim := newDiskReclaimPort(deps)
 	eagerRefill := newEagerRefillPort(bs.cfg)
 	loadEagerRefillLedger(&eagerRefill)                    //nolint:contextcheck // The retained ledger helper is path-only.
 	scheduleStore, scheduleErr := newScheduleStore(bs.cfg) //nolint:contextcheck // Schedule registration is a bootstrap file mutation with no context-aware API.
@@ -56,7 +57,7 @@ func (bs *bootState) launchWorkLoop(ctx context.Context, daemonStartTime time.Ti
 
 	loopDone := make(chan error, 1)
 	go func() {
-		loopDone <- runWorkLoop(ctx, deps, coordinatorReap, eagerRefill, governor, governorEnabled)
+		loopDone <- runWorkLoop(ctx, deps, coordinatorReap, diskReclaim, eagerRefill, governor, governorEnabled)
 	}()
 	// Block until the work loop exits (either ctx cancelled or fatal error).
 	<-loopDone

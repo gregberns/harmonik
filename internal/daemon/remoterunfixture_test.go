@@ -178,7 +178,7 @@ func remotefixIdleTunnel(ctx context.Context, _ string, _ ...string) *exec.Cmd {
 //
 //   - Nil does NOT refuse at construction. ExportedWorkLoopDeps assigns the
 //     field straight through with no guard and no default, unlike AgentSpawnSem
-//     and CacheReapMu a few lines above it. The nil guard lives in the
+//     a few lines above it. The nil guard lives in the
 //     production constructor, which no fixture goes through. So nil panics
 //     inside ForAgent, on the run's own spawned goroutine, and takes the whole
 //     test binary down.

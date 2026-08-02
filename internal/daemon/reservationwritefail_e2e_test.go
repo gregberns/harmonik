@@ -87,7 +87,6 @@ func TestReservationWriteFailure_NeverClaimsAndNeverLaunches(t *testing.T) {
 		// Report free disk far above the watermark, or the disk-low gate holds
 		// the tick before selection and the test passes without ever reaching
 		// the reservation it claims to check.
-		DiskFreeBytesFunc: func(string) (uint64, error) { return 1 << 62, nil },
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

@@ -49,14 +49,29 @@ func WorkflowModeDefaultOf(deps workLoopDeps) core.WorkflowMode {
 // ExportedRunWorkLoop runs the work loop with the given deps until ctx is
 // cancelled, mirroring runWorkLoop.
 func ExportedRunWorkLoop(ctx context.Context, deps workLoopDeps) error {
-	return runWorkLoop(ctx, deps, coordinatorReapPort{}, eagerRefillPort{}, governorPort{}, false)
+	return runWorkLoop(ctx, deps, coordinatorReapPort{}, newTestDiskReclaimPort(deps), eagerRefillPort{}, governorPort{}, false)
+}
+
+// ExportedRunWorkLoopWithDiskReclaim runs the work loop with a caller-built
+// disk port. Tests use it to prove the disk latch stops admission without any
+// real cache clean or worktree reclaim.
+func ExportedRunWorkLoopWithDiskReclaim(ctx context.Context, deps workLoopDeps, diskReclaim diskReclaimPort) error {
+	return runWorkLoop(ctx, deps, coordinatorReapPort{}, diskReclaim, eagerRefillPort{}, governorPort{}, false)
 }
 
 // ExportedRunWorkLoopWithGovernor runs the work loop with an enabled governor
 // port. Tests use it to exercise the sentinel dispatch gate without restoring
 // governor values to workLoopDeps.
 func ExportedRunWorkLoopWithGovernor(ctx context.Context, deps workLoopDeps, state *sentinel.GovernorState) error {
-	return runWorkLoop(ctx, deps, coordinatorReapPort{}, eagerRefillPort{}, governorPort{state: state}, true)
+	return runWorkLoop(ctx, deps, coordinatorReapPort{}, newTestDiskReclaimPort(deps), eagerRefillPort{}, governorPort{state: state}, true)
+}
+
+// ExportedRunWorkLoopWithGovernorAndDiskReclaim combines the two maintenance
+// test seams without placing either port back on workLoopDeps.
+func ExportedRunWorkLoopWithGovernorAndDiskReclaim(ctx context.Context, deps workLoopDeps,
+	state *sentinel.GovernorState, diskReclaim diskReclaimPort,
+) error {
+	return runWorkLoop(ctx, deps, coordinatorReapPort{}, diskReclaim, eagerRefillPort{}, governorPort{state: state}, true)
 }
 
 // ExportedStoreLocalInFlight preloads the split-gate local-in-flight counter on

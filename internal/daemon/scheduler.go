@@ -395,7 +395,7 @@ func projectActiveGroup(q *queue.Queue) *orchestrator.GroupSnapshot {
 }
 
 //nolint:gocognit,cyclop,funlen // pre-existing: Seam A moved this code out of workloop.go unchanged
-func runWorkLoop(ctx context.Context, deps workLoopDeps, coordinatorReap coordinatorReapPort, eagerRefill eagerRefillPort, governor governorPort, governorEnabled bool) error {
+func runWorkLoop(ctx context.Context, deps workLoopDeps, coordinatorReap coordinatorReapPort, diskReclaim diskReclaimPort, eagerRefill eagerRefillPort, governor governorPort, governorEnabled bool) error {
 	// wg tracks all in-flight bead goroutines. runWorkLoop waits on this before
 	// returning so callers know all bead work is complete on return.
 	var wg sync.WaitGroup
@@ -465,7 +465,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, coordinatorReap coordin
 	// (RSM-011) plus the dashboard forcing gate and the sentinel movement
 	// governor, both of which are SWITCHABLE subsystems that may be absent. It is
 	// touched only from this goroutine. See loopmaintenance.go.
-	maint := newLoopMaintenance(deps, coordinatorReap, eagerRefill, governor, governorEnabled, os.Stderr)
+	maint := newLoopMaintenance(deps, coordinatorReap, diskReclaim, eagerRefill, governor, governorEnabled, os.Stderr)
 	reapPort := newReapSeamPort(deps, eagerRefill)
 	completionPort := newRunCompletionPort(deps, reapPort)
 
@@ -1571,8 +1571,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, coordinatorReap coordin
 		// hk-y3frr: hold cacheReapMu.RLock for the duration of Register so the
 		// reaper's WLock cannot be acquired while a new run is being inserted into
 		// the registry — and so Register blocks while a reap holds the WLock.
-		if deps.cacheReapMu != nil {
-			deps.cacheReapMu.RLock()
+		if diskReclaim.cacheReapMu != nil {
+			diskReclaim.cacheReapMu.RLock()
 		}
 		dispatchedHandle := &RunHandle{
 			BeadID: beadID,
@@ -1593,8 +1593,8 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps, coordinatorReap coordin
 			Cancel:          runCancel,
 		}
 		deps.runRegistry.Register(runID, dispatchedHandle)
-		if deps.cacheReapMu != nil {
-			deps.cacheReapMu.RUnlock()
+		if diskReclaim.cacheReapMu != nil {
+			diskReclaim.cacheReapMu.RUnlock()
 		}
 
 		// hk-hs7ex: hoist SelectWorker to dispatch time (before goroutine start) so

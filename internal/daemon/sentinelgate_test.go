@@ -132,25 +132,27 @@ func TestSentinelGate_QueuePathHoldsWhileTheGovernorTripIsPending(t *testing.T) 
 		// reclaim or `go clean -cache` subprocesses that would touch this machine.
 		var tickMu sync.Mutex
 		tickCount := 0
-		params.DiskFreeBytesFunc = func(string) (uint64, error) {
-			tickMu.Lock()
-			tickCount++
-			tickMu.Unlock()
-			return 1 << 62, nil
-		}
-
-		depsPtr := daemon.ExportedWorkLoopDepsPtr(params)
-		daemon.ExportedDiskCheckSetCheckInterval(depsPtr, time.Nanosecond)
-		deps := *depsPtr
+		deps := daemon.ExportedWorkLoopDeps(params)
+		diskReclaim := daemon.ExportedDiskReclaimPortForTesting(deps, time.Nanosecond,
+			func(string) (uint64, error) {
+				tickMu.Lock()
+				tickCount++
+				tickMu.Unlock()
+				return 1 << 62, nil
+			},
+			func() error { return nil },
+			func(context.Context, string, []string) error { return nil },
+			nil,
+		)
 
 		var snapshot *queue.Queue
 		runAdmissionLoop(t, qs,
 			func(c context.Context) {
 				if governorPresent {
-					daemon.ExportedRunWorkLoopWithGovernor(c, deps, governorState) //nolint:errcheck,gosec // G104: background loop; returns on ctx cancel
+					daemon.ExportedRunWorkLoopWithGovernorAndDiskReclaim(c, deps, governorState, diskReclaim) //nolint:errcheck,gosec // G104: background loop; returns on ctx cancel
 					return
 				}
-				daemon.ExportedRunWorkLoop(c, deps) //nolint:errcheck,gosec // G104: background loop; returns on ctx cancel
+				daemon.ExportedRunWorkLoopWithDiskReclaim(c, deps, diskReclaim) //nolint:errcheck,gosec // G104: background loop; returns on ctx cancel
 			},
 			func() { snapshot = qs.Queue() },
 		)
@@ -257,20 +259,22 @@ func TestSentinelGate_ReadyPathHoldsWhileTheGovernorTripIsPending(t *testing.T) 
 		// Per-tick witness, same shape as the queue-path test above.
 		var tickMu sync.Mutex
 		tickCount := 0
-		params.DiskFreeBytesFunc = func(string) (uint64, error) {
-			tickMu.Lock()
-			tickCount++
-			tickMu.Unlock()
-			return 1 << 62, nil
-		}
-
-		depsPtr := daemon.ExportedWorkLoopDepsPtr(params)
-		daemon.ExportedDiskCheckSetCheckInterval(depsPtr, time.Nanosecond)
-		deps := *depsPtr
+		deps := daemon.ExportedWorkLoopDeps(params)
+		diskReclaim := daemon.ExportedDiskReclaimPortForTesting(deps, time.Nanosecond,
+			func(string) (uint64, error) {
+				tickMu.Lock()
+				defer tickMu.Unlock()
+				tickCount++
+				return 1 << 62, nil
+			},
+			func() error { return nil },
+			func(context.Context, string, []string) error { return nil },
+			nil,
+		)
 
 		runAdmissionLoop(t, qs,
 			func(c context.Context) {
-				daemon.ExportedRunWorkLoopWithGovernor(c, deps, governorState) //nolint:errcheck,gosec // G104: background loop; returns on ctx cancel
+				daemon.ExportedRunWorkLoopWithGovernorAndDiskReclaim(c, deps, governorState, diskReclaim) //nolint:errcheck,gosec // G104: background loop; returns on ctx cancel
 			},
 			func() {},
 		)

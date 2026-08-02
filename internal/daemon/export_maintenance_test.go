@@ -8,6 +8,7 @@ package daemon
 
 import (
 	"context"
+	"sync"
 	"time"
 )
 
@@ -21,16 +22,16 @@ type ExportedMaintState struct{ m loopMaintenanceState }
 // ExportedNewMaintState returns a fresh maintenance-state handle.
 func ExportedNewMaintState() *ExportedMaintState { return &ExportedMaintState{} }
 
-// ExportedRunPeriodicDiskCheck calls runPeriodicDiskCheck with the given deps
-// and maintenance-state handle, to drive the reaper directly without running the
-// full work loop (hk-guez).
+// ExportedRunPeriodicDiskCheck calls runPeriodicDiskCheck with the given port
+// and maintenance-state handle, to drive the reaper directly without running
+// the full work loop (hk-guez).
 //
 // Used by loopmaintenance_test.go TestDiskLowBranch. The original caller,
 // diskcheck_hksxlb_test.go, was deleted, and this comment went on naming it —
 // which left every shim in this file looking covered while all four had zero
 // callers. Name a live caller here or say there is none.
-func ExportedRunPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps, ms *ExportedMaintState) {
-	runPeriodicDiskCheck(ctx, deps, &ms.m)
+func ExportedRunPeriodicDiskCheck(ctx context.Context, port diskReclaimPort, ms *ExportedMaintState) {
+	runPeriodicDiskCheck(ctx, port, &ms.m)
 }
 
 // ExportedDiskCheckDiskLow reads the diskLow field from the maintenance-state
@@ -41,26 +42,56 @@ func ExportedDiskCheckDiskLow(ms *ExportedMaintState) bool {
 	return ms.m.diskLow
 }
 
-// ExportedDiskCheckSetCheckInterval overrides the disk-probe interval on deps
+// ExportedDiskCheckSetCheckInterval overrides the disk-probe interval on port
 // so tests fire immediately. A zero override restores the production default
 // (diskCheckInterval).
 //
 // Used by loopmaintenance_test.go TestDiskLowBranch.
 //
 // Bead ref: hk-guez.
-func ExportedDiskCheckSetCheckInterval(deps *workLoopDeps, d time.Duration) {
-	deps.diskCheckIntervalOverride = d
+func ExportedDiskCheckSetCheckInterval(port *diskReclaimPort, d time.Duration) {
+	port.diskCheckIntervalOverride = d
 }
 
-// ExportedReclaimStaleWorktrees calls reclaimStaleWorktrees with the given deps
+// ExportedDiskReclaimPortForTesting projects a disk port from the supplied
+// work-loop values, then installs all test seams. The caller passes the value
+// to ExportedRunWorkLoopWithDiskReclaim so the disk probe and registration use
+// the same cache-reap mutex.
+func ExportedDiskReclaimPortForTesting(deps workLoopDeps, interval time.Duration,
+	freeBytes func(string) (uint64, error), goClean func() error,
+	reclaim func(context.Context, string, []string) error, cacheReapMu *sync.RWMutex,
+) diskReclaimPort {
+	port := newDiskReclaimPort(deps)
+	port.diskCheckIntervalOverride = interval
+	port.diskFreeBytesFunc = freeBytes
+	port.goCacheCleanFunc = goClean
+	port.worktreeReclaimFunc = reclaim
+	if cacheReapMu != nil {
+		port.cacheReapMu = cacheReapMu
+	}
+	return port
+}
+
+// newTestDiskReclaimPort keeps broad work-loop tests independent of the host
+// filesystem. Disk-specific tests use ExportedDiskReclaimPortForTesting to
+// select their own probe result and cleanup seams.
+func newTestDiskReclaimPort(deps workLoopDeps) diskReclaimPort {
+	port := newDiskReclaimPort(deps)
+	port.diskFreeBytesFunc = func(string) (uint64, error) { return 1 << 62, nil }
+	port.goCacheCleanFunc = func() error { return nil }
+	port.worktreeReclaimFunc = func(context.Context, string, []string) error { return nil }
+	return port
+}
+
+// ExportedReclaimStaleWorktrees calls reclaimStaleWorktrees with the given port
 // and returns the count of stale worktrees removed, to drive the reclaim step
 // directly (hk-5uezz).
 //
 // NO CALLER at present. diskcheck_hksxlb_test.go, which this comment used to
 // name, was deleted. TestDiskLowBranch covers the go-cache reap but not the
 // stale-worktree reclaim, which needs a run registry and UUID-named worktree
-// directories. Wire deps.worktreeReclaimFunc when you write that test — it keeps
+// directories. Wire port.worktreeReclaimFunc when you write that test — it keeps
 // `git worktree remove` out of the run.
-func ExportedReclaimStaleWorktrees(ctx context.Context, deps *workLoopDeps) int {
-	return reclaimStaleWorktrees(ctx, deps)
+func ExportedReclaimStaleWorktrees(ctx context.Context, port diskReclaimPort) int {
+	return reclaimStaleWorktrees(ctx, port)
 }

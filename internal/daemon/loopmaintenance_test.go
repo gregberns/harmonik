@@ -41,18 +41,20 @@ func (a *recordingReapAdapter) ListSessions(context.Context) ([]string, error) {
 // diskFreeBytesFunc is injected well above the watermark so the disk job takes
 // its healthy path here. The disk-LOW branch is covered separately by
 // TestDiskLowBranch below.
-func haltFixture(t *testing.T) (*workLoopDeps, coordinatorReapPort, *recordingReapAdapter) {
+func haltFixture(t *testing.T) (*workLoopDeps, coordinatorReapPort, diskReclaimPort, *recordingReapAdapter) {
 	t.Helper()
 	adapter := &recordingReapAdapter{}
-	deps := &workLoopDeps{
-		diskFreeBytesFunc: func(string) (uint64, error) { return 1 << 62, nil },
-	}
+	deps := &workLoopDeps{}
 	port := coordinatorReapPort{
 		projectDir: t.TempDir(),
 		adapter:    adapter,
 		interval:   time.Nanosecond, // cadence is never the reason a call is skipped
 	}
-	return deps, port, adapter
+	diskReclaim := diskReclaimPort{
+		projectDir:        t.TempDir(),
+		diskFreeBytesFunc: func(string) (uint64, error) { return 1 << 62, nil },
+	}
+	return deps, port, diskReclaim, adapter
 }
 
 // TestTickBeforeDispatchHaltShortCircuits pins the invariant loopmaintenance.go
@@ -67,8 +69,8 @@ func haltFixture(t *testing.T) (*workLoopDeps, coordinatorReapPort, *recordingRe
 // the loop's exit.
 func TestTickBeforeDispatchHaltShortCircuits(t *testing.T) {
 	t.Run("halted governor reports halt and skips every other job", func(t *testing.T) {
-		deps, port, adapter := haltFixture(t)
-		m := &loopMaintenance{coordinatorReap: port, governor: &movementGovernor{haltRequested: true}}
+		deps, port, diskReclaim, adapter := haltFixture(t)
+		m := &loopMaintenance{coordinatorReap: port, diskReclaim: diskReclaim, governor: &movementGovernor{haltRequested: true}}
 
 		obs := m.tickBeforeDispatch(context.Background(), deps)
 
@@ -99,8 +101,8 @@ func TestTickBeforeDispatchHaltShortCircuits(t *testing.T) {
 	// Positive control. Without this, the assertions above would still pass if the
 	// fixture simply could not reach tmux, and the test would prove nothing.
 	t.Run("same fixture without the halt does run the reap", func(t *testing.T) {
-		deps, port, adapter := haltFixture(t)
-		m := &loopMaintenance{coordinatorReap: port, governor: &movementGovernor{haltRequested: false}}
+		deps, port, diskReclaim, adapter := haltFixture(t)
+		m := &loopMaintenance{coordinatorReap: port, diskReclaim: diskReclaim, governor: &movementGovernor{haltRequested: false}}
 
 		obs := m.tickBeforeDispatch(context.Background(), deps)
 
@@ -124,8 +126,8 @@ func TestTickBeforeDispatchHaltShortCircuits(t *testing.T) {
 	// rather than panicking, which is what lets runWorkLoop hold one code path for
 	// both configurations.
 	t.Run("absent governor subsystem never halts", func(t *testing.T) {
-		deps, port, adapter := haltFixture(t)
-		m := &loopMaintenance{coordinatorReap: port, governor: nil}
+		deps, port, diskReclaim, adapter := haltFixture(t)
+		m := &loopMaintenance{coordinatorReap: port, diskReclaim: diskReclaim, governor: nil}
 
 		obs := m.tickBeforeDispatch(context.Background(), deps)
 
@@ -158,10 +160,11 @@ func TestTickBeforeDispatchHaltShortCircuits(t *testing.T) {
 //
 // bus is nil, so the disk_low event emit is skipped. The event payload is not
 // what this test is about.
-func diskLowFixture(t *testing.T, freeBytes uint64) (*workLoopDeps, *diskSeamCalls) {
+func diskLowFixture(t *testing.T, freeBytes uint64) (*workLoopDeps, diskReclaimPort, *diskSeamCalls) {
 	t.Helper()
 	calls := &diskSeamCalls{}
-	deps := &workLoopDeps{
+	deps := &workLoopDeps{}
+	port := diskReclaimPort{
 		projectDir:        t.TempDir(),
 		diskFreeBytesFunc: func(string) (uint64, error) { return freeBytes, nil },
 		goCacheCleanFunc: func() error {
@@ -174,8 +177,8 @@ func diskLowFixture(t *testing.T, freeBytes uint64) (*workLoopDeps, *diskSeamCal
 		},
 	}
 	// Fire on the first tick instead of waiting out diskCheckInterval.
-	ExportedDiskCheckSetCheckInterval(deps, time.Nanosecond)
-	return deps, calls
+	ExportedDiskCheckSetCheckInterval(&port, time.Nanosecond)
+	return deps, port, calls
 }
 
 // diskSeamCalls counts the stubbed subprocess seams. Named fields rather than two
@@ -192,17 +195,17 @@ type diskSeamCalls struct {
 //
 // An earlier version of this file claimed the branch was too expensive to test
 // because it would run `go clean -cache` and `git worktree remove` for real. That
-// was wrong. workLoopDeps has carried goCacheCleanFunc and worktreeReclaimFunc as
-// seams for exactly this purpose the whole time, so the branch is cheap. The false
+// was wrong. diskReclaimPort carries goCacheCleanFunc and worktreeReclaimFunc as
+// seams for exactly this purpose, so the branch is cheap. The false
 // claim is recorded here because a comment that talks a reader out of a test they
 // could have written is worse than no comment.
 func TestDiskLowBranch(t *testing.T) {
 	// Below the watermark: latch set, cache reap attempted, no real subprocess.
 	t.Run("below watermark sets diskLow and reaps the go cache", func(t *testing.T) {
-		deps, calls := diskLowFixture(t, diskLowWatermarkDefault-1)
+		_, port, calls := diskLowFixture(t, diskLowWatermarkDefault-1)
 		ms := ExportedNewMaintState()
 
-		ExportedRunPeriodicDiskCheck(context.Background(), deps, ms)
+		ExportedRunPeriodicDiskCheck(context.Background(), port, ms)
 
 		if !ExportedDiskCheckDiskLow(ms) {
 			t.Error("free space one byte below the watermark: want diskLow = true")
@@ -222,17 +225,17 @@ func TestDiskLowBranch(t *testing.T) {
 	// The latch must CLEAR when the disk recovers, using the same state handle.
 	// This is the transition, not two independent probes.
 	t.Run("recovery clears the diskLow latch", func(t *testing.T) {
-		deps, calls := diskLowFixture(t, diskLowWatermarkDefault-1)
+		_, port, calls := diskLowFixture(t, diskLowWatermarkDefault-1)
 		ms := ExportedNewMaintState()
 
-		ExportedRunPeriodicDiskCheck(context.Background(), deps, ms)
+		ExportedRunPeriodicDiskCheck(context.Background(), port, ms)
 		if !ExportedDiskCheckDiskLow(ms) {
 			t.Fatal("setup: want diskLow = true before testing recovery")
 		}
 
 		// Same deps, same state handle, disk now healthy.
-		deps.diskFreeBytesFunc = func(string) (uint64, error) { return 1 << 62, nil }
-		ExportedRunPeriodicDiskCheck(context.Background(), deps, ms)
+		port.diskFreeBytesFunc = func(string) (uint64, error) { return 1 << 62, nil }
+		ExportedRunPeriodicDiskCheck(context.Background(), port, ms)
 
 		if ExportedDiskCheckDiskLow(ms) {
 			t.Error("disk recovered above the watermark: want diskLow = false")
@@ -247,8 +250,8 @@ func TestDiskLowBranch(t *testing.T) {
 	// calling runPeriodicDiskCheck directly, and the observation must carry the
 	// latch out to the loop.
 	t.Run("tickBeforeDispatch reports diskLow to the loop", func(t *testing.T) {
-		deps, calls := diskLowFixture(t, diskLowWatermarkDefault-1)
-		m := &loopMaintenance{}
+		deps, port, calls := diskLowFixture(t, diskLowWatermarkDefault-1)
+		m := &loopMaintenance{diskReclaim: port}
 
 		obs := m.tickBeforeDispatch(context.Background(), deps)
 

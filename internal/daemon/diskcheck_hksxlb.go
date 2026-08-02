@@ -7,7 +7,7 @@ package daemon
 //   - diskFreeBytes(path) — returns available bytes on the filesystem containing
 //     path, using syscall.Statfs. Returns (0, err) on failure.
 //
-//   - runPeriodicDiskCheck(ctx, deps) — called once per work-loop poll tick.
+//   - runPeriodicDiskCheck(ctx, port) — called once per work-loop poll tick.
 //     Rate-limited to diskCheckInterval (default 10 min) for the probe.
 //
 //     Reactive reap only: when disk is below the watermark, sets
@@ -45,14 +45,46 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/handlercontract"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
+
+// diskReclaimPort is the periodic disk probe and reactive reclaim dependency
+// set. It is a value. cacheReapMu is a pointer so registration and cleanup use
+// the same lock.
+//
+// projectDir, bus, and runRegistry are ambient daemon values that this port's
+// helpers need. Copying them here prevents the disk path from reaching back
+// into workLoopDeps.
+type diskReclaimPort struct {
+	projectDir                string
+	bus                       handlercontract.EventEmitter
+	runRegistry               *RunRegistry
+	diskCheckIntervalOverride time.Duration
+	diskFreeBytesFunc         func(path string) (uint64, error)
+	goCacheCleanFunc          func() error
+	worktreeReclaimFunc       func(ctx context.Context, projectDir string, stalePaths []string) error
+	cacheReapMu               *sync.RWMutex
+}
+
+// newDiskReclaimPort projects the disk path's dependencies once at the
+// composition seam. The fresh lock is shared with every run registration for
+// this work loop.
+func newDiskReclaimPort(deps workLoopDeps) diskReclaimPort {
+	return diskReclaimPort{
+		projectDir:  deps.projectDir,
+		bus:         deps.bus,
+		runRegistry: deps.runRegistry,
+		cacheReapMu: &sync.RWMutex{},
+	}
+}
 
 // diskFreeBytes returns the number of bytes available to unprivileged processes
 // on the filesystem containing path. Uses syscall.Statfs (available on
@@ -69,17 +101,17 @@ func diskFreeBytes(path string) (uint64, error) {
 }
 
 // mergeOrRunInFlight returns true when one or more bead runs are currently
-// registered in deps.runRegistry (i.e. any merge-build or run-build is active).
+// registered in port.runRegistry (i.e. any merge-build or run-build is active).
 // Non-blocking: reads an atomic counter inside RunRegistry (ActiveRuns count check).
-func mergeOrRunInFlight(deps *workLoopDeps) bool {
-	return deps.runRegistry != nil && deps.runRegistry.Len() > 0
+func mergeOrRunInFlight(port diskReclaimPort) bool {
+	return port.runRegistry != nil && port.runRegistry.Len() > 0
 }
 
-// runGoCleanCache executes `go clean -cache` using deps.goCacheCleanFunc when
+// runGoCleanCache executes `go clean -cache` using port.goCacheCleanFunc when
 // set (test seam) or exec.CommandContext otherwise. Returns an error on failure.
-func runGoCleanCache(ctx context.Context, deps *workLoopDeps) error {
-	if deps.goCacheCleanFunc != nil {
-		return deps.goCacheCleanFunc()
+func runGoCleanCache(ctx context.Context, port diskReclaimPort) error {
+	if port.goCacheCleanFunc != nil {
+		return port.goCacheCleanFunc()
 	}
 	cleanCtx, cleanCancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cleanCancel()
@@ -98,11 +130,11 @@ func runGoCleanCache(ctx context.Context, deps *workLoopDeps) error {
 // entries (e.g. .gitkeep) are silently skipped.
 //
 // Returns the count of directories successfully removed.
-func reclaimStaleWorktrees(ctx context.Context, deps *workLoopDeps) int {
-	if deps.runRegistry == nil {
+func reclaimStaleWorktrees(ctx context.Context, port diskReclaimPort) int {
+	if port.runRegistry == nil {
 		return 0
 	}
-	worktreesDir := filepath.Join(deps.projectDir, workspace.DefaultWorktreeRoot)
+	worktreesDir := filepath.Join(port.projectDir, workspace.DefaultWorktreeRoot)
 	entries, err := os.ReadDir(worktreesDir)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -120,7 +152,7 @@ func reclaimStaleWorktrees(ctx context.Context, deps *workLoopDeps) int {
 		if parseErr != nil {
 			continue // not a UUID-named worktree; skip
 		}
-		if _, registered := deps.runRegistry.Get(core.RunID(uid)); registered {
+		if _, registered := port.runRegistry.Get(core.RunID(uid)); registered {
 			continue // in-flight — never remove
 		}
 		stalePaths = append(stalePaths, filepath.Join(worktreesDir, e.Name()))
@@ -129,7 +161,7 @@ func reclaimStaleWorktrees(ctx context.Context, deps *workLoopDeps) int {
 		return 0
 	}
 
-	if reclaimErr := runWorktreeReclaim(ctx, deps, stalePaths); reclaimErr != nil {
+	if reclaimErr := runWorktreeReclaim(ctx, port, stalePaths); reclaimErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: disk-check: reclaimStaleWorktrees: %v\n", reclaimErr)
 	}
 	// Count directories that no longer exist after the reclaim attempt.
@@ -143,16 +175,16 @@ func reclaimStaleWorktrees(ctx context.Context, deps *workLoopDeps) int {
 }
 
 // runWorktreeReclaim removes stale worktree paths via git worktree remove and
-// prunes the git worktree list. Uses deps.worktreeReclaimFunc as a test seam
+// prunes the git worktree list. Uses port.worktreeReclaimFunc as a test seam
 // when non-nil; otherwise runs the production git subprocess sequence.
-func runWorktreeReclaim(ctx context.Context, deps *workLoopDeps, stalePaths []string) error {
-	if deps.worktreeReclaimFunc != nil {
-		return deps.worktreeReclaimFunc(ctx, deps.projectDir, stalePaths)
+func runWorktreeReclaim(ctx context.Context, port diskReclaimPort, stalePaths []string) error {
+	if port.worktreeReclaimFunc != nil {
+		return port.worktreeReclaimFunc(ctx, port.projectDir, stalePaths)
 	}
 	reclaimCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	for _, path := range stalePaths {
-		rmCmd := exec.CommandContext(reclaimCtx, "git", "-C", deps.projectDir, "worktree", "remove", "--force", "--force", path)
+		rmCmd := exec.CommandContext(reclaimCtx, "git", "-C", port.projectDir, "worktree", "remove", "--force", "--force", path)
 		if out, rmErr := rmCmd.CombinedOutput(); rmErr != nil {
 			// Fallback: os.RemoveAll for "not a working tree" and similar git errors.
 			_ = os.RemoveAll(path)
@@ -161,13 +193,13 @@ func runWorktreeReclaim(ctx context.Context, deps *workLoopDeps, stalePaths []st
 				path, rmErr, strings.TrimSpace(string(out)))
 		}
 	}
-	pruneCmd := exec.CommandContext(reclaimCtx, "git", "-C", deps.projectDir, "worktree", "prune")
+	pruneCmd := exec.CommandContext(reclaimCtx, "git", "-C", port.projectDir, "worktree", "prune")
 	return pruneCmd.Run()
 }
 
 // runPeriodicDiskCheck is called once per work-loop poll tick to probe disk
 // space and run the reactive go-cache cleanup. Rate-limited to
-// deps.diskCheckIntervalOverride or diskCheckInterval: reads available bytes
+// port.diskCheckIntervalOverride or diskCheckInterval: reads available bytes
 // on the project filesystem.
 //
 //   - Below watermark: sets maint.diskLow = true.
@@ -175,42 +207,42 @@ func runWorktreeReclaim(ctx context.Context, deps *workLoopDeps, stalePaths []st
 //     `go clean -cache` (reactive reap). If a merge-build IS in flight, skips
 //     the reap and logs a loud warning — this prevents a spurious
 //     merge_build_failed at the cost of one deferred clean (hk-guez).
-//     A disk_low event is emitted when deps.bus is non-nil regardless.
+//     A disk_low event is emitted when port.bus is non-nil regardless.
 //
 //   - Above watermark: clears maint.diskLow. No cache reap happens on this
 //     path — see the file-level comment (hk-gjbpp) for why a healthy-disk
 //     cadence-based reap was removed rather than restored again.
-func runPeriodicDiskCheck(ctx context.Context, deps *workLoopDeps, maint *loopMaintenanceState) {
+func runPeriodicDiskCheck(ctx context.Context, port diskReclaimPort, maint *loopMaintenanceState) {
 	now := time.Now()
 
-	checkInterval := deps.diskCheckIntervalOverride
+	checkInterval := port.diskCheckIntervalOverride
 	if checkInterval <= 0 {
 		checkInterval = diskCheckInterval
 	}
 	if time.Since(maint.lastDiskCheck) >= checkInterval {
 		maint.lastDiskCheck = now
-		runDiskProbe(ctx, deps, maint, now, diskLowWatermarkDefault)
+		runDiskProbe(ctx, port, maint, now, diskLowWatermarkDefault)
 	}
 }
 
 // runDiskProbe performs the disk watermark probe and reactive reap.
-func runDiskProbe(ctx context.Context, deps *workLoopDeps, maint *loopMaintenanceState, now time.Time, watermark uint64) {
-	freeBytesFunc := deps.diskFreeBytesFunc
+func runDiskProbe(ctx context.Context, port diskReclaimPort, maint *loopMaintenanceState, now time.Time, watermark uint64) {
+	freeBytesFunc := port.diskFreeBytesFunc
 	if freeBytesFunc == nil {
 		freeBytesFunc = diskFreeBytes
 	}
 
-	freeBytes, probeErr := freeBytesFunc(deps.projectDir)
+	freeBytes, probeErr := freeBytesFunc(port.projectDir)
 	if probeErr != nil {
 		// Non-fatal: log and leave diskLow unchanged.
-		fmt.Fprintf(os.Stderr, "daemon: disk-check: Statfs %s: %v\n", deps.projectDir, probeErr)
+		fmt.Fprintf(os.Stderr, "daemon: disk-check: Statfs %s: %v\n", port.projectDir, probeErr)
 		return
 	}
 	if freeBytes >= watermark {
 		if maint.diskLow {
 			fmt.Fprintf(os.Stderr,
 				"daemon: disk-check: recovered — available=%dMiB watermark=%dMiB path=%s — dispatch resumed\n",
-				freeBytes/(1024*1024), watermark/(1024*1024), deps.projectDir)
+				freeBytes/(1024*1024), watermark/(1024*1024), port.projectDir)
 		}
 		maint.diskLow = false
 		return
@@ -220,7 +252,7 @@ func runDiskProbe(ctx context.Context, deps *workLoopDeps, maint *loopMaintenanc
 	cleanAttempted := false
 	cleanErrStr := ""
 
-	if mergeOrRunInFlight(deps) {
+	if mergeOrRunInFlight(port) {
 		// A merge-build is in progress. Reaping the cache now would
 		// race go vet/go build and produce a spurious
 		// merge_build_failed. Defer to the next tick and warn loudly
@@ -229,18 +261,18 @@ func runDiskProbe(ctx context.Context, deps *workLoopDeps, maint *loopMaintenanc
 		fmt.Fprintf(os.Stderr,
 			"daemon: disk-check: WARN available=%dMiB watermark=%dMiB path=%s — "+
 				"disk below watermark but merge-build in flight; reap deferred to next tick\n",
-			freeBytes/(1024*1024), watermark/(1024*1024), deps.projectDir)
+			freeBytes/(1024*1024), watermark/(1024*1024), port.projectDir)
 	} else {
 		// hk-5uezz: try stale-worktree reclaim FIRST — cheaper than
 		// wiping the shared go-build cache and avoids leaving the next
 		// build with a cold cache. Re-probe after reclaim; if disk is
 		// now above the watermark, skip go clean -cache entirely.
-		if reclaimedCount := reclaimStaleWorktrees(ctx, deps); reclaimedCount > 0 {
-			if newFree, reprobeErr := freeBytesFunc(deps.projectDir); reprobeErr == nil && newFree >= watermark {
+		if reclaimedCount := reclaimStaleWorktrees(ctx, port); reclaimedCount > 0 {
+			if newFree, reprobeErr := freeBytesFunc(port.projectDir); reprobeErr == nil && newFree >= watermark {
 				fmt.Fprintf(os.Stderr,
 					"daemon: disk-check: reclaimed %d stale worktree(s) — "+
 						"disk recovered available=%dMiB watermark=%dMiB path=%s; skipping go clean -cache\n",
-					reclaimedCount, newFree/(1024*1024), watermark/(1024*1024), deps.projectDir)
+					reclaimedCount, newFree/(1024*1024), watermark/(1024*1024), port.projectDir)
 				maint.diskLow = false
 				return
 			}
@@ -252,38 +284,38 @@ func runDiskProbe(ctx context.Context, deps *workLoopDeps, maint *loopMaintenanc
 		// duration of `go clean -cache` so a run registered mid-clean
 		// cannot have its build cache deleted (Register holds the RLock;
 		// it blocks until we release the WLock below).
-		if deps.cacheReapMu != nil {
-			deps.cacheReapMu.Lock()
+		if port.cacheReapMu != nil {
+			port.cacheReapMu.Lock()
 		}
 		// Double-check: a run may have registered between the outer
 		// mergeOrRunInFlight check and the WLock acquisition.
-		if !mergeOrRunInFlight(deps) {
+		if !mergeOrRunInFlight(port) {
 			cleanAttempted = true
-			if cleanErr := runGoCleanCache(ctx, deps); cleanErr != nil {
+			if cleanErr := runGoCleanCache(ctx, port); cleanErr != nil {
 				cleanErrStr = cleanErr.Error()
 			}
 		}
-		if deps.cacheReapMu != nil {
-			deps.cacheReapMu.Unlock()
+		if port.cacheReapMu != nil {
+			port.cacheReapMu.Unlock()
 		}
 	}
 
-	if deps.bus != nil {
+	if port.bus != nil {
 		payload := core.DiskLowPayload{
 			AvailableBytes:        freeBytes,
 			WatermarkBytes:        watermark,
-			ProjectPath:           deps.projectDir,
+			ProjectPath:           port.projectDir,
 			GoCacheCleanAttempted: cleanAttempted,
 			GoCacheCleanError:     cleanErrStr,
 			DetectedAt:            now.UTC().Format(time.RFC3339),
 		}
 		if pb, marshalErr := json.Marshal(payload); marshalErr == nil {
-			_ = deps.bus.Emit(ctx, core.EventTypeDiskLow, pb) //nolint:errcheck // best-effort disk_low event emit
+			_ = port.bus.Emit(ctx, core.EventTypeDiskLow, pb) //nolint:errcheck // best-effort disk_low event emit
 		}
 	}
 	fmt.Fprintf(os.Stderr,
 		"daemon: disk-check: available=%dMiB watermark=%dMiB path=%s — dispatch paused; go_clean_attempted=%v err=%q\n",
-		freeBytes/(1024*1024), watermark/(1024*1024), deps.projectDir,
+		freeBytes/(1024*1024), watermark/(1024*1024), port.projectDir,
 		cleanAttempted, cleanErrStr)
 	maint.diskLow = true
 }

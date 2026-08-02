@@ -338,36 +338,6 @@ type WorkLoopDepsParams struct {
 	// Bead ref: hk-xfuc.
 	AllowedRepos []string
 
-	// DiskFreeBytesFunc, when non-nil, overrides the diskFreeBytes call inside
-	// runPeriodicDiskCheck. Tests use this to control the apparent free-space
-	// reading without touching the real filesystem.
-	//
-	// Bead ref: hk-guez.
-	DiskFreeBytesFunc func(string) (uint64, error)
-
-	// GoCacheCleanFunc, when non-nil, overrides "go clean -cache" execution
-	// inside runPeriodicDiskCheck. Tests use this to capture or stub the
-	// reaper without side-effects on the build cache.
-	//
-	// Bead ref: hk-guez.
-	GoCacheCleanFunc func() error
-
-	// CacheReapMu, when non-nil, overrides the reap↔dispatch exclusion
-	// RWMutex.  Tests that verify TOCTOU behaviour inject a controlled
-	// *sync.RWMutex here.  When nil, ExportedWorkLoopDeps installs a fresh
-	// *sync.RWMutex (mirrors the production newWorkLoopDeps default).
-	//
-	// Bead ref: hk-y3frr.
-	CacheReapMu *sync.RWMutex
-
-	// WorktreeReclaimFunc, when non-nil, overrides the git-worktree-remove
-	// sequence inside reclaimStaleWorktrees. Tests inject this to observe which
-	// stale paths would be removed and to control whether disk recovers after
-	// reclaim (by pairing with a stateful DiskFreeBytesFunc).
-	//
-	// Bead ref: hk-5uezz.
-	WorktreeReclaimFunc func(ctx context.Context, projectDir string, stalePaths []string) error
-
 	// Runner, when non-nil, is threaded into workLoopDeps.runner and used as the
 	// fallback dotRunner on the DOT run path when no remote worker is selected
 	// (hk-hd2w6). Inject a *tmuxPkg.RecordingRunner to capture Command calls in
@@ -445,12 +415,6 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		agentSpawnSem = make(chan struct{}, 3)
 	}
 
-	// CacheReapMu: default to a fresh RWMutex (hk-y3frr).
-	cacheReapMu := p.CacheReapMu
-	if cacheReapMu == nil {
-		cacheReapMu = &sync.RWMutex{}
-	}
-
 	// Derive the submit-wake channel from the QueueStore when one is provided
 	// (hk-24xn1). Mirrors the daemon.Start wiring so queue-aware tests observe
 	// the same wake-on-submit behaviour as production.
@@ -509,29 +473,14 @@ func ExportedWorkLoopDeps(p WorkLoopDepsParams) workLoopDeps {
 		brPath:                     p.BrPath,                // hk-f722: staged-bead generator; empty → disabled
 		spawnSubstrateReadyCh:      p.SpawnSubstrateReadyCh, // hk-bk33: post-boot re-dispatch gate
 		allowedRepos:               p.AllowedRepos,          // hk-xfuc: cross-repo dispatch safelist
-		diskFreeBytesFunc:          p.DiskFreeBytesFunc,     // hk-guez: merge-aware reaper test seam
-		// hk-y3frr: default to a no-op clean in tests so that the now-enabled
-		// proactive reap never calls real `go clean -cache` in scenario tests
-		// (which have no goCacheCleanFunc set and would wipe the build cache on
-		// the first work-loop tick, stalling long-running scenarios).
-		// Disk-check unit tests always supply their own stub via GoCacheCleanFunc,
-		// which overrides this default.
-		goCacheCleanFunc: func() error {
-			if p.GoCacheCleanFunc != nil {
-				return p.GoCacheCleanFunc()
-			}
-			return nil // no-op: tests must not wipe the shared go-build cache
-		},
-		cacheReapMu:         cacheReapMu,           // hk-y3frr: reap↔dispatch exclusion
-		worktreeReclaimFunc: p.WorktreeReclaimFunc, // hk-5uezz: stale-worktree reclaim seam
-		runner:              p.Runner,              // hk-hd2w6: Config.Runner injection seam
-		defaultHarness:      p.DefaultHarness,      // hk-ytzj2: tier-4 global harness default
+		runner:                     p.Runner,                // hk-hd2w6: Config.Runner injection seam
+		defaultHarness:             p.DefaultHarness,        // hk-ytzj2: tier-4 global harness default
 	}
 }
 
 // ExportedWorkLoopDepsPtr returns a pointer to a workLoopDeps so tests can
-// mutate fields (e.g. diskFreeBytesFunc) after construction. Callers must not
-// pass the pointer to ExportedRunWorkLoop (the loop takes the struct by value).
+// mutate an injected loop dependency after construction. Callers must not pass
+// the pointer to ExportedRunWorkLoop (the loop takes the struct by value).
 //
 // Bead ref: hk-guez.
 func ExportedWorkLoopDepsPtr(p WorkLoopDepsParams) *workLoopDeps {

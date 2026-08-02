@@ -43,6 +43,7 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
 	runpkg "github.com/gregberns/harmonik/internal/run"
+	"github.com/gregberns/harmonik/internal/runloop"
 	"github.com/gregberns/harmonik/internal/schedule"
 	"github.com/gregberns/harmonik/internal/workers"
 )
@@ -120,6 +121,26 @@ func newReapSeamPort(deps workLoopDeps) reapSeamPort {
 		concurrencyCtrl:    deps.concurrencyCtrl,
 		runRegistry:        deps.runRegistry,
 		targetBranch:       deps.targetBranch,
+	}
+}
+
+// runCompletionPort adds the follow-up generator values to the existing reap
+// seam. A dispatched run needs no other work-loop dependency after it starts.
+type runCompletionPort struct {
+	reapSeamPort
+	brPath             string
+	followUpLedger     map[string]struct{}
+	followUpLedgerMu   *sync.Mutex
+	followUpLedgerPath string
+}
+
+func newRunCompletionPort(deps workLoopDeps, reapPort reapSeamPort) runCompletionPort {
+	return runCompletionPort{
+		reapSeamPort:       reapPort,
+		brPath:             deps.brPath,
+		followUpLedger:     deps.followUpLedger,
+		followUpLedgerMu:   deps.followUpLedgerMu,
+		followUpLedgerPath: deps.followUpLedgerPath,
 	}
 }
 
@@ -452,6 +473,7 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 	// touched only from this goroutine. See loopmaintenance.go.
 	maint := newLoopMaintenance(deps, os.Stderr)
 	reapPort := newReapSeamPort(deps)
+	completionPort := newRunCompletionPort(deps, reapPort)
 
 	// claimSkipInProgressUntil tracks beads whose pre-claim check observed
 	// in_progress with an active run. Entries suppress the item from the
@@ -1603,43 +1625,30 @@ func runWorkLoop(ctx context.Context, deps workLoopDeps) error {
 		}
 
 		wg.Add(1)
-		// NQ-B1: capture the dispatching queue's name so the completion path can
-		// resolve the right queue by name (evaluateGroupAdvanceWithOutcome) and
-		// the review-loop-failure budget (beadRunOne) updates the right queue.
-		// Without this both default to the main-only shim and a non-"main" queue
-		// never marks its item terminal → the group stalls forever (hk-tigaf.4).
-		go func(runID core.RunID, beadRecord core.BeadRecord, qname string, qid *string, qgidx *int, itemIdx int, extraCtx, itemWFMode, itemWFRef string, tmplParams map[string]string, localOnly bool, workerTarget string, queueDefaultHarness core.AgentType, preSelected *workers.Worker, localSlotHeld bool) {
-			defer wg.Done()
-			defer runCancel() // always release the per-run context, even on panic
-			defer deps.runRegistry.Unregister(runID)
-			// The run outcome is the Run machine's terminal state, returned by
-			// beadRunOne (RSM-022) and read here for EM-015f group-advance.
-			// RSM-010: build the per-run value bundle from THIS goroutine's
-			// explicitly-captured parameters, not the loop variables, so the
-			// capture guard the parameter list exists for still holds.
-			env := deps.runEnv(runID, beadRecord, qname, qid, qgidx, itemIdx,
-				itemWFMode, itemWFRef, tmplParams, localOnly, workerTarget, queueDefaultHarness)
-			rp, handles := deps.buildRunBundles(env)
-			runOK := beadRunOne(runCtx, env, rp, handles, extraCtx, preSelected, localSlotHeld)
-			// EM-015f: after run terminal, evaluate queue group advance.
-			if itemIdx >= 0 && deps.queueStore != nil && qid != nil && qgidx != nil {
-				// hk-ly0hg Fix-1: if the daemon context was cancelled (shutdown),
-				// beadRunOne reopened the bead and returned without emitting
-				// run_failed. Leave the queue item as 'dispatched' so QM-002a at
-				// next startup reverts it to pending (bead is open) rather than
-				// permanently recording a false fail.
-				if ctx.Err() != nil {
-					// Item stays 'dispatched'; QM-002a handles recovery on restart.
-				} else {
-					evaluateGroupAdvanceWithOutcome(ctx, reapPort, qname, *qid, *qgidx, itemIdx, runOK)
-				}
-			}
-			// hk-f722 flywheel V9 §5.4 B: on Phase-1 success, emit a staged
-			// deploy+verify bead for any Phase-2 class the completed bead belongs to.
-			if runOK && ctx.Err() == nil {
-				stagedBeadGeneratorEval(ctx, deps, beadRecord.BeadID, beadRecord.Labels)
-			}
-		}(runID, beadRecord, capturedQueueName, capturedQueueID, capturedQueueGroupIdx, capturedItemIndex, capturedCtx, capturedWFMode, capturedWFRef, capturedTmplParams, capturedLocalOnly, capturedWorkerTarget, capturedDefaultHarness, preSelectedWorker, isLocalDispatch)
+		env := deps.runEnv(runID, beadRecord, capturedQueueName, capturedQueueID,
+			capturedQueueGroupIdx, capturedItemIndex, capturedWFMode, capturedWFRef,
+			capturedTmplParams, capturedLocalOnly, capturedWorkerTarget, capturedDefaultHarness)
+		rp, handles := deps.buildRunBundles(env)
+		go runDispatchedBead(runCtx, ctx, env, rp, handles, completionPort, capturedCtx,
+			preSelectedWorker, isLocalDispatch, &wg, runCancel)
+	}
+}
+
+func runDispatchedBead(runCtx, daemonCtx context.Context, env runloop.RunEnv, rp runloop.RunPorts,
+	handles runloop.SharedHandles, completion runCompletionPort, extraContext string,
+	preSelectedWorker *workers.Worker, localSlotHeld bool, wg *sync.WaitGroup, runCancel context.CancelFunc,
+) {
+	defer wg.Done()
+	defer runCancel()
+	defer completion.runRegistry.Unregister(env.RunID)
+
+	runOK := beadRunOne(runCtx, env, rp, handles, extraContext, preSelectedWorker, localSlotHeld)
+	if env.QueueItemIndex >= 0 && completion.queueStore != nil && env.QueueID != nil && env.QueueGroupIndex != nil && daemonCtx.Err() == nil {
+		evaluateGroupAdvanceWithOutcome(daemonCtx, completion.reapSeamPort, env.QueueName,
+			*env.QueueID, *env.QueueGroupIndex, env.QueueItemIndex, runOK)
+	}
+	if runOK && daemonCtx.Err() == nil {
+		stagedBeadGeneratorEvalWithPort(daemonCtx, completion, env.BeadRecord.BeadID, env.BeadRecord.Labels)
 	}
 }
 

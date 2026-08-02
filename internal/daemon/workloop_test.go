@@ -595,6 +595,8 @@ func TestWorkLoop_TwoConcurrentBeads(t *testing.T) {
 		claimedCh: make(chan struct{}),
 	}
 	collector := &stubEventCollector{}
+	var runEnvMu sync.Mutex
+	runEnvProjectDirs := make(map[string]string)
 
 	// Handler: sleep briefly so both goroutines are simultaneously in-flight,
 	// then exit 0 so both beads are closed.
@@ -607,7 +609,12 @@ func TestWorkLoop_TwoConcurrentBeads(t *testing.T) {
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		MaxConcurrent:    2,
-		WorktreeFactory:  workloopFixturePreCommitWorktreeFactory,
+		WorktreeFactory: func(ctx context.Context, gotProjectDir, runID, headSHA string) (string, func(), error) {
+			runEnvMu.Lock()
+			runEnvProjectDirs[runID] = gotProjectDir
+			runEnvMu.Unlock()
+			return workloopFixturePreCommitWorktreeFactory(ctx, gotProjectDir, runID, headSHA)
+		},
 	})
 
 	// Real productionWorktreeFactory + buildClaudeLaunchSpec run concurrently for
@@ -658,6 +665,19 @@ func TestWorkLoop_TwoConcurrentBeads(t *testing.T) {
 	// Assert both beads were closed (not reopened).
 	if n := ledger.closedCount(); n != 2 {
 		t.Errorf("closedCount = %d; want 2", n)
+	}
+
+	// The worktree port is the first run-path consumer of ProjectDir and RunID.
+	// Both concurrent runs must keep the shared directory and distinct identities.
+	runEnvMu.Lock()
+	defer runEnvMu.Unlock()
+	if len(runEnvProjectDirs) != 2 {
+		t.Errorf("distinct RunEnv.RunID count = %d; want 2", len(runEnvProjectDirs))
+	}
+	for runID, gotProjectDir := range runEnvProjectDirs {
+		if gotProjectDir != projectDir {
+			t.Errorf("RunEnv.ProjectDir for run %q = %q; want %q", runID, gotProjectDir, projectDir)
+		}
 	}
 
 	// Assert run_started and run_completed events emitted for both runs.

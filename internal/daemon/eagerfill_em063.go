@@ -380,22 +380,26 @@ func kerfNextBeads(ctx context.Context, kerfPath string, limit int) ([]core.Bead
 //
 // Spec ref: flywheel-motion.md §5.4 (B). Bead ref: hk-f722.
 func stagedBeadGeneratorEval(ctx context.Context, deps workLoopDeps, completedBeadID core.BeadID, completedBeadLabels []string) {
+	stagedBeadGeneratorEvalWithPort(ctx, newRunCompletionPort(deps, newReapSeamPort(deps)), completedBeadID, completedBeadLabels)
+}
+
+func stagedBeadGeneratorEvalWithPort(ctx context.Context, port runCompletionPort, completedBeadID core.BeadID, completedBeadLabels []string) {
 	// Require brPath and projectDir — without them we cannot shell out to br.
-	if deps.brPath == "" || deps.projectDir == "" {
+	if port.brPath == "" || port.projectDir == "" {
 		return
 	}
 
 	// Guardrail 3: skip when WIP == max_concurrent.
-	maxConcurrent := deps.maxConcurrent
-	if deps.concurrencyCtrl != nil {
-		maxConcurrent = deps.concurrencyCtrl.Get()
+	maxConcurrent := port.maxConcurrent
+	if port.concurrencyCtrl != nil {
+		maxConcurrent = port.concurrencyCtrl.Get()
 	}
-	if deps.runRegistry != nil && deps.runRegistry.Len() >= maxConcurrent {
+	if port.runRegistry != nil && port.runRegistry.Len() >= maxConcurrent {
 		return
 	}
 
 	// Guardrail 1: rule-only — load sentinel config to determine Phase-2 classes.
-	sentinelCfg, err := digest.LoadSentinelConfig(deps.projectDir)
+	sentinelCfg, err := digest.LoadSentinelConfig(port.projectDir)
 	if err != nil {
 		// Config parse failure is non-fatal; log and skip.
 		fmt.Fprintf(os.Stderr, "daemon: stagedBeadGeneratorEval: LoadSentinelConfig: %v\n", err)
@@ -427,19 +431,19 @@ func stagedBeadGeneratorEval(ctx context.Context, deps workLoopDeps, completedBe
 	// origin/<targetBranch> spawns NO follow-up.
 	// Skipped when targetBranch is empty (no remote merge target; not
 	// reachable in production because merges require a non-empty targetBranch).
-	if deps.targetBranch != "" && !beadOnOriginMain(ctx, deps.projectDir, completedBeadID, deps.targetBranch) {
+	if port.targetBranch != "" && !beadOnOriginMain(ctx, port.projectDir, completedBeadID, port.targetBranch) {
 		return
 	}
 
 	// Guardrail 4: at-most-once ledger (in-memory check; disk-backed by AC1).
 	ledgerKey := string(completedBeadID) + ":" + matchedClass
-	if deps.followUpLedgerMu != nil {
-		deps.followUpLedgerMu.Lock()
-		_, exists := deps.followUpLedger[ledgerKey]
+	if port.followUpLedgerMu != nil {
+		port.followUpLedgerMu.Lock()
+		_, exists := port.followUpLedger[ledgerKey]
 		if !exists {
-			deps.followUpLedger[ledgerKey] = struct{}{}
+			port.followUpLedger[ledgerKey] = struct{}{}
 		}
-		deps.followUpLedgerMu.Unlock()
+		port.followUpLedgerMu.Unlock()
 		if exists {
 			return
 		}
@@ -456,7 +460,7 @@ func stagedBeadGeneratorEval(ctx context.Context, deps workLoopDeps, completedBe
 		completedBeadID, matchedClass, verifyCmd,
 	)
 	//nolint:gosec // G204: brPath resolved via exec.LookPath at startup; args are controlled
-	cmd := exec.CommandContext(ctx, deps.brPath,
+	cmd := exec.CommandContext(ctx, port.brPath,
 		"create", title, "--type", "task", "--status", "open", // new bead, not a reset
 		"--description", description,
 		"--label", matchedClass,
@@ -465,7 +469,7 @@ func stagedBeadGeneratorEval(ctx context.Context, deps workLoopDeps, completedBe
 		// via `harmonik greenlight <bead-id>` (flywheel-motion.md §5.3/§6.2).
 		"--label", labelNeedsGreenlight,
 	)
-	cmd.Dir = deps.projectDir
+	cmd.Dir = port.projectDir
 	if out, runErr := cmd.Output(); runErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: stagedBeadGeneratorEval: br create bead=%s class=%s: %v\n%s",
 			completedBeadID, matchedClass, runErr, out)
@@ -474,8 +478,8 @@ func stagedBeadGeneratorEval(ctx context.Context, deps workLoopDeps, completedBe
 
 	// AC1 (hk-3ndb): persist the new key to disk after successful br create so
 	// the at-most-once guarantee survives a daemon restart.
-	if deps.followUpLedgerPath != "" {
-		if persistErr := appendFollowUpLedger(deps.followUpLedgerPath, ledgerKey); persistErr != nil {
+	if port.followUpLedgerPath != "" {
+		if persistErr := appendFollowUpLedger(port.followUpLedgerPath, ledgerKey); persistErr != nil {
 			fmt.Fprintf(os.Stderr, "daemon: stagedBeadGeneratorEval: persist ledger key %s: %v\n", ledgerKey, persistErr)
 		}
 	}

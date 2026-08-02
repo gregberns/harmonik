@@ -96,8 +96,18 @@ Perform all Tier-1 checks and emit the JSON verdict.
 """)
 ```
 
-The agent returns a JSON verdict. Add it to the commit as trailers (see commit format below).
-Trivial commits (typo, whitespace, one-line obvious fix) may use `Trivial: true` instead.
+The agent returns a JSON verdict. Validate it before you use it. This rejects
+`PASS`, a `summary` field, missing `notes`, and other output that the commit schema
+does not allow:
+
+```
+printf '%s\n' '<reviewer JSON>' | .claude/skills/agent-reviewer/run --validate
+```
+
+Copy the command output, not the raw reviewer output, into the commit trailer. Do
+not replace `APPROVE`, `REQUEST_CHANGES`, or `BLOCK` with a synonym. A `BLOCK`
+verdict never enters a commit. Trivial commits (typo, whitespace, one-line obvious
+fix) may use `Trivial: true` instead.
 
 ## Commit format (REQUIRED — verbatim HEREDOC pattern with quoted EOF)
 

@@ -649,6 +649,7 @@ fmt-check:  ## Fail-closed: exit 1 if gofumpt or gci would change any file (run 
 .PHONY: check-fast
 check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint --new-from-rev, go test -short
 	scripts/go-format-test.sh
+	scripts/agent-reviewer-run-test.sh
 	$(MAKE) fmt-check
 	go vet ./...
 	go build ./...
@@ -706,6 +707,7 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	@# measured on test-keeper-conformance, which ran zero keeper tests from
 	@# ec66da798 until the corpus registration came back.
 	scripts/go-test-must-match-test.sh
+	scripts/agent-reviewer-run-test.sh
 	$(MAKE) fmt-check
 	@# Every Go step below runs under a GOCACHE private to THIS checkout. The lanes
 	@# used to share one, and a concurrent process invalidating cache facts mid-run

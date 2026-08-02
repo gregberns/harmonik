@@ -11,8 +11,10 @@
 # Exit 1: BLOCK verdict or internal error
 #
 # Usage: run [--diff <REF>] [--bead <BEAD-ID>]
+#        run --validate
 #   --diff REF    Git ref to diff from (default: HEAD~1)
 #   --bead ID     Optional bead ID for review context (auto-detected from Refs: trailer)
+#   --validate    Validate one verdict JSON object from stdin without invoking Claude.
 
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GIT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
@@ -23,14 +25,66 @@ GIT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
 # ── Parse args ────────────────────────────────────────────────────────────────
 DIFF_REF="HEAD~1"
 BEAD_ID=""
+VALIDATE_ONLY=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --diff) DIFF_REF="$2"; shift 2 ;;
         --bead) BEAD_ID="$2"; shift 2 ;;
+        --validate) VALIDATE_ONLY=true; shift ;;
         *) echo "agent-reviewer: unknown argument: $1" >&2; exit 1 ;;
     esac
 done
+
+validate_verdict() {
+    python3 -c '
+import json
+import sys
+
+try:
+    verdict = json.load(sys.stdin)
+except json.JSONDecodeError as exc:
+    sys.stderr.write("agent-reviewer: JSON parse error: " + str(exc) + "\n")
+    sys.exit(1)
+
+if not isinstance(verdict, dict):
+    sys.stderr.write("agent-reviewer: verdict must be a JSON object\n")
+    sys.exit(1)
+
+required = {"schema_version", "verdict", "notes"}
+allowed = required | {"flags"}
+missing = required - verdict.keys()
+unexpected = verdict.keys() - allowed
+if missing:
+    sys.stderr.write("agent-reviewer: missing field(s): " + ", ".join(sorted(missing)) + "\n")
+    sys.exit(1)
+if unexpected:
+    sys.stderr.write("agent-reviewer: unknown field(s): " + ", ".join(sorted(unexpected)) + "\n")
+    sys.exit(1)
+if type(verdict["schema_version"]) is not int or verdict["schema_version"] != 1:
+    sys.stderr.write("agent-reviewer: schema_version must be integer 1\n")
+    sys.exit(1)
+if verdict["verdict"] not in {"APPROVE", "REQUEST_CHANGES", "BLOCK"}:
+    sys.stderr.write("agent-reviewer: unknown verdict: " + repr(verdict["verdict"]) + "\n")
+    sys.exit(1)
+if not isinstance(verdict["notes"], str):
+    sys.stderr.write("agent-reviewer: notes must be a string\n")
+    sys.exit(1)
+if "flags" in verdict and (
+    not isinstance(verdict["flags"], list)
+    or not all(isinstance(flag, str) for flag in verdict["flags"])
+):
+    sys.stderr.write("agent-reviewer: flags must be an array of strings\n")
+    sys.exit(1)
+
+print(json.dumps(verdict, separators=(",", ":")))
+'
+}
+
+if [[ "$VALIDATE_ONLY" == true ]]; then
+    validate_verdict
+    exit $?
+fi
 
 # ── Compute diff ──────────────────────────────────────────────────────────────
 # Working-tree diff first; fall back to committed diff (REF..HEAD) if clean.
@@ -59,7 +113,10 @@ mkdir -p "$VERDICTS_DIR"
 
 if [[ -f "$VERDICT_FILE" ]]; then
     echo "agent-reviewer: cache hit ${DIFF_HASH}" >&2
-    VERDICT_JSON="$(cat "$VERDICT_FILE")"
+    VERDICT_JSON="$(validate_verdict < "$VERDICT_FILE")" || {
+        echo "agent-reviewer: cached verdict is invalid" >&2
+        exit 1
+    }
 else
     # ── Auto-detect bead from Refs: git trailer ───────────────────────────────
     if [[ -z "$BEAD_ID" ]]; then
@@ -170,12 +227,18 @@ if d['verdict'] not in ('APPROVE', 'REQUEST_CHANGES', 'BLOCK'):
     sys.exit(1)
 
 if not isinstance(d.get('flags', []), list):
-    d['flags'] = []
+    sys.stderr.write('agent-reviewer: flags must be an array\n')
+    sys.exit(1)
 
 print(json.dumps(d, separators=(',', ':')))
 ")" || {
         echo "agent-reviewer: verdict extraction failed" >&2
         echo "LLM response: ${RAW_RESPONSE:0:300}" >&2
+        exit 1
+    }
+
+    VERDICT_JSON="$(printf '%s\n' "$VERDICT_JSON" | validate_verdict)" || {
+        echo "agent-reviewer: verdict validation failed" >&2
         exit 1
     }
 

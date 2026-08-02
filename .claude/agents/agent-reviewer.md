@@ -185,6 +185,10 @@ Findings → flag: `missing-scenario-test`
 
 Emit a single JSON object. No prose before or after it.
 
+Before you return it, check that `schema_version` is the integer `1`, `verdict` is
+exactly `APPROVE`, `REQUEST_CHANGES`, or `BLOCK`, and `notes` is a string. Do not
+emit `PASS`, `summary`, or an extra field.
+
 ```json
 {
   "schema_version": 1,

@@ -230,8 +230,9 @@ func (e *ErrUnsupportedConfigVersion) Error() string {
 // daemon.workflow_mode: single, violating the PL-004a review floor. The daemon
 // MUST refuse to start (fail-fast) when this error is returned.
 //
-// The only path to single-mode dispatch remains an explicit per-bead
-// workflow:single label audited via the review_bypassed event per PL-004a.
+// A legacy per-bead workflow:single label selects the registered no-review DOT
+// graph and is audited via the review_bypassed event per PL-004a. It does not
+// select a single-mode dispatcher.
 //
 // Spec ref: specs/process-lifecycle.md §4.1 PL-004a, PL-004b.
 // Bead ref: hk-rcp7.
@@ -245,7 +246,7 @@ type ErrWorkflowModeFloorViolation struct {
 func (e *ErrWorkflowModeFloorViolation) Error() string {
 	return fmt.Sprintf(
 		"daemon: project config: daemon.workflow_mode %q in %s violates the PL-004a review floor: "+
-			"single is not a valid daemon-level default; only an explicit per-bead workflow:single label may enable single mode",
+			"single is not a valid daemon-level default; a legacy per-bead workflow:single label selects the no-review DOT graph",
 		e.Value, e.Path,
 	)
 }
@@ -1542,8 +1543,9 @@ func parseDaemonBlock(path string, raw rawDaemonConfig) (DaemonConfig, error) {
 			}
 		}
 		// PL-004a review floor: single MUST NOT be reachable from the daemon-level
-		// default or any config file path.  Only an explicit per-bead workflow:single
-		// label (audited via review_bypassed) may dispatch in single mode.
+		// default or any config file path. A legacy per-bead workflow:single label
+		// selects the registered no-review DOT graph and is audited via
+		// review_bypassed.
 		if wm == core.WorkflowModeSingle {
 			return DaemonConfig{}, &ErrWorkflowModeFloorViolation{Path: path, Value: raw.WorkflowMode}
 		}

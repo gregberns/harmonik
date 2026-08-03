@@ -2,10 +2,9 @@
 
 ## Current pass
 
-The work is in change design. The problem-space, decomposition, research, and
-design artifacts are complete. Independent review approved the design package.
-It awaits Alpha review. Do not advance the work to spec drafting until Alpha
-accepts the package.
+The work is in spec draft. The problem-space, decomposition, research, change
+design, and specification draft are complete. Independent review approved the
+draft. Advance only to the integration pass.
 
 ## Decisions and evidence
 
@@ -30,14 +29,14 @@ accepts the package.
 
 ## Next steps
 
-1. Alpha reviews the complete change-design package and its review record.
-2. After Alpha accepts it, advance to `spec-draft` and write the specification
-   changes from the approved design.
+1. Run the integration pass. Confirm the one process-lifecycle amendment and
+   the no-draft handler, execution-model, and agent-input dispositions agree.
+2. Keep the two validation beads attached to the implementation plan.
 3. Keep `daemon-config-construction` shelved until this work completes.
 
 ## Reading order
 
-1. `04-design/daemon-contract-design.md`
-2. `04-design/step12-serialization.md`
-3. `change-design-review.md`
-4. `03-research/capability-behavior/findings.md`
+1. `05-spec-drafts/process-lifecycle.md`
+2. `05-changelog.md`
+3. `spec-draft-review.md`
+4. `04-design/step12-serialization.md`

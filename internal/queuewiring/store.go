@@ -53,6 +53,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/gregberns/harmonik/internal/queue"
 )
@@ -479,7 +480,58 @@ type TransactionRequest = queue.TransactionRequest
 // TransactionResult is kept as an alias for existing QueueStore callers.
 type TransactionResult = queue.TransactionResult
 
+// FailedRecoveryResult reports either a new durable recovery or an exact
+// already-durable recovery receipt.
+type FailedRecoveryResult struct {
+	TransactionResult
+	Receipt queue.FailedRecoveryReceipt
+}
+
 var _ queue.TransactionStore = (*QueueStore)(nil)
+
+// RecoverFailed resumes one paused-by-failure queue through the QM-001
+// transaction owner. It returns the same receipt without a second mutation
+// when the queue was already recovered.
+func (s *QueueStore) RecoverFailed(ctx context.Context, projectDir, name string) FailedRecoveryResult {
+	name = queue.NormaliseQueueName(name)
+	snapshot := s.Snapshot(name)
+	if snapshot.Queue == nil {
+		return FailedRecoveryResult{TransactionResult: rejectedTransaction(errors.New("failed recovery queue is absent"))}
+	}
+	if snapshot.Queue.Status == queue.QueueStatusActive && snapshot.Queue.FailedRecoveryReceiptID != nil {
+		receipt, _, err := queue.ReadFailedRecoveryReceipt(projectDir, *snapshot.Queue)
+		if err != nil {
+			return FailedRecoveryResult{TransactionResult: rejectedTransaction(fmt.Errorf("read failed recovery receipt: %w", err))}
+		}
+		return FailedRecoveryResult{
+			TransactionResult: TransactionResult{
+				NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeCommittedDurable},
+				Snapshot:        snapshot,
+			},
+			Receipt: receipt,
+		}
+	}
+	prepared, err := queue.PrepareFailedRecovery(*snapshot.Queue, time.Now())
+	if err != nil {
+		return FailedRecoveryResult{TransactionResult: rejectedTransaction(err)}
+	}
+	result := s.Transact(ctx, TransactionRequest{
+		Snapshot:                     snapshot,
+		ProjectDir:                   projectDir,
+		TransactionID:                prepared.TransactionID,
+		OperationKind:                queue.OperationFailedRecovery,
+		WakeRequired:                 true,
+		FailedRecoveryReceiptBinding: prepared.Binding,
+		Mutate: func(candidate *queue.Queue) error {
+			*candidate = prepared.Candidate
+			return nil
+		},
+	})
+	if !result.Committed() || result.CleanupErr != nil {
+		return FailedRecoveryResult{TransactionResult: result}
+	}
+	return FailedRecoveryResult{TransactionResult: result, Receipt: prepared.Receipt}
+}
 
 // Snapshot returns a deep-cloned, immutable view. Callers must provide this
 // exact generation to Transact; any intervening mutation rejects before I/O.
@@ -499,7 +551,7 @@ func (s *QueueStore) Snapshot(name string) Snapshot {
 func (s *QueueStore) Transact(ctx context.Context, req TransactionRequest) TransactionResult {
 	name := queue.NormaliseQueueName(req.Snapshot.Name)
 	s.queueMu.Lock()
-	if quarantineErr := s.quarantined[name]; quarantineErr != nil {
+	if quarantineErr := s.quarantined[name]; quarantineErr != nil && req.OperationKind != queue.OperationFailedRecovery {
 		s.queueMu.Unlock()
 		return rejectedTransaction(fmt.Errorf("%w: queue name %q: %w", ErrQueueQuarantined, name, quarantineErr))
 	}
@@ -545,9 +597,11 @@ func (s *QueueStore) Transact(ctx context.Context, req TransactionRequest) Trans
 		}}
 	}
 	if bytes.Equal(priorBytes, candidateBytes) {
-		if req.OperationKind == queue.OperationCancellation || req.ArchiveHandoff != nil {
+		if req.OperationKind == queue.OperationCancellation ||
+			req.ArchiveHandoff != nil ||
+			req.OperationKind == queue.OperationFailedRecovery {
 			s.queueMu.Unlock()
-			return rejectedTransaction(errors.New("archive-bearing transaction cannot collapse as no-op"))
+			return rejectedTransaction(errors.New("receipt-bearing transaction cannot collapse as no-op"))
 		}
 		resultSnapshot := Snapshot{
 			Name:       name,
@@ -561,14 +615,16 @@ func (s *QueueStore) Transact(ctx context.Context, req TransactionRequest) Trans
 		}
 	}
 	commit := queue.WriteReplacement(ctx, queue.ReplacementPlan{
-		ProjectDir:     req.ProjectDir,
-		OperationKind:  req.OperationKind,
-		NormalizedName: name,
-		QueueID:        candidate.QueueID,
-		PriorBytes:     priorBytes,
-		CandidateBytes: candidateBytes,
-		WakeRequired:   req.WakeRequired,
-		ArchiveHandoff: req.ArchiveHandoff,
+		ProjectDir:                   req.ProjectDir,
+		TransactionID:                req.TransactionID,
+		OperationKind:                req.OperationKind,
+		NormalizedName:               name,
+		QueueID:                      candidate.QueueID,
+		PriorBytes:                   priorBytes,
+		CandidateBytes:               candidateBytes,
+		WakeRequired:                 req.WakeRequired,
+		ArchiveHandoff:               req.ArchiveHandoff,
+		FailedRecoveryReceiptBinding: req.FailedRecoveryReceiptBinding,
 	})
 	if !commit.Committed() {
 		// QM-001: on ANY I/O error in the atomic-write sequence the daemon MUST
@@ -590,9 +646,23 @@ func (s *QueueStore) Transact(ctx context.Context, req TransactionRequest) Trans
 		return TransactionResult{NamespaceResult: commit.NamespaceResult}
 	}
 
+	var cleanupErr error
+	if req.OperationKind == queue.OperationFailedRecovery {
+		cleanupErr = queue.CleanupReplaceIntent(req.ProjectDir, name)
+		if cleanupErr != nil {
+			s.quarantined[name] = cleanupErr
+			s.queueMu.Unlock()
+			return TransactionResult{
+				NamespaceResult: commit.NamespaceResult,
+				CleanupErr:      cleanupErr,
+			}
+		}
+	}
 	s.queues[name] = cloneQueue(candidate)
 	s.generations[name]++
-	delete(s.quarantined, name)
+	if req.OperationKind == queue.OperationFailedRecovery {
+		delete(s.quarantined, name)
+	}
 	resultSnapshot := Snapshot{
 		Name:       name,
 		Queue:      cloneQueue(candidate),
@@ -602,8 +672,7 @@ func (s *QueueStore) Transact(ctx context.Context, req TransactionRequest) Trans
 	if req.WakeRequired {
 		s.Wake()
 	}
-	var cleanupErr error
-	if commit.Intent.ArchiveHandoffBinding == nil {
+	if commit.Intent.ArchiveHandoffBinding == nil && req.OperationKind != queue.OperationFailedRecovery {
 		cleanupErr = queue.CleanupReplaceIntent(req.ProjectDir, name)
 		if cleanupErr != nil {
 			s.quarantined[name] = cleanupErr

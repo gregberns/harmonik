@@ -131,6 +131,11 @@ const dotFixtureWorkComplete = `{"kind":"WORK_COMPLETE"}`
 // dotFixtureOpts are the knobs a post-exit test turns. Everything else about the
 // run is fixed.
 type dotFixtureOpts struct {
+	// RunContext replaces the fixture's ordinary timeout context. Tests use it
+	// to stop a live graph run at a precise point, such as after its handler
+	// commits and before the graph driver reaches its terminal node.
+	RunContext context.Context
+
 	// HookOutcome is the raw outcome_emitted payload the agent reported, or
 	// empty for "nothing arrived".
 	HookOutcome string
@@ -345,7 +350,11 @@ func runDotFixtureBead(t *testing.T, beadID core.BeadID, opts dotFixtureOpts) do
 		AdapterRegistry2: NewEmptySealedAdapterRegistryForTest(t),
 	})
 
-	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	ctx := opts.RunContext
+	cancel := func() {}
+	if ctx == nil {
+		ctx, cancel = context.WithTimeout(t.Context(), 60*time.Second)
+	}
 	defer cancel()
 
 	loopDone := make(chan struct{})

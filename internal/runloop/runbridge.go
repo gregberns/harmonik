@@ -191,7 +191,7 @@ type SpineArgs struct {
 	RunRunner       tmuxpkg.CommandRunner // remote SSH runner; nil ⇒ box-A-local
 	WTPath          string
 	HeadSHA         string // parent SHA the run branched from
-	PreMergeSync    func() string
+	PreMergeSync    func(context.Context) string
 	MPort           MergePort
 	ActiveRepo      string
 	ProtectBranches []string
@@ -268,7 +268,7 @@ func (b *RunBridge) mergeHook(a SpineArgs) func(context.Context) {
 	return func(c context.Context) {
 		attempt++
 		if attempt == 1 {
-			if syncReason := a.PreMergeSync(); syncReason != "" {
+			if syncReason := a.PreMergeSync(c); syncReason != "" {
 				b.rejectReason = syncReason
 				b.sh.pending = append(b.sh.pending, runexec.Event{
 					Kind: runexec.EvMergeResult, Merge: runexec.MergeFatal,
@@ -328,6 +328,11 @@ func (b *RunBridge) drainMergeHook(a SpineArgs) func(context.Context, string) []
 		mctx := c
 		if mctx.Err() != nil {
 			mctx = context.WithoutCancel(c)
+		}
+		if syncReason := a.PreMergeSync(mctx); syncReason != "" {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: shutdown-drain: sync failed for bead %s: %s; reopening for re-dispatch\n",
+				b.beadID, syncReason)
+			return []runexec.Event{{Kind: runexec.EvMergeResult, Merge: runexec.MergeFatal, MergeReason: syncReason}}
 		}
 		// hk-lgykq: shutdown-drain merge also lands on the per-bead integration
 		// branch (MergeTarget = resolved baseBranch); fall back to the

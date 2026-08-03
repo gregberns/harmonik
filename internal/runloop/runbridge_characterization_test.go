@@ -179,12 +179,43 @@ func newBridge(t *testing.T, mode core.WorkflowMode) (*RunBridge, *bridgeLedger,
 	// any merge attempt should name itself rather than surface as a nil panic.
 	b.WireSpine(SpineArgs{
 		SkipGate: true,
-		PreMergeSync: func() string {
+		PreMergeSync: func(context.Context) string {
 			t.Error("this terminal attempted a merge; every case in this file must close or reopen without one")
 			return "merge attempted in a no-merge test"
 		},
 	})
 	return b, ledger, emitter, term
+}
+
+func TestRunBridge_DrainSynchronizesWithALiveContextBeforeMerge(t *testing.T) {
+	b, ledger, _, _ := newBridge(t, core.WorkflowModeDot)
+	var syncCalled, syncContextAlive bool
+	b.WireSpine(SpineArgs{
+		SkipGate: true,
+		PreMergeSync: func(ctx context.Context) string {
+			syncCalled = true
+			syncContextAlive = ctx.Err() == nil
+			return "remote branch fetch failed"
+		},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	b.Start(ctx, core.WorkflowModeDot)
+	cancel()
+	b.Drain(ctx, "committed-tip")
+
+	if !syncCalled {
+		t.Fatal("shutdown drain merged without synchronizing the run branch")
+	}
+	if !syncContextAlive {
+		t.Fatal("shutdown drain handed the branch sync a cancelled context")
+	}
+	if reopened := ledger.only("reopen"); len(reopened) != 1 {
+		t.Fatalf("sync failure reopened %d bead(s), want 1", len(reopened))
+	}
+	if closed := ledger.only("close"); len(closed) != 0 {
+		t.Fatalf("sync failure closed %d bead(s), want 0", len(closed))
+	}
 }
 
 // ── the outcomes ─────────────────────────────────────────────────────────────

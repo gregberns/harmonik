@@ -598,14 +598,14 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// Returns an error string on failure (empty string = success). No-op for local
 	// runs (rbc == nil). The final mergeRunBranchToMain pushes box A's MAIN to
 	// GitHub with box A's own (valid) credentials — unaffected by this change.
-	preMergeSync := func() string {
+	preMergeSync := func(syncCtx context.Context) string {
 		if rbc == nil {
 			return ""
 		}
 		// host/opts come from the worker SSHRunner so git's ssh:// fetch dials the
 		// worker exactly like the rest of the remote path.
 		workerHost, sshOpts, _ := tunnelpkg.SSHHostOpts(rbc.sshRunner)
-		if err := codesyncpkg.FetchRunBranchBoxA(ctx, nil, env.ProjectDir, runID.String(), workerHost, rbc.worker.RepoPath, sshOpts); err != nil {
+		if err := codesyncpkg.FetchRunBranchBoxA(syncCtx, nil, env.ProjectDir, runID.String(), workerHost, rbc.worker.RepoPath, sshOpts); err != nil {
 			// B11: SSH connection failure → emit worker_offline + disable worker.
 			if tmuxpkg.IsSSHConnectionFailure(err) {
 				notifyWorkerOffline("spawn", fmt.Sprintf("codesync.FetchRunBranchBoxA: %v", err))
@@ -902,6 +902,15 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 			return alreadyApprovedOnMain && strings.Contains(reason, "rebase_dropped_commits")
 		},
 	})
+	if ctx.Err() != nil {
+		drainCtx := context.WithoutCancel(ctx)
+		tipSHA, tipErr := gitprobe.ResolveWorktreeHEADVia(drainCtx, dotRunner, wtPath)
+		if tipErr != nil || tipSHA == headSHA {
+			tipSHA = ""
+		}
+		bridge.Drain(ctx, tipSHA)
+		return bridge.Success()
+	}
 	switch {
 	case dotResult.success:
 		bridge.Feed(ctx, runexec.Event{

@@ -22,14 +22,26 @@ The boundary has four groups:
 
 Each group may expose smaller consumer ports. The design forbids one wide
 interface that combines all 16 methods. A capability is either absent with the
-behavior recorded in `03-research/capability-behavior/findings.md`, or required
-for the selected mode and rejected before dispatch with a structural error.
+behavior recorded in `03-research/capability-behavior/findings.md`, required by
+the selected daemon configuration before dispatch, or checked immediately
+before its operation. An operation check uses the declared operation result. It
+is not described as a pre-dispatch requirement.
 
 The `runSessionSpawner` disposition is removal. It has no production assertion
 or trigger. Alpha removes its unused private interface and unreachable concrete
 branch. The final change must not retain an unowned sixteenth interface.
 
 ## Capability Decisions
+
+### Check timing
+
+A construction requirement is checked before `run_started` only when the
+selected daemon configuration needs it for every possible dispatch. A missing
+construction requirement may refuse ready state or dispatch. An operation
+requirement is checked immediately before its operation. A run-plan or worker
+choice can be known only after `run_started`. Its missing capability uses the
+normal run-failure path. Crew-start checks occur before crew launch, not before
+a daemon run.
 
 | Capability | Consumer port | Requirement and absent result | Focused proof |
 |---|---|---|---|
@@ -40,12 +52,12 @@ branch. The final change must not retain an unowned sixteenth interface.
 | `substrateWithSpawnCapSetter` | Queue concurrency cap writer. | Optional. Absence keeps the existing oversubscription refusal. | Refusal fallback and provider resize case. |
 | `substrateSpawnReadier` | Restart-backoff readiness. | Optional. Absence makes dispatch immediately eligible after backoff. | No wait channel and provider wait or error case. |
 | `substrateDiagnosticHookSetter` | Launch diagnostics. | Optional. Absence installs no hooks and emits no hook event. | Base-only and hook-provider cases. |
-| `paneTargeter` | Crew paste and managed-run pane observation. | Optional for ordinary spawn. Required only when a selected managed operation requests pane input or capture. Absence skips crew paste and makes that later operation structural. | Crew skip, ordinary spawn, and requested capture failure cases. |
-| `paneCaptureAdapter` | Crew and run pane observation. | Optional. Absence returns `errPaneCaptureUnsupported` and keeps blind write trust. | Both capture callers with and without a provider. |
-| `pasteInjecter` | Legacy launch, cognition, and reviewer re-seed. | Optional pending the AIS deletion boundary. Absence skips legacy paste and re-seed. | One absent and one provider case for each caller. |
+| `paneTargeter` | Per-run pane capture after `SpawnWindow`; independent-crew mission seed. | Optional for hosting. A missing target does not undo a successful ordinary spawn. A later pane input or capture operation returns its existing structural no-window error. The independent-crew mission seed skips when the session has no target. | Ordinary spawn without target; requested run input and capture fail structurally; crew mission seed skips. |
+| `paneCaptureAdapter` | Run seed verification and crew mission seed verification. | Optional observation only. A successful input write is trusted when capture is unsupported. Capture never creates an input acknowledgment. | Run and crew provider verification; absent provider trusts a successful write. |
+| `pasteInjecter` | Legacy daemon-run seed compatibility, cognition-gate seed, and reviewer re-seed. | This work does not select an input transport. On a tmux/Claude daemon run, `handler.InputPort` owns delivery and the AIS async event owns positive acceptance. Direct `WriteLastPane` is test-double compatibility until AIS C6 removes it. Absence skips launch and cognition-gate seeds and disables reviewer re-seed. It does not change workflow or invent a retry. | One absent and one provider case for every caller and harness row below. |
 | `sessionCreator` | Independent crew session creation. | Required only when independent crew mode is selected. Absence returns `handler.ErrStructural` before crew launch. | Selected-crew structural failure and provider success. |
-| `sessionEnsurer` | Keepalive, local recovery, readiness, and remote pre-ensure. | Optional for local keepalive and recovery. Required for selected remote launch. Absence keeps local no-op behavior and fails remote launch before spawn. | Local no-op, local recovery, and remote structural cases. |
-| `runnerSwapper` | Remote tmux runner. | Required for selected remote launch. Absence returns `handler.ErrStructural` before spawn. | Remote structural failure and provider success. |
+| `sessionEnsurer` | Local keepalive, local `ErrNoSession` recovery, readiness probe, and conditional remote worker-session bootstrap. | Optional. Local absence keeps no-op keepalive, no recovery retry, and ready-probe success. For remote launch, call `EnsureSession` when the swapped adapter offers it. A returned error is structural before `new-window`. This work does not declare missing `EnsureSession` a selected-mode failure. | Local no-op and recovery cases; remote offered-success, offered-error, and unavailable-capability cases. |
+| `runnerSwapper` | Remote worker adapter conversion. | Operation-required when a run has selected a remote worker. Check immediately before any worker tmux operation. Absence returns `handler.ErrStructural`; no worker session ensure or window spawn occurs. The current work loop reaches this after `run_started`. | Remote missing-swapper and provider cases; assert no worker tmux call when absent. |
 | `crewSessionSpawner` | Independent crew session. | Optional. Absence falls back to a daemon-session window. | Independent provider and fallback launch cases. |
 | `crewSessionStopper` | Independent crew stop. | Optional. Absence falls back to `crewPaneStopper` when a handle exists, or makes no substrate stop call with no handle. | Both fallback cases and provider stop. |
 | `runSessionSpawner` | None. | **Remove.** Delete `runSessionSpawner`, `tmuxSubstrate.SpawnRunSession`, `tmuxSubstrate.runSessionName`, `perRunSubstrate.runSessionID`, and the independent-session branch in `perRunSubstrate.SpawnWindow`. Delete run-only tests and documentation. Keep `sessionCreator`, `ErrTmuxNewSessionTimeout`, `callNewSessionBounded`, and `WithNewWindowTimeout` only for independent crew creation. | Source ratchet proves that no removed symbol or run-only test remains. Two concurrent shared-session runs with distinct captured pane targets produce distinct valid input buffer names. |
@@ -53,6 +65,16 @@ branch. The final change must not retain an unowned sixteenth interface.
 The selected result removes `runSessionSpawner`. It is not an implementation
 choice left to Alpha. A later initiative may add a real run-session mode, but
 it must introduce its trigger, port, failure rule, and tests in that work.
+
+### Paste Caller and Harness Matrix
+
+| Caller | Harness or path | Current absent result | Contract boundary |
+|---|---|---|---|
+| `pasteInjectOnLaunch` for initial, resumed, and reviewer launch | Tmux/Claude daemon run | No seed is sent. | `InputPort` owns daemon-run delivery. The AIS async event supplies positive acceptance. The bake fallback is not acceptance. |
+| `pasteInjectOnLaunch` | Codex or Pi process-exit harness | `PasteTarget` is nil. No pane seed is attempted. | The harness receives input through its own launch path. |
+| `pasteInjectCognitionGate` | Tmux cognition-gate pane | No gate seed is sent and its completion channel closes. | This is compatibility behavior. Step 14 does not define a gate input contract. |
+| `pasteInjectQuitOnReviewFile` re-seed | Reviewer only | Re-seed is disabled. | It is a recovery aid, not primary delivery. |
+| `pasteCrewMissionToSession` | Independent crew RPC, not a run | Mission seed skips when target or adapter is absent. | Best effort. AIS daemon-run input rules do not apply. |
 
 ## Run-Only Removal Closure
 
@@ -79,8 +101,8 @@ focused tests. Bravo must not change `internal/daemon` to discover a contract.
 
 | Planning requirement | Design response |
 |---|---|
-| One declared contract | Resolve typed capabilities once at construction. |
-| Honest missing behavior | Classify each capability as optional or required by selected mode. |
+| One declared contract | Resolve the typed capability record at construction. Check each consumer at its declared construction or operation boundary. |
+| Honest missing behavior | Classify each capability as optional, construction-required, or operation-required. |
 | No false tmux semantics | Keep the base substrate port narrow and use consumer ports. |
 | Dispose of run-session drift | Remove the full run-only API, state, branch, tests, and docs. Keep input buffers unique from the captured pane target. |
 | Preserve existing behavior | Test every absent path from the research table. |

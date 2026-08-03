@@ -5,7 +5,7 @@ project:
     id: gregberns-harmonik
 jig: spec
 jig_version: 1
-status: spec-draft
+status: integration
 status_values:
     - problem-space
     - decompose
@@ -16,7 +16,7 @@ status_values:
     - tasks
     - ready
 created: 2026-08-03T00:36:04Z
-updated: 2026-08-03T01:05:27Z
+updated: 2026-08-03T01:11:29Z
 sessions:
     - id: null
       started: 2026-08-03T00:36:04Z

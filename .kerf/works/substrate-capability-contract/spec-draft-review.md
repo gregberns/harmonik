@@ -12,3 +12,8 @@ full-copy draft changes only the selected process-lifecycle contract. It keeps
 the handler boundary narrow, workflow selection sealed, and pane capture
 observation-only. The changelog preserves the Step 12 serialization and the
 full run-session removal closure.
+
+## Integration Refinement
+
+The integration pass updated the draft to distinguish construction requirements
+from operation requirements. The integration review approved that amendment.

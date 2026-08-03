@@ -26,3 +26,10 @@ handler boundary remain intact.
 
 The design package is ready for Alpha review. Do not advance to spec drafting
 until Alpha accepts the capability decisions.
+
+## Integration Refinement
+
+The integration pass refined check timing and caller scope without widening a
+public contract. It distinguishes construction requirements from operation
+requirements, keeps remote helpers internal, and records the paste caller and
+harness results. The integration review approved the aligned package.

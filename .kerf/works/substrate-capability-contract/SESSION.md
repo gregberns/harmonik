@@ -2,9 +2,9 @@
 
 ## Current pass
 
-The work is in spec draft. The problem-space, decomposition, research, change
-design, and specification draft are complete. Independent review approved the
-draft. Advance only to the integration pass.
+The work is in integration. The problem-space, decomposition, research, change
+design, specification draft, and integration check are complete. Independent
+review approved the integrated package. Advance only to the task pass.
 
 ## Decisions and evidence
 
@@ -29,14 +29,13 @@ draft. Advance only to the integration pass.
 
 ## Next steps
 
-1. Run the integration pass. Confirm the one process-lifecycle amendment and
-   the no-draft handler, execution-model, and agent-input dispositions agree.
-2. Keep the two validation beads attached to the implementation plan.
+1. Write ordered implementation tasks. Keep the two validation beads attached.
+2. Preserve construction and operation boundaries in every task.
 3. Keep `daemon-config-construction` shelved until this work completes.
 
 ## Reading order
 
-1. `05-spec-drafts/process-lifecycle.md`
-2. `05-changelog.md`
-3. `spec-draft-review.md`
+1. `06-integration.md`
+2. `integration-review.md`
+3. `05-spec-drafts/process-lifecycle.md`
 4. `04-design/step12-serialization.md`

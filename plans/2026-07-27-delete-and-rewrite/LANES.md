@@ -106,8 +106,9 @@ Bravo owns the required shared contract in `internal/core`. Add an immutable
 Git-backed release claim to the checkpoint transition before a committed run
 can need recovery. The claim records dispatch-head SHA, resolved merge target,
 and an optional worker name, host, and repository path. Alpha then uses that
-claim with Beads state before the legacy JSONL reconciliation path. Do not
-infer a release target or remote endpoint after restart.
+claim with current Beads state to reconstruct release. JSONL may record later
+divergence evidence. It cannot supply release state. Do not infer a release
+target or remote endpoint after restart.
 
 **But three more branches sit in the lane namespace, and one of them is a live collision risk.**
 Measured 2026-08-01: `work/cq-mig-01` (44 commits ahead, 256 behind, last commit 2026-07-26),

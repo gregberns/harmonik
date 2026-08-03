@@ -1,6 +1,8 @@
 # Lanes — two agents, and the line between them
 
-**Date:** 2026-08-01. **Status:** alpha running, bravo staffed and idle, charlie retired.
+**Date:** 2026-08-03. **Status:** Queue dogfood readiness is the active priority.
+The fleet daemon stays down. Step 14 implementation is planned and paused.
+Charlie is retired.
 **Read first:** [`CHARTER.md`](CHARTER.md) for what the program is.
 [`DECOMPOSITION-MAP.md`](DECOMPOSITION-MAP.md) holds the ordered steps this file assigns.
 
@@ -9,10 +11,103 @@ a new plan. It is an ownership table over the plan that exists. The graph resear
 [`../2026-08-01-graph-guided-decomposition/README.md`](../2026-08-01-graph-guided-decomposition/README.md)
 adds the contract-first waves below.
 
-**Two lanes are staffed, and no third will be staffed.** Alpha owns daemon contracts and final
-composition. Bravo is the only parallel lane. It owns the package work that a stable alpha contract
-makes independent. A lane named `charlie` existed for one evening and is retired. Its finished work
-is merged. Its unfinished charter is bravo's.
+**Two delivery lanes are staffed.** Alpha owns daemon contracts and final composition. Bravo is the
+only parallel delivery lane. It owns the package work that a stable alpha contract makes independent.
+The isolated Codex continuity worktree is not a third lane. A lane named `charlie` existed for one
+evening and is retired. Its finished work is merged. Its unfinished charter is bravo's.
+
+### Historical Bravo directive — 2026-08-01
+
+Bravo owns Step 13 planning only. Alpha owns the final `internal/core` decision
+and implementation. Bravo must not edit Alpha-owned emitters without a scoped
+handoff.
+
+Step 14 is source inventory only until Step 10 is complete. Step 27a is deferred
+until Step 10 is complete.
+
+Step 13 rejects both the live-payload and late-field-fill options. Resolve one
+immutable workflow descriptor before `run_started`, and use it for the event and
+the DOT executor. Keep the reviewed DOT graph as the default. Represent an
+explicit no-review choice as an audited DOT graph, then delete the imperative
+single tail after its behavior moves or retires.
+
+### Current series — verified 2026-08-02
+
+Step 10 and Step 13 are complete. Step 13 removed the imperative single tail.
+Legacy `single` input now selects the registered no-review DOT graph. Do not use
+the old Step 14 tail inventory as a queue.
+
+Work the remaining near-term sequence in this order:
+
+The small `internal/projectconfig` wording repair is complete at `664fe94f8`.
+Its comments and floor error now say that `workflow:single` selects no-review
+DOT while daemon configuration `single` remains rejected.
+
+1. `substrate-capability-contract` is ready and square at `a9b1ac33`. Its
+   independent review accepted the 16-interface, 30-assertion inventory and
+   its task graph. Alpha owns all Step 14 daemon implementation.
+2. Alpha works the contract task order. T1 adds the daemon capability record.
+   T2 and T3 may run in parallel only after a symbol-overlap check. T4 removes
+   the unreachable run-session residue after T3. T5 is the one shared
+   `bootState.wireWatchersAndObservers` edit after the Step 12 base change. T6
+   and T7 provide the required scenario and exploration evidence.
+3. Bravo keeps `daemon-config-construction` shelved while Step 14 establishes
+   the stable substrate boundary. It may resume the Step 27a design only after
+   Alpha accepts that implementation boundary.
+4. Alpha implements the checked daemon construction boundary. Bravo then takes
+   the scoped command conversion in `cmd/harmonik` against that accepted
+   contract.
+
+`codex-continuity` stays in its protected worktree. It is an independent
+Codex-only work. It is not a third lane and it must not change
+`internal/daemon` while this series runs.
+
+### Queue dogfood priority — operator directive, 2026-08-03
+
+Do not restart the fleet daemon or submit a normal queue bead yet. The normal
+queue cannot target the assessor role. A queued bead uses the normal workflow
+and can change code. The assessor starts separately. It audits a candidate
+commit in a scratch daemon while other lanes continue. Its verdict informs only
+whether that candidate is suitable for the controlled daemon activation. It
+does not block feature release.
+
+`queue-dogfood-readiness` is the required cross-package Kerf work. It is
+shelved at Decompose after review. Work this order:
+
+1. Bravo completes the readiness design and performs read-only ledger triage.
+   The current ledger has 142 open beads and major external drift. Verify stale
+   graph findings before closing them. Do not bulk-close or acknowledge drift.
+2. Alpha owns DOT shutdown drain and all daemon-side release-path tests. Bravo
+   owns queue, queuewiring, CLI, and non-daemon transaction proofs. Agree the
+   release contract before changing the shared boundary.
+3. Repair failed-item resume, reservation durability, sticky quarantine, and
+   the false durability test and ratchet. Do not rely on the existing
+   `queue-status-writer` work to wire failed-item recovery.
+4. Complete Step 9 and core-loop proof in an isolated scratch daemon. Establish
+   a controlled-load rule or repair for the daemon-suite reliability defect.
+5. Read the stale assessor registry and old missions. An operator authorizes
+   any reset, retirement, or fresh mission. Give the candidate commit and its
+   scratch-proof artifacts to the new assessor. It does not consume a queued
+   bead and it does not block unrelated feature release.
+6. Use the assessor result with the scratch evidence to decide whether to start
+   the fleet daemon empty and local-only. The first batch is one repeat-safe
+   stream item at concurrency one. It has no remote worker, Pi,
+   cross-repository target, or wave queue.
+
+### Release reconstruction prerequisite — measured 2026-08-03
+
+Alpha completed the committed-DOT shutdown drain. The next task, restart
+reconstruction, cannot use JSONL as authority. Git and Beads currently lack
+the resolved target branch, dispatch-head SHA, and remote worker endpoint that
+reconstruction requires. The local run registry is not a production record.
+The queue worker target is only a request.
+
+Bravo owns the required shared contract in `internal/core`. Add an immutable
+Git-backed release claim to the checkpoint transition before a committed run
+can need recovery. The claim records dispatch-head SHA, resolved merge target,
+and an optional worker name, host, and repository path. Alpha then uses that
+claim with Beads state before the legacy JSONL reconciliation path. Do not
+infer a release target or remote endpoint after restart.
 
 **But three more branches sit in the lane namespace, and one of them is a live collision risk.**
 Measured 2026-08-01: `work/cq-mig-01` (44 commits ahead, 256 behind, last commit 2026-07-26),
@@ -117,10 +212,11 @@ the research will not be finished for some time and should not block work that d
 Their instruction: work what is ready, or **separate the logic so it can be worked on independently
 and refined further.**
 
-**The park still holds for anything the four open questions in `research/README.md` touch.** What
-durable record owns a crew's work state, whether the Codex Stop-hook vertical fits the normal crew
-launcher, **which responsibility leaves `Watcher.Run` first**, and the public event vocabulary — all
-still the operator's, all still unanswered.
+**The park still holds for `Watcher.Run` extraction and public event vocabulary.** Do not answer
+either by adding a harness branch to the current watcher. The durable-record and Codex-continuation
+questions now have an approved design in Kerf work `codex-continuity`. The operator activated that
+work for the Codex-only window on 2026-08-02. It is an independent worktree, not a third active lane
+and not a change to Alpha's daemon package.
 
 **Bravo takes the slice that needs no answer**, in this order:
 
@@ -141,6 +237,44 @@ to the current watcher.
 false green — it reported success while running zero tests in `internal/keeper`, because `ec66da798`
 deleted the two corpus registration files and `go test` exits 0 on an empty `-run` match. Repaired at
 `a178b2e26`.
+
+### Codex continuity activation — operator directive, 2026-08-02
+
+Today and tomorrow use Codex implementers only. Prioritize Kerf work
+[`codex-continuity`](../../.kerf/works/codex-continuity/) so a registered Codex
+crew can continue safely without an operator pressing Enter after each stop.
+
+The worktree is `/Users/gb/github/harmonik-wt/codex-continuity` on branch
+`work/codex-continuity`. Its code stays isolated until review and normal merge
+review. Alpha owns no new `internal/daemon` work for this slice. The first
+implementation package is the new harness-neutral `internal/continuity` domain.
+
+Work this order:
+
+1. Complete T1 and revise T2 before extending it. The current T2 scaffold is
+   intentionally uncommitted and failed architecture review. See
+   `.kerf/works/codex-continuity/implementation-domain-review.md`.
+2. Build T3 through T4: the single-writer record, decision delivery fence,
+   typed declarations, lease, and close semantics.
+3. Build T5 through T8: registered Codex lifecycle source, delivery adapters,
+   and composition. Use the documented Stop hook when its lifecycle contract is
+   available. An attached rollout source is a supervised transitional source
+   only. It must use exact source registration and typed turn fields.
+4. Run T9 and T10 before any live agent. Then run T11 as a capped canary. The
+   canary runner has a time and trial bound. The controller has no lifetime
+   continuation cap.
+
+The keeper makes no decision from assistant prose. It does not parse a last
+message or use a keyword veto. It uses typed lifecycle events, typed agent
+declarations, a controller-owned work lease, the canonical open-decision gate,
+and a durable claim record. A stopped turn is not work completion. A lease close
+is not work completion. The git and dispatch layer remain the work-completion
+authority.
+
+Attached tmux delivery is at-most-once for paste and Enter. An uncertain action
+becomes review-required. Structured input also fails closed until it has durable
+effect-ID replay support. A manual pause releases the lease and abandons every
+pending claim before a person injects input.
 
 ### `charlie` — retired 2026-08-01
 
@@ -586,25 +720,45 @@ session named differently writes a gauge file the watcher does not read. Check w
 deliberate refusal in `internal/crewrun/launchspec.go`. Only per-bead worker runs launch Codex, as
 one-shot `codex exec` subprocesses, so a long-running Codex session today is a hand-run terminal.
 
-The design for waking a stalled Codex lane was measured on 2026-07-31 and is kept here rather than in
-a commit nobody will find. **The signal:** every session appends to
-`~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`, and a final record of `task_complete` means the agent
-stopped and is waiting — 170 of 174 July sessions ended that way. File mtime age separates idle from
-mid-turn. **The hard part:** a stall and a finished job have the same signature on disk. What works is
-the opposite test. A keyword gate over the last message ("requires direction", "blocked on",
-"permission to", "should I", "which approach") fired on 7 of 36 stops, and on all 7 the operator's
-reply was a decision rather than "keep going". So **default to nudging and let an explicit ask veto
-it**, cap consecutive nudges, and escalate at the cap. A nudge is not a kill, so the worst case is one
-wasted turn — which is why this is worth doing where the movement governor was not.
-**Do not build a second keeper:** `internal/keeper/dashboardnag.go` is already a cooldown-gated
-detect-then-inject nudge riding the watcher tick, and `InjectText`, the pane probes, the tick, the
-lock and the consent marker are all reusable. **One structural constraint:** the linter forbids the
-codex vertical and the keeper from importing each other, so the signal must arrive over a file marker,
-the way the gauge does. **The hazard:** the rollout schema is undocumented and unversioned, so assert
-the record shape at startup rather than failing silently.
+The 2026-07-31 rollout measurement remains useful only as source evidence.
+It MUST NOT control delivery by parsing the last assistant message or matching
+keywords. That would infer cognitive state from prose and violates ZFC. The
+replacement design is Kerf work `codex-continuity`, activated above. It uses a
+registered source identity, typed turn lifecycle data, typed declarations,
+canonical open decisions, and a durable controller record.
 
-None of this is scheduled. It is here so that staffing a Codex lane does not start with the
-measurement again.
+`internal/keeper/dashboardnag.go`, `InjectText`, pane probes, the tick, lock,
+and consent marker are evidence and possible edge mechanics. They are not a
+second continuity controller. The linter still forbids direct imports between
+the Codex vertical and keeper. The rollout schema remains undocumented, so the
+attached source must validate its registered shape and fail closed on drift.
+
+### Deferred post-core keeper and harness-lifecycle lane
+
+This is a post-core lane with one active Codex continuity slice. It is not
+Alpha, Bravo, or a third active lane. The charter still keeps keeper outside the
+core. The 2026-08-02 operator directive authorizes only the `codex-continuity`
+work listed above. All other keeper and harness-lifecycle work stays parked.
+
+Its record is [`research/README.md`](research/README.md). The lane owns `internal/keeper/**`, the
+keeper-related `cmd/harmonik/**` and `internal/agentlaunch/**` surfaces, keeper scripts, configuration,
+and shipped keeper skill assets. It does not own the core workflow packages.
+
+Work the remaining lane in this order:
+
+1. Complete `codex-continuity` T1 through T11. Its first source can be the
+   supervised attached rollout source. Move to the documented Stop hook when
+   its lifecycle contract is available. Do not parse model prose in either
+   source.
+2. Preserve the Claude vertical with replay, crash-cut, watcher-race, and
+   real-harness canary proof before extracting shared keeper contracts.
+3. Extract only the common observation, policy, journal, and delivery contracts
+   that the Claude and Codex verticals both prove they need. App-server support
+   is a later adapter.
+
+The acceptance proof is not coverage alone: the Claude behavior remains compatible, Codex distinguishes
+remaining work from terminal work, actions are idempotent and bounded, and a new harness does not edit
+the pure policy core.
 
 ---
 
@@ -619,30 +773,34 @@ measurement again.
    failure. **The exception is spent. A defect found from here on is recorded, not chased** — the one
    found while doing this is `hk-terminal-status-literals-aynz5`, handed to bravo above.
 2. **Bravo: rebase onto the shared tip**, then take §3 in order. Items 1 to 6 need no design.
-3. **Alpha: step 7 piece 1 and the fifteen ungated capability ports.** The step map says these are not
+3. **Codex continuity: work the activated isolated slice in parallel.** Start
+   `codex-continuity` T1 and the reviewed T2 revision now. It must not edit
+   `internal/daemon`, `internal/keeper/Watcher`, or Bravo's active queue work.
+   Its first live run remains behind T9 and T10.
+4. **Alpha: step 7 piece 1 and the fifteen ungated capability ports.** The step map says these are not
    blocked on the guard decision and to start them now, ordered by harm.
-4. **Bravo: the queue transition API**, once items 1 to 6 are landed and the kerf work has an agreed
+5. **Bravo: the queue transition API**, once items 1 to 6 are landed and the kerf work has an agreed
    scope. This remains bravo's core priority.
-5. **Alpha: define the tmux-host capability contract.** This is a small serial seam. It must replace
+6. **Alpha: define the tmux-host capability contract.** This is a small serial seam. It must replace
    daemon concrete assertions and unexported capability methods before bravo starts the package move.
    Alpha also adds the new package's narrow depguard rule and direct daemon deny.
-6. **Bravo: build the tmux host package.** It owns the implementation and focused tests. Alpha keeps
+7. **Bravo: build the tmux host package.** It owns the implementation and focused tests. Alpha keeps
    the daemon package clean while this work runs.
-7. **Alpha: cut the daemon over to the tmux host.** This is the only daemon edit in the wave. Re-run
+8. **Alpha: cut the daemon over to the tmux host.** This is the only daemon edit in the wave. Re-run
    the graph after the cutover before dividing the per-run path.
-8. **Alpha: step 12**, which is not blocked on step 10 and was believed to be.
-9. **Parallel capacity only: alpha may define the cursor and comms contracts.** Replace `SetRecvDeps`
+9. **Alpha: step 12**, which is not blocked on step 10 and was believed to be.
+10. **Parallel capacity only: alpha may define the cursor and comms contracts.** Replace `SetRecvDeps`
    with constructor configuration. Define the shared cursor without a daemon import. Do not delay item
    4 for this work.
-10. **Parallel capacity only: bravo may extract the cursor store, then the comms handler, then the
+11. **Parallel capacity only: bravo may extract the cursor store, then the comms handler, then the
     notification stream.** Each new package must pass its no-daemon dependency check. This wave must
     not delay a ready queue or tmux task.
-11. **Alpha: freeze the local-socket contract when the core no longer needs the lane.** Bravo can then
+12. **Alpha: freeze the local-socket contract when the core no longer needs the lane.** Bravo can then
    build the transport package while alpha works on a separate daemon seam. Alpha also adds the new
    package's narrow depguard rule and direct daemon deny.
-12. **Bravo: build the local-socket package as parallel capacity.** Alpha then performs the one
+13. **Bravo: build the local-socket package as parallel capacity.** Alpha then performs the one
     composition-root cutover.
-13. **Alpha: step 10**, after steps 7 and 8 have settled `beadRunOne`. That is the real argument for
+14. **Alpha: step 10**, after steps 7 and 8 have settled `beadRunOne`. That is the real argument for
     deferring it. "Steps 2 to 6 will discharge it" was not.
 
 ---

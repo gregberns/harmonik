@@ -73,10 +73,11 @@ VERBS
   submit    Submit a new bead to the queue (daemon must be running)
   append    Append a bead to an existing queue run (daemon must be running)
   status    Show current queue state and bead statuses (daemon must be running)
-  list      List all active queues with status and worker counts (daemon must be running)
-  pause     Pause a named queue (daemon must be running)
-  resume    Resume a paused named queue (daemon must be running)
-  dry-run   Validate a queue submission without executing (daemon must be running)
+	list      List all active queues with status and worker counts (daemon must be running)
+	pause     Pause a named queue (daemon must be running)
+	resume    Resume a paused named queue (daemon must be running)
+	recover   Recover a queue paused by failure (daemon must be running)
+	dry-run   Validate a queue submission without executing (daemon must be running)
   cancel    Archive a stale queue.json without a live daemon (no daemon required)
   set-concurrency <n>  Set the daemon's concurrent-dispatch ceiling live (daemon must be running)
 
@@ -105,8 +106,9 @@ EXAMPLES
   harmonik queue append --queue investigate 0 hk-abc123
   harmonik queue status
   harmonik queue list
-  harmonik queue pause investigate
-  harmonik queue resume investigate
+	  harmonik queue pause investigate
+	  harmonik queue resume investigate
+	  harmonik queue recover investigate
   harmonik queue cancel
   harmonik queue cancel --force
   harmonik queue set-concurrency 4
@@ -489,6 +491,8 @@ EXAMPLES
 			return queuecli.RunQueuePause(ctx, subArgs, os.Stdout, os.Stderr)
 		case "resume":
 			return queuecli.RunQueueResume(ctx, subArgs, os.Stdout, os.Stderr)
+		case "recover":
+			return queuecli.RunQueueRecover(ctx, subArgs, os.Stdout, os.Stderr)
 		case "dry-run":
 			return queuecli.RunQueueDryRun(ctx, subArgs, os.Stdout, os.Stderr)
 		case "cancel":
@@ -496,7 +500,7 @@ EXAMPLES
 		case "set-concurrency":
 			return queuecli.RunQueueSetConcurrency(ctx, subArgs, os.Stdout, os.Stderr)
 		default:
-			fmt.Fprintf(os.Stderr, "harmonik queue: unrecognised verb %q; verbs are: submit, append, status, list, pause, resume, dry-run, cancel, set-concurrency\n", verb)
+			fmt.Fprintf(os.Stderr, "harmonik queue: unrecognised verb %q; verbs are: submit, append, status, list, pause, resume, recover, dry-run, cancel, set-concurrency\n", verb)
 			return 2
 		}
 	}

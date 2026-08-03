@@ -1,6 +1,8 @@
 # Step 27a — daemon configuration construction
 
-Status: planned source analysis on 2026-08-02. No production code changed.
+Status: queued planning work on 2026-08-02. The Kerf work
+`daemon-config-construction` exists and is shelved. It depends on completion of
+the `substrate-capability-contract` plan. No production code changed.
 
 ## Purpose
 
@@ -50,10 +52,11 @@ policy rather than changing `Start` to reject every existing unit fixture.
 
 ## Design decision to make in Kerf
 
-Create a new spec work named `daemon-config-construction` before implementation.
-It is a medium-risk change across the public daemon boundary and two command
-paths. No existing Kerf work covers this contract. Do not add it to
-`event-payload-ownership`, which has a separate event-model purpose.
+The spec work `daemon-config-construction` now exists. It is a medium-risk
+change across the public daemon boundary and two command paths. It remains
+shelved until `substrate-capability-contract` reaches its complete handoff. Do
+not add it to `event-payload-ownership`, which has a separate event-model
+purpose.
 
 The work must settle this narrow contract:
 
@@ -77,8 +80,9 @@ must not retain direct `daemon.Config{...}` literals after the change.
 
 ## Implementation order
 
-1. Create and complete the Kerf design for `daemon-config-construction`.
-   Record the caller categories and the exact error surface.
+1. After `substrate-capability-contract` reaches its complete handoff, resume
+   and complete the Kerf design for `daemon-config-construction`. Record the
+   caller categories and the exact error surface.
 2. Add the constructor, typed input, and typed constructor error in
    `internal/daemon`. Keep `Config` as the runtime value consumed by `Start`.
 3. Convert `cmd/harmonik/main.go` to construct its live configuration through
@@ -95,10 +99,11 @@ must not retain direct `daemon.Config{...}` literals after the change.
 7. Re-run the source inventory. There must be no non-test
    `daemon.Config{...}` literal outside the constructor implementation.
 
-Step 10 is complete at `9f52d7f5d`, so its technical dependency is met. Step
-13 is likely to touch `internal/daemon`. Serialize the Step 27a implementation
-after that merge, or use a dedicated worktree and rebase before review. This is
-an operational collision guard, not a new technical dependency.
+Step 10 and Step 13 are complete. Step 27a now waits on the complete
+`substrate-capability-contract` planning handoff. That order keeps the public
+configuration constructor from fixing a substrate boundary that is still being
+defined. After both plans are ready, Alpha owns the daemon constructor and
+Bravo takes the scoped command-path conversion.
 
 ## Tests and acceptance
 

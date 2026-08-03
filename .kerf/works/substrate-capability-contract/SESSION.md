@@ -2,9 +2,10 @@
 
 ## Current pass
 
-The work is in tasks. The problem-space, decomposition, research, change
-design, specification draft, integration, and task plan are complete.
-Independent review approved the task graph. Advance only to ready.
+The work is ready. The problem-space, decomposition, research, change design,
+specification draft, integration, and task plan are complete. Independent
+review approved the task graph. The Kerf structural check passes after the
+three no-change dispositions and the capability-design binding were recorded.
 
 ## Decisions and evidence
 
@@ -29,7 +30,7 @@ Independent review approved the task graph. Advance only to ready.
 
 ## Next steps
 
-1. Advance to ready after the Kerf square check.
+1. Request Alpha's ready review before finalization or implementation.
 2. Keep the two validation beads attached to the implementation plan.
 3. Keep `daemon-config-construction` shelved until this work completes.
 

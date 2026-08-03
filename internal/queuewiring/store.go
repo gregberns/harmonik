@@ -116,7 +116,7 @@ func NewQueueStore() *QueueStore {
 
 // SetQueue installs q under the write lock at the slot derived from q.Name
 // (normalised to QueueNameMain if empty). It replaces any prior value at that
-// slot and signals the wake channel.
+// slot and signals the wake channel. It does not clear an I/O quarantine.
 //
 // This is the primary mutation entry point per QM-060. All queue-submit /
 // queue-append paths MUST call SetQueue (or SetQueueByName / ClearQueue /
@@ -129,7 +129,6 @@ func (s *QueueStore) SetQueue(q *queue.Queue) {
 	s.queueMu.Lock()
 	s.queues[name] = q
 	s.generations[name]++
-	delete(s.quarantined, name)
 	s.queueMu.Unlock()
 	select {
 	case s.wakeC <- struct{}{}:
@@ -192,14 +191,13 @@ func (s *QueueStore) QueueByName(name string) *queue.Queue {
 
 // SetQueueByName installs q under the write lock at the given name slot,
 // replacing any prior value. name MUST be normalised before calling. Signals
-// the wake channel.
+// the wake channel. It does not clear an I/O quarantine.
 //
 // Bead ref: hk-tigaf.2.
 func (s *QueueStore) SetQueueByName(name string, q *queue.Queue) {
 	s.queueMu.Lock()
 	s.queues[name] = q
 	s.generations[name]++
-	delete(s.quarantined, name)
 	s.queueMu.Unlock()
 	select {
 	case s.wakeC <- struct{}{}:
@@ -328,13 +326,13 @@ func (lq *LockedQueueStore) Queue() *queue.Queue {
 // SetQueue updates the queue pointer at the slot derived from q.Name
 // (normalised to QueueNameMain if empty). Safe to call while the write lock
 // is held. Does NOT signal the wake channel (use QueueStore.SetQueue for that).
+// It does not clear an I/O quarantine.
 //
 // Bead ref: hk-j808w, hk-tigaf.2.
 func (lq *LockedQueueStore) SetQueue(q *queue.Queue) {
 	name := queue.NormaliseQueueName(q.Name)
 	lq.s.queues[name] = q
 	lq.s.generations[name]++
-	delete(lq.s.quarantined, name)
 }
 
 // Done releases the write lock. MUST be called exactly once per
@@ -360,12 +358,12 @@ func (lq *LockedQueueStore) LockedQueueByName(name string) *queue.Queue {
 // LockedSetQueueByName updates the queue pointer at the given name slot
 // while the write lock is held. name MUST be normalised before calling.
 // Does NOT signal the wake channel (use QueueStore.SetQueueByName for that).
+// It does not clear an I/O quarantine.
 //
 // Bead ref: hk-tigaf.6.
 func (lq *LockedQueueStore) LockedSetQueueByName(name string, q *queue.Queue) {
 	lq.s.queues[name] = q
 	lq.s.generations[name]++
-	delete(lq.s.quarantined, name)
 }
 
 // LockedAllQueueNames returns the names of all queues currently in the store

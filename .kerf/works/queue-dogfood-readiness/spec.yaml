@@ -5,7 +5,7 @@ project:
     id: gregberns-harmonik
 jig: spec
 jig_version: 1
-status: decompose
+status: ready
 status_values:
     - problem-space
     - decompose
@@ -16,7 +16,7 @@ status_values:
     - tasks
     - ready
 created: 2026-08-03T03:56:16Z
-updated: 2026-08-03T04:00:38Z
+updated: 2026-08-03T04:43:48Z
 sessions:
     - id: null
       started: 2026-08-03T03:56:16Z
@@ -24,6 +24,12 @@ sessions:
     - id: null
       started: 2026-08-03T04:00:38Z
       ended: 2026-08-03T04:00:38Z
+    - id: null
+      started: 2026-08-03T04:17:38Z
+      ended: 2026-08-03T04:27:08Z
+    - id: null
+      started: 2026-08-03T04:31:57Z
+      ended: 2026-08-03T04:43:48Z
 active_session: null
 depends_on: []
 bead_filter:

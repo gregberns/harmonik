@@ -2,51 +2,37 @@
 
 ## Current pass
 
-The work is shelved at **Decompose**. The Problem Space pass is complete. The
-component map is complete and awaits its normal Decompose review.
+The work is shelved at **Ready**. `kerf square` passed with all expected
+artifacts. The work is ready for finalization and implementation. The fleet
+daemon was not started.
 
 ## Decisions made
 
-- This work is a narrow queue-readiness gate. It does not restart the fleet.
-- An assessor is a separate audit role. It does not consume normal queue work.
-- The first live evidence uses an isolated scratch daemon and a fresh, limited
-  mission.
-- The first canary is one local repeat-safe stream at concurrency one. It has no
-  remote, Pi, cross-repository, or wave work.
-- The confirmed blocker set is DOT shutdown drain, failed-item recovery,
-  reservation durability, durability-proof defects, daemon-test reliability,
-  Step 9 and core-loop proof, and bead and event hygiene.
-- `hk-v4wer`, `hk-o4sgg`, `hk-fmere`, and `hk-b4xf2` are verified stale closure
-  candidates. Verify their current source paths before closing them. Do not plan
-  code from their old descriptions.
-- Alpha owns daemon code. Bravo owns queue, queue wiring, CLI, proof repairs,
-  and backlog triage. Release-path contracts are shared.
-- Alpha owns every daemon change and daemon test, including
-  `evaluateGroupAdvanceWithOutcome`. Bravo must add an explicit recovery-wiring
-  task because `queue-status-writer` does not wire failed-item resume.
-- Registry and mission operations are read-first. The operator authorizes each
-  reset, retirement, or creation before it happens.
+- Failed-item recovery becomes a durable queue transaction. It is distinct from
+  drain resume and returns a durable receipt.
+- A committed but unmerged run gets one durable recovery record and one
+  terminal action. It retains its original worktree until recovery completes.
+- A readiness gate is assessor-only. Schema version 3 pins its candidate,
+  canary profile, decision owner, and proof artifacts.
+- The first canary remains one repeat-safe local stream item at concurrency one.
+  It excludes append, remote, Pi, cross-repository, and wave work.
 
-## Open questions
+## Ledger triage
 
-1. Pick a safe, repeatable first mission batch.
-2. Decide whether daemon test reliability needs code changes after a controlled
-   idle-box trial, or whether the single-suite operating rule is enough.
-3. Define the exact evidence required to close a stale graph finding.
+The four historical finding IDs are absent from this machine ledger. No closure
+was made. Current source has their named regression tests. See
+`ledger-triage.md` for the evidence boundary.
 
 ## Suggested next steps
 
-1. Resume this work.
-2. Read the problem-space record.
-3. Review `02-components.md` against the problem-space record and the affected
-   existing specs.
-4. Resolve review findings before advancing to Research.
+1. Review and finalize the ready work before implementation.
+2. Implement `07-tasks.md` in dependency order. Alpha owns daemon and workspace
+   work. Bravo owns queue, CLI, schema/runbook, and triage.
+3. Do not alter registry or mission state without operator authority.
 
 ## Reading order
 
-1. `01-problem-space.md`
-2. `plans/2026-07-27-delete-and-rewrite/LANES.md` sections 3, 7, and 8
-3. `plans/2026-07-27-delete-and-rewrite/STEP-4-RESERVATION-TRANSACTION.md`
-4. `docs/scratch-daemon-runbook.md`
-5. `specs/assessor-handoff-schema.md`
-6. Current bead records for the blockers named in `01-problem-space.md`
+1. `07-tasks.md`
+2. `05-changelog.md`
+3. `05-spec-drafts/`
+4. `ledger-triage.md`

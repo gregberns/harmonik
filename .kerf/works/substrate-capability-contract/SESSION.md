@@ -2,9 +2,9 @@
 
 ## Current pass
 
-The work is in integration. The problem-space, decomposition, research, change
-design, specification draft, and integration check are complete. Independent
-review approved the integrated package. Advance only to the task pass.
+The work is in tasks. The problem-space, decomposition, research, change
+design, specification draft, integration, and task plan are complete.
+Independent review approved the task graph. Advance only to ready.
 
 ## Decisions and evidence
 
@@ -29,13 +29,13 @@ review approved the integrated package. Advance only to the task pass.
 
 ## Next steps
 
-1. Write ordered implementation tasks. Keep the two validation beads attached.
-2. Preserve construction and operation boundaries in every task.
+1. Advance to ready after the Kerf square check.
+2. Keep the two validation beads attached to the implementation plan.
 3. Keep `daemon-config-construction` shelved until this work completes.
 
 ## Reading order
 
-1. `06-integration.md`
-2. `integration-review.md`
-3. `05-spec-drafts/process-lifecycle.md`
+1. `07-tasks.md`
+2. `tasks-review.md`
+3. `06-integration.md`
 4. `04-design/step12-serialization.md`

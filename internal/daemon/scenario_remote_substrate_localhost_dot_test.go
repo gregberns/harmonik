@@ -56,6 +56,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -133,13 +134,26 @@ const rsb12DotMinimalGraph = `digraph "remote-substrate-dot-e2e" {
 //
 // Bead: hk-rs-b12-e2e-localhost (DOT-mode companion).
 func TestScenario_RemoteSubstrate_Localhost_DOT_E2E(t *testing.T) {
+	rsb12RunRemoteDot(t, false)
+}
+
+// TestScenario_RemoteSubstrate_Localhost_DOT_ShutdownDrain cancels a real
+// worker run after its commit and proves the drain sync releases that commit.
+func TestScenario_RemoteSubstrate_Localhost_DOT_ShutdownDrain(t *testing.T) {
+	rsb12RunRemoteDot(t, true)
+}
+
+func rsb12RunRemoteDot(t *testing.T, shutdownDrain bool) {
+	t.Helper()
 	skipRealDaemonE2EInShort(t)
-	t.Parallel()
 
 	// ── Pre-flight guard: ssh localhost must work (no sshd / no key → skip). ──
 	rsb12RequireSSHOrSkip(t)
 
-	const bead = core.BeadID("hk-rs-b12-e2e-localhost-dot")
+	bead := core.BeadID("hk-rs-b12-e2e-localhost-dot")
+	if shutdownDrain {
+		bead = core.BeadID("hk-rs-b12-drain-localhost-dot")
+	}
 	sshHost := rsb12SSHHost()
 	sshRunner := tmux.SSHRunner{Host: sshHost}
 
@@ -149,7 +163,7 @@ func TestScenario_RemoteSubstrate_Localhost_DOT_E2E(t *testing.T) {
 	rsb12Git(t, originDir, "init", "--bare", "--initial-branch=main")
 
 	// ── box A (projectDir): the daemon's repo (STAYS daemon-local, not shared). ─
-	projectDir := t.TempDir()
+	projectDir := rsb12ShortTempDir(t)
 	//nolint:gosec // G301: 0755 matches .harmonik dir conventions
 	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "beads-intents"), 0o755); err != nil {
 		t.Fatalf("mkdir beads-intents: %v", err)
@@ -227,10 +241,30 @@ func TestScenario_RemoteSubstrate_Localhost_DOT_E2E(t *testing.T) {
 	// worker's run/<id> worktree — advancing HEAD past preHeadSHA exactly as a real
 	// implementer's commit does. The `Refs:` trailer makes the commit the bead's
 	// landed work; the Harmonik-Run-ID trailer keys the daemon's commit-detect.
+	marker := ""
+	if shutdownDrain {
+		marker = filepath.Join(workerDir, "dot-drain-committed")
+	}
 	handlerScript := rsb12DotImplementerHandlerScript(t, bead)
+	if shutdownDrain {
+		handlerScript = rsb12DotCommitThenWaitHandlerScript(t, bead, marker)
+	}
 
-	collector := &stubEventCollector{}
+	trace := &dotShutdownDrainTrace{}
+	collector := &stubEventCollector{onEmit: func(eventType core.EventType) {
+		if !shutdownDrain {
+			return
+		}
+		switch eventType {
+		case core.EventTypeBeadClosed, core.EventTypeRunCompleted, core.EventTypeRunFailed, core.EventTypeOutcomeEmitted:
+			trace.record(string(eventType))
+		}
+	}}
 	ledger := newRSB12Ledger([]core.BeadID{bead})
+	if shutdownDrain {
+		ledger.onClose = func() { trace.record("close") }
+		ledger.onReopen = func() { trace.record("reopen") }
+	}
 
 	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:           ledger,
@@ -249,6 +283,10 @@ func TestScenario_RemoteSubstrate_Localhost_DOT_E2E(t *testing.T) {
 	// 300s ceiling: a safety net, not a budget (several real ssh round-trips).
 	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Second)
 	defer cancel()
+	checkpointBeforeDrain := make(chan bool, 1)
+	if shutdownDrain {
+		go rsb12CancelAfterCommitMarker(ctx, cancel, marker, filepath.Join(projectDir, "remote-work.txt"), checkpointBeforeDrain)
+	}
 
 	loopDone := make(chan struct{})
 	go func() {
@@ -256,11 +294,21 @@ func TestScenario_RemoteSubstrate_Localhost_DOT_E2E(t *testing.T) {
 		daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	select {
-	case <-ledger.doneCh:
-		cancel()
-	case <-ctx.Done():
-		t.Fatalf("timed out waiting for DOT-mode bead %s to reach a terminal state; events=%v", bead, collector.eventTypes())
+	if shutdownDrain {
+		// Cancellation is the test input. The drain still owes its terminal
+		// release result after ctx.Done(), so wait on the ledger independently.
+		select {
+		case <-ledger.doneCh:
+		case <-time.After(30 * time.Second):
+			t.Fatalf("timed out waiting for remote shutdown-drain bead %s; events=%v", bead, collector.eventTypes())
+		}
+	} else {
+		select {
+		case <-ledger.doneCh:
+			cancel()
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for DOT-mode bead %s to reach a terminal state; events=%v", bead, collector.eventTypes())
+		}
 	}
 
 	select {
@@ -308,8 +356,58 @@ func TestScenario_RemoteSubstrate_Localhost_DOT_E2E(t *testing.T) {
 		t.Errorf("origin/main (%s) != box A main (%s) — the merge push did not reach origin",
 			originMainSHA, boxAMainSHA)
 	}
+	if shutdownDrain {
+		select {
+		case unchanged := <-checkpointBeforeDrain:
+			if !unchanged {
+				t.Error("local target already contained remote work at the worker commit checkpoint")
+			}
+		default:
+			t.Error("shutdown drain did not observe the worker commit checkpoint")
+		}
+		workerTip := rsb12Git(t, workerDir, "log", "--all", "--format=%H", "--grep=Refs: "+string(bead), "-1")
+		if workerTip == "" {
+			t.Fatal("worker commit was not retained for the shutdown-drain sync check")
+		}
+		rsb12Git(t, projectDir, "merge-base", "--is-ancestor", workerTip, "main")
+		if got, want := trace.snapshot(), []string{"close", string(core.EventTypeBeadClosed), string(core.EventTypeRunCompleted)}; !reflect.DeepEqual(got, want) {
+			t.Errorf("remote shutdown-drain terminal order = %v, want %v", got, want)
+		}
+	}
 
 	t.Logf("remote-substrate DOT e2e OK: worker commit synced over ssh localhost and landed on box A main (%s)", boxAMainSHA)
+}
+
+func rsb12CancelAfterCommitMarker(ctx context.Context, cancel context.CancelFunc, marker, localWorkPath string, checkpoint chan<- bool) {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if _, err := os.Stat(marker); err == nil {
+			_, localErr := os.Stat(localWorkPath)
+			checkpoint <- os.IsNotExist(localErr)
+			cancel()
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func rsb12ShortTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "hk-rs-")
+	if err != nil {
+		t.Fatalf("MkdirTemp for remote socket path: %v", err)
+	}
+	t.Cleanup(func() {
+		if removeErr := os.RemoveAll(dir); removeErr != nil {
+			t.Errorf("remove remote scenario directory %s: %v", dir, removeErr)
+		}
+	})
+	return dir
 }
 
 // rsb12Contains reports whether haystack contains needle.
@@ -329,6 +427,14 @@ func rsb12Contains(haystack []string, needle string) bool {
 // noCommit/subsume guards) and the `Harmonik-Run-ID:` trailer (read from the
 // daemon-supplied HARMONIK_RUN_ID env var) for commit-detect keying.
 func rsb12DotImplementerHandlerScript(t *testing.T, bead core.BeadID) string {
+	return rsb12DotHandlerScript(t, bead, "exit 0\n")
+}
+
+func rsb12DotCommitThenWaitHandlerScript(t *testing.T, bead core.BeadID, marker string) string {
+	return rsb12DotHandlerScript(t, bead, "touch "+marker+"\nwhile :; do sleep 1; done\n")
+}
+
+func rsb12DotHandlerScript(t *testing.T, bead core.BeadID, afterCommit string) string {
 	t.Helper()
 	dir := t.TempDir()
 	scriptPath := filepath.Join(dir, "dot-impl-handler.sh")
@@ -338,7 +444,7 @@ func rsb12DotImplementerHandlerScript(t *testing.T, bead core.BeadID) string {
 		"git add remote-work.txt\n" +
 		"git commit -m \"feat: remote-substrate dot e2e work\n\nRefs: " + string(bead) +
 		"\" --trailer \"Harmonik-Run-ID: ${HARMONIK_RUN_ID}\" >/dev/null 2>&1\n" +
-		"exit 0\n"
+		afterCommit
 	//nolint:gosec // G306: 0755 required to exec the handler script in a test tree.
 	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("rsb12DotImplementerHandlerScript: write %s: %v", scriptPath, err)

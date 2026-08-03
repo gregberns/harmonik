@@ -325,10 +325,10 @@ func (b *RunBridge) mergeHook(a SpineArgs) func(context.Context) {
 // drain requeue-reopen row.
 func (b *RunBridge) drainMergeHook(a SpineArgs) func(context.Context, string) []runexec.Event {
 	return func(c context.Context, _ string) []runexec.Event {
-		mctx := c
-		if mctx.Err() != nil {
-			mctx = context.WithoutCancel(c)
-		}
+		// A graceful drain can start before its parent context is cancelled.
+		// Detach every release operation now, so a later cancellation cannot
+		// interrupt the required synchronize-and-merge result.
+		mctx := context.WithoutCancel(c)
 		if syncReason := a.PreMergeSync(mctx); syncReason != "" {
 			fmt.Fprintf(os.Stderr, "daemon: workloop: shutdown-drain: sync failed for bead %s: %s; reopening for re-dispatch\n",
 				b.beadID, syncReason)
@@ -366,11 +366,23 @@ func (b *RunBridge) closeHook(a SpineArgs) func(context.Context, string, bool) [
 		cctx := c
 		// RSM-021 drain policy only: the pre-RT9 drain block closed under a
 		// background context. Non-drain closes keep the caller ctx untouched.
-		if b.draining && cctx.Err() != nil {
+		if b.draining {
 			cctx = context.WithoutCancel(c)
 		}
 		if closeErr := b.rp.Ledger.CloseBead(cctx, b.runID, a.TransitionTID, b.beadID, needsAttention); closeErr != nil {
 			fmt.Fprintf(os.Stderr, "daemon: workloop: CloseBead %s: %v\n", b.beadID, closeErr)
+			if b.draining {
+				// RSM-021: every shutdown-drain close failure, including a
+				// transient ledger failure, takes the reopen → run_failed
+				// ladder. The ordinary close ladder may retain an in-progress
+				// bead after BrUnavailable, but that would leave drain without
+				// its one terminal result.
+				b.reopenBead(cctx, "context_cancelled: daemon shutdown, requeue pending")
+				return []runexec.Event{{
+					Kind: runexec.EvCloseResult, Close: runexec.CloseError,
+					Detail: fmt.Sprintf("close-error (shutdown-drain): %v", closeErr),
+				}}
+			}
 			if errors.Is(closeErr, brcli.BrUnavailable) {
 				return []runexec.Event{{Kind: runexec.EvCloseResult, Close: runexec.CloseBrUnavailable}}
 			}

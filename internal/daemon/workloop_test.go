@@ -120,10 +120,13 @@ func workloopFixtureReadJSONLLines(t *testing.T, path string) []string {
 // in-memory stub for work loop tests.  Concurrency: all methods are safe to
 // call concurrently.
 type stubBeadLedger struct {
-	mu     sync.Mutex
-	ready  []core.BeadID
-	closed []core.BeadID
-	opened []core.BeadID
+	mu       sync.Mutex
+	ready    []core.BeadID
+	closed   []core.BeadID
+	opened   []core.BeadID
+	closeErr error
+	onClose  func(error)
+	onReopen func()
 }
 
 func (s *stubBeadLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
@@ -149,15 +152,25 @@ func (s *stubBeadLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutC
 
 func (s *stubBeadLedger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, beadID core.BeadID, _ bool) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.closed = append(s.closed, beadID)
-	return nil
+	err, onClose := s.closeErr, s.onClose
+	if err == nil {
+		s.closed = append(s.closed, beadID)
+	}
+	s.mu.Unlock()
+	if onClose != nil {
+		onClose(err)
+	}
+	return err
 }
 
 func (s *stubBeadLedger) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, beadID core.BeadID, _ string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.opened = append(s.opened, beadID)
+	onReopen := s.onReopen
+	s.mu.Unlock()
+	if onReopen != nil {
+		onReopen()
+	}
 	return nil
 }
 
@@ -185,6 +198,7 @@ func (s *stubBeadLedger) reopenedIDs() []core.BeadID {
 type stubEventCollector struct {
 	mu     sync.Mutex
 	events []stubEmittedEvent
+	onEmit func(core.EventType)
 }
 
 type stubEmittedEvent struct {
@@ -195,10 +209,14 @@ type stubEmittedEvent struct {
 
 func (s *stubEventCollector) Emit(_ context.Context, eventType core.EventType, payload []byte) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	raw := make(json.RawMessage, len(payload))
 	copy(raw, payload)
 	s.events = append(s.events, stubEmittedEvent{EventType: string(eventType), Payload: raw})
+	onEmit := s.onEmit
+	s.mu.Unlock()
+	if onEmit != nil {
+		onEmit(eventType)
+	}
 	return nil
 }
 

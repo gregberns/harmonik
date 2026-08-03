@@ -191,6 +191,19 @@ type dotFixtureOpts struct {
 	// WorkflowMode is the per-item mode. Empty runs the bead in dot mode, which
 	// is what this fixture exists for.
 	WorkflowMode core.WorkflowMode
+
+	// CloseError makes the fixture ledger reject the terminal CloseBead call.
+	// It exercises release failure after a real DOT handler committed work.
+	CloseError error
+
+	// WaitForRunTerminal keeps the work loop alive until a close or reopen also
+	// reaches run_completed or run_failed.
+	WaitForRunTerminal bool
+
+	// ObserveTerminalStep records terminal ledger and bus steps in their real
+	// call order. It receives only close, close_failed, reopen, bead_closed,
+	// run_completed, run_failed, and outcome_emitted.
+	ObserveTerminalStep func(string)
 }
 
 // dotFixtureResult is what the caller asserts on.
@@ -325,8 +338,38 @@ func runDotFixtureBead(t *testing.T, beadID core.BeadID, opts dotFixtureOpts) do
 
 	qs := daemon.ExportedNewQueueStore()
 	qs.SetQueue(q)
-	ledger := &dotFixtureLedger{stubBeadLedger: &stubBeadLedger{}, description: opts.BeadDescription, labels: opts.BeadLabels}
-	bus := &stubEventCollector{}
+	observe := opts.ObserveTerminalStep
+	ledger := &dotFixtureLedger{
+		stubBeadLedger: &stubBeadLedger{
+			closeErr: opts.CloseError,
+			onClose: func(err error) {
+				if observe == nil {
+					return
+				}
+				if err != nil {
+					observe("close_failed")
+					return
+				}
+				observe("close")
+			},
+			onReopen: func() {
+				if observe != nil {
+					observe("reopen")
+				}
+			},
+		},
+		description: opts.BeadDescription,
+		labels:      opts.BeadLabels,
+	}
+	bus := &stubEventCollector{onEmit: func(eventType core.EventType) {
+		if observe == nil {
+			return
+		}
+		switch eventType {
+		case core.EventTypeBeadClosed, core.EventTypeRunCompleted, core.EventTypeRunFailed, core.EventTypeOutcomeEmitted:
+			observe(string(eventType))
+		}
+	}}
 
 	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:         ledger,
@@ -364,7 +407,11 @@ func runDotFixtureBead(t *testing.T, beadID core.BeadID, opts dotFixtureOpts) do
 	}()
 
 	deadline := time.After(50 * time.Second)
-	for len(ledger.closedIDs()) == 0 && len(ledger.reopenedIDs()) == 0 {
+	for {
+		terminalTransition := len(ledger.closedIDs()) > 0 || len(ledger.reopenedIDs()) > 0
+		if terminalTransition && (!opts.WaitForRunTerminal || dotFixtureRunTerminalSeen(bus)) {
+			break
+		}
 		select {
 		case <-deadline:
 			t.Fatalf("runDotFixtureBead: bead %s reached no terminal transition; events=%v", beadID, bus.eventTypes())
@@ -375,4 +422,13 @@ func runDotFixtureBead(t *testing.T, beadID core.BeadID, opts dotFixtureOpts) do
 	<-loopDone
 
 	return dotFixtureResult{ProjectDir: projectDir, Ledger: ledger.stubBeadLedger, Bus: bus}
+}
+
+func dotFixtureRunTerminalSeen(bus *stubEventCollector) bool {
+	for _, eventType := range bus.eventTypes() {
+		if eventType == string(core.EventTypeRunCompleted) || eventType == string(core.EventTypeRunFailed) {
+			return true
+		}
+	}
+	return false
 }

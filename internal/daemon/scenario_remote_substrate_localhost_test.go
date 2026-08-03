@@ -107,6 +107,8 @@ type rsb12Ledger struct {
 
 	doneCh   chan struct{}
 	doneOnce sync.Once
+	onClose  func()
+	onReopen func()
 }
 
 func newRSB12Ledger(beads []core.BeadID) *rsb12Ledger {
@@ -167,7 +169,11 @@ func (l *rsb12Ledger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutConf
 	l.mu.Lock()
 	l.closed[beadID]++
 	l.signalDoneLocked()
+	onClose := l.onClose
 	l.mu.Unlock()
+	if onClose != nil {
+		onClose()
+	}
 	return nil
 }
 
@@ -176,7 +182,11 @@ func (l *rsb12Ledger) ReopenBead(_ context.Context, _ string, _ brcli.TimeoutCon
 	l.reopened[beadID]++
 	l.reopenReason[beadID] = reason
 	l.signalDoneLocked()
+	onReopen := l.onReopen
 	l.mu.Unlock()
+	if onReopen != nil {
+		onReopen()
+	}
 	return nil
 }
 

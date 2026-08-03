@@ -33,13 +33,19 @@ func typesFixtureRunID() *string {
 	return &s
 }
 
+func typesFixtureRecoveryReceiptID() *string {
+	s := "0190b3c4-9001-7000-8000-000000000010"
+	return &s
+}
+
 // typesFixtureQueue builds a minimal valid Queue for round-trip tests.
 func typesFixtureQueue() queue.Queue {
 	return queue.Queue{
-		SchemaVersion: 1,
-		QueueID:       typesFixtureQueueID(),
-		SubmittedAt:   typesFixtureTimestamp(),
-		Status:        queue.QueueStatusActive,
+		SchemaVersion:           1,
+		QueueID:                 typesFixtureQueueID(),
+		FailedRecoveryReceiptID: typesFixtureRecoveryReceiptID(),
+		SubmittedAt:             typesFixtureTimestamp(),
+		Status:                  queue.QueueStatusActive,
 		Groups: []queue.Group{
 			{
 				GroupIndex: 0,
@@ -105,6 +111,12 @@ func TestQueueRoundTrip(t *testing.T) {
 	}
 	if got.QueueID != original.QueueID {
 		t.Errorf("QueueID: got %q, want %q", got.QueueID, original.QueueID)
+	}
+	if got.FailedRecoveryReceiptID == nil {
+		t.Fatal("FailedRecoveryReceiptID: got nil, want a preserved receipt ID")
+	}
+	if *got.FailedRecoveryReceiptID != *original.FailedRecoveryReceiptID {
+		t.Errorf("FailedRecoveryReceiptID: got %q, want %q", *got.FailedRecoveryReceiptID, *original.FailedRecoveryReceiptID)
 	}
 	if !got.SubmittedAt.Equal(original.SubmittedAt) {
 		t.Errorf("SubmittedAt: got %v, want %v", got.SubmittedAt, original.SubmittedAt)

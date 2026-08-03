@@ -253,6 +253,13 @@ type Queue struct {
 	// implementer-protocol.md).
 	QueueID string `json:"queue_id"`
 
+	// FailedRecoveryReceiptID identifies the immutable receipt written by a
+	// completed failed-recovery transaction. Nil means the queue has not
+	// recovered from paused-by-failure.
+	//
+	// Spec ref: specs/queue-model.md QM-058a.
+	FailedRecoveryReceiptID *string `json:"failed_recovery_receipt_id,omitempty"`
+
 	// Name is the durable routing key for this queue (QM-002/2.1 queue-naming
 	// rule). Charset: [a-z0-9-], length 1–64. The reserved default is "main"
 	// (QueueNameMain); omitted or empty fields are treated as "main" at submit

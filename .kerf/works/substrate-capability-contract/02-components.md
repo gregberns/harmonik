@@ -46,3 +46,15 @@ Alpha owns the daemon-facing contract, the shared boot wiring, and the final
 composition change. Bravo may receive a later scoped implementation handoff
 for a non-daemon carrier and its focused tests. This Kerf work does not
 authorize daemon edits.
+
+## Spec areas and dependencies
+
+| Spec area | Required planning result | Dependency |
+|---|---|---|
+| `specs/process-lifecycle.md` | State the declared substrate capability families, the required remote and independent-session failures, and the honest degraded behavior for absent optional capabilities. | The research table must classify each absent path first. |
+| `specs/handler-contract.md` | Confirm that the base `handler.Substrate` port remains narrow. If a capability crosses the handler boundary, state its owner and its optionality without moving daemon internals into the handler contract. | The contract design chooses the boundary. |
+| `specs/execution-model.md` | Confirm that run start, workflow selection, and DOT execution do not change. No amendment is expected unless the selected run-session capability changes a run lifecycle guarantee. | The run-session reachability finding decides this. |
+
+No new specification file is expected. The design must not amend a spec merely
+to describe an implementation move. It must amend a spec only where the
+declared capability changes an observable contract.

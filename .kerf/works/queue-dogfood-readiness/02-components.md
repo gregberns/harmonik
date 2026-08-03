@@ -13,9 +13,10 @@
     transaction boundary before new dispatch occurs.
   - Raw writes must not clear a quarantine created by a failed durable write.
   - Reservation release and undo must leave memory and persistent state equal.
-  - The initial controlled batch must be a one-item local stream at concurrency
-    one. It must reject remote, Pi, cross-repository, and wave work.
-- **Dependencies:** The queue recovery wiring task needs the current queue
+  - The recovery transition must remain distinct from handler-type resume.
+- **Dependencies:** `process-lifecycle.md` owns the command and RPC surface.
+  `event-model.md` owns the recovery event. `handler-pause.md` must preserve
+  control-plane separation. The recovery-wiring task needs the current queue
   state-machine reading. It does not depend on `queue-status-writer`, which
   intentionally does not wire failed-item resume.
 
@@ -29,20 +30,80 @@
   - The daemon must not silently redispatch work that already committed.
   - The proof must cover daemon stop during this window.
 - **Dependencies:** Alpha owns the daemon implementation and tests. The queue
-  recovery contract must agree on the release-state handoff.
+  recovery contract must agree on the release-state handoff. The detailed
+  terminal-spine and merge rules remain in `run-state-machine.md`.
+
+### `specs/run-state-machine.md`
+
+- **Change summary:** Align the shutdown-drain terminal edge with the remote
+  branch synchronization that a committed DOT run needs before merge.
+- **Requirements:**
+  - A shutdown drain must use a context that remains live after daemon
+    cancellation for every required recovery operation.
+  - A remote run branch must synchronize before a drain merge when the commit
+    is not already local.
+  - A failed synchronization must reopen the work item. It must not close it.
+  - The terminal spine must retain its one close-or-reopen outcome.
+- **Dependencies:** This contract refines `execution-model.md` and the
+  shutdown order in `operator-nfr.md`. It is complete in code but needs
+  normative alignment before the readiness gate can claim the behavior.
+
+### `specs/operator-nfr.md`
+
+- **Change summary:** Define the shutdown-drain ordering that protects a
+  committed graph run and the controlled-load rule for daemon test evidence.
+- **Requirements:**
+  - Shutdown order must prevent a committed DOT run from being silently
+    redispatched or closed before its durable merge outcome is known.
+  - The procedure must distinguish a merge success from a durable reopen that
+    an operator can review.
+  - Daemon-suite evidence must record machine load and state the allowed test
+    concurrency for a readiness result.
+- **Dependencies:** The per-run behavior is owned by `run-state-machine.md`.
+  The queue pause transition remains owned by `queue-model.md`.
 
 ### `specs/process-lifecycle.md`
 
-- **Change summary:** Record the operational boundary between a controlled
-  queue batch, shutdown recovery, and a separate assessor gate.
+- **Change summary:** Define the operator command and RPC boundary for failed
+  queue recovery. Record the boundary between a controlled batch, shutdown
+  recovery, and a separate assessor gate.
 - **Requirements:**
-  - A normal queue worker must not be described as an assessor.
-  - The assessor must audit a scratch daemon as a separate role.
-  - The controlled batch procedure must retain the required Step 9 and
-    core-loop proof artifacts for the gate.
-- **Dependencies:** The assessor handoff format remains owned by
-  `specs/assessor-handoff-schema.md`. This work consumes that format and does
-  not change it unless Research finds a missing field.
+  - The recovery command must say which queue and failed items it changes.
+  - It must report success only after the durable queue transition succeeds.
+  - It must state the daemon-down result and must not imply that a handler
+    resume or daemon restart has recovered a failed queue.
+  - The assessor launch contract must remain separate from normal queue work.
+  - The controlled-batch procedure must retain Step 9 and core-loop proof
+    artifacts for the gate.
+- **Dependencies:** `queue-model.md` owns recovery state semantics.
+  `event-model.md` owns event payloads. `handler-pause.md` preserves the
+  distinct handler control path.
+
+### `specs/event-model.md`
+
+- **Change summary:** Define the observable recovery lifecycle when failed
+  items are re-armed, or explicitly retain no recovery event if that event
+  would add no durable fact.
+- **Requirements:**
+  - The event contract must match the queue recovery transition and preserve
+    queue state as the authority.
+  - Any recovery event must define its payload, ordering, durability class,
+    and replay behavior.
+  - Existing pause event meanings must stay distinct from recovery.
+- **Dependencies:** The decision follows `queue-model.md` and
+  `process-lifecycle.md`. An event addition requires the normal foundation
+  amendment process.
+
+### `specs/handler-pause.md`
+
+- **Change summary:** Preserve the separation between a handler-type resume
+  and a queue failed-item recovery command.
+- **Requirements:**
+  - A handler resume must not re-arm failed queue items or clear queue state.
+  - Queue recovery must not clear a handler pause.
+- **Dependencies:** This is a compatibility check on the queue recovery
+  contract in `queue-model.md` and the operator surface in
+  `process-lifecycle.md`.
 
 ### `specs/beads-integration.md`
 
@@ -56,6 +117,18 @@
 - **Dependencies:** Registry and mission actions are read-first and need an
   explicit operator decision before any mutation.
 
+### `specs/assessor-handoff-schema.md`
+
+- **Change summary:** Verify that the existing handoff schema can carry the
+  controlled-batch evidence. Change it only if a required readiness fact has
+  no valid field.
+- **Requirements:** The handoff must name the candidate branch, scope, report
+  path, gate owner, and proof artifacts. It must state the narrow canary and
+  the assessor's independent role.
+- **Dependencies:** The assessor mission and report use this schema after the
+  operator authorizes creation. A schema change depends on that field-gap
+  review.
+
 ## Operational documents and records
 
 ### `docs/scratch-daemon-runbook.md`
@@ -63,18 +136,57 @@
 - **Change summary:** Add the controlled-load and retained-artifact procedure
   for the readiness proof if Research finds the current runbook lacks it.
 - **Requirements:** The procedure must capture daemon-suite load conditions,
-  Step 9 evidence, core-loop result, and batch artifact paths.
+  Step 9 evidence, core-loop result, batch artifact paths, and fixed canary
+  limits: one local repeat-safe stream item at concurrency one, with no remote,
+  Pi, cross-repository, or wave work.
 - **Dependencies:** It follows the blocker fixes and precedes the assessor gate.
 
 ### Assessor mission and report
 
-- **Change summary:** Create a mission that uses the existing assessor handoff
-  schema and a report that evaluates the stated canary only.
+- **Change summary:** After operator authority, create
+  `.harmonik/crew/missions/assessor-queue-dogfood-readiness.md` and require the
+  report at `.harmonik/reports/queue-dogfood-readiness-gate.md`. Both use the
+  existing assessor handoff schema.
 - **Requirements:** The mission must identify the branch, scope, report path,
   gate owner, and proof artifacts. It must state that the assessor does not
-  consume normal queue work.
+  consume normal queue work. The report must evaluate only the stated canary.
 - **Dependencies:** The operator authorizes the mission creation after a
   read-first inspection of existing registry and mission records.
+
+### Durability proof tests and ratchets
+
+- **Change summary:** Repair the daemon, queue, queue-wiring, and scenario
+  proofs that claim a durable reservation or release transition.
+- **Requirements:** Each proof must fail if its observed persistence write is
+  removed. A ratchet must test the production path, not only a test fixture or
+  a function name. The proof record must say which durable state it observes.
+- **Dependencies:** The production durability contract comes from
+  `queue-model.md`, `execution-model.md`, and `run-state-machine.md`. Alpha
+  owns daemon tests. Bravo owns queue-side tests and ratchets.
+
+### Step 9 and core-loop proof artifacts
+
+- **Change summary:** Define the retained readiness evidence produced by
+  `scripts/scratch-daemon.sh`, `scripts/core-loop-matrix.sh`, and the Step 9
+  record in `DECOMPOSITION-MAP.md`.
+- **Requirements:** The record must retain the scratch batch result at
+  `<scratch>/.harmonik/batch-<name>-<queue_id>.json`, the core-loop result, the
+  tested branch, the selected canary, and the controlled-load conditions. It
+  must distinguish a machine-contention result from a product failure.
+- **Dependencies:** This proof follows blocker fixes and precedes the assessor
+  gate. The assessor mission cites the retained paths.
+
+### Beads ledger and event artifacts
+
+- **Change summary:** Define the read-first hygiene record for the source
+  ledger and event inputs that seed the controlled batch.
+- **Requirements:** Record the source paths, capture time, and open-item set
+  before selecting the canary. Close stale graph work only with current-source
+  evidence. Preserve unresolved findings as scoped work. Do not use a scratch
+  event result as authority for the fleet ledger.
+- **Dependencies:** This record precedes mission creation and batch selection.
+  `beads-integration.md` owns bead-state semantics. Scratch artifacts are
+  attached to the assessor report only after the controlled run.
 
 ### `LANES.md` and live handoffs
 
@@ -93,13 +205,15 @@ can state every required behavior without a new document.
 
 ## Dependency map
 
-1. Trace the current DOT shutdown and queue recovery paths.
-2. Define the shared release and recovery contract.
-3. Alpha repairs daemon shutdown drain, `evaluateGroupAdvanceWithOutcome`, and
-   every daemon-side durability test.
-4. Bravo repairs queue and queue-wiring durability outside daemon, adds an
-   explicit failed-item recovery wiring task, and makes ratchets observe the
-   durable boundary.
+1. Trace the current DOT shutdown, release, and queue recovery paths.
+2. Align the shared shutdown contract in `execution-model.md`,
+   `run-state-machine.md`, and `operator-nfr.md`.
+3. Define queue recovery as one contract across `queue-model.md`,
+   `process-lifecycle.md`, `event-model.md`, and `handler-pause.md`.
+4. Alpha repairs the remaining daemon release paths and daemon-side durability
+   tests. Bravo repairs queue and queue-wiring durability, adds an explicit
+   failed-item recovery wiring task, and makes ratchets observe the durable
+   boundary.
 5. Run controlled daemon tests. Decide whether code changes or the one-suite
    operating rule solves test reliability.
 6. Verify or replace stale graph findings without changing beads during this
@@ -115,11 +229,13 @@ can state every required behavior without a new document.
 
 | Goal from problem space | Areas that satisfy it |
 |---|---|
-| DOT shutdown safety | `execution-model`, daemon task, scratch proof |
-| Failed-item recovery | `queue-model`, explicit Bravo recovery wiring task |
+| DOT shutdown safety | `execution-model`, `run-state-machine`, `operator-nfr`, daemon task, scratch proof |
+| Failed-item recovery | `queue-model`, `process-lifecycle`, `event-model`, `handler-pause`, explicit Bravo recovery wiring task |
 | Durable reservation behavior | `queue-model`, Alpha daemon task, Bravo queue and queue-wiring task |
-| Trustworthy proof | daemon tests, queue ratchets, scratch-daemon runbook |
+| Durability-proof gaps | durability tests and ratchets that observe the persistent boundary |
+| Trustworthy daemon tests | `operator-nfr`, scratch-daemon runbook, controlled-load record, one-suite operating rule |
 | Step 9 and core-loop evidence | scratch-daemon runbook, process lifecycle, assessor report |
-| Read-first registry and mission hygiene | beads integration, assessor mission, operator decision |
-| Separate assessor gate | process lifecycle, assessor mission and report |
-| Narrow first canary | queue model, mission, LANES, assessor report |
+| Read-first registry and mission hygiene | beads integration, assessor handoff schema, mission, operator decision |
+| Separate assessor gate | process lifecycle, assessor handoff schema, mission and report |
+| Narrow first canary | scratch-daemon runbook, mission, LANES, assessor report |
+| Bead and event-input hygiene | beads integration, ledger and event-artifact record, operator decision |

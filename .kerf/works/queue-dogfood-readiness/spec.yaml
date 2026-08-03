@@ -5,7 +5,7 @@ project:
     id: gregberns-harmonik
 jig: spec
 jig_version: 1
-status: ready
+status: finalized
 status_values:
     - problem-space
     - decompose
@@ -16,7 +16,7 @@ status_values:
     - tasks
     - ready
 created: 2026-08-03T03:56:16Z
-updated: 2026-08-03T04:43:48Z
+updated: 2026-08-03T04:50:39Z
 sessions:
     - id: null
       started: 2026-08-03T03:56:16Z
@@ -35,6 +35,7 @@ depends_on: []
 bead_filter:
 pinned_beads: []
 implementation:
-    branch: null
+    branch: work/queue-dogfood-readiness
     pr: null
-    commits: []
+    commits:
+        - 5cf87dbb05efccc5256e24dde62d15601e5a7334

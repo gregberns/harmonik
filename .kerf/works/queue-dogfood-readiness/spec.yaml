@@ -1,0 +1,34 @@
+codename: queue-dogfood-readiness
+title: Queue dogfood readiness
+type: spec
+project:
+    id: gregberns-harmonik
+jig: spec
+jig_version: 1
+status: decompose
+status_values:
+    - problem-space
+    - decompose
+    - research
+    - change-design
+    - spec-draft
+    - integration
+    - tasks
+    - ready
+created: 2026-08-03T03:56:16Z
+updated: 2026-08-03T04:00:38Z
+sessions:
+    - id: null
+      started: 2026-08-03T03:56:16Z
+      ended: 2026-08-03T03:57:49Z
+    - id: null
+      started: 2026-08-03T04:00:38Z
+      ended: 2026-08-03T04:00:38Z
+active_session: null
+depends_on: []
+bead_filter:
+pinned_beads: []
+implementation:
+    branch: null
+    pr: null
+    commits: []

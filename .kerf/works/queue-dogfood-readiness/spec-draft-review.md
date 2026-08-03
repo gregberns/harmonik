@@ -35,3 +35,11 @@ The stopped-daemon ledger directive authorized their creation. The open test
 tasks are `hk-jthdp`, `hk-y3hvr`, `hk-ddug1`, `hk-5qhlb`, `hk-0ok7x`, `hk-xouwd`,
 `hk-q5l0b`, `hk-60996`, `hk-w0gt8`, `hk-awbvt`, `hk-qhjtb`, `hk-g3t4c`,
 `hk-nvewa`, `hk-a5mvu`, `hk-bwpms`, and `hk-11vgl`. This gate is satisfied.
+
+## Post-review amendment
+
+The approval above predates the release-claim amendment. `EM-031b` now needs a
+cross-boundary review of the immutable Git-backed claim and its recovery use.
+That review must confirm that the claim contains the dispatch head, resolved
+merge target, and optional remote endpoint, and that neither JSONL nor a
+daemon-local registry can fill a missing field.

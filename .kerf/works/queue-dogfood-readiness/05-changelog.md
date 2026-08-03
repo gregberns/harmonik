@@ -7,7 +7,7 @@
 | `beads-ledger-events.md` → `docs/queue-readiness-ledger-events.md` | new operational record | Defines the snapshot and event-evidence record. | `beads-ledger-events-design.md` |
 | `durability-proof-tests.md` → `docs/queue-readiness-durability-proofs.md` | new operational record | Defines the release-contract table and required durable/fault proofs. | `durability-proof-tests-design.md` |
 | `event-model.md` | modified | Adds class-O `queue_recovered` with payload, ordering, and replay rules. | `event-model-design.md` |
-| `execution-model.md` | modified | Defines shutdown drain for committed DOT work and restart reconstruction of unfinished release. | `execution-model-design.md` |
+| `execution-model.md` | modified | Defines shutdown drain and the immutable Git-backed release claim used to reconstruct unfinished DOT release. | `execution-model-design.md` |
 | `handler-pause.md` | modified | States the separation of handler resume and queue recovery. | `handler-pause-design.md` |
 | `lanes-handoffs.md` → `plans/2026-07-27-delete-and-rewrite/LANES.md` | modified | Complete plan copy plus ownership, shared-boundary review, work order, and handoff content. | `lanes-handoffs-design.md` |
 | `operator-nfr.md` | modified | Defines committed DOT drain completion, safe normal-watchdog behavior, and controlled-load evidence. | `operator-nfr-design.md` |

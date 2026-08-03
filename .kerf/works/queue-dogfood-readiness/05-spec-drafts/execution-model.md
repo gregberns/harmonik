@@ -8,10 +8,10 @@ requirement-prefix: EM
 status: draft
 spec-category: foundation-cross-cutting
 spec-shape: requirements-first
-version: 0.10.5
+version: 0.10.6
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-08-02
+last-updated: 2026-08-03
 depends-on:
   - architecture
 ---
@@ -27,7 +27,7 @@ It is normative for every subsystem that produces, consumes, or reasons about ru
 
 ### 2.1 In scope
 
-- Core types: `Workflow`, `Node`, `Edge`, `Run`, `State`, `Transition`, `Checkpoint`, `Outcome`.
+- Core types: `Workflow`, `Node`, `Edge`, `Run`, `State`, `Transition`, `Checkpoint`, `ReleaseClaim`, `RemoteEndpoint`, `Outcome`.
 - Typed ID aliases: `RunID`, `StateID`, `TransitionID`, `NodeID`, `BeadID`.
 - Node type enum (`agentic`, `non-agentic`, `gate`, `sub-workflow`) and node idempotency-class tag (`idempotent`, `non-idempotent`, `recoverable-non-idempotent`). (The pre-C1 `control-point` value is collapsed under `gate`/`non-agentic` per C1 + C4 bundle — see §4.2.EM-006.)
 - Checkpoint contract: one git commit per successful durable transition, structured trailers, and transition-record sibling file at `.harmonik/transitions/<run_id>/<transition_id>.json`.
@@ -42,6 +42,7 @@ It is normative for every subsystem that produces, consumes, or reasons about ru
 - Backtracking representation: hybrid transition-kind tag with `rollback_to_state_id` for architectural and policy rollbacks.
 - Cycle detection: per-edge traversal caps for cycle-bounding, and the traversal-counter storage locus.
 - Active-run discovery rule used at restart.
+- Immutable release claims for unfinished committed DOT release recovery.
 - Concurrency primitives: in-flight-run capacity gate, claim-write serialization, and `max_concurrent` configuration (§4.11).
 
 ### 2.2 Out of scope
@@ -712,11 +713,27 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### EM-031b — Unfinished committed release reconstruction
 
-For a non-terminal bead, a run branch whose tip is ahead of its dispatch head
-is evidence of unfinished release. On restart, the daemon MUST reconstruct
-that condition from git and Beads. It MUST NOT infer failure or completion from
-JSONL. It MUST retain the branch until the normal release or reopen path has a
-terminal result.
+Before a committed DOT run can enter normal release or shutdown drain, the
+daemon MUST write a checkpoint whose `Transition.release_claim` is present.
+The claim is part of the immutable Git transition record. It MUST contain the
+dispatch-head SHA, the resolved merge-target ref and SHA, and the optional
+remote endpoint defined in §6.1. A release operation MUST NOT begin until this
+checkpoint is durable.
+
+For a non-terminal bead, a run branch whose tip is ahead of the claim's
+`dispatch_head_sha` is evidence of unfinished release. On restart, the daemon
+MUST first read the claim from Git and then read the current Bead state. It
+MUST use those two sources to reconstruct the release input and choose exactly
+one release or reopen result. It MUST NOT read JSONL, a daemon-local registry,
+or reconstructed process memory to supply, replace, or infer any claim field.
+
+If the claim is absent, corrupt, or inconsistent with its checkpoint, the
+daemon MUST retain the run branch and route the run to reconciliation. It MUST
+NOT merge, close, reopen, or redispatch the bead from branch shape, JSONL, or a
+daemon-local registry alone. If the current Bead state is terminal, the daemon
+MUST verify the terminal Git evidence before it suppresses further release;
+otherwise it must route the disagreement to reconciliation. The branch remains
+retained until a release, reopen, or reconciliation result is durable.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
@@ -1509,8 +1526,31 @@ RECORD Transition:
     outcome_status       : OutcomeStatus         -- the associated Outcome.status; drives §4.5.EM-023a durability decision
     transition_kind      : TransitionKind        -- per §4.10.EM-044
     rollback_to_state_id : StateID | None        -- set iff transition_kind ∈ {architectural-rollback, policy-rollback}
+    release_claim        : ReleaseClaim | None   -- required by EM-031b on the final pre-release checkpoint; absent on all other transitions
     schema_version       : Integer
 ```
+
+```
+RECORD ReleaseClaim:
+    dispatch_head_sha : String                   -- task-branch SHA resolved at dispatch before handler work starts
+    merge_target_ref  : String                   -- fully-qualified target ref selected for this release, such as "refs/heads/main"
+    merge_target_sha  : String                   -- SHA to which merge_target_ref resolved when this claim was written; durable audit evidence, not a later merge precondition
+    remote_endpoint   : RemoteEndpoint | None    -- None for local work; the endpoint used to synchronize a remote run branch
+```
+
+```
+RECORD RemoteEndpoint:
+    worker_name : String                         -- stable worker identity chosen for the run
+    host        : String                         -- SSH host or equivalent remote host identity
+    repo_path   : String                         -- absolute repository path on that worker
+```
+
+`ReleaseClaim` is immutable because its only durable representation is the
+transition-record sibling file in the checkpoint commit. A later transition
+MUST NOT rewrite, replace, or reinterpret a prior claim. A local run records
+`remote_endpoint = None`. A remote run records all three endpoint fields;
+recovery uses those recorded values for synchronization rather than selecting a
+worker again.
 
 ```
 ENUM TransitionKind:
@@ -2032,7 +2072,7 @@ During bootstrap (before `testing.md` exists) test obligations are named in pros
 - **EM-016 — EM-022 (checkpoint contract).** Crash-recovery scenario tests: kill the daemon between `git write-tree` and `git update-ref`; verify no partial state is observable AND orphan loose objects are eligible for `git gc` (EM-016 clarification); verify the trailer-and-sibling-file atomicity invariant; verify corrupted-checkpoint fallback (EM-017a) dispatches reconciliation AND bounds recursion at one level; verify audit tool (EM-020a) detects all five integrity violations (including run_id/trailer disagreement); verify sibling file is under `.harmonik/transitions/<run_id>/<transition_id>.json` (path scoping); verify cross-run merges and cherry-picks do not collide at the sibling-file path.
 - **EM-023 — EM-026 (checkpoint cadence).** Integration tests verifying every durable transition produces exactly one commit; reconciliation workflows produce exactly one verdict commit; failure transitions produce zero commits; PARTIAL_SUCCESS produces a durable commit with `partial_success=true` flag; gate-denied transitions produce zero commits; branch-tip monotonicity check (EM-024a) flags externally-rewound task branches; transition-event emission never precedes `git update-ref` (EM-025a); ENOSPC retries with new transition_id and evidence-orphan cleanup.
 - **EM-027 — EM-030 (outcome spine).** Cross-subsystem tests with twin handler: verify the full flow from handler outcome to transition-event projection; verify consumer retrieving the full trace via `git show`.
-- **EM-031 — EM-033 (state reconstruction).** Restart scenario tests: destroy the daemon; confirm full state reconstructable from git + Beads without JSONL reads; confirm active-run discovery (EM-031a) correctly identifies in-flight runs from ref scan + Beads query; confirm no rollback on later-transition failure; confirm JSONL torn-tail does not produce false Cat 6b signal (EM-031); confirm Beads-unreachable triggers Cat 0 and `degraded` status rather than silent git-only fallback; confirm worktree state is preserved across crash → reconciliation dispatch.
+- **EM-031 — EM-033 (state reconstruction).** Restart scenario tests: destroy the daemon; confirm full state reconstructable from Git + current Bead state without JSONL or a daemon-local registry; confirm active-run discovery (EM-031a) correctly identifies in-flight runs from ref scan + Beads query; confirm a local and a remote release claim recover the recorded dispatch head, merge target, and endpoint before release; confirm a missing, corrupt, or inconsistent claim preserves the branch and routes to reconciliation without merge, close, reopen, or redispatch; confirm no rollback on later-transition failure; confirm JSONL torn-tail does not produce false Cat 6b signal (EM-031); confirm Beads-unreachable triggers Cat 0 and `degraded` status rather than silent git-only fallback; confirm worktree state is preserved across crash → reconciliation dispatch.
 - **EM-034 — EM-037 (sub-workflow).** Nested-workflow scenario tests: single run_id across nesting; checkpoint commits all on parent branch; namespaced `node_id` appears in state and transition records; mutual sub-workflow reference rejected by validator; sub-workflow-entered/exited lifecycle events fire; expansion pin is readable from the entry checkpoint's evidence map after daemon restart (EM-034c); registry updates between crash and restart do not change the run's expanded graph; sub-workflow terminal outcome at the parent's cascade matches the last-expanded-node's Outcome (EM-036a).
 - **EM-038 — EM-040 (validation).** Validator unit tests for every failure mode listed in EM-038, including sub-workflow-reference cycle detection and missing `start_node_id` / empty `terminal_node_ids`.
 - **EM-041 — EM-046, EM-046a, EM-046b (edge selection, backtracking, cycles).** Edge-cascade unit tests enumerating every precedence case; cycle-cap tests verifying `compilation_loop` failure at cap (disjoint from `structural`); traversal-counter recovery across restart verified by re-derivation from git log; rollback-transition tests verifying new `transition_id` and unchanged earlier commit; no-matching-edge scenario produces `structural` failure with reason `no_outgoing_edge_matches` (EM-046a); gate-deny enters `gate-pending` and waits for gate-resolution signal (EM-042a); RETRY re-dispatches the same node with context_updates applied pre-redispatch and fails as `transient` at retry-cap exhaustion (EM-046b).
@@ -2111,6 +2151,7 @@ Default-if-unresolved: (resolved)
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-08-03 | 0.10.6 | agent (`queue-dogfood-readiness`) | **Release-claim checkpoint for unfinished DOT release.** EM-031b now requires a final pre-release checkpoint carrying an immutable `ReleaseClaim`. The typed record stores the dispatch-head SHA, resolved merge-target ref and SHA, and an optional remote endpoint with worker name, host, and repository path. Restart reads this claim from Git and the current Bead state before it takes any release action. JSONL, daemon-local registries, and reconstructed process memory cannot supply release facts. A missing, corrupt, or inconsistent claim preserves the branch and routes to reconciliation without merge, close, reopen, or redispatch. `Transition` gains the additive optional field; N-1 compatibility remains under §6.4. |
 | 2026-08-02 | 0.10.4 | agent (codename:event-payload-ownership) | **Step 13 descriptor and no-review binding.** Adds the typed workflow descriptor, pre-start resolution, tier-0 queue-item compatibility mapping, canonical no-review graph binding, and resolver-owned review policy. EM-055 now uses WG-046 post-parse typed-attribute substitution. The main-loop pseudocode passes the complete queue item to resolution and carries the resolved result through validation and run creation. EM-057 test obligations cover all nine checks. |
 | 2026-08-01 | 0.10.2 | agent (hk-v4wer) | **EM-058 gains a terminal-classification precondition for `dot`-mode `agentic` nodes.** The component-C sub-note derived a node Outcome "after a clean agent exit" without saying who decides that the exit was clean. The `dot` implementation decided it on worktree HEAD advance alone: it never read the Stop-hook outcome and never ran the [claude-hook-bridge.md §4.7 CHB-020] branch mapping, so a node that committed and then reported `FAILURE_SIGNAL` was recorded as `SUCCESS` and its work was merged, and a progress-stream watcher failure left the node with no signal at all. The new sub-note states the three CHB-020 cases in order and forbids deriving `SUCCESS` from a HEAD advance after a failing exit. It adds no obligation the `single` path did not already carry — `single` has applied the same rule at its terminal switch since CHB-020 landed — so this is a `dot`-side parity clause, not a new requirement. The clean-exit case for a harness that reports nothing and exits 0 is stated explicitly, because dropping it would fail every `CompletionProcessExit` harness. No requirement IDs added, renumbered, or retired. |
 | 2026-07-30 | 0.10.1 | agent (spec citation cleanup) | **Rotted pointers repaired across `specs/`. No obligation changed by this pass.** Deleted files that were cited as implementation evidence now name the symbol that carries the behavior today. Line-number citations became symbol names, per the repo rule to cite symbols and never line numbers. The retired `review-loop` workflow mode was dropped from every list that presented it as a live selectable mode, because `core.WorkflowMode.Valid()` accepts only `single` and `dot`. Rules that name `review-loop` as a RETIRED value to reject are unchanged, and so are the event `review_loop_cycle_complete` and the review-loop-failure budget, whose symbols still exist. Where a spec named a test as its conformance sensor and that test no longer exists, the text now says so instead of claiming cover it does not have. |

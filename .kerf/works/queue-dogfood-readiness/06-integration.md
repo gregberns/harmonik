@@ -47,11 +47,23 @@ event cohort source before asserting a count.
     requires `TestCrossBusEventTypeCohortCount` with a named `wantCount` and
     requires the adding work to create or update it. EV-050 and
     `queue_recovered` use the same named guard.
+11. EM-031b treated a branch ahead of its dispatch head as enough restart
+    evidence. That shape cannot recover the chosen merge target or remote
+    worker endpoint. It now requires an immutable Git-backed release claim in
+    the final pre-release transition checkpoint. Recovery reads the claim and
+    current Bead state before it takes any release action. JSONL and a
+    daemon-local registry cannot provide release facts. A missing or invalid
+    claim preserves the branch and routes to reconciliation.
 
 ## Consistency Issues Found
 
 `queue-resume` is consistently distinct from operator resume, drain release,
 and handler resume. `queue_recovered` is the only recovery observation.
+
+The release claim is the shared boundary between graceful drain and restart
+reconstruction. T5a writes it. T6 consumes it. The claim stores the dispatch
+head, resolved merge target, and optional remote endpoint in the immutable Git
+checkpoint. This removes the prior unstated dependency on daemon-local state.
 
 The scratch readiness canary is now explicitly pre-fleet. It does not name or
 authorize the later fleet canary. The validator does not call Beads or the
@@ -83,7 +95,8 @@ plan files. No draft is omitted.
 ## Final Assessment
 
 The queue-dogfood readiness contract is coherent after the corrections above.
-It defines durable recovery, safe committed-DOT drain, retained local evidence,
-and independent assessment without fleet-daemon operation. Two independent
-re-reviews approve this Integration pass. No integration reviewer started a
+It defines durable recovery, safe committed-DOT drain, Git-backed restart
+inputs, retained local evidence, and independent assessment without
+fleet-daemon operation. The release-claim amendment needs the next
+cross-boundary review before finalization. No integration reviewer started a
 daemon or changed operational state.

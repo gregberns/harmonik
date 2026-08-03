@@ -17,8 +17,14 @@ The final focused review approved the corrected dependency order. Both reviews
 confirm that all sixteen scenario and exploratory test beads exist, remain
 open, and are named in the plan.
 
-## Verdict
+## Post-review amendment
 
-APPROVE. The task list covers every changelog target. It has concrete
-acceptance checks, an acyclic dependency graph, and a realistic parallel plan.
-No reviewer started a daemon or changed operational state.
+The approval above predates T5a. T5a writes the immutable Git release claim
+that T6 needs for restart reconstruction. The updated graph is
+`T5 → T5a → T6`; final integration waits for T5a with the other implementation
+tasks. Re-review this shared core boundary before finalization.
+
+## Prior verdict
+
+APPROVE. This verdict applies to the pre-amendment task list. No reviewer
+started a daemon or changed operational state.

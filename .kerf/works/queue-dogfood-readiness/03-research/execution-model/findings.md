@@ -16,6 +16,9 @@
   close.
 - `EM-031` and `EM-031a` require restart reconstruction from git and Beads.
   JSONL is not the recovery authority.
+- A run branch alone cannot recover the dispatch head, merge target, or remote
+  worker location. Those facts are not durable in Beads, and a daemon-local
+  registry disappears on restart.
 - `internal/daemon/workloop.go` `beadRunOne` detects cancellation after the
   DOT driver returns. It resolves the worktree tip and sends it to
   `RunBridge.Drain`.
@@ -33,7 +36,9 @@
 ## Risks and decisions
 
 - The spec does not name the state where an agent commit exists but release is
-  unfinished. Define that handoff and its restart recovery evidence.
+  unfinished. Define a Git-backed, immutable release claim on the checkpoint
+  transition. It must carry the dispatch head, resolved merge target, and the
+  optional remote endpoint used for synchronization.
 - `EM-052` needs a cross-reference to the shutdown-drain edge. That edge must
   synchronize a remote run branch before merge and reopen on failure.
 - A crash after merge and before bead close needs an explicit reconstruction

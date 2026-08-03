@@ -27,11 +27,20 @@
 - **Requirements:**
   - Shutdown must either drain a committed run through its release path or
     retain a durable, reviewable recovery state.
+  - Before release begins, the daemon must write an immutable Git-backed
+    release claim in the committed transition record. The claim must retain
+    the dispatch-head SHA, the resolved merge-target ref and SHA, and, for a
+    remote worker, its worker name, host, and repository path.
+  - Restart must use that claim and the current Bead state to reconstruct
+    unfinished release. JSONL and a daemon-local registry must not supply a
+    missing release fact.
   - The daemon must not silently redispatch work that already committed.
   - The proof must cover daemon stop during this window.
 - **Dependencies:** Alpha owns the daemon implementation and tests. The queue
-  recovery contract must agree on the release-state handoff. The detailed
-  terminal-spine and merge rules remain in `run-state-machine.md`.
+  recovery contract must agree on the release-state handoff. The release-claim
+  checkpoint contract is a shared core boundary and must land before restart
+  reconstruction. The detailed terminal-spine and merge rules remain in
+  `run-state-machine.md`.
 
 ### `specs/run-state-machine.md`
 

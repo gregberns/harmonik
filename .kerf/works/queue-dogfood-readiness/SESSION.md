@@ -4,9 +4,10 @@
 
 The work is **Ready**. Problem Space, Decompose, Research, Change Design, Spec
 Draft, Integration, and Tasks are complete. Two independent re-reviews approved
-the corrected Integration pass and two approved the task plan. `kerf square`
-passes with all 49 expected artifacts. The task plan has twelve tasks and names
-all sixteen required test beads. Fourteen research records and fifteen design
+the corrected Integration pass and two approved the task plan. The later
+release-claim amendment needs a cross-boundary review. `kerf square` passed
+before that amendment. The task plan now has thirteen tasks and names all
+sixteen required test beads. Fourteen research records and fifteen design
 records are on disk.
 
 ## Decisions made
@@ -39,6 +40,10 @@ records are on disk.
 - Shutdown drain resolves the committed tip with a live context, synchronizes a
   remote branch before merge, and reopens on sync or merge failure. A no-change
   close requires that synchronization.
+- Restart release recovery needs an immutable Git-backed release claim. The
+  final pre-release transition records the dispatch head, resolved merge target,
+  and optional remote endpoint. T5a writes the claim. T6 reads the claim and
+  current Bead state without JSONL or daemon-local registry fallback.
 - The first canary uses an explicit local, non-Pi, single-item invocation. It
   saves the batch artifact and event capture before scratch cleanup.
 - A normal command watchdog must not bypass graceful drain. Immediate stop is a
@@ -59,7 +64,7 @@ records are on disk.
 
 ## Suggested next steps
 
-1. Implement T1–T9 from `07-tasks.md` in lane order.
+1. Implement T1–T9 plus T5a from `07-tasks.md` in lane order.
 2. Finalize documents with T10 after implementation evidence exists.
 3. Run T11 then T12 on a controlled local fixture.
 4. Keep the fleet daemon stopped.

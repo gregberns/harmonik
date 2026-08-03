@@ -74,17 +74,37 @@
   normal-timeout bypass before the terminal result.
 - **Depends on:** none.
 
+### T5a — Immutable release-claim checkpoint
+
+- **What:** Before normal release or shutdown drain, persist a typed immutable
+  release claim in the final pre-release Git checkpoint. The claim records the
+  dispatch-head SHA, resolved merge-target ref and SHA, and the optional remote
+  worker name, host, and repository path.
+- **Spec sections:** `execution-model.md` §4.7 EM-031b and §6.1
+  `Transition`, `ReleaseClaim`, and `RemoteEndpoint`.
+- **Deliverables:** typed core release-claim records, checkpoint writer and
+  reader wiring, and focused local and remote checkpoint tests.
+- **Acceptance:** Tests prove the claim is durable before any synchronize,
+  merge, close, or reopen call; local claims omit the endpoint; remote claims
+  retain every endpoint field; and a later transition cannot rewrite the claim.
+- **Depends on:** T5.
+
 ### T6 — Restart reconstruction of unfinished release
 
 - **What:** Reconstruct committed but unsettled DOT release after restart from
-  git and Beads evidence, then reach one drain close-or-reopen result.
+  the immutable Git release claim and current Bead state, then reach one drain
+  close-or-reopen result. Do not use JSONL or a daemon-local registry as a
+  release-state source.
 - **Spec sections:** `execution-model.md` §4.7 EM-031b and §4.12 EM-053a;
   `run-state-machine.md` §7 RSM-021; `operator-nfr.md` §4.8 ON-030.
 - **Deliverables:** daemon restart/reconciliation path and restart fault tests.
 - **Acceptance:** Tests cover local and remote unfinished release, missing tip,
-  sync failure, merge failure, and close failure. No test uses JSONL as
-  reconstruction authority.
-- **Depends on:** T5.
+  sync failure, merge failure, and close failure. They prove recovery uses the
+  recorded target and remote endpoint after restart with JSONL and any
+  daemon-local registry absent. A missing, corrupt, or inconsistent claim
+  retains the branch and reconciles without merge, close, reopen, or
+  redispatch.
+- **Depends on:** T5a.
 
 ### T7 — Durability proof and ratchet repair
 
@@ -140,7 +160,7 @@
 - **Acceptance:** The final targets match the approved drafts, source-of-truth
   rules are preserved, and new operational records exist at their declared
   `docs/` paths.
-- **Depends on:** T1–T9.
+- **Depends on:** T1–T9 and T5a.
 
 ### T11 — Scenario validation
 
@@ -179,16 +199,17 @@
 T1 ─┬─ T2
     ├─ T3 ─ T7
     └─ T4
-T5 ─ T6
+T5 ─ T5a ─ T6
 T8 ─ T9
-T1,T2,T3,T4,T5,T6,T7,T8,T9 ─ T10 ─ T11 ─ T12
+T1,T2,T3,T4,T5,T5a,T6,T7,T8,T9 ─ T10 ─ T11 ─ T12
 ```
 
 ## Parallelization Plan
 
 T1, T5, and T8 can begin in parallel because they own separate contracts and
 packages. T3 starts after T1's queue transaction shape is fixed. T2 and T4
-then run in parallel after T1. T6 follows T5. T7 follows T1 and T3. T9 follows
-the read-only evidence record from T8. T10 serializes final target publication
-after all implementation evidence. T11 then validates the integrated result;
-T12 follows T11 so exploratory findings use the same controlled fixture.
+then run in parallel after T1. T5a writes the release claim after T5. T6 uses
+that claim after T5a. T7 follows T1 and T3. T9 follows the read-only evidence
+record from T8. T10 serializes final target publication after all
+implementation evidence. T11 then validates the integrated result; T12 follows
+T11 so exploratory findings use the same controlled fixture.

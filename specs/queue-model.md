@@ -8,7 +8,7 @@ requirement-prefix: QM
 status: draft
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.1.6
+version: 0.1.7
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-07-27
@@ -1321,3 +1321,20 @@ v0.1.1 — 2026-05-15 — gap-closure pass (hk-089gr). Six additive amendments s
 6. **§3.1 (QM-001) — I/O error behavior.** On any I/O error in the atomic-write sequence, the daemon MUST refuse further mutations, emit `infrastructure_unavailable{failed_prerequisite: queue_write_error}`, and transition to `degraded` state. Operator recovery is `harmonik stop` + restart.
 
 v0.1.0 — initial publication for extqueue work; see kerf/extqueue 05-changelog.md.
+
+## Amendment — durable failed-queue recovery
+
+### QM-058 — Failed recovery transaction
+
+The daemon MUST accept failed recovery only for a queue in
+`paused-by-failure`. One durable queue transaction MUST re-arm only failed
+items, reopen only failed groups, clear each retired `run_id`, and retain every
+completed item. The transaction MUST write a recovery receipt before dispatch
+can resume. A repeated request for the same recovered state MUST return that
+receipt without a second mutation.
+
+### QM-059 — Reservation release owner
+
+Reservation undo, terminal release, session adoption, and failed recovery MUST
+use the QM-001 transaction owner. A raw setter MUST NOT clear quarantine. A
+quarantine clears only through an explicit durable recovery classification.

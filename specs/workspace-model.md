@@ -8,7 +8,7 @@ requirement-prefix: WM
 status: reviewed
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.4.9
+version: 0.4.10
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-07-30
@@ -1429,3 +1429,13 @@ This table is published to help downstream specs migrate their inbound citations
 | `§5.9 Re-run rule` | `§4.9` | Re-run vs intra-run classification |
 
 Known inbound citation counts requiring migration (per round-1 cross-spec-architect audit, 2026-04-24): execution-model.md (12), reconciliation/spec.md (8), operator-nfr.md (6), process-lifecycle.md (5), handler-contract.md (5), beads-integration.md (5), event-model.md (4), reconciliation/schemas.md (2), architecture.md (1). Total ~48 inbound cites across 9 spec files. The `control-points.md` citations already use the current §4.2 form.
+
+## Amendment — terminal recovery workspace
+
+### WM-041 — Recovery disposition
+
+A committed-but-unmerged run MUST retain its task branch, worktree, merge
+evidence, and a nonterminal recovery disposition. Startup MUST adopt its lease
+or transfer recovery authority before stale-lock sweep. The run MUST NOT use
+discard or reopen until the terminal-recovery matrix reaches one terminal
+outcome.

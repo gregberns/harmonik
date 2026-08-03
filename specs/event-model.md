@@ -8,7 +8,7 @@ requirement-prefix: EV
 status: draft
 spec-category: foundation-cross-cutting
 spec-shape: taxonomy-first
-version: 0.7.6
+version: 0.7.7
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-08-02
@@ -1975,3 +1975,13 @@ Default-if-unresolved: Implement `recover_and_log`; `quarantine_consumer` and `f
 **Why UUIDv7 ordering needs the high-water-mark (EV-002c).** UUIDv7's time bits are wall-clock. NTP adjustment, VM pause/resume, and operator clock fixes can regress the wall clock across a daemon restart. Without HWM persistence, a post-restart event could sort before a pre-restart event, violating EV-008's partial order at the restart boundary. Piggybacking the HWM write on the F-class fsync domain keeps the cost flat — there is no second fsync — and aligns HWM durability with the events the HWM needs to sort after.
 
 **Hidden assumptions explicitly acknowledged.** (1) The bus is in-process; cross-process consumers (investigator agents in separate Claude Code sessions) read JSONL subject to EV-021/EV-022. (2) One JSONL file per project; cross-project correlation is out of scope. (3) Redaction-before-observe destroys evidence that a payload contained a secret; this is a deliberate safety-over-forensics tradeoff. (4) `trace_context.parent_event_id` is populated SHOULD, not MUST; payload-specific causal fields (`triggering_event_id`) coexist deliberately for cases where the causal link is type-specific. (5) 71-event taxonomy has no hard budget; later subsystems expand via EV-027; a soft target of ≤120 is advisory, not normative. (6) `fsync(2)` durability is contingent on the filesystem honoring write barriers and the storage device flushing its write cache; consumer-grade SSDs without power-loss-protection may silently weaken EV-016 to "best-effort durability at the kernel boundary." Operators on such hardware accept this floor.
+
+## Amendment — failed recovery observation
+
+### EV-051 — Failed recovery events
+
+The daemon MUST emit Class-F recovery-result events after QM-058 commits. The
+payload MUST include queue, affected groups, item count, prior and current
+state, recovery receipt, retired run IDs, and result reason. The event stream
+MUST distinguish accepted, no-op, and rejected recovery. Existing `run_*`
+events remain the only item terminal events.

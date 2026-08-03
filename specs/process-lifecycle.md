@@ -8,7 +8,7 @@ requirement-prefix: PL
 status: draft
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.7.4
+version: 0.7.5
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-08-02
@@ -1807,3 +1807,17 @@ Cross-ref: PL-021b §4 (window-naming determinism), PL-021b §8 (window-name in 
 | 2026-04-24 | 0.3.0 | foundation-author | R1 integration pass (implementer + cross-spec-architect + critic). See prior revision history for full detail. |
 | 2026-04-24 | 0.2.0 | foundation-author | Corpus-wide cleanup pass (no semantic changes); architecture.md citation anchor migration. |
 | 2026-04-23 | 0.1.0 | foundation-author | Initial draft migrated from [docs/foundation/components.md §8] per spec-template 1.1. |
+
+## Amendment — failed recovery and readiness gate
+
+### PL-032 — Failed recovery command
+
+The daemon socket and CLI MUST expose a failed-recovery command distinct from
+drain resume. It MUST report accepted, no-op, and rejected results only after
+QM-058 commits. Its response MUST include the durable recovery receipt.
+
+### PL-033 — Controlled readiness gate
+
+A readiness gate MUST run in an isolated scratch daemon. An assessor MUST NOT
+consume normal queue work. A PASS permits only the machine-readable canary
+profile after its decision owner acts.

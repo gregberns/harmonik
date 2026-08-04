@@ -385,10 +385,10 @@ exit 0
 
 	collector := &stubEventCollector{}
 	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
-		BrAdapter:     requeueLedger,
-		Bus:           collector,
-		ProjectDir:    projectDir,
-		HandlerBinary: "/bin/sh",
+		BrAdapter:        requeueLedger,
+		Bus:              collector,
+		ProjectDir:       projectDir,
+		HandlerBinary:    "/bin/sh",
 		HandlerArgs:      []string{handlerScript},
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),

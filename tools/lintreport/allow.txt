@@ -324,8 +324,6 @@ internal/daemon/restartbackoff.go	gocritic
 internal/daemon/reviewgateanomaly_hktnmjy.go	nilerr
 internal/daemon/run_session_adoption.go	gocognit
 internal/daemon/run_session_adoption.go	revive
-internal/daemon/run_w3cp1_boiwe_hiqrl_test.go	errorlint
-internal/daemon/run_w3cp1_boiwe_hiqrl_test.go	gocritic
 internal/daemon/runfailed_bead_reset_s20z_test.go	errcheck
 internal/daemon/runfailed_bead_reset_s20z_test.go	revive
 internal/daemon/runinflightreconcile_hkr73qr.go	exhaustive

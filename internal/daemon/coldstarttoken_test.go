@@ -389,8 +389,13 @@ func (r *coldstartRun) start(t *testing.T) <-chan struct{} {
 	t.Cleanup(func() {
 		// Plain write, not letFinish: a cleanup must not call t.Fatalf, and the
 		// file is already there on the paths that released the agent normally.
-		//nolint:gosec // G306: a release marker in a per-test temp dir
-		_ = os.WriteFile(r.agent.releasePath, []byte("go\n"), 0o600)
+		// The error is reported rather than dropped: `_ =` is a finding here
+		// because .golangci.yml sets errcheck check-blank, and a cleanup that
+		// silently fails to release the agent leaves the next assertion waiting
+		// on a marker that never arrives.
+		if wErr := os.WriteFile(r.agent.releasePath, []byte("go\n"), 0o600); wErr != nil {
+			t.Logf("coldstart cleanup: release marker %s: %v", r.agent.releasePath, wErr)
+		}
 		select {
 		case <-done:
 		case <-time.After(coldstartWaitLimit):

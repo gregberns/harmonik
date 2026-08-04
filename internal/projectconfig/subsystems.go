@@ -231,6 +231,26 @@ const (
 	// subscribe stream a MUST, so a `decisions wait` that returns empty and
 	// succeeds against a refused subscription is a conformance break.
 	SubsystemSubscribeHub SubsystemName = "subscribe_hub"
+
+	// SubsystemSupervisorWatchdog names the daemon-side supervisor liveness
+	// watchdog (supervise.SupervisorWatchdog), constructed at the composition
+	// root in cmd/harmonik/main.go.
+	//
+	// It probes .harmonik/cognition/supervisor.pid every 60 s. When no live
+	// supervisor is found it runs `harmonik supervise restart --watch-restart`,
+	// up to three times. On a clone where no supervisor has ever run, the FIRST
+	// tick after boot therefore starts one.
+	//
+	// That is correct for a fleet deployment and wrong for a throwaway daemon.
+	// A test or scratch daemon that an operator kills to watch the shutdown
+	// drain gets a supervisor back about a minute later, and the supervisor
+	// then revives the daemon. Off means the daemon reports a dead supervisor
+	// nowhere and starts none, so `down` stays down.
+	//
+	// Leave it ON for any deployment that must survive a supervisor crash: it
+	// is the only path that revives the supervisor, and without it a joint
+	// supervisor+daemon death has no detector (hk-pen9, a 7 h 11 m outage).
+	SubsystemSupervisorWatchdog SubsystemName = "supervisor_watchdog"
 )
 
 // knownSubsystems is the closed set of names the `subsystems:` block accepts.
@@ -250,6 +270,7 @@ var knownSubsystems = map[SubsystemName]struct{}{
 	SubsystemReviewGateAnomaly:       {},
 	SubsystemLedgerImportRecovery:    {},
 	SubsystemSubscribeHub:            {},
+	SubsystemSupervisorWatchdog:      {},
 }
 
 // ErrUnknownSubsystem is returned when the subsystems: block names a subsystem

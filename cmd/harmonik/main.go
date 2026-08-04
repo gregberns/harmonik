@@ -34,6 +34,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -1392,15 +1393,12 @@ EXAMPLES
 	// 'harmonik supervise restart --watch-restart', closing the gap where the
 	// supervisor's own DaemonWatchdog dies with it and leaves no auto-revive path
 	// for the daemon itself (hk-pen9: 7h11m undetected outage).
-	{
-		swLog := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-		sw := supervise.NewSupervisorWatchdog(buildSupervisorWatchdogSpec(projectDir, daemonBinaryPath), swLog)
-		go func() {
-			if err := sw.Run(ctx); err != nil && ctx.Err() == nil {
-				fmt.Fprintf(os.Stderr, "supervisor-watchdog: exited: %v\n", err)
-			}
-		}()
-	}
+	startSupervisorWatchdogIfEnabled(
+		ctx,
+		projCfg.Subsystems,
+		buildSupervisorWatchdogSpec(projectDir, daemonBinaryPath),
+		os.Stderr,
+	)
 
 	// F56 (hk-86eh): wire signal ctx as StopDispatchCtx so SIGTERM halts new
 	// dispatch immediately; in-flight goroutines continue on runCtx.
@@ -1456,6 +1454,50 @@ func inFlightDrainGoroutine(sigCtx, runCtx context.Context, cancelRun context.Ca
 		}
 	case <-runCtx.Done():
 	}
+}
+
+// startSupervisorWatchdogIfEnabled is the ONE construction seam for the
+// daemon-side supervisor watchdog. It applies subsystem partitioning the same
+// way daemon.bindSocketIfEnabled applies it to the socket subtree.
+//
+// When `subsystems.supervisor_watchdog.enabled: false` is set in
+// .harmonik/config.yaml, NOTHING here is built: no SupervisorWatchdog, no
+// goroutine, no pidfile probe, and no `harmonik supervise restart` child. This
+// is deliberately NOT "constructed but inert". An inert watchdog still holds
+// the composition root hostage, and a watchdog that is built but not run is one
+// deleted `if` away from starting a supervisor again.
+//
+// The return value is the observable decision: the watchdog when it was built,
+// nil when the subsystem is off. The production caller discards it. A test
+// reads it to tell "absent" from "present and idle" — a bool computed from the
+// switch could not tell those two apart.
+//
+// Absent config (the zero SubsystemsConfig) enables the watchdog, so a
+// deployment with no subsystems: block behaves as it did before this switch.
+func startSupervisorWatchdogIfEnabled(
+	ctx context.Context,
+	subsystems projectconfig.SubsystemsConfig,
+	spec supervise.SupervisorWatchdogSpec,
+	logOut io.Writer,
+) *supervise.SupervisorWatchdog {
+	if !subsystems.Enabled(projectconfig.SubsystemSupervisorWatchdog) {
+		// Say so at boot. A silent partition looks the same as a config that
+		// did not take effect.
+		//nolint:errcheck // best-effort boot diagnostic; a failed log write must not stop the daemon
+		_, _ = fmt.Fprintf(logOut, "supervisor-watchdog: subsystem %s disabled — not started; "+
+			"a dead supervisor will not be detected or revived\n",
+			projectconfig.SubsystemSupervisorWatchdog)
+		return nil
+	}
+	swLog := slog.New(slog.NewTextHandler(logOut, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	sw := supervise.NewSupervisorWatchdog(spec, swLog)
+	go func() {
+		if err := sw.Run(ctx); err != nil && ctx.Err() == nil {
+			//nolint:errcheck // best-effort exit diagnostic; the daemon is already past boot
+			_, _ = fmt.Fprintf(logOut, "supervisor-watchdog: exited: %v\n", err)
+		}
+	}()
+	return sw
 }
 
 // buildSupervisorWatchdogSpec returns the SupervisorWatchdogSpec used by the

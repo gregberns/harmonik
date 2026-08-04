@@ -319,12 +319,10 @@ func (t AxisTags) MarshalJSON() ([]byte, error) {
 			string(t.Idempotency),
 		)
 	}
-	return json.Marshal(axistagsJSON{
-		LLMFreedom:    t.LLMFreedom,
-		IODeterminism: t.IODeterminism,
-		ReplaySafety:  t.ReplaySafety,
-		Idempotency:   t.Idempotency,
-	})
+	// A conversion, not a field-by-field literal: the two shapes must stay
+	// identical, and a conversion turns any future drift into a compile error
+	// instead of a silently dropped field.
+	return json.Marshal(axistagsJSON(t))
 }
 
 // UnmarshalJSON implements json.Unmarshaler.

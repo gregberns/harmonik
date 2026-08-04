@@ -375,11 +375,7 @@ func snapshotsToDisk(snapshots []HandlerPauseStatusSnapshot) *handlerStateDiskDa
 		if len(s.InFlightAtPause) > 0 {
 			entry.InFlightAtPause = make([]inFlightRunDiskDaemon, len(s.InFlightAtPause))
 			for i, r := range s.InFlightAtPause {
-				entry.InFlightAtPause[i] = inFlightRunDiskDaemon{
-					RunID:        r.RunID,
-					BeadID:       r.BeadID,
-					DispatchedAt: r.DispatchedAt,
-				}
+				entry.InFlightAtPause[i] = inFlightRunDiskDaemon(r)
 			}
 		} else {
 			entry.InFlightAtPause = []inFlightRunDiskDaemon{}
@@ -408,11 +404,7 @@ func snapshotsToDisk(snapshots []HandlerPauseStatusSnapshot) *handlerStateDiskDa
 				if len(as.InFlightAtPause) > 0 {
 					adisk.InFlightAtPause = make([]inFlightRunDiskDaemon, len(as.InFlightAtPause))
 					for i, r := range as.InFlightAtPause {
-						adisk.InFlightAtPause[i] = inFlightRunDiskDaemon{
-							RunID:        r.RunID,
-							BeadID:       r.BeadID,
-							DispatchedAt: r.DispatchedAt,
-						}
+						adisk.InFlightAtPause[i] = inFlightRunDiskDaemon(r)
 					}
 				} else {
 					adisk.InFlightAtPause = []inFlightRunDiskDaemon{}
@@ -437,14 +429,14 @@ func diskCauseToCore(d *handlerCauseDiskDaemon) core.HandlerPauseCause {
 }
 
 // diskInFlightToCore converts []inFlightRunDiskDaemon to []InFlightBeadRecord.
+//
+// The element copy is a conversion, not a field-by-field literal. The disk shape
+// and the in-memory record must stay identical, and a conversion turns any future
+// drift into a compile error instead of a silently dropped field.
 func diskInFlightToCore(rs []inFlightRunDiskDaemon) []InFlightBeadRecord {
 	out := make([]InFlightBeadRecord, 0, len(rs))
 	for _, r := range rs {
-		out = append(out, InFlightBeadRecord{
-			RunID:        r.RunID,
-			BeadID:       r.BeadID,
-			DispatchedAt: r.DispatchedAt,
-		})
+		out = append(out, InFlightBeadRecord(r))
 	}
 	return out
 }

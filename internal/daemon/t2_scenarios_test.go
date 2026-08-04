@@ -133,10 +133,7 @@ func TestT2_NonZeroExit(t *testing.T) {
 
 	// Poll until ReopenBead is called (indicates loop handled the failure).
 	deadline := time.After(6 * time.Second)
-	for {
-		if len(ledger.reopenedIDs()) > 0 {
-			break
-		}
+	for len(ledger.reopenedIDs()) == 0 {
 		select {
 		case <-deadline:
 			t.Logf("closed=%v reopened=%v events=%v", ledger.closedIDs(), ledger.reopenedIDs(), collector.eventTypes())
@@ -245,10 +242,7 @@ launched:
 
 	// Now wait for the loop to detect the kill and reopen the bead.
 	sigkillDeadline := time.After(6 * time.Second)
-	for {
-		if len(ledger.reopenedIDs()) > 0 || len(ledger.closedIDs()) > 0 {
-			break
-		}
+	for len(ledger.reopenedIDs()) == 0 && len(ledger.closedIDs()) == 0 {
 		select {
 		case <-sigkillDeadline:
 			t.Logf("T2-S2: events=%v closed=%v reopened=%v", collector.eventTypes(), ledger.closedIDs(), ledger.reopenedIDs())
@@ -330,10 +324,7 @@ exit 0
 
 	// Poll for bead state change (closed or reopened).
 	deadline := time.After(6 * time.Second)
-	for {
-		if len(ledger.closedIDs()) > 0 || len(ledger.reopenedIDs()) > 0 {
-			break
-		}
+	for len(ledger.closedIDs()) == 0 && len(ledger.reopenedIDs()) == 0 {
 		select {
 		case <-deadline:
 			t.Logf("T2-S3: events=%v closed=%v reopened=%v", collector.eventTypes(), ledger.closedIDs(), ledger.reopenedIDs())
@@ -407,10 +398,7 @@ func TestT2_ExitZeroNoSignal(t *testing.T) {
 	}()
 
 	deadline := time.After(6 * time.Second)
-	for {
-		if len(ledger.closedIDs()) > 0 || len(ledger.reopenedIDs()) > 0 {
-			break
-		}
+	for len(ledger.closedIDs()) == 0 && len(ledger.reopenedIDs()) == 0 {
 		select {
 		case <-deadline:
 			t.Logf("T2-S4: events=%v closed=%v reopened=%v", collector.eventTypes(), ledger.closedIDs(), ledger.reopenedIDs())
@@ -631,10 +619,7 @@ func TestT2_RunFailedEventContainsExitCode(t *testing.T) {
 	}()
 
 	deadline := time.After(6 * time.Second)
-	for {
-		if len(ledger.reopenedIDs()) > 0 {
-			break
-		}
+	for len(ledger.reopenedIDs()) == 0 {
 		select {
 		case <-deadline:
 			t.Fatal("T2-ExitCode: timed out waiting for reopen")
@@ -708,10 +693,7 @@ func TestT2_WorktreeLeftAfterFailure(t *testing.T) {
 	}()
 
 	deadline := time.After(6 * time.Second)
-	for {
-		if len(ledger.reopenedIDs()) > 0 {
-			break
-		}
+	for len(ledger.reopenedIDs()) == 0 {
 		select {
 		case <-deadline:
 			t.Fatal("T2-S7: timed out waiting for reopen after failure")

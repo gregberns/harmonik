@@ -357,10 +357,7 @@ func TestWorkLoop_DispatchClosesBead(t *testing.T) {
 
 	// Poll until the bead is closed or timeout.
 	deadline := time.After(15 * time.Second)
-	for {
-		if len(ledger.closedIDs()) > 0 {
-			break
-		}
+	for len(ledger.closedIDs()) == 0 {
 		select {
 		case <-deadline:
 			t.Fatal("timed out waiting for bead to be closed")
@@ -451,10 +448,7 @@ func TestWorkLoop_FailedHandlerReopensBead(t *testing.T) {
 
 	// Poll until the bead is reopened.
 	deadline := time.After(15 * time.Second)
-	for {
-		if len(ledger.reopenedIDs()) > 0 {
-			break
-		}
+	for len(ledger.reopenedIDs()) == 0 {
 		select {
 		case <-deadline:
 			t.Fatal("timed out waiting for bead to be reopened")
@@ -657,10 +651,7 @@ func TestWorkLoop_TwoConcurrentBeads(t *testing.T) {
 
 	// Wait for both beads to close.
 	deadline := time.After(20 * time.Second)
-	for {
-		if ledger.closedCount() >= 2 {
-			break
-		}
+	for ledger.closedCount() < 2 {
 		select {
 		case <-deadline:
 			t.Fatalf("timed out waiting for both beads to close; closed=%d", ledger.closedCount())
@@ -976,10 +967,7 @@ func TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency(t *testing.T) {
 
 	// Poll until all 10 beads are closed or the test times out.
 	deadline := time.After(25 * time.Second)
-	for {
-		if ledger.closedCount() >= beadCount {
-			break
-		}
+	for ledger.closedCount() < beadCount {
 		select {
 		case <-deadline:
 			t.Fatalf("timed out waiting for all %d beads to close; closed=%d peak_concurrent_claims=%d",

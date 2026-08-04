@@ -94,10 +94,7 @@ func TestRC020a_StartReconciliationScheduler_EmitsReconciliationStarted(t *testi
 
 	// Wait until at least one reconciliation_started event is emitted or timeout.
 	deadline := time.After(3 * time.Second)
-	for {
-		if emitter.count(core.EventTypeReconciliationStarted) > 0 {
-			break
-		}
+	for emitter.count(core.EventTypeReconciliationStarted) == 0 {
 		select {
 		case <-deadline:
 			t.Fatal("RC-020a: timed out waiting for reconciliation_started from scheduler")
@@ -153,10 +150,7 @@ func TestRC020a_StartReconciliationScheduler_EmitsReconciliationCompleted(t *tes
 
 	// Wait until at least one reconciliation_completed event is emitted or timeout.
 	deadline := time.After(3 * time.Second)
-	for {
-		if emitter.count(core.EventTypeReconciliationCompleted) > 0 {
-			break
-		}
+	for emitter.count(core.EventTypeReconciliationCompleted) == 0 {
 		select {
 		case <-deadline:
 			t.Fatal("RC-020a N5: timed out waiting for reconciliation_completed from scheduler on a no-op tick; " +

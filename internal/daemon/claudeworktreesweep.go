@@ -250,11 +250,18 @@ func claudeWorktreeNameValid(name string) bool {
 		return false
 	}
 	for _, c := range suffix {
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+		if !asciiAlphanumeric(c) {
 			return false
 		}
 	}
 	return true
+}
+
+// asciiAlphanumeric reports whether c is one of [A-Za-z0-9]. It is deliberately
+// ASCII-only: unicode.IsLetter would accept characters a git worktree name
+// produced by the Claude Code harness never contains.
+func asciiAlphanumeric(c rune) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 }
 
 // claudeWorktreeListRegisteredAndLocked returns the set of absolute paths that

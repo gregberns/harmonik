@@ -157,10 +157,7 @@ func runGateEfficacyWorkLoop(t *testing.T, beadID core.BeadID, scenarioBody stri
 	}()
 
 	deadline := time.After(85 * time.Second)
-	for {
-		if len(ledger.closedIDs()) > 0 || len(ledger.reopenedIDs()) > 0 {
-			break
-		}
+	for len(ledger.closedIDs()) == 0 && len(ledger.reopenedIDs()) == 0 {
 		select {
 		case <-deadline:
 			cancel()

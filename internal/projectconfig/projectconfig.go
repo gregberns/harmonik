@@ -1978,18 +1978,12 @@ func parseSuperviseBlock(path string, raw rawSuperviseConfig) (SuperviseConfig, 
 // Both target fields are optional; empty strings mean "not configured"
 // and callers apply the "captain" default (NOT here — so callers can
 // distinguish "absent" from an explicit "captain").
+//
+// A conversion, not a field-by-field literal: the raw shape and the config shape
+// must stay identical, and a conversion turns any future drift into a compile
+// error instead of a silently dropped field.
 func parseWatchBlock(raw rawWatchConfig) WatchConfig {
-	return WatchConfig{
-		StatusTarget:            raw.StatusTarget,
-		OpsmonitorTarget:        raw.OpsmonitorTarget,
-		AbsentThreshSec:         raw.AbsentThreshSec,
-		StallTicks:              raw.StallTicks,
-		LivenessInterval:        raw.LivenessInterval,
-		DigestInterval:          raw.DigestInterval,
-		StaffingStarvationGrace: raw.StaffingStarvationGrace,
-		LivenessPingBody:        raw.LivenessPingBody,
-		VerifyServicesBody:      raw.VerifyServicesBody,
-	}
+	return WatchConfig(raw)
 }
 
 // parseOpsmonitorBlock converts a rawOpsmonitorConfig into an OpsmonitorConfig.
@@ -1998,11 +1992,12 @@ func parseWatchBlock(raw rawWatchConfig) WatchConfig {
 // "scripts/ops-monitor-check.sh" script path).
 //
 // Bead ref: hk-bi4bg.
+//
+// A conversion, not a field-by-field literal: the raw shape and the config shape
+// must stay identical, and a conversion turns any future drift into a compile
+// error instead of a silently dropped field.
 func parseOpsmonitorBlock(raw rawOpsmonitorConfig) OpsmonitorConfig {
-	return OpsmonitorConfig{
-		Interval:   raw.Interval,
-		ScriptPath: raw.ScriptPath,
-	}
+	return OpsmonitorConfig(raw)
 }
 
 // parseStallSentinelBlock converts a rawStallSentinelConfig into a
@@ -2072,14 +2067,10 @@ func parseHarnessesBlock(raw rawHarnessesConfig) HarnessesConfig {
 	if len(pi.Profiles) > 0 {
 		profiles = make(map[string]PiProfileConfig, len(pi.Profiles))
 		for name, rp := range pi.Profiles {
-			profiles[name] = PiProfileConfig{
-				Provider:   rp.Provider,
-				Model:      rp.Model,
-				APIKeyEnv:  rp.APIKeyEnv,
-				APIKeyFile: rp.APIKeyFile,
-				BaseURL:    rp.BaseURL,
-				API:        rp.API,
-			}
+			// A conversion, not a field-by-field literal: drift between the raw
+			// and resolved profile shapes becomes a compile error instead of a
+			// silently dropped field.
+			profiles[name] = PiProfileConfig(rp)
 		}
 	}
 	// Copy provider slot ceilings verbatim; nil/empty stays nil (unbounded).

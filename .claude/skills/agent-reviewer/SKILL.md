@@ -144,6 +144,17 @@ against the repo's own `errcheck` / `gosec` / `noctx` / `nolintlint` settings.
 - In `internal/codexinput/` and `internal/codexdriver/`, `time.Sleep` / `time.After` /
   `time.NewTimer` are banned in production files — every wait goes through
   `substrate.ClockPort` (forbidigo, marker `SC6-DRIVER-CLOCKPORT`; `_test.go` exempt).
+- In `internal/runloop/` and `internal/runexec/`, EVERY direct wall-clock call is banned in
+  production files — `time.Now`, `time.Since`, `time.After`, `time.Tick`, `time.NewTicker`,
+  `time.NewTimer`, `time.Sleep`, `time.AfterFunc` (forbidigo, marker `C23-CLOCK-RATCHET`;
+  `_test.go` exempt). Both packages already keep off the wall clock, by different means.
+  `internal/runloop` takes every read through the injected `substrate.ClockPort`.
+  `internal/runexec` is a pure reactor that reads no clock at all — every timestamp arrives
+  on a fed event, stamped by the shell. Do NOT give `runexec` a clock port to satisfy the
+  ban. That passes the linter and breaks the purity contract its `doc.go` states. The ban is
+  a ratchet that prevents a regression in either, not a migration. To put one more package
+  under it, clean that package first, then add it to the `path-except` list of the
+  `C23-CLOCK-RATCHET` exclusion rule in `.golangci.yml`.
 - Comma-ok on every type assertion: `v, ok := x.(T)`. A bare `x.(T)` or `v, _ := x.(T)`
   is a finding (errcheck `check-type-assertions: true`).
 - **Never discard an error into the blank identifier.** `_ = f()` is an errcheck

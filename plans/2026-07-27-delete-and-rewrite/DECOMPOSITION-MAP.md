@@ -2591,10 +2591,15 @@ agreed measurement command. The migration half cannot be priced until that disag
 calls — `time.Now`, `time.Since`, `time.After`, `time.Tick`, `time.NewTicker`, `time.NewTimer`,
 `time.Sleep` and `time.AfterFunc` — in **`internal/runloop` and `internal/runexec`**. Both packages
 already made zero direct calls in production code, so the ban migrates nothing and costs nothing. It
-is a ratchet: neither package can regress. Test files are exempt, because a test may read the wall
-clock directly. The finding carries the tag `C23-CLOCK-RATCHET`, and the package list lives in the
-`path-except` field of the exclusion rule of the same name. **To extend the clause: clean one more
-package of direct clock calls, then add that package to that list.** Every other package is
+is a ratchet: neither package can regress. They stay off the wall clock by different means, and the
+difference matters. `internal/runloop` takes every read through the injected `substrate.ClockPort`.
+`internal/runexec` is a pure reactor that reads no clock at all — every timestamp arrives on a fed
+event, stamped by the shell, which is what its `doc.go` states. **Do not give `runexec` a clock port
+to satisfy this ban.** That passes the linter and breaks the purity contract the ban exists to
+protect. Test files are exempt, because a test may read the wall clock directly. The finding carries
+the tag `C23-CLOCK-RATCHET`, and the package list lives in the `path-except` field of the exclusion
+rule of the same name. **To extend the clause: clean one more package of direct clock calls, then
+add that package to that list.** Every other package is
 unaffected, `internal/daemon` and its 119 direct calls included. The whole-tree finding count is
 unchanged at 1,068.
 

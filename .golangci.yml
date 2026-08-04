@@ -169,7 +169,7 @@ linters:
         # TO EXTEND THE CLAUSE: clean a package of direct clock calls first, then
         # add it to the path-except list of the C23-CLOCK-RATCHET exclusion rule
         # above. That list is the whole ratchet. Do not widen it ahead of the code.
-        - { pattern: '^time\.(Now|Since|After|Tick|NewTicker|NewTimer|Sleep|AfterFunc)$', msg: "C23-CLOCK-RATCHET: internal/runloop and internal/runexec take every clock read through the injected port, never the wall clock" }
+        - { pattern: '^time\.(Now|Since|After|Tick|NewTicker|NewTimer|Sleep|AfterFunc)$', msg: "C23-CLOCK-RATCHET: neither internal/runloop nor internal/runexec reads the wall clock. runloop goes through the injected substrate.ClockPort. runexec is a pure reactor and takes every timestamp off a fed event, so do NOT give it a clock port" }
     depguard:
       # Component-graph rules (subsystem layering) live here per subsystem-organization.md §Dependency layering enforcement.
       # One `rules.<name>` entry per component; `files:` scopes the rule, `allow:`/`deny:` set the allowed edges.

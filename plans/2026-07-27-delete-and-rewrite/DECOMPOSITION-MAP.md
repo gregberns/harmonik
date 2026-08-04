@@ -2585,8 +2585,18 @@ quote 111 for the daemon figure — it is wrong.** The whole-tree totals propose
 failed to reproduce. The same regex over the same scope gives 356 here. One uncancellable sleep did
 verify: `internal/hookrelay/hookrelay.go` `sendToSocket` declares `wallMax = 25 * time.Second` and
 retries under a bare `time.Sleep`, so it can block shutdown for 25 seconds. **Settle first:** one
-agreed measurement command, then the free half — ban `time.Now` in the packages that are already
-clean, so they cannot regress.
+agreed measurement command. The migration half cannot be priced until that disagreement is closed.
+
+**The free half is DONE and enforced (2026-08-04).** `.golangci.yml` now bans the direct wall-clock
+calls — `time.Now`, `time.Since`, `time.After`, `time.Tick`, `time.NewTicker`, `time.NewTimer`,
+`time.Sleep` and `time.AfterFunc` — in **`internal/runloop` and `internal/runexec`**. Both packages
+already made zero direct calls in production code, so the ban migrates nothing and costs nothing. It
+is a ratchet: neither package can regress. Test files are exempt, because a test may read the wall
+clock directly. The finding carries the tag `C23-CLOCK-RATCHET`, and the package list lives in the
+`path-except` field of the exclusion rule of the same name. **To extend the clause: clean one more
+package of direct clock calls, then add that package to that list.** Every other package is
+unaffected, `internal/daemon` and its 119 direct calls included. The whole-tree finding count is
+unchanged at 1,068.
 
 **24 — delete the second merge engine, dedupe the live one.** Claims a complete second merge engine
 of about 1,048 production lines with zero non-test callers, held alive by tests, and that

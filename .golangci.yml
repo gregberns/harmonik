@@ -95,6 +95,21 @@ linters:
           - forbidigo
         text: 'SC6-DRIVER-CLOCKPORT'
         path: _test\.go$
+      # C23-CLOCK-RATCHET scoping. Same mechanism as the two SC6 rules above.
+      # This rule DROPS the C23-CLOCK-RATCHET finding in every file EXCEPT
+      # internal/runloop and internal/runexec (path-except), so the ban bites
+      # only in the two packages that are already clean. internal/daemon makes
+      # about 119 direct clock calls and stays unaffected.
+      - linters:
+          - forbidigo
+        text: 'C23-CLOCK-RATCHET'
+        path-except: internal/(runloop|runexec)/
+      # C23 carve-out: the ban targets production code. A test may read the
+      # wall clock directly.
+      - linters:
+          - forbidigo
+        text: 'C23-CLOCK-RATCHET'
+        path: _test\.go$
       # P2 hk-8dtiv: production Close() is now mechanically errcheck-gated (the four
       # (io.Closer|*os.File|net.Conn|net.Listener).Close exclude-functions entries were
       # dropped). Test Close noise stays at zero by matching the finding text on _test.go
@@ -143,6 +158,18 @@ linters:
         - { pattern: '^time\.Sleep$',    msg: "SC6-DRIVER-CLOCKPORT: driver waits go through substrate.ClockPort.Sleep, never time.Sleep" }
         - { pattern: '^time\.After$',    msg: "SC6-DRIVER-CLOCKPORT: driver waits go through substrate.ClockPort, never time.After" }
         - { pattern: '^time\.NewTimer$', msg: "SC6-DRIVER-CLOCKPORT: driver waits go through substrate.ClockPort, never time.NewTimer" }
+        # C23-CLOCK-RATCHET: this is the free half of decomposition candidate 23
+        # ("time as a port, on a ratchet") in
+        # plans/2026-07-27-delete-and-rewrite/DECOMPOSITION-MAP.md. It MIGRATES
+        # NOTHING. internal/runloop and internal/runexec already make zero direct
+        # wall-clock calls in production code, so the ban costs nothing today and
+        # stops both packages regressing. The migration half stays unpriced,
+        # because candidate 23's measurements still do not agree.
+        #
+        # TO EXTEND THE CLAUSE: clean a package of direct clock calls first, then
+        # add it to the path-except list of the C23-CLOCK-RATCHET exclusion rule
+        # above. That list is the whole ratchet. Do not widen it ahead of the code.
+        - { pattern: '^time\.(Now|Since|After|Tick|NewTicker|NewTimer|Sleep|AfterFunc)$', msg: "C23-CLOCK-RATCHET: internal/runloop and internal/runexec take every clock read through the injected port, never the wall clock" }
     depguard:
       # Component-graph rules (subsystem layering) live here per subsystem-organization.md §Dependency layering enforcement.
       # One `rules.<name>` entry per component; `files:` scopes the rule, `allow:`/`deny:` set the allowed edges.

@@ -66,12 +66,25 @@ func (b *gateTestRecordingBus) ReplayFrom(_ string, _ core.EventID) error       
 func (b *gateTestRecordingBus) DeadLetterReplay(_ string, _ *core.EventPattern) error { return nil }
 func (b *gateTestRecordingBus) Drain(_ context.Context) error                         { return nil }
 
+// gateTestFixtureWorkflowID returns the logical workflow identity the gate
+// dispatch fixtures use. It builds the value through core.NewWorkflowID so a
+// fixture that stops matching the identity rules fails here, not deep inside
+// Run.Valid().
+func gateTestFixtureWorkflowID(t *testing.T) core.WorkflowID {
+	t.Helper()
+	id, err := core.NewWorkflowID("gate-dispatch-test-graph")
+	if err != nil {
+		t.Fatalf("core.NewWorkflowID: %v", err)
+	}
+	return id
+}
+
 // gateTestFixtureRun returns a minimal valid Run for gate dispatch tests.
 func gateTestFixtureRun(t *testing.T) *core.Run {
 	t.Helper()
 	return &core.Run{
 		RunID:           core.RunID(uuid.Must(uuid.NewV7())),
-		WorkflowID:      core.WorkflowID(uuid.Must(uuid.NewV7())),
+		WorkflowID:      gateTestFixtureWorkflowID(t),
 		WorkflowVersion: core.WorkflowVersion("1.0.0"),
 		Input:           core.WorkspaceRef("ws-gate-test"),
 		WorkflowMode:    core.WorkflowModeSingle,

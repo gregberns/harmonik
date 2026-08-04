@@ -28,18 +28,42 @@ func scenarioFileFixtureWorkflowPath(t *testing.T) ScenarioFile {
 	}
 }
 
+// scenarioFixtureWorkflowIDText is the logical workflow identity the
+// ScenarioFile fixtures select. core.NewWorkflowID accepts it — see
+// TestScenarioFixtureWorkflowIDIsValidLogicalIdentity. The value must stay
+// valid because ScenarioFile marshals WorkflowID through
+// core.WorkflowID.MarshalText, which rejects text the identity rules do not
+// allow.
+const scenarioFixtureWorkflowIDText = "scenario-fixture-graph"
+
+// newScenarioFixtureWorkflowID returns a pointer to the fixture identity.
+// ScenarioFile.WorkflowID is a pointer because the spec models the field as
+// String|None, so each fixture needs its own addressable copy.
+func newScenarioFixtureWorkflowID() *core.WorkflowID {
+	wid := core.WorkflowID(scenarioFixtureWorkflowIDText)
+	return &wid
+}
+
+// TestScenarioFixtureWorkflowIDIsValidLogicalIdentity defends the claim that
+// the fixture identity is a real logical workflow ID and not text that only
+// happens to compile.
+func TestScenarioFixtureWorkflowIDIsValidLogicalIdentity(t *testing.T) {
+	t.Parallel()
+	if _, err := core.NewWorkflowID(scenarioFixtureWorkflowIDText); err != nil {
+		t.Fatalf("core.NewWorkflowID(%q): %v", scenarioFixtureWorkflowIDText, err)
+	}
+}
+
 // scenarioFileFixtureWorkflowID returns a minimally valid ScenarioFile using
 // WorkflowID as the workflow selector.
 func scenarioFileFixtureWorkflowID(t *testing.T) ScenarioFile {
 	t.Helper()
-	// Use a nil-pointer-free zero UUID for testing (not a valid UUID value, but
-	// valid for structural tests — WorkflowID presence is what matters here).
-	wid := core.WorkflowID{}
+	wid := newScenarioFixtureWorkflowID()
 	return ScenarioFile{
 		Name:              "id-based-scenario",
-		Description:       "scenario referencing a workflow by UUID",
+		Description:       "scenario referencing a workflow by logical ID",
 		WorkflowPath:      nil,
-		WorkflowID:        &wid,
+		WorkflowID:        wid,
 		AgentOverrides:    nil,
 		FixtureSetup:      FixtureSetup{},
 		ExpectedEvents:    nil,
@@ -80,7 +104,7 @@ func TestScenarioFileValid(t *testing.T) {
 	t.Parallel()
 
 	makeWP := func(s string) *string { return &s }
-	makeWID := func() *core.WorkflowID { w := core.WorkflowID{}; return &w }
+	makeWID := newScenarioFixtureWorkflowID
 	makeOutcome := func() *OutcomeExpectation {
 		o := OutcomeExpectation{
 			OutcomeStatus: core.OutcomeStatusSuccess,
@@ -472,7 +496,7 @@ func TestScenarioFileWorkflowMutualExclusivity(t *testing.T) {
 	t.Parallel()
 
 	makeWP := func(s string) *string { return &s }
-	makeWID := func() *core.WorkflowID { w := core.WorkflowID{}; return &w }
+	makeWID := newScenarioFixtureWorkflowID
 
 	base := ScenarioFile{
 		Name:        "mutex-test",

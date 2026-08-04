@@ -103,7 +103,7 @@ func (b *LiveStateBuilder) Build(ctx context.Context) StateSnapshot {
 	snap.Queues = b.buildQueues(globalCap)
 
 	var sessErr error
-	snap.Sessions, sessErr = b.buildSessions(now)
+	snap.Sessions, sessErr = b.buildSessions(ctx, now)
 	if sessErr != nil {
 		snap.ReadQuality.Unsure = true
 		snap.ReadQuality.Reasons = append(snap.ReadQuality.Reasons, "session gather error: "+sessErr.Error())
@@ -213,7 +213,7 @@ func (b *LiveStateBuilder) buildQueues(globalCap int) []StateQueue {
 	return result
 }
 
-func (b *LiveStateBuilder) buildSessions(now time.Time) ([]StateSession, error) {
+func (b *LiveStateBuilder) buildSessions(ctx context.Context, now time.Time) ([]StateSession, error) {
 	if b.projectDir == "" {
 		return nil, nil
 	}
@@ -224,12 +224,12 @@ func (b *LiveStateBuilder) buildSessions(now time.Time) ([]StateSession, error) 
 	sleepSIDs := scanSleepMarkerSIDs(b.projectDir)
 	sessions := make([]StateSession, 0, len(crewRecords))
 	for _, cr := range crewRecords {
-		sess := b.buildOneSession(cr.Name, "crew", cr.SessionID, sleepSIDs, now)
+		sess := b.buildOneSession(ctx, cr.Name, "crew", cr.SessionID, sleepSIDs, now)
 		sessions = append(sessions, sess)
 	}
 	if !hasCaptainRecord(crewRecords) {
 		if _, _, err := keeper.ReadCtxFile(b.projectDir, captainAgentName); err == nil {
-			sess := b.buildOneSession(captainAgentName, "captain", "", sleepSIDs, now)
+			sess := b.buildOneSession(ctx, captainAgentName, "captain", "", sleepSIDs, now)
 			sessions = append(sessions, sess)
 		}
 	}
@@ -251,9 +251,9 @@ func hasCaptainRecord(records []crew.Record) bool {
 	return false
 }
 
-func (b *LiveStateBuilder) buildOneSession(agent, sessionType, declaredSID string, sleepSIDs map[string]bool, now time.Time) StateSession {
+func (b *LiveStateBuilder) buildOneSession(ctx context.Context, agent, sessionType, declaredSID string, sleepSIDs map[string]bool, now time.Time) StateSession {
 	tmuxTarget := lifecycle.TmuxSessionName(b.projectHash, agent)
-	alive := tmuxHasSession(tmuxTarget)
+	alive := tmuxHasSession(ctx, tmuxTarget)
 
 	presenceSrc := "registry"
 	if alive && declaredSID == "" {

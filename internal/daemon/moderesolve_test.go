@@ -58,8 +58,8 @@ func (b *modeResolveFixtureBus) Emit(_ context.Context, et core.EventType, paylo
 
 // EmitWithRunID satisfies handlercontract.EventEmitter; run_id is not stored
 // because mode-resolution events are not run-scoped.
-func (b *modeResolveFixtureBus) EmitWithRunID(_ context.Context, _ core.RunID, et core.EventType, payload []byte) error {
-	return b.Emit(context.Background(), et, payload)
+func (b *modeResolveFixtureBus) EmitWithRunID(ctx context.Context, _ core.RunID, et core.EventType, payload []byte) error {
+	return b.Emit(ctx, et, payload)
 }
 
 // Compile-time assertion: modeResolveFixtureBus satisfies EventEmitter.

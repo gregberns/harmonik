@@ -33,11 +33,12 @@ import (
 )
 
 // newNoOpRecorderZ8ek returns a RecordingRunner that succeeds for every call
-// without side effects (exec.Command("true")).
+// without side effects (`true`). The caller's context is passed to the command
+// so a cancelled run does not leave the stub process behind.
 func newNoOpRecorderZ8ek() *tmux.RecordingRunner {
 	return &tmux.RecordingRunner{
-		CmdFunc: func(_ context.Context, _ string, _ ...string) *exec.Cmd {
-			return exec.Command("true")
+		CmdFunc: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+			return exec.CommandContext(ctx, "true")
 		},
 	}
 }

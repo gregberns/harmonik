@@ -281,6 +281,11 @@ func fireCommandAction(port schedulePort, job schedule.ScheduledJob) (int, error
 	if len(job.Action.Argv) == 0 {
 		return 0, fmt.Errorf("command action has empty argv")
 	}
+	// exec.Command, NOT exec.CommandContext, and that is deliberate. A scheduled
+	// command is handed to the operating system and then let go: the lines below
+	// put it in its own process group so it survives a daemon restart. A context
+	// on this command would kill the job the moment the daemon's context ended,
+	// which is the opposite of what a scheduled job is for.
 	//nolint:gosec // G204: argv is operator-authored schedule config, not untrusted input.
 	cmd := exec.Command(job.Action.Argv[0], job.Action.Argv[1:]...)
 	cmd.Dir = port.projectDir

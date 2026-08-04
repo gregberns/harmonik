@@ -28,8 +28,8 @@ func (b *piProfFixtureBus) Emit(_ context.Context, et core.EventType, _ []byte) 
 	return nil
 }
 
-func (b *piProfFixtureBus) EmitWithRunID(_ context.Context, _ core.RunID, et core.EventType, payload []byte) error {
-	return b.Emit(context.Background(), et, payload)
+func (b *piProfFixtureBus) EmitWithRunID(ctx context.Context, _ core.RunID, et core.EventType, payload []byte) error {
+	return b.Emit(ctx, et, payload)
 }
 
 func (b *piProfFixtureBus) hasEventType(et core.EventType) bool {

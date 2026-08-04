@@ -50,7 +50,7 @@ import (
 func TestRSB11_IsSSHConnectionFailure_Exit255(t *testing.T) {
 	t.Parallel()
 
-	cmd := exec.Command("sh", "-c", "exit 255")
+	cmd := exec.CommandContext(t.Context(), "sh", "-c", "exit 255")
 	err := cmd.Run()
 	if err == nil {
 		t.Fatal("RSB11: sh -c 'exit 255' unexpectedly returned nil error")
@@ -69,7 +69,7 @@ func TestRSB11_IsSSHConnectionFailure_OtherExits(t *testing.T) {
 		code := code
 		t.Run(fmt.Sprintf("exit%d", code), func(t *testing.T) {
 			t.Parallel()
-			cmd := exec.Command("sh", "-c", fmt.Sprintf("exit %d", code))
+			cmd := exec.CommandContext(t.Context(), "sh", "-c", fmt.Sprintf("exit %d", code))
 			err := cmd.Run()
 			// exit 0 produces nil error; others produce *exec.ExitError.
 			if tmux.IsSSHConnectionFailure(err) {

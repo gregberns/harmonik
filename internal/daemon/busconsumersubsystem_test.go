@@ -295,7 +295,7 @@ func buspartDialSocket(t *testing.T, projectDir string, timeout time.Duration) n
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for time.Now().Before(deadline) {
-		conn, err := net.Dial("unix", sockPath)
+		conn, err := (&net.Dialer{}).DialContext(t.Context(), "unix", sockPath)
 		if err == nil {
 			return conn
 		}

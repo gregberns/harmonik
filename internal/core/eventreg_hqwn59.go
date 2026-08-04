@@ -655,14 +655,14 @@ func registerBeadLedgerEvents() {
 //
 // This helper is intentionally unexported and limited to init() callers; it
 // MUST NOT be called after startup completes.
-func mustRegister(typeName string, ctor func() EventPayload) {
-	if err := RegisterEventType(typeName, ctor); err != nil {
-		panic("core: mustRegister: " + typeName + ": " + err.Error())
+func mustRegister(typeName EventType, ctor func() EventPayload) {
+	if err := RegisterEventType(string(typeName), ctor); err != nil {
+		panic("core: mustRegister: " + string(typeName) + ": " + err.Error())
 	}
 }
 
-func mustRegisterAtVersion(typeName string, ctor func() EventPayload, version int) {
-	if err := RegisterEventTypeAtVersion(typeName, ctor, version); err != nil {
-		panic("core: mustRegisterAtVersion: " + typeName + ": " + err.Error())
+func mustRegisterAtVersion(typeName EventType, ctor func() EventPayload, version int) {
+	if err := RegisterEventTypeAtVersion(string(typeName), ctor, version); err != nil {
+		panic("core: mustRegisterAtVersion: " + string(typeName) + ": " + err.Error())
 	}
 }

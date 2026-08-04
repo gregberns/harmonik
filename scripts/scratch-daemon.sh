@@ -354,8 +354,23 @@ cmd_up() {
 
     echo "[scratch-daemon] starting standalone daemon (session=$sess, project=$scratch)"
     # Standalone start = the bare `harmonik --project <path>` binary run INSIDE a
-    # tmux session. NO `harmonik supervise` => NO auto-revive, so a plain
-    # `down`/pkill stays down for a clean rebuild. API keys are stripped so the
+    # tmux session. This script starts no `harmonik supervise` process. That alone
+    # does NOT give you a supervisor-free daemon: the daemon carries its own
+    # supervisor watchdog. The watchdog probes .harmonik/cognition/supervisor.pid
+    # every 60 s, and a scratch clone has never had a supervisor, so the FIRST
+    # tick after boot runs `harmonik supervise restart --watch-restart` for this
+    # project (up to 3 attempts). That supervisor then revives the daemon, so a
+    # plain `down`/pkill can come back about a minute later.
+    #
+    # To hold a scratch daemon down, switch the watchdog off in the scratch
+    # clone's .harmonik/config.yaml before `up`:
+    #     subsystems:
+    #       supervisor_watchdog:
+    #         enabled: false
+    # With that set the daemon builds no watchdog at all, so `down` stays down
+    # and a shutdown drain can be watched to the end.
+    #
+    # API keys are stripped so the
     # run bills the subscription pool (codename:credfence), matching smoke-scratch.
     # -c "$scratch": the daemon MUST run with CWD == its ProjectDir. Guards that
     # read config via os.Getwd() (e.g. the codex stale-WAL guard) assume this

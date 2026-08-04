@@ -51,7 +51,7 @@ This spec owns *semantics* (what must happen between tasks, what must be readabl
 
 ### 2.1a Operational-posture assumption (formerly ON-INV-002)
 
-- **Direct-to-main development.** This spec assumes foundation specs and subsystem specs operate under direct-to-main development per `docs/foundation/project-level/build-practices.md`. No PR-based merge gate is the enforcement model; agent-reviewer-every-commit + post-push CI surfacing is the discipline. Subsystem specs SHOULD NOT design contracts that assume a pre-merge human review gate. A later restoration of PR-based gating is an additive concern to subsystem design (it affects process, not contract shape). This is an operational posture, not a runtime invariant; it is captured here as a scope assumption to replace the retired ON-INV-002.
+- **Work lands on the integration branch, never on `main`.** The rule is owned by `docs/foundation/project-level/build-practices.md` §"Branch model — land on the integration branch". Read it there. **Superseded 2026-08-04:** this bullet said "Direct-to-main development". No per-change pull-request gate is the enforcement model. The agent reviewer on every commit plus post-push CI is the discipline, and one human pull request moves the integration branch into `main`. Subsystem specs SHOULD NOT design contracts that assume a pre-merge human review gate. A later restoration of PR-based gating is an additive concern to subsystem design (it affects process, not contract shape). This is an operational posture, not a runtime invariant; it is captured here as a scope assumption to replace the retired ON-INV-002.
 
 ### 2.2 Out of scope
 
@@ -1386,7 +1386,7 @@ Additional codes may be added within the N-1 window as long as existing code-to-
 
 ### 9.3 Co-references (read-only consumption)
 
-- **[docs/foundation/project-level/build-practices.md §Branch model]** — direct-to-main development; §2.1a consumes this operational posture (formerly ON-INV-002, retired v0.3 — content preserved as a scope assumption).
+- **[docs/foundation/project-level/build-practices.md §Branch model — land on the integration branch]** — work lands on the integration branch, never on `main`; §2.1a consumes this operational posture (formerly ON-INV-002, retired v0.3 — content preserved as a scope assumption).
 - **[docs/foundation/problem-space.md §Locked decisions]** — locked decision #10 (operator controls between tasks) and locked decision #12 (no DTW); §4.3 and §4.8 derive from these positions.
 - **[STATUS.md §Decisions Locked In]** — the ten locked decisions; amendment protocol per [architecture.md §4.6] applies to relaxing any requirement here that rests on a locked decision.
 - **[session-keeper.md §4.7 SK-016]** — SK-016 re-expresses the keeper decision logic these bands drive behind ports + a `Step` reactor and preserves the §4.13 ON-059 warn/act/force-act bands (200k/215k/240k) and the ceiling function unchanged; band changes remain HARD-NO without operator direction (ON-059). Read-only co-reference; no reverse dependency.

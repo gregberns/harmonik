@@ -9,7 +9,7 @@
 - Imports: **`gci`** with three groups (stdlib, third-party, `github.com/gregberns/harmonik`).
 - Meta-linter: **`golangci-lint` v2.3+** (config uses `version: 2` schema explicitly; migrated March 2025 GA). Config at repo root `.golangci.yml`.
 - Hook manager: **`lefthook`** (Go-native, single binary, no Python/Node dep).
-- Enforcement: pre-commit hooks + **`agent-reviewer` on every non-trivial commit** (per `build-practices.md`) + **post-push CI status checks on `main`** via GitHub branch protection. No PR-based merge gate (direct-to-main); CI failures fix-forward.
+- Enforcement: **`agent-reviewer` on every non-trivial commit** (per `build-practices.md`) + **post-push CI status checks**. CI runs on every branch, so it covers the integration branch. Fix a red integration branch forward. The one merge gate is the integration→`main` pull request. Branch model: `build-practices.md` §"Branch model — land on the integration branch".
 - Tests: `go test ./... -race -count=1` required in CI; short subset pre-commit.
 - **Local/CI parity:** CI runs `make full`, the same target a developer runs. See §Two gate targets.
 

@@ -113,7 +113,11 @@ Landed in code by `1f8781730` (confirmed an ancestor of HEAD on 2026-07-30). The
 
 ### Decisions locked in this session's flow (from prior sessions)
 
-- Direct-to-main + agent-reviewer-every-commit + no-PRs (decision from phase-1).
+- Agent-reviewer-every-commit + no per-change PRs (decision from phase-1). **Superseded 2026-08-04:**
+  this line also said "Direct-to-main". Work now lands on the integration branch, and a human moves the
+  integration branch into `main` with one pull request. The rule lives in
+  [docs/foundation/project-level/build-practices.md](docs/foundation/project-level/build-practices.md)
+  §"Branch model — land on the integration branch".
 - AGENTS.md canonical with CLAUDE.md symlink.
 - CONSTITUTION.md as non-recursive trust anchor.
 - JSON-structured agent-reviewer verdict.
@@ -137,7 +141,7 @@ Key properties:
 - Single daemon per project (pidfile lock; exit 5 on collision).
 - `--no-auto-pull` is now a no-op alias kept for back-compat. Queue-only is the default. **Corrected 2026-07-30:** this line called the flag "the safe default" and said bead `hk-8vy18` would flip it to opt-in. `cmd/harmonik/usage.go` documents the flag as a no-op alias, and `hk-8vy18` is not in the bead ledger.
 - Supervisor (`harmonik supervise start`) auto-revives on crash; restart-backoff = 30s–1min after rapid kills.
-- Queue-only: agents submit via `harmonik queue submit`; daemon dispatches, merges to main one-at-a-time, closes beads.
+- Queue-only: agents submit via `harmonik queue submit`. The daemon dispatches, merges one-at-a-time into its target branch, and closes beads. The target branch comes from `.harmonik/branching.yaml` key `defaults.lands_on`. **Corrected 2026-08-04:** this line said "merges to main". The daemon must target the integration branch, not `main`.
 - **Corrected 2026-07-30:** this list said "Review-loop on by default (`--workflow-mode review-loop`)". Review-loop is retired and its driver is deleted. The default mode is `builtin`. Valid values are `builtin`, `single`, and `dot`.
 - Work-project deployment: use `--target-branch`, `--protect-branch`, `--forbid-default-main` flags (or `.harmonik/branching.yaml`).
 

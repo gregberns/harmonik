@@ -12,7 +12,7 @@ The intended daily loop is:
 1. **Main agent** decides what's important next; records priority via `br update --priority` and (when needed) `kerf pin` / `kerf work edit`.
 2. **kerf** exposes the prioritized feed via `kerf next`.
 3. **Main agent** picks a batch (≥2, typically 3–5) and dispatches: `harmonik run --beads id1,id2,... --max-concurrent N`.
-4. **harmonik** runs each bead end-to-end: spawn claude → watch → commit → merge to main → push → close. No orchestrator intervention.
+4. **harmonik** runs each bead end-to-end: spawn claude → watch → commit → merge into its target branch → push → close. No orchestrator intervention. The target branch comes from `.harmonik/branching.yaml` key `defaults.lands_on`. Set that key to the integration branch. When the file is absent the daemon resolves the target to `main`.
 5. **Main agent** keeps moving while harmonik runs — queues the next batch, reviews completed work, files follow-ups, drains untriaged kerf items.
 6. On harmonik exit: review outcomes, dispatch next batch. Sub-agent dispatch is the **exception**, used only when (a) harmonik itself is the thing being debugged, (b) the change is a single-line typo / cross-reference fix, or (c) the work spans a code/spec gap harmonik can't currently handle (e.g. a new untested workload class — see `2026-05-19-phase2-readiness-audit.md`).
 
@@ -57,7 +57,7 @@ Insert before `## Planning with kerf`:
 
 1. `bv --robot-triage` and `kerf next` — surface the prioritized work.
 2. Pick a batch of 3–5 beads from the top of the feed (skip the untested-workload classes documented in `HANDOFF.md` §"Three caveats" until the probes land).
-3. `harmonik run --beads id1,id2,... --max-concurrent N` — run in background; the daemon spawns claude, watches for completion, commits, merges to main, pushes, and closes each bead.
+3. `harmonik run --beads id1,id2,... --max-concurrent N` — run in background; the daemon spawns claude, watches for completion, commits, merges into its target branch, pushes, and closes each bead.
 4. While harmonik runs: queue the next batch, drain `kerf triage` untriaged items, file follow-ups from prior runs, review recently-merged commits.
 5. On exit: review outcomes, dispatch next batch.
 

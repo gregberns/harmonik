@@ -50,7 +50,7 @@ harmonik comms recv --follow --json | head -60
 harmonik comms who --json
 harmonik crew list --json
 harmonik queue status --json
-git -C $HARMONIK_PROJECT log --oneline -3   # confirm main is current
+git -C $HARMONIK_PROJECT log --oneline -3   # confirm the integration branch is current
 ```
 
 Note any crew messages received that require action (bead banked, lane complete,
@@ -61,9 +61,19 @@ error) before proceeding. Attribute run events via `br show <epic_id> --format j
 
 ## Step 2 — Deploy banked commits (before standing down any crew)
 
-Any commit on a `worktree-agent-*` or `bank/*` branch that passed review but was
-not yet cherry-picked to `main` must be deployed **before** the session ends. A
-stood-down crew cannot re-bank or re-review; deploy now.
+Any commit on a `worktree-agent-*` or `bank/*` branch that passed review but has
+not reached the integration branch must be deployed **before** the session ends. A
+stood-down crew cannot re-bank or re-review, so deploy now.
+
+**Deploy to the integration branch. Never to `main`.** Read the branch name from
+`.harmonik/branching.yaml`, key `defaults.lands_on`. The commands below use
+`$TARGET` for it. The captain does not push `main`.
+
+A human moves the integration branch into `main` later with one pull request. That
+command is `harmonik promote --pr --from "$TARGET" --target main`. Pass both flags.
+`promote --pr` reads its base from `defaults.lands_on` and its head from `--from`,
+whose default is the literal name `integration`, so a bare `harmonik promote --pr`
+does not aim at `main`.
 
 **Timing: deploy only in a TRUE lull (0 reviewers active, 0 in-flight merges)** —
 the deploy itself is routine self-authorized work; the lull is only so an in-flight
@@ -81,9 +91,16 @@ harmonik queue status --json    # check "active_runs" count
 ### Temp-worktree cherry-pick SOP (bypass-SOP, used when the daemon is live):
 
 ```bash
-# 1. Fetch and create a detached deploy worktree off origin/main
-git -C $HARMONIK_PROJECT fetch origin main
-git worktree add --detach /tmp/cap-deploy origin/main
+# 0. Resolve the integration branch — never hard-code it.
+#    Strip an inline comment and any quotes, the way cmd/harmonik/smoke.go does.
+TARGET=$(awk -F'lands_on:' '/^ *lands_on:/{sub(/#.*/,"",$2); gsub(/["'"'"'[:space:]]/,"",$2); print $2; exit}' \
+  "$HARMONIK_PROJECT/.harmonik/branching.yaml" 2>/dev/null)
+test -n "$TARGET" || { echo "no lands_on in branching.yaml — STOP, ask the operator"; exit 1; }
+test "$TARGET" != "main" || { echo "lands_on is main — STOP, ask the operator"; exit 1; }
+
+# 1. Fetch and create a detached deploy worktree off the integration branch
+git -C $HARMONIK_PROJECT fetch origin "$TARGET"
+git worktree add --detach /tmp/cap-deploy "origin/$TARGET"
 
 # 2. Cherry-pick reviewed SHAs in order (oldest first)
 git -C /tmp/cap-deploy cherry-pick <sha1> <sha2> ...
@@ -91,25 +108,25 @@ git -C /tmp/cap-deploy cherry-pick <sha1> <sha2> ...
 # 3. Merged-tree gate
 go build ./... && go vet ./internal/daemon/... && go vet ./internal/queue/...
 
-# 4. Announce before push (crews need to know main is advancing)
+# 4. Announce before push (crews need to know the integration branch is advancing)
 harmonik comms send --from "$HARMONIK_AGENT" --broadcast --topic announce -- \
-  "DEPLOY: cherry-picking <shas> to main — brief push window"
+  "DEPLOY: cherry-picking <shas> to $TARGET — brief push window"
 # --from = your verified lane identity ($HARMONIK_AGENT), NOT a hardcoded "captain"
 # (an uncommissioned --from captain freezes the fleet — STARTUP.md Step 0 identity guard).
 
-# 5. Push and ff-update local main (CRITICAL — skipping wedges the daemon)
-git -C /tmp/cap-deploy push origin HEAD:main
-git -C $HARMONIK_PROJECT merge --ff-only origin/main
+# 5. Push and ff-update the local integration branch (CRITICAL — skipping wedges the daemon)
+git -C /tmp/cap-deploy push origin "HEAD:$TARGET"
+git -C $HARMONIK_PROJECT merge --ff-only "origin/$TARGET"
 
 # 6. Verify no divergence
-git -C $HARMONIK_PROJECT rev-parse main HEAD origin/main
+git -C $HARMONIK_PROJECT rev-parse "$TARGET" HEAD "origin/$TARGET"
 #    All three must agree.
 
 # 7. Clean up
 git worktree remove --force /tmp/cap-deploy
 
 # 8. Close manually deployed beads
-br close <bead_id> --reason "Manually deployed: <sha> on main (bypass-SOP)"
+br close <bead_id> --reason "Manually deployed: <sha> on $TARGET (bypass-SOP)"
 ```
 
 > **TIMING — don't redeploy the daemon mid-run** (while a bead is merging or a
@@ -292,7 +309,7 @@ Write HANDOFF.md using the **captain handoff format** (tiered model):
 
 # STATE (<timestamp>)
 Daemon UP/DOWN, --workflow-mode <mode>, -c<N>, supervisor-managed (pid <N>).
-main == origin/main in sync (or: main is at <sha>, origin at <sha> — divergence noted).
+integration branch == origin in sync (or: local is at <sha>, origin at <sha> — divergence noted).
 <N> crews live.
 
 ## Lanes (one line per crew)
@@ -388,9 +405,9 @@ comm -23 \
   true lull (0 `active_runs` in `queue status --json`) so nothing in flight is lost.
 
 - **The ff-after-push step is load-bearing for captain cherry-pick deploys.** After
-  pushing banked commits out-of-band, run `git -C <repo> merge --ff-only origin/main`
-  to advance the daemon's local `refs/heads/main`. Skipping this leaves the daemon's
-  local main behind origin → every subsequent daemon merge push is rejected as non-ff
+  pushing banked commits out-of-band, run `git -C <repo> merge --ff-only origin/$TARGET`
+  to advance the daemon's local integration branch. Skipping this leaves the daemon's
+  local branch behind origin → every subsequent daemon merge push is rejected as non-ff
   → daemon wedge (hk-svieq, `b4858a3c` now auto-recovers, but the ff step is cheaper).
 
 - **Don't arm session-keeper full-cycle unsupervised.** `.managed` markers make

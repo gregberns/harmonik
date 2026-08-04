@@ -593,8 +593,8 @@ rather than blocking; surface only genuine splits / unsound consensus.
   NOT issue terminal-transition writes (`br claim` / `br close` / `br reopen`) — those
   are daemon-owned (beads-cli write discipline, BI-010); an out-of-band `br close`
   racing the daemon breaks C1's `epic_completed` chain. **The single sanctioned
-  exception:** `br close <bead>` AFTER a *verified* manual cherry-pick to `main` via
-  the SHUTDOWN.md Step 2 bypass-SOP (`--reason "Manually deployed: <sha> (bypass-SOP)"`).
+  exception:** `br close <bead>` AFTER a *verified* manual cherry-pick to the
+  integration branch via the SHUTDOWN.md Step 2 bypass-SOP (`--reason "Manually deployed: <sha> (bypass-SOP)"`).
   **Exception-to-the-exception (do NOT raw-close):** `harmonik promote` cherry-picks
   LACK the `Harmonik-Bead-ID` merge trailer that `harmonik reconcile` keys on, so a
   raw `br close` strands the bead — for those, let `harmonik reconcile` close it (or

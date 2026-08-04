@@ -388,8 +388,8 @@ dispatches regardless of which submit call placed them.
 
 ### 4. Do NOT close beads
 
-The daemon closes a bead when its work merges into main (beads-cli write
-discipline, NORMATIVE). That daemon-owned close is what fires C1's
+The daemon closes a bead when its work merges into the integration branch (beads-cli
+write discipline, NORMATIVE). That daemon-owned close is what fires C1's
 `epic_completed` event to the captain. **You must not pre-empt it with `br
 close`** — doing so breaks the C1 event chain and the captain's attribution.
 

@@ -2,13 +2,15 @@
 
 > **What this is:** A canned prompt to paste into a fresh Claude Code session when deploying harmonik on a new project. Copy the block below, substitute the two placeholders, and paste.
 >
-> **Current limitation (fail-closed):** The daemon merges completed work to a single fixed branch. Until `hk-m8vy2` (merge-retarget) lands, `$TARGET_BRANCH` MUST be `main`. If your project's canonical merge target is not `main`, do not deploy harmonik on it yet — the daemon will merge to main regardless of what you set here.
+> **Corrected 2026-08-04.** This note said `$TARGET_BRANCH` MUST be `main`, and cited bead `hk-m8vy2` as the tracking bead for merge-retarget. That guard is gone from the code (see `specs/process-lifecycle.md`), and the bead is not in the ledger. `harmonik init --target-branch <branch>` accepts any branch and exits 0.
+>
+> **Set `$TARGET_BRANCH` to an integration branch, not `main`.** Then add `main` to `protect_branches` so the daemon fails closed and never pushes `main`. A person moves the integration branch into `main` with a pull request.
 
 ---
 
 ## Canned Setup Prompt
 
-> Replace `$PROJECT_DIR` and `$TARGET_BRANCH` before pasting. With current harmonik, `$TARGET_BRANCH` must be `main`.
+> Replace `$PROJECT_DIR` and `$TARGET_BRANCH` before pasting. Set `$TARGET_BRANCH` to your integration branch.
 
 ```
 You are being set up as a harmonik orchestrator agent for a new project.
@@ -16,10 +18,10 @@ You are being set up as a harmonik orchestrator agent for a new project.
 Project directory: $PROJECT_DIR
 Target branch (harmonik merges completed work here): $TARGET_BRANCH
 
-⚠️  FAIL-CLOSED CHECK: if $TARGET_BRANCH != "main", stop here and tell me.
-The daemon does not yet support retargeting merges away from main (hk-m8vy2
-is the tracking bead). Proceeding with a non-main target will merge work to
-main silently.
+⚠️  FAIL-CLOSED CHECK: if $TARGET_BRANCH == "main", stop here and tell me.
+Harmonik must merge completed work into an integration branch. It must never
+merge into main. A person moves the integration branch into main with a pull
+request. Also add main to protect_branches so the daemon refuses to push it.
 
 ## Step 1 — Verify prerequisites
 
@@ -50,7 +52,21 @@ Expected: events/, worktrees/ directories (may be empty), and either no
 queue.json (first run) or a queue.json from a prior session. If .harmonik/
 is absent, run:
 
-  harmonik init --project $PROJECT_DIR
+  harmonik init --project $PROJECT_DIR --target-branch $TARGET_BRANCH
+
+This writes .harmonik/branching.yaml with lands_on: $TARGET_BRANCH. Open that
+file and add main to protect_branches, so the daemon fails closed. Add ONLY the
+protect_branches key. Keep every other line, including version: 1 — the loader
+accepts version 1 only, and the daemon refuses to start on any other value. The
+result looks like this:
+
+  version: 1
+  defaults:
+    start_from: $TARGET_BRANCH
+    lands_on: $TARGET_BRANCH
+    landing_strategy: squash
+    protect_branches:
+      - main
 
 ## Step 4 — Start the daemon (if not already running)
 
@@ -61,7 +77,11 @@ Check first:
 If exit 17, start the daemon in a detached tmux session:
 
   tmux new-session -d -s harmonik-daemon \
-    'harmonik --project $PROJECT_DIR --no-auto-pull --max-concurrent 4'
+    'harmonik --project $PROJECT_DIR --no-auto-pull --max-concurrent 4 \
+       --target-branch $TARGET_BRANCH --protect-branch main'
+
+The daemon refuses to start if the resolved target branch is protected. That is
+the fail-closed guard that keeps work off main.
 
 Then confirm it came up:
 
@@ -106,7 +126,7 @@ Then wait for dispatch instructions.
 **What it does NOT cover:**
 - `harmonik init` (first-time repo setup) — run that manually before using this prompt.
 - Bead creation / kerf work setup — those are session-specific and belong in HANDOFF.md, not a generic setup prompt.
-- Integration-branch mode (coming with hk-6r6xv + hk-m8vy2) — once those land, add `--integration-branch` to the daemon start command and remove the fail-closed check.
+- Integration-branch mode has landed. There is no `--integration-branch` flag. Set the branch with `--target-branch` on `harmonik init`, or with `defaults.lands_on` in `.harmonik/branching.yaml`. Protect `main` with `--protect-branch main` or with `defaults.protect_branches`.
 
 **Updating this prompt:**
-When the merge-retarget feature (hk-m8vy2) lands: remove the `⚠️ FAIL-CLOSED CHECK` block and update the `$TARGET_BRANCH must be main` caveat in the header. The rest of the prompt is target-branch-agnostic.
+The merge-retarget feature has landed, so the prompt no longer forces `main`. The `⚠️ FAIL-CLOSED CHECK` block now does the opposite job: it stops a setup that would target `main`. The rest of the prompt is target-branch-agnostic.

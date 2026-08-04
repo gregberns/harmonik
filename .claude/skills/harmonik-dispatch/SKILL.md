@@ -45,7 +45,7 @@ tmux new-session -d -s harmonik-daemon \
    ```
    This writes `.harmonik/keeper/<agent>.dispatching` so `HoldingDispatch` returns true and the
    keeper cycle defers any handoff action while queue work is in flight (hk-rc51s).
-4. **Submit to the running daemon's queue.** `harmonik queue submit --beads id1,id2,id3` (or `harmonik queue submit /tmp/batch.json` for a hand-authored `QueueSubmitRequest`). This does NOT block — it returns the daemon-minted `queue_id`. The daemon spawns claude per bead, watches for completion, commits, merges to main **one-at-a-time**, pushes, and **auto-skips** any bead whose merge conflicts. Review-loop is on by default.
+4. **Submit to the running daemon's queue.** `harmonik queue submit --beads id1,id2,id3` (or `harmonik queue submit /tmp/batch.json` for a hand-authored `QueueSubmitRequest`). This does NOT block — it returns the daemon-minted `queue_id`. The daemon spawns claude per bead, watches for completion, commits, merges into its target branch **one-at-a-time**, pushes, and **auto-skips** any bead whose merge conflicts. The target branch comes from `.harmonik/branching.yaml` key `defaults.lands_on`. Set that key to the integration branch. When the file is absent the daemon resolves the target to `main`, so check the file before you dispatch. Review-loop is on by default.
 5. **Arm a Monitor.** Submitting returns only the `queue_id`; without a Monitor you are blind from submit to group-completion. Run `harmonik subscribe --types run_completed,run_failed,run_stale,heartbeat --heartbeat 60s --json` in a Monitor call (it attaches to the running daemon, so one Monitor sees every bead regardless of which agent submitted it).
 6. **Stay active while the daemon works.** Append the next batch (`harmonik queue append [--queue-id <uuid>] <group-index> <bead-id ...>` on a stream group); drain `kerf triage` untriaged items; file follow-up beads observed from prior runs; review recently-merged commits per the per-commit-reviewer gate.
 7. **On group completion.** Inspect outcomes via the subscribe stream / `.harmonik/events/events.jsonl`; `git -C $HARMONIK_PROJECT log --oneline -N` for landed commits. Run reviewer on any load-bearing commit, then submit/append the next batch.
@@ -57,7 +57,7 @@ tmux new-session -d -s harmonik-daemon \
 
 ### Pre-screen for already-landed beads
 
-Beads can be stale-open — the implementation landed on `main` but the bead was never closed. Dispatching one wastes a daemon slot (hits the noChange path). Before submitting a batch, grep history and drop any already-landed bead:
+Beads can be stale-open — the implementation landed on the target branch but the bead was never closed. Dispatching one wastes a daemon slot (hits the noChange path). Before submitting a batch, grep history and drop any already-landed bead:
 
 ```bash
 for id in hk-aaa hk-bbb hk-ccc; do

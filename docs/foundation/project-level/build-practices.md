@@ -2,14 +2,16 @@
 
 > **Scope clarification.** These practices govern work on the harmonik codebase itself — the human + agents collaborating to write the Go daemon, handlers, CLI, and tests. They do **NOT** govern the workflow-run commit pattern that harmonik produces at runtime (three-level branching, checkpoint commits with `Harmonik-Run-ID` / `Harmonik-State-ID` / `Harmonik-Transition-ID` / `Harmonik-Bead-ID` / `Harmonik-Schema-Version` trailers). That pattern is specified in components.md §2.1 (checkpoint format) and §5.8 (branching). If a commit lands in this repo without a `Harmonik-Run-ID` trailer, it is a project-level commit and this document applies.
 
-**2026-04-24 user direction:** Until real users adopt the product, harmonik uses **direct-to-main** development with **agent reviewers on every commit**. No pull requests. User reads committed code asynchronously, never gates it. This doc is revised accordingly; the PR-based shape it previously described is gone.
+**2026-04-24 user direction:** Until real users adopt the product, harmonik uses **agent reviewers on every commit**. The user reads committed code asynchronously and never gates it.
+
+**Superseded 2026-08-04 — the branch half of that direction is reversed.** The 2026-04-24 direction also said **direct-to-main**, and that is no longer the model. Work now lands on the integration branch, and a human moves the integration branch into `main`. The agent-reviewer-every-commit half stands unchanged. See §"Branch model — land on the integration branch".
 
 ## Decisions
 
 1. **Conventional Commits** for message format, with a small fixed type set.
-2. **Direct commits to `main`.** `main` is the working branch. Ephemeral `agent/<codename>` branches allowed only for work spanning sessions that needs to park; squash-merge back to main same session on resume.
+2. **Work lands on the integration branch, never on `main`.** See §"Branch model — land on the integration branch" below for the rule and for where the branch name is recorded.
 3. **Agent reviewer on every commit** (required, not optional). Every non-trivial commit carries a `Reviewed-By:` trailer recording the `agent-reviewer` verdict.
-4. **No pull requests.** PR-based workflow returns when real users adopt the product or multiple human contributors join.
+4. **One pull request, at the integration→`main` boundary.** Work does not need a pull request to reach the integration branch. The agent reviewer is the gate there. A human opens the single pull request that moves the integration branch into `main`.
 5. **Self + agent review** — user reads committed code async, catches what agents miss. Never a merge gate.
 6. **Semver `0.y.z`** pre-1.0; breaking changes bump `y`, everything else bumps `z`; 1.0 only after foundation complete + full bootstrap workflow runs end-to-end.
 7. **Tag-triggered releases** via `git tag v0.y.z` → GitHub release + `goreleaser` binary matrix.
@@ -49,20 +51,54 @@ Trivial commits (typo, whitespace, obvious one-line fix) MAY omit these trailers
 
 **`Trivial: true` bypass trailer.** To opt a single commit out of the `Reviewed-By:` / `Review-Verdict:` requirement, add the trailer `Trivial: true` anywhere in the commit message's trailer block (after the blank line separating the body from trailers). `scripts/validate-commit-msg.sh` (run via the agent-driven `/check` flow) detects this trailer and skips the reviewer-trailer check. Use ONLY for: typo fixes, whitespace normalization, obvious one-line corrections, and test-infrastructure trivial changes. The `make full` requirement still applies — `Trivial: true` does not bypass linting or tests, only the agent-reviewer trailer.
 
-Forbidden: emoji, "WIP" subjects on main, single-word subjects, messages that describe the diff instead of the intent.
+Forbidden: emoji, "WIP" subjects on the integration branch, single-word subjects, messages that describe the diff instead of the intent.
 
 Examples: `feat(s04): add claude-twin handler adapter` — `fix(workspace): honor run_id in worktree path` — `spec(handler-contract): narrow skill-injection failure to fail-launch`.
 
-## Branch model — direct-to-main
+## Branch model — land on the integration branch
 
-**`main` is the working branch.** Agents commit directly. The previous trunk-based + feature-branch shape is gone.
+**This section owns the rule. Other documents point here. They do not restate it.**
 
-- **Ephemeral `agent/<codename>` branches allowed ONLY** for parked work that spans sessions and cannot cleanly land on main mid-way. Squash-merged to main on resume within the same session.
-- **No `user/<topic>` or long-lived `agent/<codename>` branches.** Direct-to-main is the norm; branching is the rare exception for session-straddling parks.
-- **No release branches** pre-1.0. Tags point at main. If a hot-fix on an older release is ever needed post-1.0, spin a `release/0.y` branch at that point — not preemptively.
-- **Integration branch (`harmonik/integration`) is runtime-only** — it is how harmonik's workflow engine merges run-branches at runtime (workspace-model §5.8). It is NOT a branch for building harmonik itself. Do not confuse the two.
+**Completed work lands on the integration branch.** It does not land on `main`. This replaces the
+earlier direct-to-main model, which made `main` the working branch.
 
-## Commit standards for direct-to-main
+**The repo names the integration branch in `.harmonik/branching.yaml`, key `defaults.lands_on`.**
+Read that file to learn the current name. Do not write the branch name into a doc or a script. The
+same key is what `harmonik promote`, the daemon, and the smoke check all read, so the file is the one
+place the name lives.
+
+**`main` moves only by a deliberate human step.** A person opens a pull request from the integration
+branch to `main` and merges it. No agent pushes `main`.
+
+Open that pull request with both flags set:
+
+```sh
+harmonik promote --pr --from <integration-branch> --target main
+```
+
+**Pass both flags.** `promote --pr` reads its base branch from `defaults.lands_on` and its head
+branch from `--from`, whose default is the literal name `integration`. A bare `harmonik promote --pr`
+therefore aims at the integration branch, not at `main`.
+
+**Today the daemon still resolves its merge target to `main`.** It does that whenever
+`.harmonik/branching.yaml` is absent, and that file is absent in this repo. Create the file and set
+`defaults.lands_on` to the integration branch. Add `main` to `defaults.protect_branches` in the same
+edit, so the daemon fails closed and refuses to push `main`. Until both keys are set, this section
+states a rule that the running system does not yet follow.
+
+- **Commit on a short-lived branch, then merge that branch into the integration branch.** Merge it
+  when the review passes. Delete the branch after the merge.
+- **Do not commit to `main` directly.** Do not push `main`.
+- **No `user/<topic>` or long-lived `agent/<codename>` branches.** A work branch lives for one unit of
+  work.
+- **No release branches** pre-1.0. Tags point at `main`, because `main` is the released trunk. If a
+  hot-fix on an older release is ever needed post-1.0, spin a `release/0.y` branch at that point — not
+  preemptively.
+- **The runtime integration branch is a different thing.** harmonik's workflow engine merges
+  run-branches at runtime (workspace-model §5.8). That is the product's behavior for a user's repo. It
+  is not this repo's branch model. Do not confuse the two.
+
+## Commit standards
 
 **Size.** Target roughly one logical change per commit. No hard LOC cap: commits are naturally smaller units of work than PRs, so the 1,000-LOC PR ceiling does not translate. Monitor commit size in practice; add a cap if agents produce megacommits.
 
@@ -148,7 +184,8 @@ The pipeline has four stages triggered by pushing a signed semver tag to `main`:
 CREATE → VALIDATE → CERTIFY → [ROLLBACK if needed]
 ```
 
-No "merge all PRs" step — `main` is the working branch and is always the release candidate.
+There is no "merge all PRs" step. Only one pull request reaches `main`, and it is the
+integration→`main` pull request. Cut the release tag on `main` after that pull request merges.
 
 ### Pre-release checklist
 
@@ -216,26 +253,26 @@ No binary signing pre-1.0. Distribution is GitHub releases only until a user ask
 
 ## Git hygiene
 
-- **Direct commits to `main`.** No rebase-feature-branch flow; there are no feature branches to rebase.
+- **Merge a work branch into the integration branch.** Do not commit to `main`. See §"Branch model — land on the integration branch".
 - **Never rewrite main history** after a tag.
-- **Never `--force-push` main.** `--force-with-lease` allowed on ephemeral `agent/<codename>` park-branches only.
+- **Never `--force-push` main.** `--force-with-lease` is allowed on a short-lived work branch only.
 - **`--no-verify` forbidden.** Pre-commit hook failures require fixing the underlying issue, not bypassing the hook.
 - **Signed commits (`git commit -S`)** — nice-to-have, not required; revisit when the product gets real users.
 - **`.gitignore`** must cover: `/bin/`, `/dist/`, `.harmonik/` (runtime state), `*.test`, `coverage.out`, `.kerf/` (gitignored per CLAUDE.md).
 
 ## ⚑ Assumptions worth user's eye
 
-1. **⚑ Direct-to-main with pre-commit + agent-reviewer-every-commit is the failure-tolerance model.** Trade-off: speed up front, accept possibility that a bad commit reaches main and needs fix-forward. For agent-coded solo dev: probably the right trade. Revisit when the product has real users or a multi-human team.
+1. **⚑ An integration branch plus agent-reviewer-every-commit is the failure-tolerance model.** The trade-off is speed up front. A bad commit can still reach the integration branch and need a fix-forward. The integration→`main` pull request keeps that bad commit off `main` until a human looks. For agent-coded solo development this is probably the right trade. Revisit when the product has real users or a multi-human team.
 2. **⚑ `agent-reviewer` skill is load-bearing and must not rot.** Agent-config Tier 2 cadence explicitly checks its currency. If the reviewer becomes a rubber stamp, the whole model collapses.
 3. **⚑ Reviewer verdict as commit trailer.** `Reviewed-By: agent-reviewer` (presence marker) + `Review-Verdict:` (structured JSON) makes review outcome auditable via `git log`. `BLOCK` verdicts by definition never land.
 4. **⚑ JSON-structured `agent-reviewer` verdict** (not prose). Prevents prompt-injection; enables audit/metrics. Schema lives in the `agent-reviewer` skill's documentation and is versioned; agents MUST use the current schema.
 5. **⚑ No hard LOC cap on commits.** Commits are naturally smaller than PRs; an explicit ceiling isn't needed. Monitor commit size; add a cap if agents produce megacommits.
 6. **⚑ `spec:` commit type** — non-standard within Conventional Commits; added because spec work dominates early. Alternative: fold into `docs:` or `chore:`.
-7. **⚑ Post-commit CI on main** — re-runs `make full`. Failures require fix-forward; no gate that rejects the push. Flag for user: is a remote CI set up (GitHub Actions assumed but not confirmed)?
+7. **⚑ Post-commit CI on the integration branch** — re-runs `make full`. Failures require fix-forward. No gate rejects the push to the integration branch. The integration→`main` pull request is where CI acts as a gate.
 
 ## Deferred / follow-up
 
-- **PR-based workflow, code review, branch protection** — restored when the product has real users or multiple human contributors. Currently direct-to-main with agent review.
+- **Per-change pull requests and human code review** — restored when the product has real users or multiple human contributors. Today the agent reviewer gates each commit, and one human pull request gates integration→`main`.
 - **CI provider choice** — GitHub Actions assumed; not pinned.
 - **Coverage thresholds** — per-package minimums to block merge; wait until testing methodology settles.
 - **Dependency update policy** — dependabot cadence, pinning vs. floating.

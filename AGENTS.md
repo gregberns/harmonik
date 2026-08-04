@@ -56,6 +56,10 @@ Non-trivial changes are planned with **kerf** (spec-first; create a kerf work be
 
 ## Key conventions
 
+- **Work lands on the integration branch, never on `main`.** The rule is owned by
+  [`docs/foundation/project-level/build-practices.md`](docs/foundation/project-level/build-practices.md)
+  §"Branch model — land on the integration branch". Read it there. It replaces the retired
+  direct-to-main model.
 - **Specs live in `specs/`** at the repo root. These are normative: the spec is always right, and code is expected to match it. Spec drafts produced by kerf are copied here on `kerf finalize`.
 - **Kerf process artifacts** (problem space, research, design, drafts, tasks, reviews) live in the repo at **`.kerf/works/{codename}/`**. This project has already been localized (`.kerf/config.yaml` sets `storage: local`), so the repo — not the global bench — is the authoritative working directory. The bench path `~/.kerf/projects/gregberns-harmonik/` still resolves: it is a **symlink** to `.kerf/works/`, so either spelling reaches the same files. Write pass artifacts to the path `kerf new` / `kerf show` prints, or you will silently produce orphan files. **Do NOT run `kerf localize` to tidy up misplaced files** — it is not a file reconciler, it is the one-time bench→repo storage migration, and it has already been run here. There is no automated command for a misplaced artifact: move it into the work's directory by hand.
 - **Knowledge base docs** (`docs/`) capture problems, goals, concepts, components, subsystems, ideas, and the collaboration log. These are inputs to kerf works; they are not themselves normative specs.

@@ -309,12 +309,13 @@ Excluded from agent done-check (CI-nightly or on-demand): real-agent smoke tests
 
 Full recommendation at `docs/foundation/project-level/build-practices.md` (revised per user direction). Key alignments:
 
-**User direction:** No PRs — now or later — until the product has real users. Direct commits to `main`. Agent reviewers do all code review. User reads committed code asynchronously, never gates. Streamline for speed without lowering quality bars.
+**User direction:** Agent reviewers do all code review. The user reads committed code asynchronously and never gates it. Streamline for speed without lowering quality bars.
 
-**Branch model: direct-to-main.**
-- `main` is the working branch. Agents commit directly.
-- Ephemeral `agent/<codename>` branches allowed ONLY for parked-across-sessions work; squash-merge to main on resume.
-- No long-lived feature/topic branches.
+**Branch model: work lands on the integration branch, never on `main`.**
+`build-practices.md` §"Branch model — land on the integration branch" owns this rule. Read it there.
+This section does not restate it, because a second copy drifts. **Superseded 2026-08-04:** this
+section used to say "No PRs — now or later" and "Direct commits to `main`".
+
 - (Unchanged: workspace-model §5.8 three-level branching for WORKFLOW RUNS — that's runtime orchestrator behavior, not build-of-harmonik practice.)
 
 **Agent review on every non-trivial commit (required, not optional).**
@@ -346,7 +347,7 @@ Full recommendation at `docs/foundation/project-level/build-practices.md` (revis
 
 ### Deferred / follow-up
 
-- **PR-based workflow, human review gates, branch protection with required approvals** — restored when the product has real users or multiple human contributors. Currently direct-to-main with agent review.
+- **Per-change pull requests, human review gates, branch protection with required approvals** — restored when the product has real users or multiple human contributors. Today the agent reviewer gates each commit, and one human pull request gates integration→`main`.
 - **Post-commit CI details** — platform choice (GitHub Actions assumed) to be confirmed at bootstrap.
 - **Signed commits** — `git commit -S` as nice-to-have now; revisit signing policy at 1.0.
 - **Commit size monitoring** — no hard LOC cap now; add a cap if agents start producing megacommits.
@@ -367,7 +368,7 @@ Prevents prompt injection; enables audit/metrics. Schema lives in the `agent-rev
 
 **Skills at `.claude/skills/` in repo**: the normative registry is `agent-configuration.md §Skills` — do not restate the list here, it drifts. Load-bearing members (must not rot): `agent-reviewer`, `agent-config-reviewer`, `agent-comms`, `beads-cli`, `orchestrator-rules`, `harmonik-lifecycle`, `keeper`.
 
-**Rule categories**: git ops (direct-to-main, agent-reviewer-every-commit), Go procedures (`make check-full` before declared-done), commit style (Conventional Commits + required trailers), commit creation (Why/What/Spec/Test/Risk in body), spec adherence, Protected rule files.
+**Rule categories**: git ops (land on the integration branch, agent-reviewer-every-commit), Go procedures (`make check-full` before declared-done), commit style (Conventional Commits + required trailers), commit creation (Why/What/Spec/Test/Risk in body), spec adherence, Protected rule files.
 
 **Memory system**: `project_/feedback_/user_` prefixes; `MEMORY.md` index; new files for durable content only.
 

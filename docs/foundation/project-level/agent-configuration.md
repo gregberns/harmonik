@@ -68,7 +68,7 @@ The `CONSTITUTION.md` at repo root lists immutable project foundations. Edits re
 - The three-store model (git / Beads / JSONL) and git-wins-on-completion arbitration.
 - Centralized controller (daemon owns workflow state; Gas Town polecat model rejected).
 - Three-artifact separation: spec / workflow graph / bead (no "feature" primitive).
-- Direct-to-main + agent-reviewer-every-commit (revisit when the product has real users).
+- Work lands on the integration branch, never on `main`, plus agent-reviewer-every-commit (revisit when the product has real users).
 - Deterministic skeleton + probabilistic organs (daemon in Go, cognition in agents).
 - The 10 locked decisions from 2026-04-19 + the 4 candidate decisions from 2026-04-20/21.
 - Pointer to full spec corpus in `docs/foundation/` and `specs/` (once `kerf finalize` populates it).
@@ -88,7 +88,7 @@ The `CONSTITUTION.md` at repo root lists immutable project foundations. Edits re
 
 - **Commit per node.** One git commit per workflow node that produces durable state. Trailers: `Harmonik-Run-ID`, `Harmonik-State-ID`, `Harmonik-Transition-ID`, optional `Harmonik-Bead-ID`, `Harmonik-Schema-Version` (execution-model §2.1b). Interactive-session commits (human or agent editing outside a run) do NOT carry these trailers.
 - **Branching.** Runtime workflow runs use 3-level branching: node commits → `run/<run_id>` task branch → `harmonik/integration` (workspace-model §5.8). This is runtime behavior of harmonik, NOT how harmonik-itself is built.
-- **Project-level work: direct commits to `main`** (per `build-practices.md §Branch model — direct-to-main`). Ephemeral `agent/<codename>` branches allowed only for parked-across-sessions work; squash-merge back to main on resume.
+- **Project-level work lands on the integration branch, never on `main`.** The rule is owned by `build-practices.md §Branch model — land on the integration branch`. Read it there.
 - **Agent reviewer runs on every non-trivial commit** (per `build-practices.md §Agent review on every commit`). Skipping reviewer on a non-trivial commit is a process violation. Verdict lands in two commit trailers: `Reviewed-By: agent-reviewer` (presence marker) + `Review-Verdict:` (structured JSON per `build-practices.md §Commit conventions`). `BLOCK` never lands.
 - **Never amend** in non-interactive workflows. Interactive sessions: amends allowed for cosmetic fixes only, never across sessions.
 - **Never force-push** `main` or `harmonik/integration`. `run/*` branches may be force-pushed by their owning run only. `agent/<codename>` park-branches may be force-pushed by their owning session only.
@@ -115,9 +115,9 @@ The `CONSTITUTION.md` at repo root lists immutable project foundations. Edits re
 - **Interactive work:** commit at each coherent change-unit (≤~200 lines of diff, one logical idea). Never bundle unrelated changes.
 - **Work-in-progress commits are banned on `main` / integration.** On `run/*` branches, WIP is the norm; squash is the integration merger's choice.
 
-### Commit creation (direct-to-main)
+### Commit creation
 
-- **No PRs** (per `build-practices.md`). Until real users adopt the product, work lands via direct commit to `main`. PR workflow returns when the product has real users or multiple human contributors.
+- **No per-change pull requests** (per `build-practices.md`). The agent reviewer is the gate on the way to the integration branch. Per-change pull requests return when the product has real users or multiple human contributors.
 - **Commit message** follows Conventional Commits per `build-practices.md §Commit conventions`. Subject rules unchanged; non-trivial commits include a body with Why / What / Spec alignment / Test plan / Risk sections (same information previously required in PR bodies).
 - **Required trailers**: `Refs:` (bead-id or kerf-codename) for tracked work items; `Co-Authored-By:` for agent-assisted commits; on every non-trivial commit:
   - `Reviewed-By: agent-reviewer` (presence marker)

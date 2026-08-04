@@ -13,8 +13,8 @@ harmonik --project /path/to/project --no-auto-pull --max-concurrent N
 
 then dispatch work by submitting beads to its queue with `harmonik queue submit
 --beads ...` (see `harmonik queue` below) and watch progress with `harmonik
-subscribe`. The daemon spawns claude per bead, commits, merges to main
-one-at-a-time, pushes, and closes each bead. `harmonik run` is the legacy /
+subscribe`. The daemon spawns claude per bead, commits, merges into its
+target branch one-at-a-time, pushes, and closes each bead. `harmonik run` is the legacy /
 solo-bootstrap path — see below.
 
 ## Subcommands

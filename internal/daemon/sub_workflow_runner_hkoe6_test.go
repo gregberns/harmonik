@@ -74,18 +74,38 @@ func swWriteDotFile(t *testing.T, dir, name, content string) string {
 }
 
 // minimalDotWorkflow returns valid DOT source for a trivial one-node workflow.
+//
+// The graph-level workflow_id is load-bearing. WG-055 makes it required, and the
+// parser refuses a graph without it. Every test here writes its sub-workflow to
+// disk and lets resolveSubWorkflowGraph load it, so a graph the parser refuses
+// never resolves. The runner then returns the SAME structural FAIL that a
+// missing file returns, and a test that expects a structural FAIL passes without
+// reaching the rule it names. Keep the identity here or the negative tests in
+// this file go vacuous again.
+//
+// The value is deliberately not the DOT graph name. The parser must not fall
+// back to the graph name, so a fixture that reuses it would teach the wrong
+// shape.
 const minimalDotWorkflow = `digraph {
   schema_version="1";
   version="1.0";
+  workflow_id="sub-workflow-minimal-fixture";
   start_node="only";
   terminal_node_ids="only";
   only [type="non-agentic", idempotency_class="idempotent", handler_ref="noop"];
 }`
 
 // reviewLoopDotWorkflow returns valid DOT source for a workflow marked as review-loop class.
+//
+// The workflow_id is load-bearing for the same reason as minimalDotWorkflow, and
+// it matters more here: SW-010 is checked AFTER resolution. Without the identity
+// the parser refuses this graph, the runner fails at resolution, and
+// TestSubWorkflowRunner_NoReviewLoop_FailsStructural sees the structural FAIL it
+// wants without the review-loop rule ever running.
 const reviewLoopDotWorkflow = `digraph {
   schema_version="1";
   version="1.0";
+  workflow_id="sub-workflow-review-loop-fixture";
   workflow_class="review-loop";
   start_node="only";
   terminal_node_ids="only";
@@ -210,8 +230,14 @@ func TestSubWorkflowRunner_AcyclicityReject_SelfReference(t *testing.T) {
 func TestSubWorkflowRunner_AcyclicityReject_MutualReference(t *testing.T) {
 	dir := t.TempDir()
 	// Write "B.dot" that references "A" — creating a mutual cycle A→B→A.
+	// schema_version is the DOT schema, so it is "1" and not the graph version.
+	// workflow_id is required by WG-055. Without either, the parser refuses this
+	// graph, the runner fails at resolution, and the structural FAIL below says
+	// nothing about cycle detection — the check runs only after resolution.
 	childDot := `digraph {
-  schema_version = "1.0";
+  schema_version = "1";
+  version = "1.0";
+  workflow_id = "sub-workflow-mutual-cycle-child";
   start_node = "sw-back";
   terminal_node_ids = "sw-back";
   sw-back [type="sub-workflow", sub_workflow_ref="A", workflow_version="1.0"];

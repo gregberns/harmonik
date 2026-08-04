@@ -151,6 +151,89 @@ fi
 rm -rf "$RUN_DIR"
 
 # ---------------------------------------------------------------------------
+# BEHAVIOURAL — a dying `go test` outranks a report that parsed cleanly.
+#
+# THE CASE. `make fast` and `make full` render their run through
+# tools/testreport. The renderer reads a `go test -json` stream, and a stream
+# that was CUT SHORT still parses: every test that finished before the kill
+# passed, so the report says so and exits 0. If the recipe took the renderer's
+# word for it, a run killed by a timeout, an OOM or a signal would be reported
+# as green. That is the fail-open shape this whole file exists to refuse, and
+# the only thing standing against it is the go-test status outranking the
+# report status.
+#
+# WHY IT NEEDS ITS OWN STUB. The stub above exits with one code for every
+# subcommand, which never gets past `go build`. This one has to succeed at
+# `go build` — and produce a renderer that really runs and really exits 0 —
+# and then fail at `go test` while writing a completely valid all-passing
+# stream. That is the exact combination the precedence check defends against
+# and the only one that can tell it apart from its absence.
+#
+# WHAT MUTATION THIS CATCHES. Delete the `if [ "$TEST_STATUS" -ne 0 ]` block
+# from RUN_TESTS_AND_REPORT in the Makefile. Every other assertion in this file
+# still passes, `make -n` still shows no banned construct, and the gate starts
+# approving killed runs. This case goes red.
+# ---------------------------------------------------------------------------
+assertions=$((assertions + 1))
+probe_dir=$(mktemp -d "${TMPDIR:-/tmp}/gate-fc-probe-XXXXXX")
+mkdir -p "$probe_dir/bin"
+cat >"$probe_dir/bin/go" <<'PROBESTUB'
+#!/usr/bin/env bash
+# Succeeds at `go build`, writing a renderer that exits 0 no matter what it is
+# fed. Fails at `go test` AFTER emitting a valid stream in which every test
+# passed — a run that died with its output looking perfectly healthy.
+printf '%s\n' "${1:-<none>}" >>"$GATE_STUB_MARKER"
+case "${1:-}" in
+build)
+    out=
+    while [ "$#" -gt 0 ]; do
+        if [ "$1" = "-o" ]; then out=$2; fi
+        shift
+    done
+    [ -n "$out" ] || exit 3
+    printf '#!/bin/sh\nexit 0\n' >"$out"
+    chmod +x "$out"
+    exit 0
+    ;;
+test)
+    pkg=github.com/gregberns/harmonik/internal/sentinel
+    printf '{"Action":"run","Package":"%s","Test":"TestOne"}\n' "$pkg"
+    printf '{"Action":"pass","Package":"%s","Test":"TestOne","Elapsed":0.01}\n' "$pkg"
+    printf '{"Action":"pass","Package":"%s","Elapsed":0.02}\n' "$pkg"
+    # Killed here. The stream above is complete, well formed and entirely green.
+    exit 137
+    ;;
+esac
+exit 0
+PROBESTUB
+chmod +x "$probe_dir/bin/go"
+: >"$probe_dir/marker"
+env PATH="$probe_dir/bin:$PATH" \
+    GATE_STUB_MARKER="$probe_dir/marker" \
+    HARMONIK_GATE_SELFTEST=1 \
+    make gate-test-report-probe >"$probe_dir/out" 2>&1
+probe_status=$?
+probe_calls=$(grep -c . "$probe_dir/marker" 2>/dev/null || echo 0)
+
+# The recipe exits 137 and make reports its own 2 for any failed recipe, so the
+# status alone cannot show WHICH failure won. The message the precedence block
+# prints is the evidence, and it names the number it acted on. Both halves are
+# required: a non-zero exit, and the go-test status being the reason for it.
+if [ "$probe_status" -eq 0 ]; then
+    fail "a killed run with a green partial stream: the test step exited 0, so a dead run reads as a pass"
+    cat "$probe_dir/out" >&2
+elif ! grep -q '^test$' "$probe_dir/marker"; then
+    fail "a killed run with a green partial stream: \`go test\` was never reached (calls: $probe_calls), so this proves nothing"
+    cat "$probe_dir/out" >&2
+elif ! grep -q 'go test exited 137' "$probe_dir/out"; then
+    fail "a killed run with a green partial stream: blocked (exit $probe_status) but NOT because of the go-test status — the report status won, or the precedence check is gone"
+    cat "$probe_dir/out" >&2
+else
+    pass "a killed run with a green partial stream: blocked because \`go test\` exited 137 — the go-test status outranks the report"
+fi
+rm -rf "$probe_dir"
+
+# ---------------------------------------------------------------------------
 # STRUCTURAL — no step of either target may swallow a status.
 #
 # `make -n` expands variables and recurses into the sub-makes, so this reads the

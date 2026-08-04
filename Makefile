@@ -660,8 +660,8 @@ fmt-check:  ## Fail-closed: exit 1 if gofumpt or gci would change any file (run 
 #
 # fast and full share every static step. They differ in exactly two ways: full
 # tests EVERY package instead of the major set, and full adds the whole-tree
-# lint ceiling, the tagged scenario tier, the crash tier and the module hygiene
-# checks. Keep it that way. A step that belongs to only one of them is how a
+# lint allow list, the tagged scenario tier, the crash tier and the module
+# hygiene checks. Keep it that way. A step that belongs to only one of them is how a
 # third tier grows back.
 # ---------------------------------------------------------------------------
 
@@ -732,7 +732,7 @@ script-tests:  ## Self-tests for the shell the gate depends on
 	scripts/go-test-must-match-test.sh
 	scripts/loadgen-test.sh
 	scripts/gate-fails-closed-test.sh
-	scripts/lint-ceiling-test.sh
+	scripts/lint-allow-test.sh
 
 # freeze-gates — the per-subsystem "do not move this back" greps. Cheap
 # (sub-second each) and they only ever answer a structural question, so they
@@ -789,14 +789,90 @@ gate-test-compile:  ## Compile every _test.go file, run none
 	$(GATE_CAP) scripts/with-lane-gocache.sh go test -run='^$$' -count=1 ./...
 
 # ---------------------------------------------------------------------------
+# THE TEST STEP, and why it is spelled the long way in both targets.
+#
+# `go test` runs under -json and its stream goes to a file, which tools/testreport
+# then renders. Three things forced that shape.
+#
+#   THE REPORT IS WORTH MOST WHEN THE RUN IS RED. A plain recipe would stop at
+#   the first failing step and never render anything, which is the run a reader
+#   most needs read to them. So the status is captured, the report is rendered,
+#   and only then does the step exit.
+#
+#   CAPTURED, NOT DISCARDED. `go test ... | testreport` looks equivalent and is
+#   not: a pipeline in /bin/sh exits with the status of the LAST command, so a
+#   killed or crashed `go test` would be reported by whatever the renderer made
+#   of a truncated stream. That is a fail-open, and it is the exact shape the
+#   gate this replaced was deleted for. Both statuses are kept and the test
+#   status wins, so a run that died still fails even if the report parsed fine.
+#
+#   A FILE, NOT A PIPE, because testreport buffers the whole stream before it
+#   prints anyway — it cannot know what to suppress until a test has passed.
+#   Neither spelling streams, and a file cannot lose the status.
+#
+# Kept inline in both targets rather than hidden in a script on purpose:
+# scripts/gate-fails-closed-test.sh reads the expanded step list with `make -n`,
+# and `make -n` does not descend into a shell script. A step behind a script is
+# a step that structural check cannot see, and the test step is the one place
+# that matters most.
+#
+# ONE DEFINITION, THREE USERS. `fast`, `full` and `gate-test-report-probe` all
+# expand the canned recipe below. Writing it out three times would let the
+# probe drift away from the thing it claims to test, and a probe that no longer
+# matches the real step proves nothing about the real step.
+#
+# $(1) is a label for the messages. $(2) is the package list.
+#
+# THE RENDERER IS BUILT, NOT `go run`. Two reasons, both learned here. `go run`
+# would compile the tool against the default shared GOCACHE while every
+# neighbouring step uses the per-checkout one, which is the cross-lane cache
+# corruption scripts/with-lane-gocache.sh exists to prevent. And a renderer that
+# fails to COMPILE must be told apart from a renderer that ran and found
+# failures; building it separately means a broken tool exits 2 and can never be
+# mistaken for a verdict.
+# ---------------------------------------------------------------------------
+define RUN_TESTS_AND_REPORT
+@RAW=$$(mktemp); \
+BINDIR=$$(mktemp -d); \
+trap 'rm -f "$$RAW"; rm -rf "$$BINDIR"' EXIT; \
+scripts/with-lane-gocache.sh go build -o "$$BINDIR/testreport" ./tools/testreport \
+	|| { echo "$(1): could not build tools/testreport, so no run can be judged"; exit 2; }; \
+TEST_STATUS=0; \
+TMPDIR=/tmp $(GATE_CAP) scripts/with-lane-gocache.sh \
+	go test -json -short -count=1 -timeout=$(GATE_GO_TIMEOUT) $(2) \
+	> "$$RAW" || TEST_STATUS=$$?; \
+REPORT_STATUS=0; \
+"$$BINDIR/testreport" < "$$RAW" || REPORT_STATUS=$$?; \
+if [ "$$TEST_STATUS" -ne 0 ]; then \
+	echo "$(1): go test exited $$TEST_STATUS, so this run FAILED regardless of what the report shows"; \
+	exit "$$TEST_STATUS"; \
+fi; \
+exit "$$REPORT_STATUS"
+endef
+
+# ---------------------------------------------------------------------------
 # make fast — the inner loop.
 # ---------------------------------------------------------------------------
 .PHONY: fast
 fast:  ## THE inner loop: format, build, vet, compile every test, unit-test the major packages, lint changed lines
 	$(MAKE) gate-static
 	$(MAKE) gate-test-compile
-	TMPDIR=/tmp $(GATE_CAP) scripts/with-lane-gocache.sh \
-		go test -short -count=1 -timeout=$(GATE_GO_TIMEOUT) $(FAST_PKGS)
+	$(call RUN_TESTS_AND_REPORT,make fast,$(FAST_PKGS))
+
+# gate-test-report-probe — the smallest real use of the test step above.
+#
+# It exists so scripts/gate-fails-closed-test.sh can drive the capture-render-
+# exit block behaviourally. The behavioural case on `full` cannot reach it: it
+# dies at `go build` inside gate-static, hundreds of steps earlier. Without this
+# probe the one invariant that matters here — the go-test status outranks the
+# report status — is held up by a comment and nothing else, and deleting the
+# precedence check leaves every test in the repo green.
+#
+# internal/sentinel is the package because it is small and fast. Under the
+# self-test the `go` on PATH is a stub, so nothing real is compiled or run.
+.PHONY: gate-test-report-probe
+gate-test-report-probe:  ## Smallest real use of the test step (drives scripts/gate-fails-closed-test.sh)
+	$(call RUN_TESTS_AND_REPORT,make gate-test-report-probe,./internal/sentinel)
 
 # ---------------------------------------------------------------------------
 # make full — the merge decision.
@@ -807,50 +883,61 @@ fast:  ## THE inner loop: format, build, vet, compile every test, unit-test the 
 # extra answer. Everything else fast runs, full runs, in the same order.
 # ---------------------------------------------------------------------------
 .PHONY: full
-full:  ## THE merge decision: everything in fast over EVERY package, plus lint ceiling, scenario tier, crash tier, module hygiene
+full:  ## THE merge decision: everything in fast over EVERY package, plus the lint allow list, scenario tier, crash tier, module hygiene
 	$(MAKE) gate-static
 	$(MAKE) gate-test-compile
-	TMPDIR=/tmp $(GATE_CAP) scripts/with-lane-gocache.sh \
-		go test -short -count=1 -timeout=$(GATE_GO_TIMEOUT) ./...
-	$(MAKE) lint-ceiling
+	$(call RUN_TESTS_AND_REPORT,make full,./...)
+	$(MAKE) lint-allow
 	$(MAKE) test-scenario
 	$(GATE_CAP) go test -tags=crash -count=1 -timeout=$(GATE_GO_TIMEOUT) ./test/crash/...
 	$(MAKE) module-hygiene
 
 # ---------------------------------------------------------------------------
-# lint-ceiling — THE HOOK for the whole-tree lint ceiling.
+# lint-allow — THE HOOK for the whole-tree lint verdict.
 #
-# `make full` lints the WHOLE tree, not only the changed lines, and fails when
-# the finding count rises above the ceiling in scripts/lint-ceiling.baseline.
-# A bare `golangci-lint run` reports more than a thousand findings, so it exits
-# non-zero on every commit and is useless as a verdict — which is why the old
-# `make check` was documented as "never gate on this", and why the whole-tree
-# linter watched nothing at all.
+# `make full` lints the WHOLE tree, not only the changed lines, and fails when a
+# finding appears in a file that is not on the allow list at
+# tools/lintreport/allow.txt. A bare `golangci-lint run` reports more than a
+# thousand findings, so it exits non-zero on every commit and is useless as a
+# verdict — which is why the old `make check` was documented as "never gate on
+# this", and why the whole-tree linter watched nothing at all.
 #
-# The ceiling grandfathers what is already here and refuses what is added. It
-# only ever goes DOWN: a run that comes in under it rewrites the baseline to the
-# lower number, so a fixer commits the new ceiling with the fix and never has to
-# remember a separate bump. scripts/lint-ceiling.sh carries the reasoning for
-# a committed file over a derived number, and for delegating the count to
-# `make lint-full-count` rather than counting twice.
+# WHY A LIST AND NOT A COUNT. This target used to compare a single number
+# against a committed ceiling. A count is a weak verdict, because it falls just
+# as readily when somebody silences a finding as when somebody fixes one, and it
+# says nothing about WHERE the debt is. It also cannot tell "fixed two in the
+# daemon, added two in the queue" from "no change at all".
+#
+# The allow list names each tolerated file-and-linter pair on its own line. A
+# finding whose pair is listed is grandfathered. A finding whose pair is NOT
+# listed fails the build. Clean a file, delete its line, and that file can never
+# regress. The list is keyed on file-and-linter rather than on line number
+# because line numbers rot within days and would churn the list on every
+# unrelated edit.
+#
+# Every run prints what it is tolerating, broken down by package and by linter,
+# including a run that passes. "No new lint findings" must never be readable as
+# "this tree is clean". The tree carries 1,187 findings today and 615 of them
+# are in internal/daemon.
 #
 # `make fast` lints CHANGED LINES only (the --new-from-rev step in gate-static).
 # The whole-tree pass belongs to the merge decision alone.
 #
-# scripts/lint-ceiling-test.sh holds this target's assertions. It runs inside
+# scripts/lint-allow-test.sh holds this target's assertions. It runs inside
 # script-tests, so it runs in both fast and full.
 # ---------------------------------------------------------------------------
-.PHONY: lint-ceiling
-lint-ceiling:  ## Whole-tree lint against the finding ceiling in scripts/lint-ceiling.baseline
-	@if [ ! -x scripts/lint-ceiling.sh ]; then \
-		echo "make full: the whole-tree lint ceiling script is missing."; \
-		echo "  Expected: scripts/lint-ceiling.sh, executable, exit 0 at or under the ceiling."; \
+.PHONY: lint-allow
+lint-allow:  ## Whole-tree lint judged against the allow list in tools/lintreport/allow.txt
+	@if [ ! -x scripts/lint-allow.sh ]; then \
+		echo "make full: the whole-tree lint script is missing."; \
+		echo "  Expected: scripts/lint-allow.sh, executable, exit 0 when no finding"; \
+		echo "  falls outside tools/lintreport/allow.txt."; \
 		echo "  This step FAILS while it is missing. A merge decision with a missing"; \
 		echo "  step has not produced a verdict, and a gate that shrugs at a missing"; \
 		echo "  step is the fail-open behaviour this gate was built to remove."; \
 		exit 1; \
 	fi
-	scripts/lint-ceiling.sh
+	scripts/lint-allow.sh
 
 # ---------------------------------------------------------------------------
 # module-hygiene — the cheap whole-module checks the old `check` target held.
@@ -976,12 +1063,14 @@ LINT_FULL_TIMEOUT ?= 15m
 lint:  ## golangci-lint run (shorthand)
 	$(TOOLS_DIR)/golangci-lint run
 
-# lint-full-count publishes the number. lint-ceiling judges it. Keeping the
-# count in one place is why scripts/lint-ceiling.sh calls this target instead of
-# running its own golangci-lint.
+# lint-full-count publishes a whole-tree finding count for a reader who wants
+# one number. It is NOT the verdict and nothing gates on it: `make full` judges
+# each finding against tools/lintreport/allow.txt through `make lint-allow`,
+# because a count falls just as readily when somebody silences a finding as when
+# somebody fixes one. Kept as a hand-run measure, not as a gate.
 #
-# TWO CHANGES WERE NEEDED before it could carry a verdict, both measured
-# 2026-08-03 on this tree.
+# TWO CHANGES WERE NEEDED before it could report a trustworthy number, both
+# measured 2026-08-03 on this tree.
 #
 #   THE CACHE. This used to run under with-isolated-gocache.sh, which hands the
 #   command a `mktemp -d` GOCACHE and deletes it on exit. Every run therefore
@@ -997,7 +1086,7 @@ lint:  ## golangci-lint run (shorthand)
 #   changed-line runs but is under a cold whole-tree run. Overridden here, and
 #   only here, to a bound that a cold checkout fits inside. NOT disabled: a
 #   linter that hangs must fail rather than hang.
-lint-full-count:  ## Publish the full-tree grandfathered lint finding count (lint-ceiling judges it)
+lint-full-count:  ## Publish the full-tree lint finding count (a measure, not the verdict; see lint-allow)
 	@REPORT=$$(mktemp); \
 	trap 'rm -f "$$REPORT"' EXIT; \
 	LINT_STATUS=0; \

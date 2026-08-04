@@ -76,6 +76,31 @@ func writeBeadsOwnedSentinel(projectDir, beadID string) error {
 	return f.Close()
 }
 
+// beadsOwnedSentinelExists reports whether this project's daemon holds the
+// ownership sentinel for beadID, meaning a ClaimBead call of ours has already
+// succeeded on this bead and no close, reopen or reset has since cleared it.
+//
+// This is the only local signal that answers "did WE claim this bead". br
+// itself cannot answer it: the adapter never learns its own br actor name, so
+// an assignee read tells us who holds a bead but not whether that holder is us.
+//
+// An empty projectDir returns false. Such an adapter has no beads-owned
+// directory at all, so it has no ownership signal and MUST NOT assume
+// ownership. Every production caller builds the adapter with NewForProject, so
+// projectDir is empty only for test callers that use New.
+//
+// A stat error other than "does not exist" also returns false. The caller uses
+// this to decide whether to credit itself with a bead's current state, so an
+// unreadable sentinel must fail closed.
+func beadsOwnedSentinelExists(projectDir, beadID string) bool {
+	dir := beadsOwnedDir(projectDir)
+	if dir == "" {
+		return false
+	}
+	_, err := os.Stat(beadsOwnedSentinelPath(dir, beadID))
+	return err == nil
+}
+
 // deleteBeadsOwnedSentinel removes the ownership sentinel file for beadID
 // under projectDir. A missing file (os.ErrNotExist) is treated as success —
 // idempotent.

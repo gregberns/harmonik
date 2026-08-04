@@ -109,6 +109,42 @@ func (a *Adapter) RunWithDBLockedRetry(
 	maxBackoff time.Duration,
 	args ...string,
 ) (Result, error) {
+	result, _, err := a.runWithDBLockedRetryTimeoutKills(ctx, cfg, kind, maxRetries, base, maxBackoff, args...)
+	return result, err
+}
+
+// runWithDBLockedRetryTimeoutKills is RunWithDBLockedRetry plus the number of
+// attempts it lost to a WALL-CLOCK TIMEOUT KILL. RunWithDBLockedRetry delegates
+// to it and drops the count.
+//
+// The count matters to the claim path. A caller that sees `br` REFUSE a write
+// cannot always tell whether an EARLIER attempt of the same call already
+// landed. The two transient classes that force a retry carry OPPOSITE evidence,
+// and only one of them creates that doubt:
+//
+//   - Timeout kill (BrUnavailable). `br` was killed at the wall-clock deadline.
+//     It may have committed the write before it died, because a commit and its
+//     acknowledgement are not atomic (hk-5dewt / hk-yjsk8). A later refusal may
+//     be `br` rejecting OUR OWN landed write. This is the doubt. It is counted.
+//   - Locked database (BrDbLocked, exit 3). `br` gave up waiting for the write
+//     lock and wrote NOTHING. A later refusal cannot be our own write. There is
+//     no doubt here, so this is NOT counted.
+//
+// Counting attempts instead of timeout kills would conflate the two and credit
+// a claim after ordinary SQLite contention, which re-opens the takeover the
+// claim gate exists to stop. Count only the kills.
+//
+// The count is 0 for a call whose attempts all produced a definite answer from
+// `br`, however many attempts that took.
+func (a *Adapter) runWithDBLockedRetryTimeoutKills(
+	ctx context.Context,
+	cfg TimeoutConfig,
+	kind CommandKind,
+	maxRetries int,
+	base time.Duration,
+	maxBackoff time.Duration,
+	args ...string,
+) (Result, int, error) {
 	backoff := base
 
 	// Diagnostic counters: track how many attempts hit each failure class.
@@ -127,15 +163,15 @@ func (a *Adapter) RunWithDBLockedRetry(
 		switch {
 		case err == nil && result.BrErr != BrDbLocked:
 			// Success or non-DbLocked Result: return as-is.
-			return result, nil
+			return result, countUnavailable, nil
 		case err != nil && errors.Is(err, context.Canceled):
 			// Context cancellation is never a transient retry target.
-			return Result{}, err
+			return Result{}, countUnavailable, err
 		case err != nil && errors.Is(err, context.DeadlineExceeded):
-			return Result{}, err
+			return Result{}, countUnavailable, err
 		case err != nil && !errors.Is(err, BrUnavailable):
 			// Exec / fork error that is NOT a wall-clock timeout: propagate.
-			return Result{}, err
+			return Result{}, countUnavailable, err
 		}
 
 		// Transient: record outcome for diagnostics.
@@ -157,7 +193,7 @@ func (a *Adapter) RunWithDBLockedRetry(
 
 			totalAttempts := maxRetries + 1
 			if lastErr != nil {
-				return Result{}, fmt.Errorf(
+				return Result{}, countUnavailable, fmt.Errorf(
 					"brcli: BrUnavailable persisted after %d retries"+
 						" (%d/%d BrUnavailable, %d/%d BrDbLocked)"+
 						" last attempt: brErr=%s exit=%d stderr=%q: %w",
@@ -168,7 +204,7 @@ func (a *Adapter) RunWithDBLockedRetry(
 					BrUnavailable,
 				)
 			}
-			return Result{}, fmt.Errorf(
+			return Result{}, countUnavailable, fmt.Errorf(
 				"brcli: BrDbLocked persisted after %d retries"+
 					" (%d/%d BrUnavailable, %d/%d BrDbLocked)"+
 					" last attempt: brErr=%s exit=%d stderr=%q: %w",
@@ -186,7 +222,7 @@ func (a *Adapter) RunWithDBLockedRetry(
 		// Respect context cancellation during the sleep.
 		select {
 		case <-ctx.Done():
-			return Result{}, fmt.Errorf("brcli: context canceled during transient-failure backoff: %w", ctx.Err())
+			return Result{}, countUnavailable, fmt.Errorf("brcli: context canceled during transient-failure backoff: %w", ctx.Err())
 		case <-time.After(backoff):
 		}
 
@@ -200,5 +236,5 @@ func (a *Adapter) RunWithDBLockedRetry(
 	}
 
 	// Unreachable: the loop always returns on the last iteration.
-	return Result{}, errors.New("brcli: RunWithDBLockedRetry: internal invariant violation")
+	return Result{}, countUnavailable, errors.New("brcli: RunWithDBLockedRetry: internal invariant violation")
 }

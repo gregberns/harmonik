@@ -89,6 +89,13 @@ func (a *Adapter) ReissueTerminalTransition(
 	switch result.BrErr {
 	case BrOK:
 		// (4a) Write completed successfully.  BI-031 step 6: delete intent file.
+		// Keep the ownership sentinel in step with the op first: brcli's claim
+		// gate reads it as proof of "we own this bead", so a re-drive that moves
+		// a bead without touching it leaves a lie on disk. A re-driven close,
+		// reopen or reset that left the sentinel behind would later credit a
+		// claim on a bead another actor holds. A re-driven claim that wrote no
+		// sentinel would later refuse a bead that is genuinely ours.
+		a.syncOwnershipSentinel(entry.Op, entry.BeadID)
 		if delErr := DeleteIntentLogAndSyncParent(intentLogDir, entry.IdempotencyKey); delErr != nil {
 			// Write succeeded; stale intent file will be resolved by BI-031 GC
 			// on the next startup (gcIntentOpLanded will return true).
@@ -104,6 +111,9 @@ func (a *Adapter) ReissueTerminalTransition(
 		record, showErr := a.ShowBead(ctx, entry.BeadID)
 		if showErr == nil && record.Status == entry.IntendedPostState {
 			// Post-state confirmed.  BI-031 step 6: delete intent file.
+			// Same sentinel bookkeeping as the BrOK path: the bead reached the
+			// post-state, so our ownership marker must match it.
+			a.syncOwnershipSentinel(entry.Op, entry.BeadID)
 			// best-effort: stale file resolved by BI-031 GC on next startup if this fails.
 			_ = DeleteIntentLogAndSyncParent(intentLogDir, entry.IdempotencyKey) //nolint:errcheck // best-effort; startup GC resolves a retained intent
 			return nil
@@ -117,5 +127,27 @@ func (a *Adapter) ReissueTerminalTransition(
 		// In both cases the intent file is retained so reconciliation can route
 		// appropriately.
 		return fmt.Errorf("brcli.ReissueTerminalTransition: op=%s bead=%s br error %w (exit %d): retaining intent for Cat 3a/6b routing", entry.Op, entry.BeadID, result.BrErr, result.ExitCode)
+	}
+}
+
+// syncOwnershipSentinel brings the beads-owned ownership sentinel into step with
+// a terminal op that has just landed. A claim gains the sentinel. A close,
+// reopen or reset clears it. Any other op leaves it alone.
+//
+// ClaimBead, CloseBead, ReopenBead and ResetBead each do this inline for the
+// writes they issue. ReissueTerminalTransition re-drives those same writes at
+// crash-recovery boot, so it has to do the same bookkeeping or it leaves the
+// sentinel disagreeing with the ledger. That matters because
+// Adapter.postStateIsOurs reads the sentinel as sole proof of "we own this
+// bead" when it decides whether a refused claim may be credited.
+//
+// Both calls are best-effort, matching every other sentinel call site. A miss
+// degrades to the intent-log provenance signal.
+func (a *Adapter) syncOwnershipSentinel(op core.TerminalOp, beadID core.BeadID) {
+	switch op {
+	case core.TerminalOpClaim:
+		_ = writeBeadsOwnedSentinel(a.projectDir, string(beadID)) //nolint:errcheck // best-effort; hk-11xkn
+	case core.TerminalOpClose, core.TerminalOpReopen, core.TerminalOpReset:
+		_ = deleteBeadsOwnedSentinel(a.projectDir, string(beadID)) //nolint:errcheck // best-effort; hk-11xkn
 	}
 }

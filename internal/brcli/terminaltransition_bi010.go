@@ -38,6 +38,101 @@ import (
 // Spec refs: specs/beads-integration.md §4.4 BI-010; §4.4 BI-010d (reset);
 // §4.10 BI-029, BI-030, BI-031; §6.1 RECORD IntentLogEntry.
 
+// postStateIsOurs reports whether terminalTransitionWrite may credit itself
+// with a bead that already sits at the intended post-state, AFTER br refused
+// the write with a non-retriable non-zero exit.
+//
+// The idempotency check it gates exists for a real case (hk-cw4sx): under a
+// concurrent wave, several writers race and one lands while the others get an
+// error, so an observed post-state means the work is done and the error is a
+// false negative. That reasoning holds for close, reopen and reset, whose
+// post-states (closed, open) are the shared END state everybody was driving
+// toward. Whoever got there, the caller wants the same thing.
+//
+// It does NOT hold for claim. A claim's post-state is in_progress, which is not
+// a shared end state but an EXCLUSIVE one: it names a single owner running a
+// single bead. Crediting ourselves with somebody else's in_progress tells the
+// caller it owns a bead another actor is actively running, and the caller then
+// dispatches a second run onto it.
+//
+// So the claim op has to answer "is this in_progress OURS", and it has two ways
+// to say yes. Either is enough.
+//
+//  1. timeoutKills > 0. An attempt of THIS call was killed at the wall-clock
+//     deadline. br can commit and then die before it acknowledges (hk-5dewt /
+//     hk-yjsk8), so that attempt may have landed and the refusal we are holding
+//     may be br rejecting our own claim. We cannot tell, so we credit it. This
+//     keeps a lost acknowledgement from turning into a bead nobody can claim.
+//  2. The beads-owned sentinel exists. It is written only after a ClaimBead of
+//     ours succeeded on this bead, and close, reopen and reset each clear it.
+//     Its presence means an earlier CALL of ours already claimed the bead, so
+//     this is a self-retry.
+//
+// The count is TIMEOUT KILLS, not attempts. A retry forced by a locked database
+// (exit 3) does not count, because br gave up on the write lock and wrote
+// nothing, so a later refusal cannot be our own write. Counting attempts would
+// conflate the two and credit a takeover after ordinary SQLite contention,
+// which is the very thing the retry loop absorbs, ten times over. That bug was
+// caught in review.
+//
+// With no timeout kill and no sentinel, neither holds: every attempt got a
+// definite answer from br and the last one was a refusal, so nothing of ours
+// landed in this call, and no earlier call of ours claimed the bead. The
+// in_progress belongs to somebody else and the claim error must reach the
+// caller. That is the case this gate exists to catch, and it is the shape the
+// reported takeovers had — br refuses "already assigned to <crew>".
+//
+// Scope note: this gates ONLY the refused-write branch. The BrUnavailable
+// retry-exhaustion branch stays ungated for every op, and that is deliberate,
+// not an oversight. A timeout never proves the write failed — br may have
+// committed and then been killed before it answered — so there is no attempt
+// count at which a timeout becomes proof. Only a definitive refusal carries
+// that information, and only when it was the sole attempt.
+//
+// Residual risk, deliberate: a stale sentinel credits a bead we no longer own.
+// Every write path that ends our ownership clears it — CloseBead, ReopenBead,
+// ResetBead, SweepCloseBead, and the ReissueTerminalTransition re-drive — so a
+// stale sentinel needs one of those best-effort deletes to fail. The deletes are
+// logged nowhere, so such a failure is silent. The alternative is to fail closed
+// on the sentinel and wedge real self-retries, which is worse.
+//
+// Residual risk 2, unavoidable: condition 1 still credits a takeover when a
+// timeout kill coincides with a genuine other holder. Two workers race an open
+// bead. A wins. B's first attempt is killed while it waits on A's lock, so B
+// wrote nothing, but B cannot know that. B's next attempt reads "already
+// assigned to A", B sees its own timeout kill, and B credits itself. Closing
+// this needs the adapter to know its own br actor name, which it cannot — see
+// claimFallbackAllowed. The window is far narrower than the unconditional
+// credit it replaces, but it is not zero.
+//
+// Two more things a reader should know:
+//
+//   - Granting the credit MAKES the bead ours. ClaimBead writes the sentinel
+//     after a nil return, so a wrong credit is self-confirming and every later
+//     claim on that bead sails through. That is why the two conditions above are
+//     narrow, and why the retry-exhaustion branch is gated as well.
+//   - This gate sits on the ClaimBead path only. A caller that resets a stranded
+//     bead by another route, such as the queue path's stranded-bead auto-reset,
+//     does not consult it.
+//
+// Spec note: the beads-owned sentinel is NOT specced. process-lifecycle.md
+// PL-006 offers audit-actor OR intent-log as provenance, and
+// lifecycle.SentinelFileProvenanceChecker adds the sentinel as one of several
+// ORed signals for the orphan sweep. This function is the first place the
+// sentinel acts as a sole predicate, so it wants a spec amendment.
+//
+// Spec ref: specs/beads-integration.md §4.4 BI-010a (claim status table).
+// Bead refs: hk-cw4sx (the wave-race check being gated), hk-11xkn (sentinel).
+func (a *Adapter) postStateIsOurs(op core.TerminalOp, beadID core.BeadID, timeoutKills int) bool {
+	if op != core.TerminalOpClaim {
+		return true
+	}
+	if timeoutKills > 0 {
+		return true
+	}
+	return beadsOwnedSentinelExists(a.projectDir, string(beadID))
+}
+
 // IntentLogEntrySchemaVersion is the schema version stamped on every
 // adapter-owned intent-log entry written under .harmonik/beads-intents/.
 // Production callers derive that directory's absolute path via
@@ -120,7 +215,7 @@ func (a *Adapter) terminalTransitionWrite(
 	// to inject small values to keep retry-exhaustion scenarios fast.
 	// Spec ref: beads-integration.md §4.10 BI-031 step (4c-transient).
 	retryMax, retryBase, retryCap := cfg.terminalWriteRetryParams()
-	result, err := a.RunWithDBLockedRetry(
+	result, timeoutKills, err := a.runWithDBLockedRetryTimeoutKills(
 		ctx,
 		cfg,
 		CommandKindWrite,
@@ -137,8 +232,18 @@ func (a *Adapter) terminalTransitionWrite(
 		// the failure is a false-negative — treat as success and delete intent file.
 		// Only check on BrUnavailable (retry exhaustion); propagate context
 		// cancellation and exec errors without the extra ShowBead round-trip.
+		//
+		// postStateIsOurs gates this credit too. BrUnavailable does NOT mean a
+		// timeout happened: the retry loop wraps BrUnavailable around BOTH
+		// escalations, including the one where every attempt exited 3 with a
+		// locked database and br therefore wrote nothing at all. Leaving this
+		// branch ungated let that case credit itself with a bead another actor
+		// runs, and the credit then planted the ownership sentinel and made the
+		// mistake permanent. A genuine timeout escalation is unaffected, because
+		// it always carries at least one timeout kill.
 		if errors.Is(err, BrUnavailable) {
-			if record, showErr := a.ShowBead(ctx, beadID); showErr == nil && record.Status == intendedPost {
+			if record, showErr := a.ShowBead(ctx, beadID); showErr == nil && record.Status == intendedPost &&
+				a.postStateIsOurs(op, beadID, timeoutKills) {
 				_ = DeleteIntentLogAndSyncParent(intentLogDir, ikey) //nolint:errcheck // best-effort; stale file resolved by BI-031 on next startup
 				return nil
 			}
@@ -150,7 +255,11 @@ func (a *Adapter) terminalTransitionWrite(
 		// Non-retriable non-zero exit (e.g. BrConflict, BrNotFound).
 		// Same idempotency check: a concurrent write may have already landed
 		// (hk-cw4sx). If ShowBead confirms the intended post-state, treat as success.
-		if record, showErr := a.ShowBead(ctx, beadID); showErr == nil && record.Status == intendedPost {
+		//
+		// postStateIsOurs gates that credit for the CLAIM op, whose post-state
+		// names an exclusive owner rather than a shared end state.
+		if record, showErr := a.ShowBead(ctx, beadID); showErr == nil && record.Status == intendedPost &&
+			a.postStateIsOurs(op, beadID, timeoutKills) {
 			_ = DeleteIntentLogAndSyncParent(intentLogDir, ikey) //nolint:errcheck // best-effort; stale file resolved by BI-031 on next startup
 			return nil
 		}
@@ -229,16 +338,13 @@ func (a *Adapter) ClaimBead(
 		// for. When the gate refuses, ClaimBead returns the original claim error and
 		// issues no write — losing the claim is the correct outcome.
 		//
-		// KNOWN LIMIT — the gate never sees a bead at in_progress, which is the state
-		// a live holder is actually in. terminalTransitionWrite runs its own
-		// idempotency check first: when a fresh read shows the bead already at the
-		// intended post-state (in_progress for a claim), it returns nil. So ClaimBead
-		// reports SUCCESS for a bead another actor is running, and neither the
-		// "already assigned" branch nor this gate is reached. No write goes out, so
-		// the gate's no-takeover promise holds, but the caller then dispatches a
-		// second run onto a live bead. That hole is in the shared
-		// terminalTransitionWrite idempotency check (the hk-cw4sx wave-race path),
-		// not in this fallback, and this change does not close it.
+		// in_progress reaches this gate only when the bead is NOT ours. The
+		// idempotency check inside terminalTransitionWrite used to swallow every
+		// in_progress bead as a success before this branch ran, which hid the
+		// commonest takeover of all. postStateIsOurs now gates that credit on two
+		// conditions — a timeout kill in this call, or our ownership sentinel — so
+		// a genuine self-retry still returns success early and a bead another
+		// actor holds arrives here as an error instead.
 		if strings.Contains(claimErr.Error(), "already assigned") {
 			holder, allowed := a.claimFallbackAllowed(ctx, beadID)
 			if !allowed {
@@ -288,12 +394,14 @@ func (a *Adapter) ClaimBead(
 //   - read failure — fail closed. An unknown holder counts as a different
 //     holder, so an unreadable bead is never taken.
 //
-// KNOWN LIMIT — in_progress never reaches this function. terminalTransitionWrite
-// converts an "already assigned" refusal into a nil return when a fresh read
-// shows the bead already at the intended post-state, and in_progress IS the
-// intended post-state of a claim. So the caller never sees an error for a bead a
-// live holder is running, and this gate is never asked about that case. See the
-// KNOWN LIMIT note in ClaimBead.
+// in_progress reaches this function only for a bead this daemon cannot show is
+// its own. terminalTransitionWrite still short-circuits an "already assigned"
+// refusal to a nil return when the bead is already at the intended post-state,
+// but postStateIsOurs now restricts that credit on the claim op to two cases: a
+// wall-clock timeout kill happened in this call, so an attempt of ours may have
+// landed, or we hold the bead's ownership sentinel from an earlier call. A
+// genuine self-retry matches one of those and never gets this far. A bead
+// another actor is running matches neither, and is refused here.
 //
 // The read goes through ShowBead (`br show <id> --format json`), which is the
 // adapter's structured read surface. The holder is NOT parsed out of the br
@@ -577,6 +685,12 @@ func (a *Adapter) ResetBead(
 			result.BrErr, result.ExitCode, result.Stderr)
 	}
 
+	// Delete ownership sentinel (best-effort; bead is back to open).
+	// This runs BEFORE the intent-file delete so a failed intent delete cannot
+	// leave the sentinel behind. A stale sentinel outlives the bead's reset and
+	// would let a later claim credit itself with it (postStateIsOurs reads it).
+	_ = deleteBeadsOwnedSentinel(a.projectDir, string(beadID)) //nolint:errcheck // best-effort; hk-11xkn
+
 	// BI-030 step 6: delete intent file + fsync(parent_dir_fd) on success.
 	if err := DeleteIntentLogAndSyncParent(intentLogDir, ikey); err != nil {
 		// Non-fatal: the write succeeded; the stale intent file will be
@@ -584,9 +698,6 @@ func (a *Adapter) ResetBead(
 		// protocol on next startup.
 		return fmt.Errorf("brcli.ResetBead: delete intent file: %w", err)
 	}
-
-	// Delete ownership sentinel (best-effort; bead is back to open).
-	_ = deleteBeadsOwnedSentinel(a.projectDir, string(beadID)) //nolint:errcheck // best-effort; hk-11xkn
 
 	return nil
 }
@@ -637,6 +748,12 @@ func (a *Adapter) SweepCloseBead(
 		return fmt.Errorf("brcli.SweepCloseBead: br close %s failed: %w (exit %d): stderr=%q",
 			beadID, result.BrErr, result.ExitCode, string(result.Stderr))
 	}
+
+	// Delete the ownership sentinel, exactly as CloseBead does. The bead is
+	// closed, so we no longer own it. Leaving the sentinel behind would let a
+	// later claim of a REOPENED bead credit itself with our stale marker and
+	// take a bead another actor holds (postStateIsOurs reads this file).
+	_ = deleteBeadsOwnedSentinel(a.projectDir, string(beadID)) //nolint:errcheck // best-effort; hk-11xkn
 
 	// Flag the auto-closed bead for operator review (H3). A Cat 3c close is a
 	// daemon inference, not an explicit sign-off, so mark it needs-attention.

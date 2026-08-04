@@ -22,23 +22,30 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
-// singleFixtureAborter watches for the implementer to start, then does what
-// every StaleWatcher reaper does: latch the run aborted and cancel its context.
-// That pair is what the run path reads to tell a per-run abort apart from a
-// daemon-wide shutdown.
+// singleFixtureAborter watches for the implementer to start, then cancels its
+// context.
+//
+// latch selects which of the two cancellations it models, and they are the two
+// the run path must tell apart. With the latch it is the StaleWatcher reaper
+// reaping ONE run, which is that run's terminal. Without it, it is the daemon
+// stopping and taking every live run's context down with it, which is a drain
+// and not a failure. The cancelled context looks identical from the run's side;
+// the latch is the only thing that distinguishes them.
 type singleFixtureAborter struct {
 	marker   string
 	registry *daemon.RunRegistry
+	latch    bool
 	fired    atomic.Bool
 	stop     chan struct{}
 	done     chan struct{}
 }
 
-func newSingleFixtureAborter(t *testing.T, registry *daemon.RunRegistry) *singleFixtureAborter {
+func newSingleFixtureAborter(t *testing.T, registry *daemon.RunRegistry, latch bool) *singleFixtureAborter {
 	t.Helper()
 	return &singleFixtureAborter{
 		marker:   filepath.Join(t.TempDir(), "implementer-running"),
 		registry: registry,
+		latch:    latch,
 		stop:     make(chan struct{}),
 		done:     make(chan struct{}),
 	}
@@ -68,9 +75,15 @@ func (a *singleFixtureAborter) start() {
 				if h.Cancel == nil {
 					continue
 				}
-				daemon.ExportedMarkRunAborted(h)
-				if !daemon.ExportedRunHandleIsAborted(h) {
-					return // the latch did not take; the test's own guard reports it
+				if a.latch {
+					daemon.ExportedMarkRunAborted(h)
+				}
+				// Guard both directions. A latch that silently failed to take
+				// would make the abort test assert nothing; a latch set when the
+				// fixture asked for a shutdown would make the drain test assert
+				// the opposite of what it claims.
+				if daemon.ExportedRunHandleIsAborted(h) != a.latch {
+					return // the test's own guard reports it
 				}
 				h.Cancel()
 				a.fired.Store(true)
@@ -89,7 +102,7 @@ func TestLegacySingleInput_NoReviewDOTAbortedRunReportsImplementerPhase(t *testi
 	t.Parallel()
 
 	registry := daemon.ExportedNewRunRegistry()
-	aborter := newSingleFixtureAborter(t, registry)
+	aborter := newSingleFixtureAborter(t, registry, true)
 	script := aborter.handlerScript(t)
 	aborter.start()
 
@@ -111,6 +124,52 @@ func TestLegacySingleInput_NoReviewDOTAbortedRunReportsImplementerPhase(t *testi
 	}
 	if !singleFixtureHasEvent(res, core.EventTypeImplementerPhaseComplete) {
 		t.Errorf("bead %s was aborted and emitted no implementer_phase_complete; events=%v", beadID, res.Bus.eventTypes())
+	}
+}
+
+// TestLegacySingleInput_NoReviewDOTShutdownDrainsRatherThanFails is the other
+// half of the same branch. It pairs with the test above through the one field
+// that differs between them — the latch — so neither can be read alone.
+//
+// The run is cancelled exactly as above but WITHOUT the reaper's latch, which is
+// what a daemon-wide stop looks like. That is a drain: the run did not fail, it
+// only did not finish, so RSM-021 parks it. Blaming a run for the daemon going
+// down would re-run an agent that was doing nothing wrong.
+//
+// It asserts the reopen as well as the absence of run_failed. The absence is
+// what the drain has to get right; the reopen adds the one case the absence
+// cannot see, which is a run that CLOSES its bead instead of reopening it. A run
+// that emits nothing at all is already caught upstream — runDotFixtureBead waits
+// on a close or a reopen and fatals without one — so that is not what this
+// assertion is for. dot_shutdown_drain_test.go covers the same branch from the
+// ordinary shutdown side; this one is here because it shares a fixture with the
+// abort test and so pins the discriminator itself.
+func TestLegacySingleInput_NoReviewDOTShutdownDrainsRatherThanFails(t *testing.T) {
+	t.Parallel()
+
+	registry := daemon.ExportedNewRunRegistry()
+	stopper := newSingleFixtureAborter(t, registry, false)
+	script := stopper.handlerScript(t)
+	stopper.start()
+
+	const beadID = core.BeadID("hk-aekon-shutdown-drain")
+	res := runDotFixtureBead(t, beadID, dotFixtureOpts{
+		WorkflowMode:  core.WorkflowModeSingle,
+		HandlerScript: script,
+		RunRegistry:   registry,
+	})
+	stopper.finish()
+
+	if !stopper.fired.Load() {
+		t.Fatal("the fixture never cancelled a run, so this test asserts nothing — fix the fixture before trusting the result")
+	}
+	if summary := dotFixtureRunFailedSummary(res); summary != "" {
+		t.Errorf("the daemon stopped and the run was blamed for it: run_failed summary = %q; want no run_failed at all; events=%v",
+			summary, res.Bus.eventTypes())
+	}
+	if reopened := res.Ledger.reopenedIDs(); len(reopened) == 0 {
+		t.Errorf("bead %s was not reopened after the daemon stopped, so the drain left it stranded in_progress with no terminal at all; events=%v",
+			beadID, res.Bus.eventTypes())
 	}
 }
 

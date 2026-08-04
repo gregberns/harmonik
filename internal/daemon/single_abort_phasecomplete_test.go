@@ -107,7 +107,7 @@ func TestLegacySingleInput_NoReviewDOTAbortedRunReportsImplementerPhase(t *testi
 	// The graph must report its cancellation. Without this check the event below
 	// could come from an ordinary completed node.
 	if summary := dotFixtureRunFailedSummary(res); !strings.Contains(summary, "context cancelled during node") {
-		t.Fatalf("run_failed summary = %q; want the DOT cancellation reason", summary)
+		t.Fatalf("run_failed summary = %q; want the DOT cancellation reason; events=%v", summary, res.Bus.eventTypes())
 	}
 	if !singleFixtureHasEvent(res, core.EventTypeImplementerPhaseComplete) {
 		t.Errorf("bead %s was aborted and emitted no implementer_phase_complete; events=%v", beadID, res.Bus.eventTypes())

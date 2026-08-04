@@ -362,30 +362,32 @@ func TestT2_ExitZeroNoSignal(t *testing.T) {
 	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
-	// Shell script: writes nothing, exits 0.
-	scriptDir := t.TempDir()
-	scriptPath := filepath.Join(scriptDir, "silent-exit.sh")
-	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("T2-S4: write script: %v", err)
-	}
-
 	projectDir := t2FixtureProjectDir(t)
 
 	const beadID = core.BeadID("t2-bead-silent-exit")
+	// workflow:single is load-bearing; see stubBeadLedger.labels. Without it this
+	// bead selects the reviewed graph, whose commit gate cannot pass in a fixture
+	// repo that holds one README, so the run reopens the bead and the test reads
+	// that as a silent exit 0 failing to close.
 	ledger := &stubBeadLedger{
-		ready: []core.BeadID{beadID},
+		ready:  []core.BeadID{beadID},
+		labels: workloopFixtureSingleLabels,
 	}
 	collector := &stubEventCollector{}
 
+	// The handler commits and exits 0 without writing one NDJSON line, which is
+	// what this scenario is about: a twin that exits clean and says nothing. The
+	// commit has to be here rather than in a worktree factory, because a factory
+	// runs before the launch and the node baseline would already carry it — see
+	// workloopFixtureAdvanceHeadHandlerArgs.
 	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
 		ProjectDir:       projectDir,
 		HandlerBinary:    "/bin/sh",
-		HandlerArgs:      []string{scriptPath},
+		HandlerArgs:      workloopFixtureAdvanceHeadHandlerArgs(t),
 		AdapterRegistry2: NewEmptySealedAdapterRegistryForTest(t),
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
-		WorktreeFactory:  workloopFixturePreCommitWorktreeFactory,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)

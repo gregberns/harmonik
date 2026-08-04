@@ -118,11 +118,15 @@ func (l *multiBeadLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
 	}
 	id := l.pending[0]
 	l.pending = l.pending[1:]
-	return []core.BeadRecord{{BeadID: id, Status: core.CoarseStatusOpen}}, nil
+	return []core.BeadRecord{{BeadID: id, Status: core.CoarseStatusOpen, Labels: workloopFixtureSingleLabels}}, nil
 }
 
 func (l *multiBeadLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
-	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen}, nil
+	// workflow:single is load-bearing; see stubBeadLedger.labels. An unlabelled
+	// bead selects the reviewed graph, whose commit gate cannot pass in a fixture
+	// repo that holds one README, so no bead ever reached the merge these two
+	// tests are about.
+	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen, Labels: workloopFixtureSingleLabels}, nil
 }
 
 func (l *multiBeadLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, runID core.RunID, _ core.TransitionID, beadID core.BeadID) error {
@@ -248,26 +252,53 @@ func hktijajInitRepoWithOrigin(t *testing.T) (string, string) {
 	return projectDir, originDir
 }
 
-// hktijajCommitInWorktree writes `content` to `relPath` inside the run-branch
-// worktree and commits it with the run-id trailer, simulating an agent that did
-// work. Fatals on error.
-func hktijajCommitInWorktree(t *testing.T, ctx context.Context, wtPath, runID, relPath, content string) {
+// hktijajStageInWorktree writes `content` to `relPath` inside the run-branch
+// worktree and leaves it UNCOMMITTED. Fatals on error.
+//
+// It does not commit, and that is the point. The worktree factory runs BEFORE
+// the agent launches, and the graph node reads the worktree HEAD just before
+// that launch and keeps it as the node baseline. A commit made in the factory is
+// already in the baseline, so the node's no-advance guard correctly refuses a
+// run whose agent produced nothing, and every bead in both tests below reopened
+// with "exited without advancing HEAD past ...". The factory now only shapes
+// WHAT each bead will commit — one unique file per clean bead, the shared
+// conflict path for the conflict bead — and hktijajAgentHandlerArgs commits it
+// during the run, which is what a real implementer does.
+func hktijajStageInWorktree(t *testing.T, ctx context.Context, wtPath, relPath, content string) {
 	t.Helper()
 	full := filepath.Join(wtPath, relPath)
 	//nolint:gosec // G306: test fixture file
 	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
-		t.Fatalf("hktijajCommitInWorktree: WriteFile %s: %v", relPath, err)
+		t.Fatalf("hktijajStageInWorktree: WriteFile %s: %v", relPath, err)
 	}
-	for _, args := range [][]string{
-		{"add", relPath},
-		{"commit", "-m", "feat: agent work " + relPath, "--trailer", "Harmonik-Run-ID: " + runID},
-	} {
-		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir = wtPath
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("hktijajCommitInWorktree: git %v: %v\n%s", args, err, out)
-		}
+	// Stage it here so the handler can commit the INDEX rather than the whole
+	// tree. The daemon writes its own run-context file into the worktree, and a
+	// `git add -A` in the handler swept that up as agent work.
+	cmd := exec.CommandContext(ctx, "git", "add", relPath)
+	cmd.Dir = wtPath
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("hktijajStageInWorktree: git add %s: %v\n%s", relPath, err, out)
 	}
+}
+
+// hktijajAgentHandlerArgs returns the `/bin/sh -c` argument pair for the fake
+// agent both tests launch: it commits what the factory staged, then exits 0.
+//
+// git is called by absolute path because handler.Launch replaces the child
+// environment with LaunchSpec.Env, which carries no PATH. The script sends its
+// own stdout to stderr, because the handler contract reads the child's stdout as
+// an NDJSON event stream and git chatter there reads as a malformed line.
+func hktijajAgentHandlerArgs(t *testing.T) []string {
+	t.Helper()
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("hktijajAgentHandlerArgs: git not found on PATH: %v", err)
+	}
+	script := fmt.Sprintf(
+		"exec 1>&2\nset -e\n%s commit -q -m 'feat: agent work'\n",
+		gitPath,
+	)
+	return []string{"-c", script}
 }
 
 // hktijajAdvanceMainOn commits `content` to `relPath` directly on the project's
@@ -402,12 +433,12 @@ func TestScenario_MultiBead_ConflictSkipsButOthersProceed(t *testing.T) {
 			// different content → rebase conflict at merge time. The advance mutates
 			// projectDir directly, but this factory already runs inside the merge
 			// exclusion domain (RSM-018), so it is serialised against sibling merges.
-			hktijajCommitInWorktree(t, ctx, wtPath, runID, conflictFile, "agent version of conflict file\n")
+			hktijajStageInWorktree(t, ctx, wtPath, conflictFile, "agent version of conflict file\n")
 			hktijajAdvanceMainOn(t, ctx, projectDir, conflictFile, "main's out-of-band conflicting content\n")
 			return wtPath, cleanup, nil
 		}
 		// Clean bead: commit a unique file that never collides.
-		hktijajCommitInWorktree(t, ctx, wtPath, runID, fileForBead(beadID), "clean work for "+string(beadID)+"\n")
+		hktijajStageInWorktree(t, ctx, wtPath, fileForBead(beadID), "clean work for "+string(beadID)+"\n")
 		return wtPath, cleanup, nil
 	}
 
@@ -416,7 +447,7 @@ func TestScenario_MultiBead_ConflictSkipsButOthersProceed(t *testing.T) {
 		Bus:              collector,
 		ProjectDir:       projectDir,
 		HandlerBinary:    "/bin/sh",
-		HandlerArgs:      []string{"-c", "exit 0"},
+		HandlerArgs:      hktijajAgentHandlerArgs(t),
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		MaxConcurrent:    len(allBeads),
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
@@ -551,7 +582,7 @@ func TestScenario_MultiBead_SerializedNCompletion(t *testing.T) {
 			cleanup()
 			return "", nil, fmt.Errorf("hktijaj: no bead recorded for run %s", runID)
 		}
-		hktijajCommitInWorktree(t, ctx, wtPath, runID, fileForBead(beadID), "serial work for "+string(beadID)+"\n")
+		hktijajStageInWorktree(t, ctx, wtPath, fileForBead(beadID), "serial work for "+string(beadID)+"\n")
 		return wtPath, cleanup, nil
 	}
 
@@ -560,7 +591,7 @@ func TestScenario_MultiBead_SerializedNCompletion(t *testing.T) {
 		Bus:              collector,
 		ProjectDir:       projectDir,
 		HandlerBinary:    "/bin/sh",
-		HandlerArgs:      []string{"-c", "sleep 0.2; exit 0"},
+		HandlerArgs:      hktijajAgentHandlerArgs(t),
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		MaxConcurrent:    n,
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),

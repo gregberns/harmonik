@@ -178,13 +178,17 @@ func ReadTerminalIntents(harmonikDir string) (TerminalIntent, error) {
 // The file is the artifact the assessor reads, so it is written whole and
 // pretty-printed rather than as one line: a person has to be able to diff two
 // of these and see which clause changed.
-func WriteSnapshot(path string, s Snapshot) (err error) {
+func WriteSnapshot(path string, s Snapshot) error {
 	body, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return fmt.Errorf("readiness: marshal snapshot: %w", err)
 	}
-	body = append(body, '\n')
+	return writeJSONFile(path, append(body, '\n'))
+}
 
+// writeJSONFile writes body to path, creating the parent directory. Shared by
+// the snapshot and the validation record so the two artifacts land the same way.
+func writeJSONFile(path string, body []byte) (err error) {
 	if mkErr := os.MkdirAll(filepath.Dir(path), core.HarmonikDirMode); mkErr != nil {
 		return fmt.Errorf("readiness: mkdir for %q: %w", path, mkErr)
 	}

@@ -54,6 +54,10 @@ var (
 	ErrNoTerminalIntentDir      = errors.New("readiness: snapshot names no terminal-intent directory")
 	ErrStaleFindingIncomplete   = errors.New("readiness: stale finding does not name its ID, checked source, fixing commit, focused proof, and disposition")
 	ErrCurrentFindingIncomplete = errors.New("readiness: current finding does not name its scoped record, current source evidence, and source path")
+
+	// Refusals raised when a snapshot is read back from a file rather than built.
+	ErrSnapshotSchemaUnreadable = errors.New("readiness: snapshot on disk states a schema version this build cannot read")
+	ErrSnapshotNoteAltered      = errors.New("readiness: snapshot on disk does not carry the observational note it was written with")
 )
 
 // Candidate is the ledger data for one bead that was considered for the canary

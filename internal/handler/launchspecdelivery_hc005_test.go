@@ -35,7 +35,10 @@ import (
 func keb6oFixtureHandlerSpec(t *testing.T) *handlercontract.LaunchSpec {
 	t.Helper()
 	runID := core.RunID(uuid.MustParse("0196f000-0000-7000-8000-000000aaaaaa"))
-	wfID := core.WorkflowID(uuid.MustParse("0196f000-0000-7000-8000-000000bbbbbb"))
+	wfID, err := core.NewWorkflowID("launchspec-delivery-graph")
+	if err != nil {
+		t.Fatalf("core.NewWorkflowID: %v", err)
+	}
 	beadID := "hk-smoke-test"
 	return &handlercontract.LaunchSpec{
 		RunID:               runID,

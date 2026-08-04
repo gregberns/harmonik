@@ -49,14 +49,27 @@ func sensorBeadIDFixtureMakeID() core.BeadID {
 	return core.BeadID("bead-sensor-biinv002-stable")
 }
 
+// sensorBeadIDFixtureWorkflowID returns the logical workflow identity the
+// BI-INV-002 fixtures use. It builds the value through core.NewWorkflowID so a
+// fixture that stops matching the identity rules fails here, not deep inside
+// Run.Valid().
+func sensorBeadIDFixtureWorkflowID(t *testing.T) core.WorkflowID {
+	t.Helper()
+	id, err := core.NewWorkflowID("sensor-biinv002-graph")
+	if err != nil {
+		t.Fatalf("core.NewWorkflowID: %v", err)
+	}
+	return id
+}
+
 // sensorBeadIDFixtureMakeRun constructs a minimal valid core.Run whose BeadID
-// is set to id. All UUID fields are populated so Run.Valid() passes.
+// is set to id. All identifier fields are populated so Run.Valid() passes.
 func sensorBeadIDFixtureMakeRun(t *testing.T, id core.BeadID) core.Run {
 	t.Helper()
 	now := time.Now()
 	return core.Run{
 		RunID:           core.RunID(uuid.Must(uuid.NewV7())),
-		WorkflowID:      core.WorkflowID(uuid.Must(uuid.NewV7())),
+		WorkflowID:      sensorBeadIDFixtureWorkflowID(t),
 		WorkflowVersion: core.WorkflowVersion("1.0.0"),
 		Input:           core.WorkspaceRef("workspace://sensor/biinv002"),
 		WorkflowMode:    core.WorkflowModeSingle,

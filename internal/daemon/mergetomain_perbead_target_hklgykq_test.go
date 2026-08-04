@@ -122,10 +122,9 @@ func TestMergeToMain_PerBeadIntegrationTargetLandsOnBranch(t *testing.T) {
 		Bus:              collector,
 		ProjectDir:       projectDir,
 		HandlerBinary:    "/bin/sh",
-		HandlerArgs:      []string{"-c", "exit 0"},
+		HandlerArgs:      mergeToMainCommittingHandlerArgs(t),
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		WorktreeFactory:  mergeToMainCommittingFactory(t),
 		TargetBranch:     "main", // daemon-wide target — the bead must OVERRIDE this
 	})
 

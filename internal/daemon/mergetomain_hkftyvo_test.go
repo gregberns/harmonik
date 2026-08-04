@@ -32,6 +32,7 @@ package daemon_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -185,12 +186,25 @@ func newMergeToMainRecordingLedger(beadID core.BeadID) *mergeToMainRecordingLedg
 	}
 }
 
+// mergeToMainFixtureLabels is the bead label set every merge-to-main fixture
+// bead carries.
+//
+// The label is load-bearing, not decoration. resolveWorkflow sends a bead with
+// no workflow label to the REVIEWED graph (internal/daemon/standard-bead.dot),
+// whose commit_gate node shells out to `go build ./... && go vet ./... && go
+// test ...` inside the run worktree. These fixtures build a bare git repo with
+// one README, so that gate can only fail, and the run never reaches the merge
+// these tests are about. The exact "workflow:single" label is the sanctioned
+// selector for the no-review graph (implement → close), which is the shape each
+// test's own header describes.
+var mergeToMainFixtureLabels = []string{"workflow:single"}
+
 func (l *mergeToMainRecordingLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	// Return the bead only once — after it is consumed, Ready returns empty.
 	if l.closedCount+l.reopenedCount == 0 && !l.isDoneNoLock() {
-		return []core.BeadRecord{{BeadID: l.beadID, Status: core.CoarseStatusOpen}}, nil
+		return []core.BeadRecord{{BeadID: l.beadID, Status: core.CoarseStatusOpen, Labels: mergeToMainFixtureLabels}}, nil
 	}
 	return []core.BeadRecord{}, nil
 }
@@ -205,7 +219,7 @@ func (l *mergeToMainRecordingLedger) isDoneNoLock() bool {
 }
 
 func (l *mergeToMainRecordingLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
-	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen}, nil
+	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen, Labels: mergeToMainFixtureLabels}, nil
 }
 
 func (l *mergeToMainRecordingLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
@@ -248,13 +262,63 @@ func (l *mergeToMainRecordingLedger) getReopenedCount() int {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// The committing agent: a fake handler that commits DURING its run
+// ─────────────────────────────────────────────────────────────────────────────
+
+// mergeToMainCommittingHandlerArgs returns the `/bin/sh -c` argument pair for a
+// fake agent that writes and commits work.txt onto the run branch while it runs,
+// then exits 0.
+//
+// Wire it as TestRuntimeParams.HandlerArgs and leave WorktreeFactory nil so the
+// production factory cuts the worktree.
+//
+// WHY THE COMMIT LIVES HERE AND NOT IN THE WORKTREE FACTORY. The graph node
+// (dispatchDotAgenticNode) reads the worktree HEAD BEFORE it launches the agent
+// and keeps that SHA as the node baseline. It then fails the node when HEAD has
+// not moved past the baseline by the time the agent exits. A fixture that
+// commits inside the worktree factory commits before the launch, so the baseline
+// already contains the commit and the guard correctly refuses the node. Such a
+// fixture models an agent that never existed: no implementer produces its commit
+// before it starts. It only ever passed because the baseline probe threw its
+// error away and left an empty baseline, which the guard could never match. See
+// TestMergeToMain_PreCommittedWorktreeAndIdleAgentStillFails for the case this
+// arrangement must keep failing.
+//
+// The script calls git by absolute path because handler.Launch replaces the
+// child environment with LaunchSpec.Env, which carries no PATH. It also sends
+// its own stdout to stderr, because the handler contract reads the child's
+// stdout as an NDJSON event stream and git chatter there reads as a malformed
+// line.
+func mergeToMainCommittingHandlerArgs(t *testing.T) []string {
+	t.Helper()
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("mergeToMainCommittingHandlerArgs: git not found on PATH: %v", err)
+	}
+	script := fmt.Sprintf(
+		"exec 1>&2\nset -e\nprintf 'agent work\\n' > work.txt\n%s add work.txt\n%s commit -q -m 'feat: agent work'\n",
+		gitPath, gitPath,
+	)
+	return []string{"-c", script}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // worktreeFactory that also commits a file onto the run-branch
 // ─────────────────────────────────────────────────────────────────────────────
 
 // mergeToMainCommittingFactory wraps productionWorktreeFactory and, after the
-// worktree is created, writes a file and commits it onto the run-branch. This
-// simulates an agent that made work — the run-branch tip is one commit ahead
-// of main, so the merge-to-main fast-forward is non-trivial.
+// worktree is created, writes a file and commits it onto the run-branch.
+//
+// It hands back a worktree whose run branch is ALREADY one commit ahead of main
+// before any agent runs. Use it only where the caller needs that starting state
+// directly — for example a unit test that calls the merge function itself, or
+// the negative test that proves an idle agent on a pre-committed worktree still
+// fails.
+//
+// Do NOT wire it as TestRuntimeParams.WorktreeFactory in a work-loop test. It
+// commits before the launch, so the node baseline already contains the commit
+// and the no-advance guard refuses the node. Use
+// mergeToMainCommittingHandlerArgs instead, which commits during the run.
 func mergeToMainCommittingFactory(t *testing.T) func(ctx context.Context, projectDir, runID, headSHA string) (string, func(), error) {
 	t.Helper()
 	return func(ctx context.Context, projectDir, runID, headSHA string) (string, func(), error) {
@@ -386,16 +450,17 @@ func TestMergeToMain_SuccessPath(t *testing.T) {
 	ledger := newMergeToMainRecordingLedger(beadID)
 	collector := &stubEventCollector{}
 
-	// The handler exits 0 immediately — triggers the auto-close heuristic (branch 2).
+	// The handler commits work.txt and exits 0 — triggers the auto-close
+	// heuristic (branch 2). WorktreeFactory is left nil so the production
+	// factory cuts the worktree and the node baseline is the pre-agent HEAD.
 	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
 		ProjectDir:       projectDir,
 		HandlerBinary:    "/bin/sh",
-		HandlerArgs:      []string{"-c", "exit 0"},
+		HandlerArgs:      mergeToMainCommittingHandlerArgs(t),
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		WorktreeFactory:  mergeToMainCommittingFactory(t),
 	})
 
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
@@ -510,6 +575,143 @@ func TestMergeToMain_SuccessPath(t *testing.T) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Test: the guard the success-path fixture must not buy back
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestMergeToMain_PreCommittedWorktreeAndIdleAgentStillFails is the negative
+// twin of TestMergeToMain_SuccessPath. It runs the SAME work loop with the SAME
+// bead and the SAME graph, and changes one thing: the commit arrives in the
+// worktree BEFORE the agent launches, and the agent then does nothing.
+//
+// The node must refuse that run. Nothing about a commit that predates the launch
+// is evidence that the agent worked, so the daemon must not merge it and must
+// not close the bead.
+//
+// WHY THIS TEST EXISTS. Until the graph node stopped throwing away the error
+// from its pre-launch HEAD probe, an unreadable probe left an EMPTY baseline.
+// The no-advance guard compares the post-exit SHA against that baseline, and a
+// real SHA is never the empty string, so the guard could never fire: a node that
+// did no work at all returned SUCCESS and its bead closed green. The success
+// path's old fixture committed inside the worktree factory, which is the same
+// shape as this test, and it passed only because the guard was dead. Repairing
+// that fixture by weakening the guard would hand the defect back. This test
+// fails if anyone does.
+func TestMergeToMain_PreCommittedWorktreeAndIdleAgentStillFails(t *testing.T) {
+	t.Parallel()
+
+	const beadID = core.BeadID("mergetomain-precommitted-idle-bead-001")
+
+	projectDir := mergeToMainFixtureProjectDir(t)
+	mergeToMainFixtureGitRepo(t, projectDir)
+
+	// A working bare origin, exactly as the success path has one. Without it the
+	// merge would fail on the push and the bead would stay open for a reason
+	// that has nothing to do with the guard, and every close assertion below
+	// would pass for free.
+	originDir := t.TempDir()
+	//nolint:gosec // G204: originDir is this test's own t.TempDir(), not user input
+	initBareCmd := exec.CommandContext(t.Context(), "git", "init", "--bare", "--initial-branch=main", originDir)
+	if out, err := initBareCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init --bare: %v\n%s", err, out)
+	}
+	//nolint:gosec // G204: originDir is this test's own t.TempDir(), not user input
+	addRemoteCmd := exec.CommandContext(t.Context(), "git", "remote", "add", "origin", originDir)
+	addRemoteCmd.Dir = projectDir
+	if out, err := addRemoteCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git remote add origin: %v\n%s", err, out)
+	}
+	pushInitCmd := exec.CommandContext(t.Context(), "git", "push", "origin", "main")
+	pushInitCmd.Dir = projectDir
+	if out, err := pushInitCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git push origin main (initial): %v\n%s", err, out)
+	}
+
+	mainSHABefore := mergeToMainFixtureHeadSHA(t, projectDir, "main")
+
+	ledger := newMergeToMainRecordingLedger(beadID)
+	collector := &stubEventCollector{}
+
+	// The worktree arrives with the work already committed, and the agent does
+	// nothing at all. This is the fixture shape the guard exists to refuse.
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
+		BrAdapter:        ledger,
+		Bus:              collector,
+		ProjectDir:       projectDir,
+		HandlerBinary:    "/bin/sh",
+		HandlerArgs:      []string{"-c", "exit 0"},
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
+		WorktreeFactory:  mergeToMainCommittingFactory(t),
+	})
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	loopDone := make(chan error, 1)
+	go func() {
+		loopDone <- daemon.ExportedRunWorkLoop(ctx, deps)
+	}()
+
+	select {
+	case <-ledger.doneCh:
+		cancel()
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for bead close/reopen")
+	}
+
+	select {
+	case loopErr := <-loopDone:
+		if loopErr != nil && !errors.Is(loopErr, context.Canceled) {
+			t.Errorf("work loop returned unexpected error: %v", loopErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("work loop did not exit within 5s")
+	}
+
+	types := mergeToMainEventOrder(collector)
+
+	// ── The bead must NOT close. ──────────────────────────────────────────────
+	if got := ledger.getClosedCount(); got != 0 {
+		t.Errorf("CloseBead call count = %d; want 0. A node whose agent produced nothing must not close its bead", got)
+	}
+	if got := ledger.getReopenedCount(); got < 1 {
+		t.Errorf("ReopenBead call count = %d; want >= 1. The refused node must return the bead to the pool", got)
+	}
+
+	// ── The refusal must be the HEAD-advance guard, not some other failure. ───
+	// Without this the test would still pass if the run died for an unrelated
+	// reason, and it would stop defending the guard.
+	// The baseline it names is the run-branch tip, which already carries the
+	// factory's commit — that is the whole point: the agent added nothing to it.
+	if reason := ledger.getReopenReason(); !strings.Contains(reason, `node "implement" (implementer) exited without advancing HEAD past `) {
+		t.Errorf("ReopenBead reason = %q; want the implementer no-advance refusal", reason)
+	}
+
+	// ── Nothing may reach the target branch. ──────────────────────────────────
+	if got := mergeToMainFixtureHeadSHA(t, projectDir, "main"); got != mainSHABefore {
+		t.Errorf("main HEAD = %s; want it pinned at %s. A refused node must not merge", got, mainSHABefore)
+	}
+
+	// ── No success-shaped events. ─────────────────────────────────────────────
+	if evs := mergeToMainFindEvents(collector, "bead_closed"); len(evs) > 0 {
+		t.Errorf("bead_closed emitted for a node that did no work; event stream: %v", types)
+	}
+	for _, ev := range mergeToMainFindEvents(collector, "run_completed") {
+		var m map[string]interface{}
+		if err := json.Unmarshal(ev.Payload, &m); err != nil {
+			t.Fatalf("run_completed payload unmarshal: %v", err)
+		}
+		success, ok := m["success"].(bool)
+		if ok && success {
+			t.Errorf("run_completed success = true for a node that did no work; event stream: %v", types)
+		}
+	}
+
+	t.Logf("pre-committed worktree with an idle agent refused as required: main pinned at %s, events: %v",
+		mainSHABefore[:8], types)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Test: non-FF path (EM-053 assertions f–h)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -540,10 +742,11 @@ func TestMergeToMain_NonFFReopen(t *testing.T) {
 	collector := &stubEventCollector{}
 
 	// Use a custom worktreeFactory that:
-	//   1. Creates the real run-branch + commits work.txt (agent work).
-	//   2. Then advances main with a conflicting commit to work.txt so the rebase fails.
+	//   1. Creates the real run-branch (no commit — the agent makes that).
+	//   2. Then advances main with a conflicting commit to work.txt so the
+	//      rebase of the agent's later work.txt commit fails.
 	conflictFactory := func(ctx context.Context, projectDir, runID, headSHA string) (string, func(), error) {
-		wtPath, cleanup, err := mergeToMainCommittingFactory(t)(ctx, projectDir, runID, headSHA)
+		wtPath, cleanup, err := daemon.ExportedProductionWorktreeFactory(ctx, projectDir, runID, headSHA)
 		if err != nil {
 			return "", nil, err
 		}
@@ -551,13 +754,13 @@ func TestMergeToMain_NonFFReopen(t *testing.T) {
 		return wtPath, cleanup, nil
 	}
 
-	// Handler exits 0 — triggers the auto-close heuristic branch.
+	// Handler commits work.txt and exits 0 — triggers the auto-close heuristic branch.
 	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
 		ProjectDir:       projectDir,
 		HandlerBinary:    "/bin/sh",
-		HandlerArgs:      []string{"-c", "exit 0"},
+		HandlerArgs:      mergeToMainCommittingHandlerArgs(t),
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		WorktreeFactory:  conflictFactory,

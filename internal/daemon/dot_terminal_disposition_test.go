@@ -22,6 +22,7 @@ import (
 const evalShapedGraph = `digraph "eval-bead" {
     schema_version="1";
     version="1.0";
+    workflow_id="terminal-disposition-eval-shape";
     start_node="start";
     terminal_node_ids="close-pass,close-fail";
 
@@ -41,6 +42,7 @@ const evalShapedGraph = `digraph "eval-bead" {
 const standardShapedGraph = `digraph "standard-bead" {
     schema_version="1";
     version="1.0";
+    workflow_id="terminal-disposition-standard-shape";
     start_node="start";
     terminal_node_ids="close,close-needs-attention";
 
@@ -59,6 +61,7 @@ const standardShapedGraph = `digraph "standard-bead" {
 const undeclaredTerminalGraph = `digraph "gate-check" {
     schema_version="1";
     version="1.0";
+    workflow_id="terminal-disposition-undeclared";
     start_node="start";
     terminal_node_ids="tests,gate_fail";
 
@@ -117,6 +120,7 @@ func TestTerminalDisposition_ReservedIDsWinOverAttribute(t *testing.T) {
 	src := `digraph "contradictory" {
     schema_version="1";
     version="1.0";
+    workflow_id="terminal-disposition-reserved-wins";
     start_node="start";
     terminal_node_ids="close,close-needs-attention";
 
@@ -161,6 +165,7 @@ func TestTerminalDisposition_InvalidValueIsNotSuccess(t *testing.T) {
 	src := `digraph "typo" {
     schema_version="1";
     version="1.0";
+    workflow_id="terminal-disposition-invalid-value";
     start_node="start";
     terminal_node_ids="done";
 

@@ -152,9 +152,10 @@ func (l *branchGuardDescribedLedger) ShowBead(ctx context.Context, id core.BeadI
 }
 
 // branchGuardRunBead drives one bead through the real work loop with the given
-// target branch + protect-set, using a committing worktree factory (so the
-// run-branch is one commit ahead of the target) and a /bin/sh "exit 0" handler
-// (the single-mode auto-close heuristic path). The bead carries description as
+// target branch + protect-set, using the production worktree factory and a
+// /bin/sh handler that commits one file during its run (so the run branch ends
+// one commit ahead of the target, and the node's pre-launch HEAD baseline does
+// not already carry that commit). The bead carries description as
 // its body (use "" for no ## Branching section). Returns the recording ledger
 // and the event collector after the loop has settled.
 func branchGuardRunBead(
@@ -176,10 +177,9 @@ func branchGuardRunBead(
 		Bus:              collector,
 		ProjectDir:       projectDir,
 		HandlerBinary:    "/bin/sh",
-		HandlerArgs:      []string{"-c", "exit 0"},
+		HandlerArgs:      mergeToMainCommittingHandlerArgs(t),
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		WorktreeFactory:  mergeToMainCommittingFactory(t),
 		TargetBranch:     targetBranch,
 		ProtectBranches:  protectBranches,
 	})

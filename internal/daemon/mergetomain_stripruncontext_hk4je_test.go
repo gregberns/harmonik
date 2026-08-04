@@ -35,9 +35,15 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
-// stripRunCtxWorktreeFactory wraps productionWorktreeFactory and also
-// force-commits a .harmonik/run-context/<runID>/context.json into the
-// run-branch, mirroring the CHB-023 persistClaudeSessionID path.
+// stripRunCtxWorktreeFactory wraps productionWorktreeFactory and force-commits
+// a .harmonik/run-context/<runID>/context.json into the run-branch, mirroring
+// the CHB-023 persistClaudeSessionID path. The daemon makes that commit itself,
+// so the fixture may make it before the agent launches.
+//
+// The AGENT's own commit does not belong here. The graph node reads the worktree
+// HEAD before the launch and requires HEAD to move past it, so a fixture that
+// commits the agent's work up front fails the node. The fake handler commits it
+// instead — see stripRunCtxCommittingHandlerArgs.
 func stripRunCtxWorktreeFactory(t *testing.T) func(ctx context.Context, projectDir, runID, headSHA string) (string, func(), error) {
 	t.Helper()
 	return func(ctx context.Context, projectDir, runID, headSHA string) (string, func(), error) {
@@ -46,29 +52,7 @@ func stripRunCtxWorktreeFactory(t *testing.T) func(ctx context.Context, projectD
 			return "", nil, err
 		}
 
-		// 1. Commit real agent work so the run-branch is ahead of main.
-		workFile := filepath.Join(wtPath, "work_hk4je.txt")
-		//nolint:gosec // G306: 0644 is fine for a test fixture file
-		if writeErr := os.WriteFile(workFile, []byte("agent work\n"), 0o644); writeErr != nil {
-			cleanup()
-			return "", nil, fmt.Errorf("stripRunCtxWorktreeFactory: WriteFile work: %w", writeErr)
-		}
-		addCmd := exec.CommandContext(ctx, "git", "add", "work_hk4je.txt")
-		addCmd.Dir = wtPath
-		if out, addErr := addCmd.CombinedOutput(); addErr != nil {
-			cleanup()
-			return "", nil, fmt.Errorf("stripRunCtxWorktreeFactory: git add work: %v\n%s", addErr, out)
-		}
-		commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", "feat: agent work",
-			"--trailer", "Harmonik-Run-ID: "+runID,
-		)
-		commitCmd.Dir = wtPath
-		if out, commitErr := commitCmd.CombinedOutput(); commitErr != nil {
-			cleanup()
-			return "", nil, fmt.Errorf("stripRunCtxWorktreeFactory: git commit work: %v\n%s", commitErr, out)
-		}
-
-		// 2. Force-add context.json, mirroring CHB-023 persistClaudeSessionID.
+		// Force-add context.json, mirroring CHB-023 persistClaudeSessionID.
 		ctxDir := filepath.Join(wtPath, ".harmonik", "run-context", runID)
 		//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
 		if mkErr := os.MkdirAll(ctxDir, 0o755); mkErr != nil {
@@ -102,6 +86,28 @@ func stripRunCtxWorktreeFactory(t *testing.T) func(ctx context.Context, projectD
 
 		return wtPath, cleanup, nil
 	}
+}
+
+// stripRunCtxCommittingHandlerArgs returns the `/bin/sh -c` argument pair for a
+// fake agent that commits work_hk4je.txt during its run and exits 0. The commit
+// must land while the agent runs so the node's HEAD-advance guard is satisfied
+// by the AGENT's work, which is what a real implementer produces.
+//
+// git is called by absolute path because handler.Launch replaces the child
+// environment with LaunchSpec.Env, which carries no PATH. The script sends its
+// own stdout to stderr, because the handler contract reads the child's stdout
+// as an NDJSON event stream.
+func stripRunCtxCommittingHandlerArgs(t *testing.T) []string {
+	t.Helper()
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("stripRunCtxCommittingHandlerArgs: git not found on PATH: %v", err)
+	}
+	script := fmt.Sprintf(
+		"exec 1>&2\nset -e\nprintf 'agent work\\n' > work_hk4je.txt\n%s add work_hk4je.txt\n%s commit -q -m 'feat: agent work'\n",
+		gitPath, gitPath,
+	)
+	return []string{"-c", script}
 }
 
 // TestStripRunContext_NeverLandsOnMain verifies that after a run which
@@ -142,7 +148,7 @@ func TestStripRunContext_NeverLandsOnMain(t *testing.T) {
 		Bus:              collector,
 		ProjectDir:       projectDir,
 		HandlerBinary:    "/bin/sh",
-		HandlerArgs:      []string{"-c", "exit 0"},
+		HandlerArgs:      stripRunCtxCommittingHandlerArgs(t),
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		WorktreeFactory:  stripRunCtxWorktreeFactory(t),

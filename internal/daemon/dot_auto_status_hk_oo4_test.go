@@ -57,6 +57,7 @@ func TestDotParser_AutoStatusTrue_Parsed(t *testing.T) {
 	t.Parallel()
 
 	src := `digraph {
+  workflow_id = "auto-status-true"
   start_node = "n"
   terminal_node_ids = "n"
   n [type="agentic", agent_type="implementer", handler_ref="h",
@@ -84,6 +85,7 @@ func TestDotParser_AutoStatusFalse_Parsed(t *testing.T) {
 	t.Parallel()
 
 	src := `digraph {
+  workflow_id = "auto-status-false"
   start_node = "n"
   terminal_node_ids = "n"
   n [type="agentic", agent_type="implementer", handler_ref="h",
@@ -109,6 +111,7 @@ func TestDotParser_AutoStatus_WarnOnNonAgentic(t *testing.T) {
 	t.Parallel()
 
 	src := `digraph {
+  workflow_id = "auto-status-non-agentic"
   start_node = "n"
   terminal_node_ids = "n"
   n [type="non-agentic", handler_ref="noop", idempotency_class="idempotent",

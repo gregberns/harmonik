@@ -70,9 +70,20 @@ die() {
   Seed it ONCE, on a settled tree, and commit the result."
 
 # TOOLS_DIR is where the Makefile puts golangci-lint. Honour an inherited value
-# so a test or a non-default checkout can point elsewhere, and fall back to the
-# same path the Makefile computes.
-tools_dir="${TOOLS_DIR:-$repo_root/.tools}"
+# first, so a test or an unusual checkout can point elsewhere.
+#
+# THE DEFAULT MUST NOT BE "$repo_root/.tools". A linked worktree has its own
+# top level and no .tools of its own — the toolchain lives once, beside the main
+# checkout — so that spelling makes this script unusable from every worktree,
+# which is where most work in this repo happens. The Makefile already solves it
+# by asking git for the COMMON git dir, which is shared by every worktree, and
+# stripping the trailing /.git. Same computation here, so both agree.
+if [ -n "${TOOLS_DIR:-}" ]; then
+    tools_dir="$TOOLS_DIR"
+else
+    tools_home=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null | sed 's|/\.git/*$||')
+    tools_dir="${tools_home:-$repo_root}/.tools"
+fi
 linter="$tools_dir/golangci-lint"
 [ -x "$linter" ] || die "no golangci-lint at $linter.
   A missing linter is a failure, not a clean tree. Run 'make tools' to install it."

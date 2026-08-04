@@ -207,6 +207,7 @@ func (bs *bootState) buildQueueHandler(ctx context.Context) QueueHandler {
 		_ = brcli.BrErrReconciliationCategoryWithEmit(ctx, brHandlerErr, "br-new-for-project-handler", bs.bus)
 		return queueHandler
 	}
+	bs.recoveryLedger = queuewiring.NewBRQueueLedger(brAdapterForHandler)
 	adapter := queue.NewHandlerAdapter(queuewiring.NewBRQueueLedger(brAdapterForHandler), cfg.ProjectDir, bs.qs, bs.bus)
 	// Wire the global --max-concurrent so submit can default a queue's Workers
 	// count (QM-066) and warn on oversubscription (hk-tigaf.4 NQ-B1).
@@ -228,6 +229,8 @@ func (bs *bootState) buildPauseConcurrencyTuner(ctx context.Context, queueHandle
 	cfg := bs.cfg
 
 	bs.opPauseCtrl = NewOperatorPauseController(bs.bus)
+	// Let a per-queue resume tell a drain pause from a failure park (QM-052).
+	bs.opPauseCtrl.SetQueueStates(bs.qs)
 
 	bs.concurrencyCtrl = NewConcurrencyController(cfg.MaxConcurrent)
 	if ha, ok := queueHandler.(*queue.HandlerAdapter); ok {
@@ -445,6 +448,7 @@ func (bs *bootState) startSocketListener(ctx context.Context, sockPath string, q
 		Request:   &noopRequestHandler{},
 		HookRelay: bs.hookStore,
 		Queue:     queueHandler,
+		Recovery:  NewQueueRecoveryController(bs.qs, cfg.ProjectDir, bs.recoveryLedger),
 		Operator:  bs.opPauseCtrl,
 		Comms:     commsSendHandler,
 		Crew:      bs.crewHandler,

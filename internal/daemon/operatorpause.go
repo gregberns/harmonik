@@ -32,6 +32,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/queue"
 )
 
 // OperatorControlHandler is the interface for handling operator pause/resume
@@ -72,6 +73,11 @@ type OperatorPauseController struct {
 	// the operator's confirm/veto decision (routed via HandleVerdictOverride).
 	// See verdictoverride.go.
 	verdicts *VerdictConfirmationRegistry
+
+	// queues reads live queue status so a per-queue resume can refuse a
+	// failure-parked queue instead of reporting a success that dispatches
+	// nothing. Nil until SetQueueStates is called.
+	queues QueuePauseStateReader
 }
 
 // NewOperatorPauseController constructs an OperatorPauseController wired to bus.
@@ -159,6 +165,10 @@ func (c *OperatorPauseController) HandleOperatorResume(ctx context.Context, queu
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if err := c.refuseFailureParkedLocked(queueName); err != nil {
+		return err
+	}
+
 	if queueName == "" {
 		// Global resume: gate with paused flag for idempotency.
 		if !c.paused {
@@ -181,6 +191,55 @@ func (c *OperatorPauseController) HandleOperatorResume(ctx context.Context, queu
 	}
 
 	return nil
+}
+
+// QueuePauseStateReader reports the live status of one named queue. It is the
+// consumer-owned slice of the queue registry that operator-resume needs to tell
+// a drain pause from a failure pause. *queuewiring.QueueStore satisfies it.
+type QueuePauseStateReader interface {
+	QueueByName(name string) *queue.Queue
+}
+
+// SetQueueStates gives the controller a way to read queue status. Without it,
+// operator-resume cannot see a failure-parked queue and falls back to the
+// pre-existing behaviour, which reports success and dispatches nothing.
+//
+// Call it once at the composition root, before Serve.
+func (c *OperatorPauseController) SetQueueStates(reader QueuePauseStateReader) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.queues = reader
+}
+
+// refuseFailureParkedLocked refuses a drain-release aimed at a queue that is
+// parked by failure.
+//
+// This is the fix for a silent wrong answer. `harmonik queue resume <name>`
+// sends operator-resume, and the QueueOperatorEventConsumer only transitions a
+// queue whose status is paused-by-drain. A failure-parked queue therefore
+// matched nothing, yet the operator saw "resumed" and no item ever dispatched.
+// A typed refusal that names `harmonik queue recover` is the honest answer.
+//
+// Only the per-queue form is refused. A global resume (empty queueName) is a
+// drain release over every drained queue and is not aimed at any one failure
+// park, so it keeps its existing meaning.
+//
+// Caller must hold mu.
+//
+// Spec ref: specs/queue-model.md §8.3 QM-052, §8.5 QM-054.
+func (c *OperatorPauseController) refuseFailureParkedLocked(queueName string) error {
+	if queueName == "" || c.queues == nil {
+		return nil
+	}
+	q := c.queues.QueueByName(queueName)
+	if q == nil || q.Status != queue.QueueStatusPausedByFailure {
+		return nil
+	}
+	return &queue.ResumeRefusedError{
+		NormalizedName: queue.NormaliseQueueName(queueName),
+		QueueID:        q.QueueID,
+		ObservedStatus: q.Status,
+	}
 }
 
 // emitPauseStatusLocked emits an operator_pause_status event with the given

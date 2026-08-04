@@ -75,7 +75,8 @@ VERBS
   status    Show current queue state and bead statuses (daemon must be running)
   list      List all active queues with status and worker counts (daemon must be running)
   pause     Pause a named queue (daemon must be running)
-  resume    Resume a paused named queue (daemon must be running)
+  resume    Release a DRAIN pause on a named queue (daemon must be running)
+  recover   Re-arm the failed items of a queue paused by FAILURE (daemon must be running)
   dry-run   Validate a queue submission without executing (daemon must be running)
   cancel    Archive a stale queue.json without a live daemon (no daemon required)
   set-concurrency <n>  Set the daemon's concurrent-dispatch ceiling live (daemon must be running)
@@ -87,6 +88,11 @@ NOTES
   Exit code 17 means the daemon is not running (socket absent or ECONNREFUSED).
   Queues are created automatically on first submit to a new name (--queue flag).
   Absent --queue defaults to the 'main' queue.
+  'resume' and 'recover' are not interchangeable. A queue stops for two
+  different reasons. A drain pause holds dispatch and 'resume' releases it. A
+  failure pause also marks the failed items, so it needs 'recover', which
+  re-arms them. 'resume' against a failure-paused queue is refused and names
+  'recover'.
 
 EXIT CODES
   0   Success (JSON response to stdout)
@@ -107,6 +113,7 @@ EXAMPLES
   harmonik queue list
   harmonik queue pause investigate
   harmonik queue resume investigate
+  harmonik queue recover investigate
   harmonik queue cancel
   harmonik queue cancel --force
   harmonik queue set-concurrency 4
@@ -489,6 +496,8 @@ EXAMPLES
 			return queuecli.RunQueuePause(ctx, subArgs, os.Stdout, os.Stderr)
 		case "resume":
 			return queuecli.RunQueueResume(ctx, subArgs, os.Stdout, os.Stderr)
+		case "recover":
+			return queuecli.RunQueueRecover(ctx, subArgs, os.Stdout, os.Stderr)
 		case "dry-run":
 			return queuecli.RunQueueDryRun(ctx, subArgs, os.Stdout, os.Stderr)
 		case "cancel":
@@ -496,7 +505,7 @@ EXAMPLES
 		case "set-concurrency":
 			return queuecli.RunQueueSetConcurrency(ctx, subArgs, os.Stdout, os.Stderr)
 		default:
-			fmt.Fprintf(os.Stderr, "harmonik queue: unrecognised verb %q; verbs are: submit, append, status, list, pause, resume, dry-run, cancel, set-concurrency\n", verb)
+			fmt.Fprintf(os.Stderr, "harmonik queue: unrecognised verb %q; verbs are: submit, append, status, list, pause, resume, recover, dry-run, cancel, set-concurrency\n", verb)
 			return 2
 		}
 	}

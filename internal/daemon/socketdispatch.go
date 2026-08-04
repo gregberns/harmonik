@@ -5,7 +5,7 @@ package daemon
 //
 // socketDispatch bundles the injected handler interfaces and exposes one small
 // named method per op, each returning a socketrouter.Result (the neutral,
-// wire-vocabulary-free outcome). buildSocketRouter registers all 27 routable ops
+// wire-vocabulary-free outcome). buildSocketRouter registers all 28 routable ops
 // (every op except subscribe, which stays a daemon pre-branch alongside
 // hook-relay). resultToResponse maps a socketrouter.Result back to the wire
 // SocketResponse — the single real byte-drift surface, pinned by T5.
@@ -32,6 +32,7 @@ import (
 type socketDispatch struct {
 	h          RequestHandler
 	qh         QueueHandler
+	recoverh   QueueRecoveryHandler
 	oh         OperatorControlHandler
 	ch         CommsSendHandler // comma-ok asserted for presence/recv/decisions
 	crewh      crewrun.CrewHandler
@@ -402,7 +403,7 @@ func (d *socketDispatch) dashboard(ctx context.Context, _ json.RawMessage) socke
 	return socketrouter.Result{OK: true, Payload: result}
 }
 
-// buildSocketRouter registers all 27 routable ops (every op except subscribe,
+// buildSocketRouter registers all 28 routable ops (every op except subscribe,
 // which is a daemon pre-branch alongside hook-relay). cyclop(buildSocketRouter)=1.
 func buildSocketRouter(d *socketDispatch) *socketrouter.Router {
 	r := socketrouter.New()
@@ -415,6 +416,7 @@ func buildSocketRouter(d *socketDispatch) *socketrouter.Router {
 	r.Register("queue-list", d.queueList)
 	r.Register("queue-set-concurrency", d.queueSetConcurrency)
 	r.Register("queue-cancel", d.queueCancel)
+	r.Register("queue-recover", d.queueRecover)
 	r.Register("worker-set-enabled", d.workerSetEnabled)
 	r.Register("comms-send", d.commsSend)
 	r.Register("comms-presence", d.commsPresence)

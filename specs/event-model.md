@@ -1484,7 +1484,7 @@ paused_at: <Timestamp>
 reason: <String>                         # enum: group_failure | operator_drain — per [queue-model.md §5, §8]
 ```
 
-`reason` is an exhaustive enum (`group_failure` is the v0.1 pause-by-failure path; `operator_drain` is the operator-initiated drain path). New variants require an EV-027 amendment. v0.1 ships no `queue-resume` operation; `queue_resumed` is reserved for v0.2 per the design rationale (see §A.3).
+`reason` is an exhaustive enum (`group_failure` is the v0.1 pause-by-failure path; `operator_drain` is the operator-initiated drain path). New variants require an EV-027 amendment. The failed-queue recovery operation is `queue-recover` per [queue-model.md §8.3b QM-052b]; it emits no event today, and `queue_resumed` stays reserved (see §A.3).
 
 #### `queue_appended`
 

@@ -4,7 +4,7 @@
 
 Two independent read-only reviews found these blockers:
 
-1. Stale queue-resume deferrals remained in queue-model and process-lifecycle.
+1. Stale queue-recover deferrals remained in queue-model and process-lifecycle.
 2. `queue_recovered` lacked typed registration, compatibility, count, ownership,
    and test obligations.
 3. Failed-item recovery did not reset attempts.

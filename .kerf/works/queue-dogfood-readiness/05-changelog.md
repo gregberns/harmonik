@@ -11,7 +11,7 @@
 | `handler-pause.md` | modified | States the separation of handler resume and queue recovery. | `handler-pause-design.md` |
 | `lanes-handoffs.md` → `plans/2026-07-27-delete-and-rewrite/LANES.md` | modified | Complete plan copy plus ownership, shared-boundary review, work order, and handoff content. | `lanes-handoffs-design.md` |
 | `operator-nfr.md` | modified | Defines committed DOT drain completion, safe normal-watchdog behavior, and controlled-load evidence. | `operator-nfr-design.md` |
-| `process-lifecycle.md` | modified | Adds the direct `queue-resume` RPC and CLI contract. | `process-lifecycle-design.md` |
+| `process-lifecycle.md` | modified | Adds the direct `queue-recover` RPC and CLI contract. | `process-lifecycle-design.md` |
 | `queue-model.md` | modified | Defines the durable per-queue failed-item recovery transaction and response records. | `queue-model-design.md` |
 | `run-state-machine.md` | modified | Replaces the conflicting no-sync shutdown clause with synchronized close-or-reopen behavior. | `run-state-machine-design.md` |
 | `scratch-daemon-runbook.md` | modified | Adds the local, non-Pi, one-item readiness procedure and evidence retention. | `scratch-daemon-runbook-design.md` |

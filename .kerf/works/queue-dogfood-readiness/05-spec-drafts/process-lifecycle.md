@@ -195,7 +195,7 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### PL-003a — Socket wire format for CLI / agent requests
 
-The daemon's Unix socket MUST carry a JSON-RPC 2.0 request/response stream framed as newline-delimited JSON per [handler-contract.md §4.2 HC-007a] (same NDJSON framing discipline; one JSON object per line terminated by `\n`; max line length 1 MiB; lines exceeding the cap abort the connection). CLI clients MUST issue one JSON-RPC request per connection and close the connection on receipt of the response. Agent subprocesses MAY hold their connection for the lifetime of the session per [handler-contract.md §4.3]; CLI connections MUST NOT. The JSON-RPC method set spans the CLI commands of PL-028 plus the agent-facing commands named in PL-015. The JSON-RPC method names exposed on the daemon socket are: agent-facing (`claim-next`, `emit-outcome`, `dispatch-status`, Beads-CLI-skill proxy methods per [beads-integration.md §4.9 BI-027]); CLI-facing (`status`, `pause`, `resume`, `stop`, `upgrade`, `attach`, `list` per [operator-nfr.md §4.10 ON-041]; plus the queue method set: `queue-submit`, `queue-append`, `queue-status`, `queue-dry-run`, `queue-cancel`, `queue-resume` per [queue-model.md §2.10] and PL-028c); daemon-internal / introspection (`get-agent-count` — returns `{count: <integer>}` reporting the number of currently-tracked live handler subprocesses; consumed by the cross-daemon machine-ceiling drift-reconciliation surface of [operator-nfr.md §4.10 ON-041] for periodic comparison of tracked-vs-running handler counts per project). Method payload schemas for non-queue methods are intentionally deferred; the names are the stable surface. The `get-agent-count` reply schema is pinned here (`{count: integer ≥ 0}`); semantic interpretation (drift threshold, escalation cadence) is owned by ON-041.
+The daemon's Unix socket MUST carry a JSON-RPC 2.0 request/response stream framed as newline-delimited JSON per [handler-contract.md §4.2 HC-007a] (same NDJSON framing discipline; one JSON object per line terminated by `\n`; max line length 1 MiB; lines exceeding the cap abort the connection). CLI clients MUST issue one JSON-RPC request per connection and close the connection on receipt of the response. Agent subprocesses MAY hold their connection for the lifetime of the session per [handler-contract.md §4.3]; CLI connections MUST NOT. The JSON-RPC method set spans the CLI commands of PL-028 plus the agent-facing commands named in PL-015. The JSON-RPC method names exposed on the daemon socket are: agent-facing (`claim-next`, `emit-outcome`, `dispatch-status`, Beads-CLI-skill proxy methods per [beads-integration.md §4.9 BI-027]); CLI-facing (`status`, `pause`, `resume`, `stop`, `upgrade`, `attach`, `list` per [operator-nfr.md §4.10 ON-041]; plus the queue method set: `queue-submit`, `queue-append`, `queue-status`, `queue-dry-run`, `queue-cancel`, `queue-recover` per [queue-model.md §2.10] and PL-028c); daemon-internal / introspection (`get-agent-count` — returns `{count: <integer>}` reporting the number of currently-tracked live handler subprocesses; consumed by the cross-daemon machine-ceiling drift-reconciliation surface of [operator-nfr.md §4.10 ON-041] for periodic comparison of tracked-vs-running handler counts per project). Method payload schemas for non-queue methods are intentionally deferred; the names are the stable surface. The `get-agent-count` reply schema is pinned here (`{count: integer ≥ 0}`); semantic interpretation (drift threshold, escalation cadence) is owned by ON-041.
 
 The queue wire MUST preserve the exact queue-model §2.10 records: submit
 `groups`, `schema_version`, `name`, `workers`, `spend_cap_usd`, and
@@ -211,7 +211,7 @@ selector precedence and default-main behavior; PL owns transport without
 renaming or narrowing those records.
 
 Queue submit/append/status/dry-run payload schemas and validation error codes
-(`-32010..-32019`), plus queue-resume's `-32030..-32036` recovery-error block,
+(`-32010..-32019`), plus queue-recover's `-32030..-32036` recovery-error block,
 are owned by [queue-model.md §6, §8.3b] and
 [operator-nfr.md §8]; cancellation transport and daemon-only behavior are
 owned by PL-028c while queue-model owns the archive transaction. PL-003a fixes
@@ -219,7 +219,7 @@ the wire names. `queue-remove`, `queue-pause`, and `queue-clear` remain
 deferred. The retired `enqueue` method has no alias or
 compatibility shim.
 
-`queue-resume` calls the queue-model recovery transaction. It is not
+`queue-recover` calls the queue-model recovery transaction. It is not
 `operator-resume`, drain release, or handler resume. Its response is returned
 only after the durable transaction commits.
 
@@ -1192,8 +1192,8 @@ The daemon MUST support the following entry points:
 - **`hk queue status [--queue <name>] [--queue-id <uuid>] [--watched-group-index <n>]`** — report live or receipt-backed exact queue status per [queue-model.md §2]. The operator CLI exposes the watched-group field used by daemon-backed waiters. Method: JSON-RPC `queue-status`; request, selector precedence, response, and receipt fields are queue-model-owned. Daemon-not-running → exit code 17.
 - **`hk queue submit <queue-file>`** — submit a named queue document, preserving the shipped `groups`, `schema_version`, `name`, `workers`, `spend_cap_usd`, and `default_harness` request fields. Method: JSON-RPC `queue-submit`; the daemon mints `queue_id` and QueueStore persists the canonical named queue. Daemon-not-running → exit code 17.
 - **`hk queue cancel [--queue <name>] [--queue-id <uuid>] [--force]`** — cancel through the live daemon only. Method: JSON-RPC `queue-cancel`; the request preserves shipped JSON `queue` and `force` and additively accepts `queue_id`. Both selectors must agree, and neither absent defaults to `main`; exact conflict/absence behavior is queue-model-owned. Daemon-not-running → exit code 17 with no local fallback write.
-- **`hk queue resume [--queue <name>] [--queue-id <uuid>]`** — recover one
-  failed queue through JSON-RPC `queue-resume`. Selector precedence is name,
+- **`hk queue recover [--queue <name>] [--queue-id <uuid>]`** — recover one
+  failed queue through JSON-RPC `queue-recover`. Selector precedence is name,
   then queue ID, then `main`. Success returns the queue ID, normalized name,
   re-armed items or count, and `active` status only after QueueStore commits.
   A drained, active, completed, cancelled, missing, or quarantined queue
@@ -1281,7 +1281,7 @@ intent/legacy/receipt/marker/event writes; no local archive or audit fallback
 exists. The single-project remediation prose is owned by
 [operator-nfr.md §4.1 ON-004].
 
-For `queue-resume`, a successful reply requires only a committed QueueStore
+For `queue-recover`, a successful reply requires only a committed QueueStore
 recovery candidate. The daemon then attempts the class-O `queue_recovered`
 event and wakes dispatch. It MUST NOT route through `operator-resume`, alter
 handler pause state, or report recovery before the durable transaction returns.
@@ -1648,7 +1648,7 @@ This spec does not own a failure taxonomy. Startup failure modes are cataloged p
 For each requirement, the implementation MUST satisfy at least one test covering the behavior:
 
 - **PL-001, PL-002, PL-002a, PL-INV-001** — a twin-driven test that attempts to start a second daemon against the same project and asserts it exits with the pidfile-contention exit code (`5`). An additional test crashes the first daemon (SIGKILL) and asserts the second daemon's stale-pidfile detection (PL-024) via `flock` + `kill(pid, 0)` logic.
-- **PL-003, PL-003a, PL-INV-004** — a binding test that asserts socket mode `0600`, socket-path exclusivity (second daemon observing `EADDRINUSE` exits with exit code `6`), and NDJSON framing correctness against a JSON-RPC client. The wire-method registry assertion MUST enumerate the queue method names (`queue-submit`, `queue-append`, `queue-status`, `queue-dry-run`, `queue-cancel`, `queue-resume`) and assert that `enqueue` is NOT a registered method.
+- **PL-003, PL-003a, PL-INV-004** — a binding test that asserts socket mode `0600`, socket-path exclusivity (second daemon observing `EADDRINUSE` exits with exit code `6`), and NDJSON framing correctness against a JSON-RPC client. The wire-method registry assertion MUST enumerate the queue method names (`queue-submit`, `queue-append`, `queue-status`, `queue-dry-run`, `queue-cancel`, `queue-recover`) and assert that `enqueue` is NOT a registered method.
 - **PL-005, PL-006, PL-006a, PL-007, PL-INV-003, PL-INV-005** — retain the orphan-sweep scenarios, plus startup fixtures for canonical/legacy migration, receipt-root first-create and wrong-type cuts, valid/corrupt/unsupported/coexisting replace/archive/receipt/release-marker states, delayed cleanup and missing-marker recovery, and startup final cleanup with no final-event synthesis. QueueStore installs only after exact classification or refusal.
 - **PL-008a** — a unit test asserting every exit code consumed by this spec (5–10, 14, 17, 19, 22, 23) maps to a distinct failure, and that `daemon_startup_failed` is emitted on each (where the event bus has been initialized). Code 17 is asserted via a `hk queue *` invocation against a daemon-down project (no `.harmonik/daemon.sock` listener).
 - **PL-009, PL-009a, PL-010** — scenario tests covering (a) `ready` transition only when criteria are met, (b) `degraded` persistence until Cat 0 clears, and (c) auto-resolver failure routing to Cat 3 investigator workflows without blocking `ready`.

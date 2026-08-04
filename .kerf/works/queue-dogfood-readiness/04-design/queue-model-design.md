@@ -10,7 +10,7 @@ changes `paused-by-failure` to active.
 
 ## Target state
 
-Promote recovery into the current queue contract. Add a queue-resume request
+Promote recovery into the current queue contract. Add a queue-recover request
 and response with name or queue-ID selection, normalized queue name, re-armed
 bead IDs and count, and final active status. Name takes precedence. No selector
 means main.

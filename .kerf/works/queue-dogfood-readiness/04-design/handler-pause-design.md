@@ -8,7 +8,7 @@ items at dispatch.
 
 ## Target state
 
-Add a recovery cross-link to `HP-043` and `HP-009`. `queue-resume` does not
+Add a recovery cross-link to `HP-043` and `HP-009`. `queue-recover` does not
 call `HandlerPauseController`, clear handler state, emit `handler_resumed`, or
 bypass the handler gate. It may re-arm an item to pending while its handler
 remains paused. Normal held-item and deduplicated held-event behavior applies

@@ -57,9 +57,13 @@ type bootState struct {
 	concurrencyCtrl     *ConcurrencyController
 	queueHandlerAdapter *queue.HandlerAdapter
 	drainDet            *DrainDetector
-	crewHandler         crewrun.CrewHandler
-	crewIdleReaper      *crewrun.CrewIdleReaper
-	branchReapWatcher   *BranchReapWatcher
+	// recoveryLedger is the QM-052b preflight reader for `queue-recover`. It is
+	// nil when the daemon booted without a Beads adapter, which makes recovery
+	// decide on queue state alone.
+	recoveryLedger    queuewiring.RecoveryBeadReader
+	crewHandler       crewrun.CrewHandler
+	crewIdleReaper    *crewrun.CrewIdleReaper
+	branchReapWatcher *BranchReapWatcher
 }
 
 // constructBusAndRegistries performs PL-005 step 0 P4: it opens the JSONL event

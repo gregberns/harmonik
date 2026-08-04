@@ -199,6 +199,13 @@ Explicit **NO** on: `wsl`, `lll`, `gocyclo` (superseded by `cyclop`), `godox`, `
 
 No package scoping. No retry. No fail-open. A timeout, an out-of-memory kill, a compile failure or an exit code nothing recognises all BLOCK. `scripts/gate-fails-closed-test.sh` holds that property, and it runs inside both targets.
 
+**The lint ceiling, and why it only goes down.** A bare `golangci-lint run` over this tree reports more than a thousand findings, so it exits non-zero on every commit and cannot be a verdict. The ceiling in `scripts/lint-ceiling.baseline` grandfathers what is already here and refuses what a change adds. Two rules follow from that:
+
+- A run that comes in OVER the ceiling fails `make full`. Fix the findings you added. To see only those, run `.tools/golangci-lint run --new-from-rev=HEAD~1` — the same check `make fast` runs.
+- A run that comes in UNDER the ceiling rewrites the baseline to the lower number. Commit that file with your fix. There is no separate step to remember, and the ground a fix wins is never given back.
+
+Raising the number by hand is the one repair that is not allowed. `scripts/lint-ceiling.sh` carries the reasoning, and `scripts/lint-ceiling-test.sh` holds the assertions inside `script-tests`.
+
 **Why the scoping went.** The old gate asked git which files changed since main and tested only those packages. `scripts/scenario-gate.sh` implemented that and is deleted. Measured 2026-08-03, whole-repo `go test -short -count=1 ./...` costs about 13 seconds more than `internal/daemon` alone, so the scoping saved 13 seconds. In exchange it could not see a break in a package the change did not touch, which is the usual case because `internal/daemon` imports eight other packages. The same script also had five ways to APPROVE work that never passed — a compile failure, a timeout, a signal kill, an unrecognised exit code, and a retry that allowed when the second run passed — against one way to block.
 
 **Lanes that are not the gate.** None can block a merge and none is a third tier: `make test-race-nightly` (the nightly `-race` lane, the only place a data race surfaces now that `make full` runs without `-race`), `make test-integration` (the integration-tagged tier; needs tmux and a live environment), `make coverage-gates` (the two coverage ratchets; a trend measure, not a verdict).

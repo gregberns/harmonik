@@ -7,23 +7,19 @@ import (
 	"github.com/gregberns/harmonik/internal/release"
 )
 
-// manifestFixtureVersionRegex is a local copy of the BI-024a version regex
-// (specs/beads-integration.md §4.8a) used to validate BeadsVersion's shape
-// without importing internal/brcli (which owns the authoritative copy).
-//
-// The regex is reproduced here so the release package remains a leaf with no
-// dependencies on the brcli adapter.  If the regex spec changes in BI-024a,
-// both copies must be updated in the same commit.
+// manifestFixtureVersionRegex is the MAJOR.MINOR.PATCH shape a release manifest
+// entry must take.
 var manifestFixtureVersionRegex = regexp.MustCompile(`^(\d+)\.(\d+)\.(\d+)$`)
 
 // TestBeadsVersionMatchesVersionRegex verifies that BeadsVersion is a valid
-// MAJOR.MINOR.PATCH string accepted by the BI-024a version regex shape.
+// MAJOR.MINOR.PATCH string.
 //
-// The BI-024a regex includes a `br\s+` prefix and an optional pre-release
-// suffix; BeadsVersion is the bare numeric form (pre-release stripped) that
-// CheckBrVersion compares against, so only the numeric core is validated here.
+// BI-024 requires each harmonik release to NAME the Beads version it tested
+// against, so the constant must read as a version and not as "latest" or "v1.2".
+// No code compares it against the installed `br`: BI-024a is now an existence
+// check only. This test guards the manifest's readability, nothing else.
 //
-// Spec ref: specs/beads-integration.md §4.8a BI-024a.
+// Spec ref: specs/beads-integration.md §4.8 BI-024.
 func TestBeadsVersionMatchesVersionRegex(t *testing.T) {
 	if !manifestFixtureVersionRegex.MatchString(release.BeadsVersion) {
 		t.Errorf(

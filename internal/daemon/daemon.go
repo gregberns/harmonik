@@ -1061,8 +1061,8 @@ func startWithHooks(ctx context.Context, cfg Config, hooks daemonTestHooks) erro
 	// Step 3 (PL-005 / PL-006, hk-60uvn): orphan sweep + in-flight-run reconcile,
 	// BEFORE any socket or listener bind. Extracted into runStartupReconcile (and
 	// three sub-helpers) for giant-retirement boot-config B4. Holds the single
-	// ProjectDir guard internally; the only fatal path is the BI-024a br --version
-	// handshake (exit code 8). Runs before loadStartupQueues (QM-002a ordering).
+	// ProjectDir guard internally; the only fatal path is the BI-024a `br`
+	// existence check (exit code 8). Runs before loadStartupQueues (QM-002a ordering).
 	if reconcileErr := bs.runStartupReconcile(ctx, daemonStartTime, resolvedTargetBranch); reconcileErr != nil {
 		return reconcileErr
 	}

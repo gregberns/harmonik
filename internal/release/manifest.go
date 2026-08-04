@@ -1,14 +1,11 @@
 // Package release holds the harmonik release manifest constants and ledger.
 //
 // These values are the structured artifact required by BI-024: each harmonik
-// release MUST name the Beads version it tested against. The compatibility
-// window (amended by hk-m6243): a version delta between BeadsVersion and the
-// installed br is a loud warning at daemon startup, NOT a fatal error. Only
-// exec failure or unparseable `br --version` output blocks startup.
+// release MUST name the Beads version it tested against.
 //
-// Callers of internal/brcli.(*Adapter).CheckBrVersion should pass
-// [BeadsVersion] as the pinnedVersion argument.  Daemon-startup wiring is
-// deferred until cmd/harmonik/ lands.
+// [BeadsVersion] is a record, not a gate. No code compares it against the
+// installed `br`. Daemon startup only confirms `br` is runnable — see
+// internal/brcli.(*Adapter).CheckBrRunnable.
 //
 // The release ledger ([Ledger]) records every harmonik release entry. It is the
 // compiled-in snapshot of the ledger; the mutable ledger persisted on disk is
@@ -16,19 +13,18 @@
 package release
 
 // BeadsVersion is the Beads CLI version that this harmonik release was tested
-// against. Amended by hk-m6243 (BI-024a): a mismatch between this value and
-// the installed br version is a loud warning at daemon startup, not a fatal
-// error. Only exec failure or unparseable `br --version` output blocks startup.
+// against. It is documentation for a human reading the manifest. Nothing reads
+// it at run time.
 //
-// Bumping this constant MUST be accompanied by an adapter change for every
+// It used to be the pin that daemon startup enforced. That enforcement is gone
+// (operator direction, 2026-08-04): the fleet ran 754 beads across a version gap
+// with no adapter failure, and the pin was the sole cause of every restart
+// failure over the same period. Startup now only asks whether `br` runs — see
+// internal/brcli.(*Adapter).CheckBrRunnable.
+//
+// Bumping this constant MUST still be accompanied by an adapter change for every
 // backwards-incompatible Beads change per BI-026 (specs/beads-integration.md
-// §4.8).  Silent upgrades are forbidden; see BI-024.
-// Bumped 0.1.45 → 0.2.10 (2026-06-23): the installed br has been 0.2.10 since
-// 2026-05-19 and the fleet executed 754 run_completed beads on it through the
-// full dispatch lifecycle with the existing adapter — empirically proving no
-// backwards-incompatible change requiring a BI-026 adapter update. The stale
-// pin (never updated when br moved to 0.2.10) was the sole daemon-startup
-// blocker once the BI-024a handshake landed on the daemon path.
+// §4.8). Silent upgrades are forbidden; see BI-024.
 const BeadsVersion = "0.2.10"
 
 // ReleaseEntry records a single harmonik release in the ledger.

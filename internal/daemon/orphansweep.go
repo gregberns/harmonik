@@ -976,8 +976,8 @@ func RunOrphanSweep(
 	result.Cat3bRunIDs = reconResult.Cat3bRunIDs
 
 	// (f) Stale in_progress bead markers (PL-006 sixth bullet — hk-iuaed.4).
-	// Run after the filesystem+process sweep and after the BI-024a `br --version`
-	// handshake has succeeded (the latter is the caller's responsibility — see
+	// Run after the filesystem+process sweep and after the BI-024a `br` existence
+	// check has succeeded (the latter is the caller's responsibility — see
 	// the package doc in internal/lifecycle/orphansweepbeads.go for the
 	// sequencing rationale). Skipped silently when the bead-ledger / resetter
 	// adapter isn't wired (unit-test mode).

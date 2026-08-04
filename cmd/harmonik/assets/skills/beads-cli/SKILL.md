@@ -209,16 +209,17 @@ it rather than retrying in a loop.
 
 ## Version
 
-The pinned `br` version for this harmonik release is declared in the harmonik release
-manifest. Run `br version` to confirm compatibility:
+Harmonik does not check which `br` version you have. Daemon startup only checks that
+`br` is present and runnable, per BI-024a. Startup fails with exit code 8
+(`beads-unavailable`) when `br` cannot be executed at all, or when `br --version`
+exits non-zero. Any version, and any banner text, is accepted otherwise.
 
-```bash
-br version
-# Expected: br version 0.1.x (release)
-```
+The harmonik release manifest still names the `br` version the release was tested
+against. That is a record for a human reading the manifest. No code reads it, and a
+difference between it and your `br` is not an error.
 
-A version mismatch causes daemon startup to fail with exit code 8
-(`beads-unavailable`) per BI-024a.
+If a `br` command fails, report the failure itself. Do not report it as a version
+problem and do not try to change the installed `br` to match the manifest.
 
 ---
 

@@ -9,9 +9,13 @@ package brcli
 //
 // BI-031b: a BrSchemaMismatch recovery path MUST emit divergence_inconclusive
 // per event-model.md §8.6.10 with reason=authority_unavailable and refuse the
-// reissue.  Recovery cannot proceed under schema drift; the pinned-version
-// handshake of BI-024a is the mechanism that prevents schema drift from arising
-// in non-pathological configurations.
+// reissue.  Recovery cannot proceed under schema drift.
+//
+// Nothing prevents schema drift ahead of time. BI-024a checks only that `br`
+// runs, and BI-024's pinned version is a record that no code reads, so a
+// BrSchemaMismatch here is the FIRST signal that the installed `br` moved out
+// from under the adapter. Treat it as such: it routes to the operator, not to a
+// retry.
 //
 // This file provides:
 //   - SchemaMismatchEmitter — the narrow interface for divergence_inconclusive

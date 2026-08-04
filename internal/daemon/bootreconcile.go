@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -15,7 +14,6 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
-	"github.com/gregberns/harmonik/internal/release"
 	runpkg "github.com/gregberns/harmonik/internal/run"
 )
 
@@ -47,7 +45,7 @@ type reconcileState struct {
 // sweep+adopt+reconcile → Cat-BL sweeps), each under the funlen/cyclop ceilings.
 // All reconcile work uses context.Background() (matching the pre-extraction
 // block); sweep/reconcile errors are non-fatal. The only fatal path is the
-// BI-024a br --version handshake (exit code 8), surfaced from buildReconcileAdapters.
+// BI-024a `br` existence check (exit code 8), surfaced from buildReconcileAdapters.
 func (bs *bootState) runStartupReconcile(ctx context.Context, daemonStartTime time.Time, resolvedTargetBranch string) error {
 	cfg := bs.cfg
 	if cfg.ProjectDir == "" {
@@ -63,12 +61,12 @@ func (bs *bootState) runStartupReconcile(ctx context.Context, daemonStartTime ti
 	return nil
 }
 
-// buildReconcileAdapters constructs the BI bead adapter (with the BI-024a
-// br --version handshake), reads the raw queue.json bead-provenance sets, and
-// extracts the tmux adapter + daemon-own session name from the substrate. It
-// returns a fatal error only when the br --version handshake fails structurally
-// (exit code 8); a version delta is a NOTICE, and an adapter-construction
-// failure is classified + emitted (non-fatal, queue-less proceed).
+// buildReconcileAdapters constructs the BI bead adapter (with the BI-024a `br`
+// existence check), reads the raw queue.json bead-provenance sets, and extracts
+// the tmux adapter + daemon-own session name from the substrate. It returns a
+// fatal error only when `br` cannot be run at all (exit code 8); no version
+// relationship is checked, and an adapter-construction failure is classified +
+// emitted (non-fatal, queue-less proceed).
 func (bs *bootState) buildReconcileAdapters(ctx context.Context, st *reconcileState) error {
 	cfg := bs.cfg
 
@@ -93,10 +91,10 @@ func (bs *bootState) buildReconcileAdapters(ctx context.Context, st *reconcileSt
 	return nil
 }
 
-// buildBeadAdapters constructs the BI bead adapter and, on success, runs the
-// BI-024a br --version handshake and populates the reconcile ledgers/resetters.
-// An adapter-construction failure is classified + emitted (non-fatal); only a
-// structural version-handshake failure is fatal (exit code 8).
+// buildBeadAdapters constructs the BI bead adapter and, on success, confirms
+// `br` is runnable per BI-024a and populates the reconcile ledgers/resetters.
+// An adapter-construction failure is classified + emitted (non-fatal); only an
+// unrunnable `br` is fatal (exit code 8).
 func (bs *bootState) buildBeadAdapters(ctx context.Context, st *reconcileState) error {
 	cfg := bs.cfg
 	if cfg.BrPath == "" {
@@ -108,7 +106,7 @@ func (bs *bootState) buildBeadAdapters(ctx context.Context, st *reconcileState) 
 		_ = brcli.BrErrReconciliationCategoryWithEmit(ctx, brAdapterErr, "br-new-for-project-sweep", bs.bus)
 		return nil
 	}
-	if err := bs.brVersionHandshake(ctx, brAdapter); err != nil {
+	if err := bs.ensureBrRunnable(ctx, brAdapter); err != nil {
 		return err
 	}
 	st.beadLedger = brAdapter
@@ -121,32 +119,33 @@ func (bs *bootState) buildBeadAdapters(ctx context.Context, st *reconcileState) 
 	return nil
 }
 
-// brVersionHandshake runs the BI-024a br --version handshake (hk-3pbox, hk-m6243):
-// hk-m6243 + operator direction 2026-07-16: a version delta is a NOTICE (log +
-// continue) — an expected, benign condition, not something wrong; only exec-failure
-// or unparseable output is fatal (emits daemon_startup_failed, returns exit-code-8 error).
-func (bs *bootState) brVersionHandshake(ctx context.Context, brAdapter *brcli.Adapter) error {
-	versionErr := brAdapter.CheckBrVersion(ctx, release.BeadsVersion)
-	if versionErr == nil {
-		return nil
-	}
-	if errors.Is(versionErr, brcli.ErrBrVersionMismatch) {
-		// Non-fatal, expected: br version differs from pin but br is usable.
-		// A notice, not a warning — daemon continues.
-		log.Printf("NOTICE: daemon.Start: br version differs from pin (BI-024a): %v — daemon continues normally; bump release.BeadsVersion when the fleet adopts a new br", versionErr)
+// ensureBrRunnable confirms `br` is present and runnable at daemon startup per
+// BI-024a. That is the whole check: the daemon cannot reach the bead ledger
+// without `br`, so an unrunnable `br` emits daemon_startup_failed and returns
+// the exit-code-8 error.
+//
+// No version relationship is asserted. The version pin and the banner parse were
+// removed by operator direction (2026-08-04) — see
+// [brcli.Adapter.CheckBrRunnable] for the evidence. Version skew is now invisible
+// to startup, and a real `br` surface change surfaces as BrSchemaMismatch or
+// BrOther on the call that trips over it.
+func (bs *bootState) ensureBrRunnable(ctx context.Context, brAdapter *brcli.Adapter) error {
+	banner, runnableErr := brAdapter.CheckBrRunnable(ctx)
+	if runnableErr == nil {
+		log.Printf("NOTICE: daemon.Start: br is runnable (BI-024a); br --version reports %q", banner)
 		return nil
 	}
 	failedPayload := core.DaemonStartupFailedPayload{
 		FailedAt:    time.Now().UTC().Format(time.RFC3339),
 		ExitCode:    8,
-		FailureMode: "br-version-incompatible",
+		FailureMode: "br-unavailable",
 	}
 	if failedBytes, marshalErr := json.Marshal(failedPayload); marshalErr == nil {
 		if emitErr := bs.bus.Emit(ctx, core.EventTypeDaemonStartupFailed, failedBytes); emitErr != nil {
 			log.Printf("warn: daemon.Start: emit daemon_startup_failed: %v", emitErr)
 		}
 	}
-	return fmt.Errorf("daemon.Start: br --version handshake failed (BI-024a, exit code 8): %w", versionErr)
+	return fmt.Errorf("daemon.Start: br is not runnable (BI-024a, exit code 8): %w", runnableErr)
 }
 
 // loadQueueProvenance reads every named queue's queue.json (hk-2ty0g, widened to

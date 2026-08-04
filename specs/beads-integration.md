@@ -8,10 +8,10 @@ requirement-prefix: BI
 status: draft
 spec-category: foundation-cross-cutting
 spec-shape: requirements-first
-version: 0.9.3
+version: 0.9.4
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-08-02
+last-updated: 2026-08-04
 depends-on:
   - architecture
   - execution-model
@@ -482,9 +482,11 @@ Tags: mechanism
 
 A harmonik release MUST name the Beads version it tested against. Upgrading the Beads dependency MUST require a harmonik release that has verified compatibility with the new Beads version, MUST be accompanied by an adapter change for backwards-incompatible Beads changes per §4.8 BI-026. Beads is pre-1.0; silent upgrades are forbidden.
 
-The compatibility window between a pinned Beads version `pinned` and an observed Beads version `observed` is: all observable versions are treated as compatible for startup purposes. A version delta (`observed != pinned`) is a NOTICE — the daemon logs it at notice level (an expected, benign condition) and continues; it is NOT a fatal startup condition. (Amended 2026-07-16, operator direction: a delta was formerly logged as a loud WARNING; demoted to a notice because a routine version skew is not something wrong.) Hard-failure (exit code 8) is reserved for cases where `br` is genuinely unavailable: exec failure, non-zero exit from `br --version`, or version output that cannot be parsed. This policy supersedes the former exact-match rule (`isCompatible(pinned, observed) ≡ pinned == observed`), which proved operationally harmful: the fleet executed 754 successful runs on br=0.2.10 while pinned at 0.1.45, yet the exact-match check bricked every daemon restart during that period. OQ-BI-011 (semver-range widening) is resolved by this amendment.
+The pinned version is a record of what the release was tested against. It is not a runtime gate. No code compares it against the installed `br`, and no version relationship is asserted at any point (amended 2026-08-04, operator direction). The rule the pin still carries is the release-engineering one above: a maintainer who bumps it MUST have verified the new Beads version, and MUST ship the BI-026 adapter change that any backwards-incompatible Beads change requires.
 
-The check is performed by BI-024a `--version` handshake; only exec/parse failures fail daemon startup with §8 code 8 (`beads-unavailable`) per [operator-nfr.md §8]; a version delta emits a notice only.
+The former exact-match rule (`isCompatible(pinned, observed) ≡ pinned == observed`) is retired, and so is the notice-on-delta rule that briefly replaced it. Both proved to have no value: the fleet executed 754 successful runs on br 0.2.10 while pinned at 0.1.45, yet the exact-match check bricked every daemon restart during that period. OQ-BI-011 (semver-range widening) is moot — there is no window left to widen.
+
+Daemon startup checks only that `br` is present and runnable, per BI-024a. That failure alone exits with §8 code 8 (`beads-unavailable`) per [operator-nfr.md §8].
 
 Tags: mechanism
 
@@ -499,21 +501,31 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### BI-026 — Harmonik absorbs breakage rather than forking Beads
 
-On a backwards-incompatible Beads change, harmonik MUST either (a) remain pinned to the prior Beads version and delay upgrade, or (b) ship a harmonik release with an adapter change that handles the new surface. Forking Beads to patch is forbidden.
+On a backwards-incompatible Beads change, harmonik MUST either (a) keep the installed `br` at the prior Beads version and delay the upgrade, or (b) ship a harmonik release with an adapter change that handles the new surface. Forking Beads to patch is forbidden.
+
+This is a release-engineering duty on the maintainer. No startup check enforces it, and none ever did. Option (a) means the operator does not upgrade the `br` on the box; it does not mean daemon startup rejects a `br` that differs from BI-024's pinned version. Startup asserts no version relationship at all per BI-024a. What does run is the call-time classification of §6.1a: an incompatible `br` surface produces `BrSchemaMismatch` or `BrOther` on the call that trips over it.
 
 Tags: mechanism
 
 ### 4.8a `br` CLI surface contract
 
-#### BI-024a — `br --version` handshake
+#### BI-024a — `br` existence check
 
-The adapter MUST invoke `br --version` at daemon startup (during PL-005 step 4, the Cat 0 prerequisite pre-check where Beads/`br` availability is verified). The handshake MUST complete BEFORE the daemon accepts its first `queue-submit` RPC per [process-lifecycle.md §4.4 PL-003a], so that submit-time validation (§4.5a BI-013b) does not run against an incompatible `br` version. The adapter MUST compare the parsed version against the pinned version declared in the harmonik release manifest per BI-024. The version output MUST match the regex `br\s+(\d+)\.(\d+)\.(\d+)(?:[-.][a-zA-Z0-9]+)?`.
+The adapter MUST invoke `br --version` at daemon startup (during PL-005 step 4, the Cat 0 prerequisite pre-check where Beads/`br` availability is verified). The check MUST complete BEFORE the daemon accepts its first `queue-submit` RPC per [process-lifecycle.md §4.4 PL-003a], so that submit-time validation (§4.5a BI-013b) does not run against a `br` the daemon cannot reach.
 
-**Failure policy (amended by hk-m6243):**
-- Exec failure launching `br`, OR non-zero exit from `br --version`, OR output that does not match the version regex → MUST fail daemon startup with exit code 8 (`beads-unavailable` per [operator-nfr.md §8]) and emit `daemon_startup_failed{failure_mode="br-version-incompatible"}`.
-- Observed version differs from pinned version but `br` is otherwise usable (output parsed successfully, binary executed) → MUST log a NOTICE and continue; MUST NOT fail daemon startup; MUST NOT emit `daemon_startup_failed`. The adapter returns `ErrBrVersionMismatch` (a distinct non-fatal sentinel) in this case, which the daemon recognises as warn-only.
+The check asserts one thing: `br` is present and runnable. It MUST NOT assert any version relationship.
 
-The rationale for warn-over-fail on version delta: the fleet proved 754 successful runs on br=0.2.10 while pinned at 0.1.45 (2026-05-19 → 2026-06-23); the exact-match guard was the sole blocker on every daemon restart during that period, and no adapter failure occurred at any br call. A schema-compat guard is legitimate; exact-match-as-hard-fail is the wrong shape for a pre-1.0 dependency that operators do not upgrade in lockstep.
+**Failure policy (amended 2026-08-04, operator direction):**
+- Exec failure launching `br`, OR non-zero exit from `br --version` → MUST fail daemon startup with exit code 8 (`beads-unavailable` per [operator-nfr.md §8]) and emit `daemon_startup_failed{failure_mode="br-unavailable"}`.
+- `br` executes and exits zero → MUST pass, for ANY output. The adapter MUST NOT parse the output, MUST NOT compare it against the pinned version of BI-024, and MUST NOT fail startup on the shape of the output. The adapter returns the raw output so the daemon MAY log which `br` it found.
+
+**Why the version pin was removed.** Two rules were retired here: the comparison against the pinned version, and the parse that fed it.
+
+The comparison never earned its place. The fleet executed 754 successful runs on br 0.2.10 while pinned at 0.1.45 (2026-05-19 through 2026-06-23) with no adapter failure at any `br` call, and the pin was the sole cause of every daemon restart failure over that period. An earlier amendment demoted the comparison from fatal to a notice, which left a check that could only ever produce a log line.
+
+The parse was worse than the comparison. It required the output to match `br\s+(\d+)\.(\d+)\.(\d+)(?:[-.][a-zA-Z0-9]+)?`, and a `br` build whose banner did not match that regex blocked daemon startup outright. That failure was observed on 2026-08-04 with a build reporting `0.0.0`. A parse that can fail is a parse that can block, and no consumer read the parsed value once the comparison stopped being fatal.
+
+Schema compatibility is still enforced, at the place the evidence is. The adapter classifies every `br` invocation per §6.1a, so an incompatible `br` surface produces `BrSchemaMismatch` or `BrOther` on the call that trips over it. A version string read at boot never proved compatibility; a failing call does.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
@@ -701,7 +713,7 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### BI-031 — Idempotent crash-recovery via status-check-before-reissue
 
-On daemon startup (PL-005 step 4 Cat 0 pre-check completing successfully and BI-024a version handshake passing), the adapter MUST scan `.harmonik/beads-intents/` for stale intent files (intent files older than the current daemon's `started_at` per [process-lifecycle.md §4.2]) and execute the recovery sequence below for each.
+On daemon startup (PL-005 step 4 Cat 0 pre-check completing successfully and the BI-024a `br` existence check passing), the adapter MUST scan `.harmonik/beads-intents/` for stale intent files (intent files older than the current daemon's `started_at` per [process-lifecycle.md §4.2]) and execute the recovery sequence below for each.
 
 Reconciliation's Cat 3a auto-resolver per [reconciliation/spec.md §8.4a] does NOT directly invoke the adapter's recovery path; instead, Cat 3a is the post-emergence detection layer for divergences the adapter could not resolve (per BI-031 step 3ii / step 4f routing to `divergence_inconclusive`). The adapter's startup recovery and reconciliation's Cat 3a are layered, not concurrent.
 
@@ -731,7 +743,7 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### BI-031b — `br show` JSON-consistency dependency
 
-The status-check protocol of BI-031 MUST consume `br show <bead_id> --format json` per BI-025b. Any parse failure on the structured output MUST classify as `BrSchemaMismatch` per §6.1a, NOT as "status differs." A `BrSchemaMismatch` recovery path MUST emit `divergence_inconclusive` per [event-model.md §8.6.10] with `reason=authority_unavailable` and the `BrSchemaMismatch` reason captured in the structured-fields tag per [event-model.md §6.3], and refuse the reissue. The pinned-version handshake of BI-024a is the mechanism that prevents schema drift from arising in non-pathological configurations.
+The status-check protocol of BI-031 MUST consume `br show <bead_id> --format json` per BI-025b. Any parse failure on the structured output MUST classify as `BrSchemaMismatch` per §6.1a, NOT as "status differs." A `BrSchemaMismatch` recovery path MUST emit `divergence_inconclusive` per [event-model.md §8.6.10] with `reason=authority_unavailable` and the `BrSchemaMismatch` reason captured in the structured-fields tag per [event-model.md §6.3], and refuse the reissue. Nothing prevents schema drift ahead of time. BI-024a's existence check does not read the version, and BI-024's pin is a record only, so a `BrSchemaMismatch` here is the first and only signal that the installed `br` moved out from under the adapter. Treat it as such: it routes to the operator, not to a retry.
 
 Tags: mechanism
 
@@ -930,7 +942,7 @@ The adapter is the producer of `BrError`; reconciliation detectors are the prima
 - **[control-points.md §6.3]** — YAML policy where per-role exclusions of the Beads-CLI skill are recorded (§4.9.BI-028). Target spec pending bootstrap.
 - **[queue-model.md §6 QM-020..QM-026]** — validation rules consumed by the §4.5a submit-time validation read surface; this spec owns the read mechanics, queue-model owns the rules.
 - **[queue-model.md §8 QM submit]** — queue-submit lifecycle that consumes BI-013b reads; queue-submit is the daemon's dispatch input, not `br ready`.
-- **[process-lifecycle.md §4.4 PL-003a]** — first-`queue-submit` gate consumed by the BI-024a `br --version` handshake ordering requirement.
+- **[process-lifecycle.md §4.4 PL-003a]** — first-`queue-submit` gate consumed by the BI-024a `br` existence-check ordering requirement.
 
 ### 9.2 Reverse dependencies
 
@@ -968,7 +980,7 @@ During bootstrap (before `testing.md` exists) test obligations are named in pros
 - **BI-013b — BI-013c (submit-time validation read surface).** Contract tests against a live `br` binary verify that `br show` returns the fields consumed by [queue-model.md §6 QM-020..QM-022] validation; pre-claim-guard tests inject a status flip between dispatcher selection and claim and verify `bead_claim_skipped` emission with no claim write.
 - **BI-017 — BI-020 (bead-ID propagation).** Cross-spec tests inspect a bead-bound run's git checkpoint trail, event stream, and session logs to verify `bead_id` appears on every expected surface; a non-bead-bound-run test verifies the field is absent everywhere.
 - **BI-021 — BI-023 (store-authority rules).** Scenario tests inject a git-vs-Beads divergence (Beads `closed`, no merge commit) and verify the divergence surfaces as a Cat 3 classification; JSONL-driven override attempts are rejected.
-- **BI-024 — BI-026 (version-pin + adapter).** Release-engineering tests verify the adapter module is the sole importer of `br` subprocess helpers; a mock-Beads test simulates a breaking surface change and verifies that only the adapter module changes.
+- **BI-024 — BI-026 (version-pin + adapter).** Release-engineering tests verify the adapter module is the sole importer of `br` subprocess helpers; a mock-Beads test simulates a breaking surface change and verifies that only the adapter module changes. BI-024a existence-check tests use a mock `br` and cover three cases: `br` absent blocks startup, `br` present but exiting non-zero blocks startup, and `br` present and exiting zero PASSES for any output. The third case MUST include output the retired version regex rejected, because accepting that output is the point of the 2026-08-04 amendment.
 - **BI-027 — BI-028 (Beads-CLI skill).** Agent-launch integration tests verify that a launched agent's skill list contains the Beads-CLI skill by default and that the skill's documented commands succeed.
 - **BI-029 — BI-032 (adapter idempotency).** Crash-injection tests kill the adapter between intent-log fsync and `br` call completion, then restart and verify idempotent completion via the audit-log check; a torn-write scenario verifies the Cat 3a detector's evidence path reads the intent log.
 
@@ -1056,7 +1068,7 @@ Superseded by: BI-014b; [process-lifecycle.md §4.2a PL-006e, PL-006f, PL-006g].
 
 #### OQ-BI-011 — Deferred compatibility-window widening
 
-**RESOLVED by hk-m6243 (2026-06-23).** Policy: all version deltas are warn-only; only exec/parse failures are fatal. See BI-024 and BI-024a. The exact-match rule is retired.
+**MOOT (2026-08-04, operator direction).** There is no compatibility window left to widen. BI-024a reads no version, and BI-024's pin is a record only. A first resolution (2026-06-23) made version deltas warn-only and kept the parse; the parse then blocked startup on its own, so both went. See BI-024 and BI-024a.
 
 ~~Question: BI-024's compatibility window is exact-match. Later widening to a semver-range window (e.g., patch-level acceptance) is desirable for operator ergonomics. What rule governs the widening?~~
 ~~Owner: foundation-author (a later revision)~~
@@ -1082,12 +1094,13 @@ Default-if-unresolved: yes; emit `infrastructure_unavailable{failed_prerequisite
 Question: How does the adapter distinguish "SQLite file corrupt" from "schema-skew"?
 Owner: foundation-author
 Blocks: nothing
-Default-if-unresolved: corruption manifests as parse errors on multiple `br` commands and routes to Cat 6b (operator escalation); schema-skew is BI-024a's responsibility and routes to BrSchemaMismatch.
+Default-if-unresolved: corruption manifests as parse errors on multiple `br` commands and routes to Cat 6b (operator escalation); schema-skew manifests as `BrSchemaMismatch` on the call that trips over it, per §6.1a. BI-024a does not help here — it reads no version and detects no skew.
 
 ## 12. Revision history
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-08-04 | 0.9.4 | agent (operator direction) | **BI-024a becomes an existence check. The version pin is no longer a runtime gate.** BI-024a retitled from "`br --version` handshake" to "`br` existence check". It now asserts one thing: `br` is present and runnable. It MUST NOT parse the `br --version` output, MUST NOT compare it against BI-024's pinned version, and MUST pass on ANY output when `br` exits zero. Startup still fails with exit code 8 when `br` cannot be executed or exits non-zero; the emitted `failure_mode` changes from `br-version-incompatible` to `br-unavailable`, which is what the condition now is. **Two rules retired.** The comparison against the pin: the fleet ran 754 beads on br 0.2.10 while pinned at 0.1.45 with no adapter failure, and the pin caused every restart failure in that window. The regex parse `br\s+(\d+)\.(\d+)\.(\d+)(?:[-.][a-zA-Z0-9]+)?`: a `br` build whose banner did not match blocked startup outright, observed 2026-08-04 with a build reporting `0.0.0`. A parse that can fail is a parse that can block, and nothing read the parsed value after the comparison stopped being fatal. **BI-024 amended:** the pinned version is a record of what the release was tested against, not a gate; the maintainer duty to verify before bumping survives unchanged. **BI-026 amended:** clarified that it is a release-engineering duty on the maintainer that no startup check enforces, and that "remain pinned" means the operator does not upgrade the installed `br`. **BI-031b amended:** dropped the claim that the version handshake prevents schema drift; a `BrSchemaMismatch` at call time is now the first and only signal. **OQ-BI-011** marked moot — no window is left to widen. **OQ-BI-014** default-if-unresolved corrected. **§10.2** gains the three existence-check test obligations, including the explicit obligation to test output the retired regex rejected. Adapter: `CheckBrVersion` becomes `CheckBrRunnable` and returns the raw banner for logging; `ErrBrVersionMismatch` deleted. |
 | 2026-08-02 | 0.9.3 | agent (codename:event-payload-ownership) | **Step 13 no-review compatibility.** BI-009a now defines two legacy no-review inputs: `workflow:single` and tier-0 queue-item `workflow_mode=single`. Both resolve the registered `no-review-bead` version `1.0` graph to `dot`, with distinct `workflow_selection_source` values. The raw queue value remains for audit. The stale `review_bypassed` reference is retired. |
 | 2026-07-30 | 0.9.2 | agent (spec citation cleanup) | **Rotted pointers repaired across `specs/`. No obligation changed by this pass.** Deleted files that were cited as implementation evidence now name the symbol that carries the behavior today. Line-number citations became symbol names, per the repo rule to cite symbols and never line numbers. The retired `review-loop` workflow mode was dropped from every list that presented it as a live selectable mode, because `core.WorkflowMode.Valid()` accepts only `single` and `dot`. Rules that name `review-loop` as a RETIRED value to reject are unchanged, and so are the event `review_loop_cycle_complete` and the review-loop-failure budget, whose symbols still exist. Where a spec named a test as its conformance sensor and that test no longer exists, the text now says so instead of claiming cover it does not have. |
 | 2026-07-29 | 0.9.1 | agent (delete-and-rewrite program / source-comment harvest) | **INFORMATIVE note added under BI-022: a bare `Refs: <bead_id>` commit-message match is not evidence of completion.** No requirement text changed. BI-022 makes git authoritative for completion, and the note records the measured false positive a bare match produces on a bead worked in several parts — an earlier partial commit carries the same ID, the grep matches, and the bead closes with work outstanding. Live incident: bead `hk-cmry` closed wrongly, and its remaining work was refiled as `hk-zmpd` to escape the match. The pre-dispatch check that ran the grep was removed, and the note names the two run-driver close paths (no-change timeout, no-commit guard) that check for the work itself and so preserve crash-restart recovery. This fact previously lived ONLY in a comment on the `beadRunOne` run driver in `internal/daemon/workloop.go`, which is why it is being written down here. The note also names [execution-model.md §4.13 EM-063] Phase 2 (the daemon's eager-refill pre-screen) and [execution-model.md §4.14 EM-064] tier 2 (the orchestrator's guard before submit) as the two places that still mandate the bare match — flagged rather than amended, because narrowing a normative "already landed" test is an execution-model change and needs adjudication. No requirement IDs added, renumbered, or retired. Refs: hk-f38n. |

@@ -22,34 +22,35 @@ package lifecycle
 //     reset path.
 //   - specs/beads-integration.md §4.4 BI-010d (ResetBead op).
 //   - specs/beads-integration.md §4.10 BI-030 (intent-log discipline).
-//   - specs/beads-integration.md §4.8a BI-024a (`br --version` handshake) —
+//   - specs/beads-integration.md §4.8a BI-024a (`br` existence check) —
 //     drives the sequencing decision documented below.
 //
 // # Sequencing decision (PL-006 sixth bullet vs PL-005 step ordering)
 //
 // The bead `br show` and `br update` invocations issued by this sweep are
-// BI-write-surface operations: they depend on the BI-024a `br --version`
-// handshake (PL-005 step 4 Cat 0 pre-check) having succeeded, otherwise we
-// could issue an `update` against a version-mismatched `br` and corrupt the
-// intent-log discipline. The other PL-006 bullets (tmux sessions, worktree
-// locks, subprocess sweeps, stale intent enumeration, stale recon-locks) do
-// NOT touch the BI write surface — they operate on the filesystem and the
-// process table directly.
+// BI-write-surface operations: they depend on the BI-024a existence check
+// (PL-005 step 4 Cat 0 pre-check) having succeeded, otherwise we could start
+// writing intent files for `br` calls that can never run and leave the
+// intent-log discipline holding entries nothing will ever retire. The other
+// PL-006 bullets (tmux sessions, worktree locks, subprocess sweeps, stale
+// intent enumeration, stale recon-locks) do NOT touch the BI write surface —
+// they operate on the filesystem and the process table directly.
 //
 // The bead brief (hk-iuaed.4) explicitly delegates this sequencing question to
 // the implementation task. The chosen ordering is:
 //
 //	step 3 — PL-006 filesystem+process orphan sweep (existing 5 bullets)
-//	step 4 — PL-005 Cat 0 pre-check (includes BI-024a `br --version` handshake)
+//	step 4 — PL-005 Cat 0 pre-check (includes the BI-024a `br` existence check)
 //	step 4.5 — PL-006 sixth bullet: stale-in_progress bead reset (this sweep)
 //	step 5+ — git walk, Beads ready query, in-memory model rebuild, etc.
 //
 // In other words: the bead-reset sweep is fired AFTER the rest of PL-006 has
 // quiesced the project's filesystem and process tree AND AFTER the BI-024a
-// handshake has confirmed the `br` binary is on the pinned version. This
+// check has confirmed the `br` binary runs at all. It confirms nothing about
+// which version `br` reports; no code asserts a version relationship. This
 // matches the spec text in PL-006 sixth bullet, which references the in-memory
 // model rebuilt at PL-005 step 7 in exclusion (a) — the bead-reset enumeration
-// CANNOT precede the handshake.
+// CANNOT precede the existence check.
 //
 // The in-memory model rebuild (PL-005 step 7) is not yet wired as a
 // distinct phase; exclusion (a) reduces to the OR clause in the spec text —

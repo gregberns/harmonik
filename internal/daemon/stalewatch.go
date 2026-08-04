@@ -987,7 +987,9 @@ func (w *StaleWatcher) checkRun(
 		fmt.Fprintf(os.Stderr, "daemon: stalewatch: marshal run_stale for run %s: %v\n", runID, err)
 		return
 	}
-	_ = w.cfg.Emitter.EmitWithRunID(ctx, runID, core.EventTypeRunStale, b)
+	if emitErr := w.cfg.Emitter.EmitWithRunID(ctx, runID, core.EventTypeRunStale, b); emitErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: stalewatch: emit run_stale for run %s: %v\n", runID, emitErr)
+	}
 
 	// hk-tn36: kill-consumer backstop — cancel the per-run context on the
 	// first run_stale emission so a wedged consumer is reaped even when
@@ -1083,7 +1085,9 @@ func (w *StaleWatcher) emitLaunchStallDetected(ctx context.Context, runID core.R
 		fmt.Fprintf(os.Stderr, "daemon: stalewatch: marshal launch_stall_detected for run %s: %v\n", runID, err)
 		return
 	}
-	_ = w.cfg.Emitter.EmitWithRunID(ctx, runID, core.EventTypeLaunchStallDetected, b)
+	if emitErr := w.cfg.Emitter.EmitWithRunID(ctx, runID, core.EventTypeLaunchStallDetected, b); emitErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: stalewatch: emit launch_stall_detected for run %s: %v\n", runID, emitErr)
+	}
 }
 
 // emitAgentReadyStallDetected emits an agent_ready_stall_detected warning event.
@@ -1102,7 +1106,9 @@ func (w *StaleWatcher) emitAgentReadyStallDetected(ctx context.Context, runID co
 		fmt.Fprintf(os.Stderr, "daemon: stalewatch: marshal agent_ready_stall_detected for run %s: %v\n", runID, err)
 		return
 	}
-	_ = w.cfg.Emitter.EmitWithRunID(ctx, runID, core.EventTypeAgentReadyStallDetected, b)
+	if emitErr := w.cfg.Emitter.EmitWithRunID(ctx, runID, core.EventTypeAgentReadyStallDetected, b); emitErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: stalewatch: emit agent_ready_stall_detected for run %s: %v\n", runID, emitErr)
+	}
 }
 
 // fireNeverSpawnedReaper is called (at most once per run) when launch_initiated
@@ -1181,9 +1187,13 @@ func (w *StaleWatcher) emitSilentHangTransition(ctx context.Context, runID core.
 		return
 	}
 	// Parse run_id from machine (it was set at Machine.New time).
+	var emitErr error
 	if parsedUUID, parseErr := uuid.Parse(m.RunID()); parseErr == nil {
-		_ = w.cfg.Emitter.EmitWithRunID(ctx, core.RunID(parsedUUID), core.EventTypeLifecycleTransition, payload)
+		emitErr = w.cfg.Emitter.EmitWithRunID(ctx, core.RunID(parsedUUID), core.EventTypeLifecycleTransition, payload)
 	} else {
-		_ = w.cfg.Emitter.Emit(ctx, core.EventTypeLifecycleTransition, payload)
+		emitErr = w.cfg.Emitter.Emit(ctx, core.EventTypeLifecycleTransition, payload)
+	}
+	if emitErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: stalewatch: emit lifecycle_transition for run %s: %v\n", m.RunID(), emitErr)
 	}
 }

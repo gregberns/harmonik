@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -39,13 +40,15 @@ func (h *commsSendHandlerImpl) emitRefreshBeat(ctx context.Context, agent, sessi
 	if h.presEmitter == nil || agent == "" {
 		return
 	}
-	_, _ = h.presEmitter.EmitAgentPresence(ctx, core.AgentPresencePayload{
+	if _, emitErr := h.presEmitter.EmitAgentPresence(ctx, core.AgentPresencePayload{
 		Agent:     agent,
 		Status:    core.AgentPresenceStatusOnline,
 		LastSeen:  time.Now().UTC().Format(time.RFC3339),
 		Reason:    core.AgentPresenceReasonRefresh,
 		SessionID: sessionID,
-	})
+	}); emitErr != nil {
+		slog.WarnContext(ctx, "daemon: emit agent_presence refresh beat failed", "err", emitErr, "agent", agent)
+	}
 }
 
 // CommsPresenceHandler is the interface for processing comms-presence socket ops.

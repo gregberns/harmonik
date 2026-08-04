@@ -752,7 +752,11 @@ func (a *QuiesceArbiter) writeSleepMarker(sessionID string, source SleepSource, 
 		Level:     level,
 	}
 	marker.normalize()
-	body, _ := json.Marshal(marker)
+	body, marshalErr := json.Marshal(marker)
+	if marshalErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: quiesce: marshal sleep marker for %q: %v\n", sessionID, marshalErr)
+		return
+	}
 	//nolint:gosec // G306: marker file is readable by all users of this project; 0644 is intentional
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: quiesce: write sleep marker %q: %v\n", path, err)

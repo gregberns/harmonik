@@ -626,7 +626,12 @@ func (s *tmuxSubstrate) RunSessionKeepalive(ctx context.Context) {
 			// (duplicate-session treated as success). If the session was killed,
 			// EnsureSession recreates it so the next SpawnWindow succeeds without
 			// requiring the hk-yaj retry path.
-			_ = se.EnsureSession(ctx, s.sessionName, "")
+			if ensureErr := se.EnsureSession(ctx, s.sessionName, ""); ensureErr != nil {
+				// The session stays absent, so the next SpawnWindow fails. Say so
+				// rather than let the next spawn look like the first sign of trouble.
+				slog.WarnContext(ctx, "daemon: tmux substrate: ensure session on keepalive tick",
+					"err", ensureErr, "session", s.sessionName)
+			}
 		}
 	}
 }
@@ -1892,7 +1897,12 @@ func (s *tmuxSubstrate) SpawnCrewSession(ctx context.Context, crewName string, s
 	if paneID != "" {
 		pidTarget = tmux.WindowHandle(paneID)
 	}
-	pid, _ := s.adapter.WindowPanePID(ctx, pidTarget)
+	pid, pidErr := s.adapter.WindowPanePID(ctx, pidTarget)
+	if pidErr != nil {
+		// pid stays 0, so every later PID-based liveness probe reports "dead".
+		slog.WarnContext(ctx, "daemon: tmux substrate: resolve pane PID",
+			"err", pidErr, "target", string(pidTarget))
+	}
 
 	sess := &tmuxSubstrateSession{
 		adapter:     s.adapter,
@@ -1969,7 +1979,12 @@ func (s *tmuxSubstrate) SpawnRunSession(ctx context.Context, runID string, spawn
 	if paneID != "" {
 		pidTarget = tmux.WindowHandle(paneID)
 	}
-	pid, _ := s.adapter.WindowPanePID(ctx, pidTarget)
+	pid, pidErr := s.adapter.WindowPanePID(ctx, pidTarget)
+	if pidErr != nil {
+		// pid stays 0, so every later PID-based liveness probe reports "dead".
+		slog.WarnContext(ctx, "daemon: tmux substrate: resolve pane PID",
+			"err", pidErr, "target", string(pidTarget))
+	}
 
 	sess := &tmuxSubstrateSession{
 		adapter:     s.adapter,
@@ -2118,12 +2133,21 @@ func (s *tmuxSubstrate) ensureCrewKeeperWindow(ctx context.Context, crewName, se
 // without re-creating the agent pane (hk-u5tgh).
 func (s *tmuxSubstrate) existingCrewSession(ctx context.Context, sessName string) (handler.SubstrateSession, error) {
 	handle := tmux.WindowHandle(sessName + ":" + tmux.WindowAgent)
-	paneID, _ := s.adapter.WindowPaneID(ctx, handle)
+	paneID, paneErr := s.adapter.WindowPaneID(ctx, handle)
+	if paneErr != nil {
+		slog.WarnContext(ctx, "daemon: tmux substrate: resolve pane ID for existing crew session",
+			"err", paneErr, "handle", string(handle))
+	}
 	pidTarget := handle
 	if paneID != "" {
 		pidTarget = tmux.WindowHandle(paneID)
 	}
-	pid, _ := s.adapter.WindowPanePID(ctx, pidTarget)
+	pid, pidErr := s.adapter.WindowPanePID(ctx, pidTarget)
+	if pidErr != nil {
+		// pid stays 0, so every later PID-based liveness probe reports "dead".
+		slog.WarnContext(ctx, "daemon: tmux substrate: resolve pane PID",
+			"err", pidErr, "target", string(pidTarget))
+	}
 	return &tmuxSubstrateSession{
 		adapter:     s.adapter,
 		handle:      handle,

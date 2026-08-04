@@ -956,7 +956,10 @@ func pasteInjectQuitOnCommit(
 	// hk-ue0u2: pane-output fingerprint baseline — initialised before the
 	// loop so the first tick has a reference to diff against.  Nil when qs
 	// does not implement paneOutputSizer (e.g. test stubs, nil substrate).
-	outputSizer, _ := qs.(paneOutputSizer)
+	var outputSizer paneOutputSizer
+	if sizer, ok := qs.(paneOutputSizer); ok {
+		outputSizer = sizer
+	}
 	lastPaneOutputFP := ""
 	if outputSizer != nil {
 		lastPaneOutputFP, _ = outputSizer.PaneOutputFingerprint(ctx)
@@ -964,7 +967,10 @@ func pasteInjectQuitOnCommit(
 
 	// hk-fbydv: optional pane liveness checker — probed once; nil when qs does
 	// not implement paneLivenessChecker (e.g. test stubs, nil substrate path).
-	livenessChecker, _ := qs.(paneLivenessChecker)
+	var livenessChecker paneLivenessChecker
+	if lc, ok := qs.(paneLivenessChecker); ok {
+		livenessChecker = lc
+	}
 
 	// hk-76n5g: one-shot reseed-Enter setup.  When qs also implements
 	// enterSender (production: perRunSubstrate; test stubs that combine both),
@@ -973,7 +979,10 @@ func pasteInjectQuitOnCommit(
 	// redundant Enter at an already-submitted REPL is a harmless empty line.
 	// Disable when qs has no enterSender capability (reseedEnterFired=true
 	// short-circuits the check on every tick).
-	reseedES, _ := qs.(enterSender)
+	var reseedES enterSender
+	if es, ok := qs.(enterSender); ok {
+		reseedES = es
+	}
 	reseedEnterDeadline := loopStart.Add(reseedGrace)
 	reseedEnterFired := reseedES == nil
 
@@ -1464,7 +1473,9 @@ func emitPasteInjectFailed(ctx context.Context, bus handlercontract.EventEmitter
 		fmt.Fprintf(os.Stderr, "daemon: pasteinject: emitPasteInjectFailed: marshal: %v\n", err)
 		return
 	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypePasteInjectFailed, b)
+	if emitErr := bus.EmitWithRunID(ctx, runID, core.EventTypePasteInjectFailed, b); emitErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: emit paste_inject_failed: %v\n", emitErr)
+	}
 }
 
 // emitImplementerBudgetExceeded emits an implementer_budget_exceeded event
@@ -1505,7 +1516,9 @@ func emitImplementerBudgetExceeded(ctx context.Context, bus handlercontract.Even
 		fmt.Fprintf(os.Stderr, "daemon: pasteinject: emitImplementerBudgetExceeded: marshal: %v\n", err)
 		return
 	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeImplementerBudgetExceeded, b)
+	if emitErr := bus.EmitWithRunID(ctx, runID, core.EventTypeImplementerBudgetExceeded, b); emitErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: pasteinject: emit implementer_budget_exceeded: %v\n", emitErr)
+	}
 }
 
 // splashDismissWait sleeps for splashDismissDelay or until ctx is cancelled.
@@ -2412,7 +2425,10 @@ func pasteInjectQuitOnReviewFile(
 	// still has an active child process is extended by one base window rather
 	// than killing a reviewer that is genuinely still reading the diff — but the
 	// extension is itself bounded by the absolute hard ceiling below.
-	livenessChecker, _ := qs.(paneLivenessChecker)
+	var livenessChecker paneLivenessChecker
+	if lc, ok := qs.(paneLivenessChecker); ok {
+		livenessChecker = lc
+	}
 	hardDeadline := loopStart.Add(effectiveCeiling)
 
 	// hk-4u1mb: heartbeat-extension ceiling — the maximum total elapsed time the
@@ -2586,13 +2602,19 @@ func pasteInjectQuitOnReviewFile(
 				// distinct "reviewer budget exceeded" diagnostic instead of the
 				// generic "verdict absent".
 				writeReviewerBudgetSentinel(wtPath, budget, changedLines, clk.Since(loopStart), reason)
-				_ = qs.SendQuitToLastPane(ctx)
+				if quitErr := qs.SendQuitToLastPane(ctx); quitErr != nil {
+					fmt.Fprintf(os.Stderr,
+						"daemon: pasteinject: quit-on-review-file: send /quit failed: %v\n", quitErr)
+				}
 				select {
 				case <-ctx.Done():
 				case <-substrate.After(clk, killDelay): //nolint:contextcheck // substrate.After is ctx-free by contract (internal/substrate/clock.go After); this select's ctx.Done() case carries cancellation
 				}
 				if killer != nil {
-					_ = killer.Kill(ctx)
+					if killErr := killer.Kill(ctx); killErr != nil {
+						fmt.Fprintf(os.Stderr,
+							"daemon: pasteinject: quit-on-review-file: kill session failed: %v (the pane may still be alive)\n", killErr)
+					}
 				}
 				return
 			}
@@ -2613,14 +2635,20 @@ func pasteInjectQuitOnReviewFile(
 				fmt.Fprintf(os.Stderr,
 					"daemon: pasteinject: quit-on-review-file: valid verdict detected at %s; sending /quit\n",
 					verdictPath)
-				_ = qs.SendQuitToLastPane(ctx)
+				if quitErr := qs.SendQuitToLastPane(ctx); quitErr != nil {
+					fmt.Fprintf(os.Stderr,
+						"daemon: pasteinject: quit-on-review-file: send /quit failed: %v\n", quitErr)
+				}
 				// Grace period for claude to process /quit before force-kill.
 				select {
 				case <-ctx.Done():
 				case <-substrate.After(clk, postQuitKillGrace): //nolint:contextcheck // substrate.After is ctx-free by contract (internal/substrate/clock.go After); this select's ctx.Done() case carries cancellation
 				}
 				if killer != nil {
-					_ = killer.Kill(ctx)
+					if killErr := killer.Kill(ctx); killErr != nil {
+						fmt.Fprintf(os.Stderr,
+							"daemon: pasteinject: quit-on-review-file: kill session failed: %v (the pane may still be alive)\n", killErr)
+					}
 				}
 				return
 			}

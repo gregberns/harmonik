@@ -66,7 +66,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -334,7 +336,10 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 	for {
 		cur := h.connCount.Load()
 		if cur >= maxConn {
-			_ = conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+			if dlErr := conn.SetWriteDeadline(time.Now().Add(writeTimeout)); dlErr != nil {
+				// No deadline means the refusal write below can block forever.
+				slog.WarnContext(ctx, "daemon: subscribe: set write deadline on refused connection", "err", dlErr)
+			}
 			writeSubscribeError(conn, "subscribe_capacity_exceeded")
 			return
 		}
@@ -390,12 +395,14 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 	// agent that opens a subscribe session stays visible in "comms who" even if it
 	// never calls comms-send. Best-effort: errors are silently dropped (O-class).
 	if h.cfg.PresenceEmitter != nil && req.To != "" {
-		_, _ = h.cfg.PresenceEmitter.EmitAgentPresence(ctx, core.AgentPresencePayload{
+		if _, emitErr := h.cfg.PresenceEmitter.EmitAgentPresence(ctx, core.AgentPresencePayload{
 			Agent:    req.To,
 			Status:   core.AgentPresenceStatusOnline,
 			LastSeen: h.cfg.Now().UTC().Format(time.RFC3339),
 			Reason:   core.AgentPresenceReasonRefresh,
-		})
+		}); emitErr != nil {
+			slog.WarnContext(ctx, "daemon: subscribe: emit agent_presence refresh beat", "err", emitErr, "agent", req.To)
+		}
 	}
 
 	// Detect client-side close: a goroutine reads from the conn and signals
@@ -443,7 +450,11 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 		// Serialize against concurrent one-shot comms-recv on the same agent.
 		agentMu := h.cursorStore.AgentMu(req.To)
 		agentMu.Lock()
-		_ = h.cursorStore.Advance(req.To, pendingCursorID)
+		if advErr := h.cursorStore.Advance(req.To, pendingCursorID); advErr != nil {
+			// At-least-once tolerates this: the agent re-reads from the old cursor
+			// and sees the message again.
+			fmt.Fprintf(os.Stderr, "daemon: subscribe: advance comms cursor for %s: %v\n", req.To, advErr)
+		}
 		agentMu.Unlock()
 		pendingCursorID = ""
 	}
@@ -599,7 +610,10 @@ func (h *SubscribeHub) makeHeartbeat() heartbeatLine {
 }
 
 func (h *SubscribeHub) loadLastEventID() string {
-	v, _ := h.lastEventID.Load().(string)
+	v, ok := h.lastEventID.Load().(string)
+	if !ok {
+		return "" // never stored yet
+	}
 	return v
 }
 
@@ -678,6 +692,12 @@ type subscriptionGapLine struct {
 // writeSubscribeError writes a SocketResponse error and is used when no
 // SubscribeHandler is wired or the request is malformed.
 func writeSubscribeError(w io.Writer, msg string) {
-	data, _ := json.Marshal(SocketResponse{Ok: false, Error: msg})
-	_, _ = w.Write(data)
+	data, marshalErr := json.Marshal(SocketResponse{Ok: false, Error: msg})
+	if marshalErr != nil {
+		slog.WarnContext(context.Background(), "daemon: subscribe: marshal error reply", "err", marshalErr, "msg", msg)
+		return
+	}
+	if _, writeErr := w.Write(data); writeErr != nil {
+		slog.WarnContext(context.Background(), "daemon: subscribe: write error reply", "err", writeErr, "msg", msg)
+	}
 }

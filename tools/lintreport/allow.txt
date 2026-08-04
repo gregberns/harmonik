@@ -183,7 +183,6 @@ internal/daemon/agent_message_test.go	copyloopvar
 internal/daemon/agent_message_test.go	errcheck
 internal/daemon/agent_message_test.go	gosec
 internal/daemon/agent_message_test.go	unconvert
-internal/daemon/bandwidthtuner.go	errcheck
 internal/daemon/bandwidthtuner.go	gocritic
 internal/daemon/bandwidthtuner.go	nilerr
 internal/daemon/bandwidthtuner_test.go	errcheck
@@ -206,10 +205,8 @@ internal/daemon/claudelaunchspec_fixture_test.go	unused
 internal/daemon/claudeworktreesweep.go	gocognit
 internal/daemon/claudeworktreesweep.go	gocritic
 internal/daemon/claudeworktreesweep.go	gosec
-internal/daemon/commscursor.go	errcheck
 internal/daemon/commscursor.go	gocognit
 internal/daemon/commscursor_test.go	gocritic
-internal/daemon/commspresencehandler_7t27s.go	errcheck
 internal/daemon/commsrecvhandler_nnwaa.go	contextcheck
 internal/daemon/commsrecvhandler_nnwaa.go	gocognit
 internal/daemon/commsrecvhandler_nnwaa.go	prealloc
@@ -235,21 +232,16 @@ internal/daemon/decision_block_ev043a.go	gocritic
 internal/daemon/decisionsprojection_test.go	forbidigo
 internal/daemon/decisionsprojection_test.go	gocritic
 internal/daemon/decisionsprojection_test.go	gosec
-internal/daemon/detectorbarrier_rc020b.go	errcheck
 internal/daemon/detectorbarrier_rc020b.go	forbidigo
 internal/daemon/detectorbarrier_rc020b_test.go	forbidigo
-internal/daemon/diskcheck_hksxlb.go	errcheck
 internal/daemon/diskcheck_hksxlb.go	gosec
 internal/daemon/diskcheck_hksxlb.go	prealloc
-internal/daemon/dot_cascade_core.go	errcheck
 internal/daemon/dot_cascade_core.go	gocognit
-internal/daemon/dot_cascade_helpers.go	errcheck
 internal/daemon/dot_cascade_helpers.go	gocritic
 internal/daemon/dot_cascade_helpers.go	gosec
 internal/daemon/dot_cascade_helpers.go	unused
 internal/daemon/dot_cascade_tool_injection_security_test.go	gosec
 internal/daemon/dot_gate.go	cyclop
-internal/daemon/dot_gate.go	errcheck
 internal/daemon/dot_gate.go	gocognit
 internal/daemon/dot_gate.go	gosec
 internal/daemon/dot_postexit_fixture_test.go	containedctx
@@ -268,8 +260,6 @@ internal/daemon/followup_ledger_ac1_test.go	gosec
 internal/daemon/handlerpause_9hwbw_test.go	unparam
 internal/daemon/handlerpause_account_lhxzc_test.go	errcheck
 internal/daemon/handlerpause_account_lhxzc_test.go	gosec
-internal/daemon/handlerpause_autoresume_0otqs.go	errcheck
-internal/daemon/handlerpause_persist_m0k0a.go	errcheck
 internal/daemon/handlerpause_persist_m0k0a.go	gocognit
 internal/daemon/handlerpause_persist_m0k0a_test.go	errcheck
 internal/daemon/handlerpause_persist_m0k0a_test.go	gosec
@@ -277,11 +267,9 @@ internal/daemon/handlerpause_policy_37zy8.go	unused
 internal/daemon/handlerpause_scenario_6f1uj_test.go	forbidigo
 internal/daemon/handlerpause_scenario_6f1uj_test.go	nilerr
 internal/daemon/handlerpause_sigusr1_bdvae_test.go	nilerr
-internal/daemon/harnessregistry.go	errcheck
 internal/daemon/harnessregistry.go	funlen
 internal/daemon/harnessregistry.go	unconvert
 internal/daemon/harnessregistry_test.go	gosec
-internal/daemon/harnessresolve.go	errcheck
 internal/daemon/harnessresolve_test.go	contextcheck
 internal/daemon/harnessresolve_test.go	copyloopvar
 internal/daemon/hk_lfrub_dot_node_model_leak_test.go	copyloopvar
@@ -290,7 +278,6 @@ internal/daemon/hk_pkugu_pi_launch_e2e_test.go	gosec
 internal/daemon/hk_pkugu_pi_launch_e2e_test.go	unparam
 internal/daemon/hk_pkugu_pi_model_leak_test.go	copyloopvar
 internal/daemon/hk_ytzj2_default_harness_wiring_test.go	copyloopvar
-internal/daemon/hookrelay_chb025.go	errcheck
 internal/daemon/mergetomain_hkftyvo_test.go	contextcheck
 internal/daemon/mergetomain_hkftyvo_test.go	errcheck
 internal/daemon/mergetomain_hkftyvo_test.go	errorlint
@@ -300,12 +287,10 @@ internal/daemon/mergetomain_hkftyvo_test.go	unused
 internal/daemon/mergetomain_stripruncontext_hk4je_test.go	errcheck
 internal/daemon/mergetomain_stripruncontext_hk4je_test.go	errorlint
 internal/daemon/mergetomain_stripruncontext_hk4je_test.go	gosec
-internal/daemon/moderesolve.go	errcheck
 internal/daemon/moderesolve_single_override_dot_default_hkgwy_test.go	copyloopvar
 internal/daemon/moderesolve_test.go	contextcheck
 internal/daemon/moderesolve_test.go	copyloopvar
 internal/daemon/noautopull_em066_em067_test.go	errcheck
-internal/daemon/notifystream.go	errcheck
 internal/daemon/notifystream.go	nilerr
 internal/daemon/notifystream_test.go	errcheck
 internal/daemon/operatorpause_ry8q1_test.go	copyloopvar
@@ -314,7 +299,6 @@ internal/daemon/orphansweep.go	gocognit
 internal/daemon/orphansweep.go	gocritic
 internal/daemon/orphansweep.go	unparam
 internal/daemon/pasteinject.go	contextcheck
-internal/daemon/pasteinject.go	errcheck
 internal/daemon/pasteinject.go	errorlint
 internal/daemon/pasteinject.go	gocognit
 internal/daemon/pasteinject.go	gocritic
@@ -326,14 +310,12 @@ internal/daemon/pasteinject_resume_reseed_test.go	unparam
 internal/daemon/perqueuespendmeter_tigaf11.go	nilerr
 internal/daemon/pi_dgx_reasoning_test.go	gosec
 internal/daemon/pi_no_tier3_leak_test.go	gosec
-internal/daemon/pi_profile_resolve.go	errcheck
 internal/daemon/pi_profile_resolve_test.go	contextcheck
 internal/daemon/pi_profile_resolve_test.go	copyloopvar
 internal/daemon/pi_toolcalls_per_provider_test.go	gosec
 internal/daemon/pi_unknown_profile_refuse_test.go	errcheck
 internal/daemon/queueonlyposture_test.go	gocritic
 internal/daemon/quiesce.go	contextcheck
-internal/daemon/quiesce.go	errcheck
 internal/daemon/quiesce.go	gocognit
 internal/daemon/quiesce.go	gocritic
 internal/daemon/quiesce.go	nilerr
@@ -346,7 +328,6 @@ internal/daemon/remote_substrate_b11_test.go	copyloopvar
 internal/daemon/remote_substrate_b11_test.go	gosec
 internal/daemon/remote_substrate_b11_test.go	noctx
 internal/daemon/restartbackoff.go	contextcheck
-internal/daemon/restartbackoff.go	errcheck
 internal/daemon/restartbackoff.go	gocritic
 internal/daemon/reviewgateanomaly_hktnmjy.go	nilerr
 internal/daemon/run_session_adoption.go	gocognit
@@ -358,9 +339,7 @@ internal/daemon/runfailed_bead_reset_s20z_test.go	revive
 internal/daemon/runinflightreconcile_hkr73qr.go	exhaustive
 internal/daemon/runinflightreconcile_hkr73qr.go	gocognit
 internal/daemon/runregistry_test.go	gocritic
-internal/daemon/runsupport.go	errcheck
 internal/daemon/runsupport.go	gocritic
-internal/daemon/sandboxgate.go	errcheck
 internal/daemon/sandboxgate.go	gocritic
 internal/daemon/sandboxgate.go	gosec
 internal/daemon/sandboxprofile.go	gocritic
@@ -398,7 +377,6 @@ internal/daemon/spendmeter_hkk3f8g.go	revive
 internal/daemon/srt_pi_egress_e2e_test.go	errcheck
 internal/daemon/srt_pi_egress_e2e_test.go	gosec
 internal/daemon/srt_pi_egress_e2e_test.go	noctx
-internal/daemon/stalewatch.go	errcheck
 internal/daemon/stalewatch.go	gocognit
 internal/daemon/stalewatch.go	unconvert
 internal/daemon/stalewatch.go	unparam
@@ -407,10 +385,8 @@ internal/daemon/standardgraph.go	forbidigo
 internal/daemon/standardgraph_sync_test.go	gocritic
 internal/daemon/standardgraph_sync_test.go	gosec
 internal/daemon/statedisk.go	contextcheck
-internal/daemon/statedisk.go	errcheck
 internal/daemon/statedisk.go	exhaustive
 internal/daemon/stategather.go	contextcheck
-internal/daemon/stategather.go	errcheck
 internal/daemon/stategather.go	exhaustive
 internal/daemon/statetypes.go	revive
 internal/daemon/sub_workflow_runner.go	funlen
@@ -420,7 +396,6 @@ internal/daemon/sub_workflow_runner_hkoe6_test.go	gosec
 internal/daemon/sub_workflow_runner_hkoe6_test.go	unparam
 internal/daemon/sub_workflow_runner_hkoe6_test.go	unused
 internal/daemon/subscribe.go	contextcheck
-internal/daemon/subscribe.go	errcheck
 internal/daemon/subscribe.go	gocognit
 internal/daemon/subscribe.go	gocritic
 internal/daemon/subscribe.go	unused
@@ -429,7 +404,6 @@ internal/daemon/subscribe_test.go	errcheck
 internal/daemon/subscribe_test.go	gocritic
 internal/daemon/subscribe_test.go	gosec
 internal/daemon/subscribe_test.go	noctx
-internal/daemon/supervisorrevival_hkrnkuy.go	errcheck
 internal/daemon/supervisorrevival_hkrnkuy.go	exhaustive
 internal/daemon/survive_shutdown_run_resources_test.go	unparam
 internal/daemon/survive_shutdown_run_resources_test.go	unused
@@ -448,7 +422,6 @@ internal/daemon/t6_scale_shape_test.go	gocritic
 internal/daemon/t6_scale_shape_test.go	gosec
 internal/daemon/t6_scale_shape_test.go	unused
 internal/daemon/testhelpers_adapterregistry_test.go	errcheck
-internal/daemon/tmuxsubstrate.go	errcheck
 internal/daemon/tmuxsubstrate.go	forbidigo
 internal/daemon/tmuxsubstrate.go	gocognit
 internal/daemon/tmuxsubstrate.go	gocritic
@@ -456,7 +429,6 @@ internal/daemon/tmuxsubstrate.go	unused
 internal/daemon/tmuxsubstrate_nosession_hkyaj_test.go	errcheck
 internal/daemon/tmuxsubstrate_spawnstagger_hkhzj_test.go	errcheck
 internal/daemon/tmuxsubstrate_spawnstagger_hkhzj_test.go	prealloc
-internal/daemon/verdictexecutor_rc025a.go	errcheck
 internal/daemon/verdictexecutor_rc025a.go	gocognit
 internal/daemon/verdictexecutor_rc025a.go	gosec
 internal/daemon/verdictexecutor_rc025a_test.go	errcheck
@@ -466,7 +438,6 @@ internal/daemon/walcheckpoint.go	nilerr
 internal/daemon/walcheckpoint.go	unparam
 internal/daemon/walcheckpoint.go	unused
 internal/daemon/workloop.go	contextcheck
-internal/daemon/workloop.go	errcheck
 internal/daemon/workloop.go	gocritic
 internal/daemon/workloop.go	nakedret
 internal/daemon/workloop.go	unused
@@ -570,7 +541,6 @@ internal/runloop/scenariogate.go	unused
 internal/runloop/scenariogate_test.go	gosec
 internal/runloop/scenariogate_test.go	noctx
 internal/runloop/scenariogate_test.go	testifylint
-internal/runloop/waitsocketgrace.go	errcheck
 internal/runloop/waitsocketgrace.go	revive
 internal/runmerge/commitsubject_test.go	gosec
 internal/runmerge/fixture_test.go	gosec

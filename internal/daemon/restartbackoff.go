@@ -104,7 +104,7 @@ type restartRecord struct {
 // The cognition/ directory under projectDir is created on demand.
 //
 // Bead ref: hk-7t9g1, hk-uzvt9.
-func applyBootBackoff(ctx context.Context, projectDir string, rawCfg projectconfig.DaemonRestartBackoffConfig) time.Duration { //nolint:unparam // ctx kept for signature parity with the boot-backoff call site; not threaded through today
+func applyBootBackoff(ctx context.Context, projectDir string, rawCfg projectconfig.DaemonRestartBackoffConfig) time.Duration {
 	if projectDir == "" {
 		return 0
 	}
@@ -118,10 +118,12 @@ func applyBootBackoff(ctx context.Context, projectDir string, rawCfg projectconf
 	if readErr != nil && !os.IsNotExist(readErr) {
 		fmt.Fprintf(os.Stderr, "daemon: restart-backoff: read %q: %v (skipping backoff)\n", path, readErr)
 		// Record the current boot even on read failure, best-effort.
-		_ = writeRestartRecord(path, restartRecord{
+		if writeErr := writeRestartRecord(ctx, path, restartRecord{
 			SchemaVersion: 1,
 			BootTimesUnix: []int64{now.Unix()},
-		})
+		}); writeErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: restart-backoff: write %q: %v\n", path, writeErr)
+		}
 		return 0
 	}
 
@@ -141,7 +143,7 @@ func applyBootBackoff(ctx context.Context, projectDir string, rawCfg projectconf
 	// Append this boot and persist.
 	rec.SchemaVersion = 1
 	rec.BootTimesUnix = append(recent, now.Unix())
-	if writeErr := writeRestartRecord(path, rec); writeErr != nil {
+	if writeErr := writeRestartRecord(ctx, path, rec); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: restart-backoff: write %q: %v\n", path, writeErr)
 		// Non-fatal: proceed even if we can't persist.
 	}
@@ -205,7 +207,7 @@ func readRestartRecord(path string) (restartRecord, error) {
 
 // writeRestartRecord writes rec atomically (temp+rename+fsync) to path.
 // The directory is created on demand.
-func writeRestartRecord(path string, rec restartRecord) error {
+func writeRestartRecord(ctx context.Context, path string, rec restartRecord) error {
 	dir := filepath.Dir(path)
 	if mkErr := os.MkdirAll(dir, core.HarmonikDirMode); mkErr != nil {
 		return fmt.Errorf("mkdir %s: %w", dir, mkErr)
@@ -225,7 +227,7 @@ func writeRestartRecord(path string, rec restartRecord) error {
 	defer func() {
 		if !ok {
 			if closeErr := tmp.Close(); closeErr != nil {
-				slog.WarnContext(context.Background(), "restartbackoff: close temp during cleanup", "err", closeErr, "path", tmpPath)
+				slog.WarnContext(ctx, "restartbackoff: close temp during cleanup", "err", closeErr, "path", tmpPath)
 			}
 			_ = os.Remove(tmpPath) //nolint:errcheck // cleanup; unactionable
 		}

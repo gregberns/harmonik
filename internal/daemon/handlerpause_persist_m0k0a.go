@@ -203,23 +203,21 @@ func atomicWriteHandlerStateDaemon(statePath string, snapshots []HandlerPauseSta
 
 	// Steps 2–4: write, fsync, close.
 	if _, writeErr := tmp.Write(data); writeErr != nil {
-		writeErr = errors.Join(writeErr, tmp.Close())
-		_ = os.Remove(tmpPath)
+		writeErr = errors.Join(writeErr, tmp.Close(), os.Remove(tmpPath))
 		return fmt.Errorf("atomicWriteHandlerStateDaemon: write %s: %w", tmpPath, writeErr)
 	}
 	if syncErr := tmp.Sync(); syncErr != nil {
-		syncErr = errors.Join(syncErr, tmp.Close())
-		_ = os.Remove(tmpPath)
+		syncErr = errors.Join(syncErr, tmp.Close(), os.Remove(tmpPath))
 		return fmt.Errorf("atomicWriteHandlerStateDaemon: fsync %s: %w", tmpPath, syncErr)
 	}
 	if closeErr := tmp.Close(); closeErr != nil {
-		_ = os.Remove(tmpPath)
+		closeErr = errors.Join(closeErr, os.Remove(tmpPath))
 		return fmt.Errorf("atomicWriteHandlerStateDaemon: close %s: %w", tmpPath, closeErr)
 	}
 
 	// Step 5: atomic rename.
 	if renameErr := os.Rename(tmpPath, statePath); renameErr != nil {
-		_ = os.Remove(tmpPath)
+		renameErr = errors.Join(renameErr, os.Remove(tmpPath))
 		return fmt.Errorf("atomicWriteHandlerStateDaemon: rename %s → %s: %w", tmpPath, statePath, renameErr)
 	}
 

@@ -29,6 +29,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strings"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -181,5 +182,7 @@ func emitHarnessSelected(
 	if err != nil {
 		return
 	}
-	_ = bus.Emit(ctx, core.EventTypeHarnessSelected, b)
+	if emitErr := bus.Emit(ctx, core.EventTypeHarnessSelected, b); emitErr != nil {
+		slog.WarnContext(ctx, "daemon: emit harness_selected failed", "err", emitErr, "bead_id", string(bead.BeadID))
+	}
 }

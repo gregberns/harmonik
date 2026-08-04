@@ -26,6 +26,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -220,7 +221,7 @@ func verifySandboxEngaged(ctx context.Context, spawn *SrtSpawnConfig, canaryPath
 	if err := os.WriteFile(profilePath, profileBytes, 0o600); err != nil {
 		return fmt.Errorf("verifySandboxEngaged: write probe profile: %w", err)
 	}
-	defer func() { _ = os.Remove(profilePath) }()
+	defer func() { removeProbeFile(profilePath, "probe profile", logf) }()
 
 	srtBin := spawn.SrtBinary
 	if srtBin == "" {
@@ -230,7 +231,8 @@ func verifySandboxEngaged(ctx context.Context, spawn *SrtSpawnConfig, canaryPath
 
 	var lastDetail string
 	for attempt := 1; attempt <= srtEngagementMaxAttempts; attempt++ {
-		_ = os.Remove(canaryPath) // clean slate: a prior attempt's leaked write must not taint this one
+		// Clean slate: a prior attempt's leaked write must not taint this one.
+		removeProbeFile(canaryPath, "canary before attempt", logf)
 
 		//nolint:gosec // G204: srtBin/profilePath/script are daemon-controlled, not attacker input.
 		cmd := exec.CommandContext(ctx, srtBin, "--settings", profilePath, "-c", script)
@@ -238,7 +240,7 @@ func verifySandboxEngaged(ctx context.Context, spawn *SrtSpawnConfig, canaryPath
 
 		content, readErr := os.ReadFile(canaryPath)
 		wrote := readErr == nil && strings.Contains(string(content), srtEngagementCanaryMarker)
-		_ = os.Remove(canaryPath)
+		removeProbeFile(canaryPath, "canary after attempt", logf)
 
 		if runErr != nil && !wrote {
 			return nil // engaged: srt itself failed AND the denied write never landed
@@ -260,4 +262,15 @@ func verifySandboxEngaged(ctx context.Context, spawn *SrtSpawnConfig, canaryPath
 // daemon-derived (projectDir + a UUID RunID), never attacker input.
 func shellQuoteSingle(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// removeProbeFile deletes one file the srt engagement probe created. An absent
+// file is the normal case. Any other failure leaves the file in place, which can
+// taint the next attempt's canary reading, so report it through logf.
+func removeProbeFile(path, what string, logf func(format string, args ...any)) {
+	rmErr := os.Remove(path)
+	if rmErr == nil || errors.Is(rmErr, os.ErrNotExist) || logf == nil {
+		return
+	}
+	logf("srt sandbox engagement probe: remove %s %s: %v", what, path, rmErr)
 }

@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 
@@ -109,7 +110,9 @@ func emitModelSelected(
 	if err != nil {
 		return
 	}
-	_ = bus.Emit(ctx, core.EventTypeModelSelected, b)
+	if emitErr := bus.Emit(ctx, core.EventTypeModelSelected, b); emitErr != nil {
+		slog.WarnContext(ctx, "daemon: emit model_selected failed", "err", emitErr, "run_id", runID.String())
+	}
 }
 
 // routedLaunchSpecBuilder returns a launchSpecBuilder (the legacy aggregate hook

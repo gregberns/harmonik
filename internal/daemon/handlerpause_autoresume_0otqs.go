@@ -20,6 +20,7 @@ package daemon
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -192,5 +193,7 @@ func (c *HandlerPauseController) doAutoResume(ctx context.Context, agentType cor
 
 	// Step 6: call Resume.  Resume acquires mu internally, so we must not hold
 	// it here.  HandlerResumedByAutoBackoff is the initiator discriminator.
-	_ = c.Resume(ctx, agentType, core.HandlerResumedByAutoBackoff)
+	if resumeErr := c.Resume(ctx, agentType, core.HandlerResumedByAutoBackoff); resumeErr != nil {
+		slog.WarnContext(ctx, "daemon: auto-resume of paused handler failed", "err", resumeErr, "agent_type", string(agentType))
+	}
 }

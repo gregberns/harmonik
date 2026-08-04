@@ -120,7 +120,9 @@ func emitReviewFixupStalled(
 	if err != nil {
 		return
 	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeReviewFixupStalled, b)
+	if emitErr := bus.EmitWithRunID(ctx, runID, core.EventTypeReviewFixupStalled, b); emitErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: emit review_fixup_stalled: %v\n", emitErr)
+	}
 }
 
 // emitReviewerBudgetExceeded emits a reviewer_budget_exceeded event (hk-da3rr)
@@ -145,5 +147,7 @@ func emitReviewerBudgetExceeded(ctx context.Context, bus handlercontract.EventEm
 		fmt.Fprintf(os.Stderr, "daemon: emitReviewerBudgetExceeded: marshal: %v\n", err)
 		return
 	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeReviewerBudgetExceeded, b)
+	if emitErr := bus.EmitWithRunID(ctx, runID, core.EventTypeReviewerBudgetExceeded, b); emitErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: emit reviewer_budget_exceeded: %v\n", emitErr)
+	}
 }

@@ -90,8 +90,9 @@ const cursorLockRetryInterval = 25 * time.Millisecond
 // CursorStore is a daemon-owned, file-backed store of per-agent cursors.
 // The zero value is not usable; construct with NewCursorStore.
 type CursorStore struct {
-	dir string   // base directory, e.g. <ProjectDir>/.harmonik/comms/cursors
-	mus sync.Map // per-agent mutexes (agent name → *sync.Mutex), created lazily
+	dir   string                 // base directory, e.g. <ProjectDir>/.harmonik/comms/cursors
+	musMu sync.Mutex             // guards mus
+	mus   map[string]*sync.Mutex // per-agent mutexes by agent name, created lazily
 }
 
 // NewCursorStore returns a CursorStore rooted at dir.
@@ -315,8 +316,17 @@ func acquireCursorLock(fd int, timeout time.Duration) error {
 // Callers must hold this mutex across the Get→scan→Advance critical section to
 // prevent concurrent recv ops for the same agent from delivering duplicates.
 func (s *CursorStore) AgentMu(name string) *sync.Mutex {
-	v, _ := s.mus.LoadOrStore(name, &sync.Mutex{})
-	return v.(*sync.Mutex) //nolint:forcetypeassert // we always store *sync.Mutex
+	s.musMu.Lock()
+	defer s.musMu.Unlock()
+	if s.mus == nil {
+		s.mus = make(map[string]*sync.Mutex)
+	}
+	mu, ok := s.mus[name]
+	if !ok {
+		mu = &sync.Mutex{}
+		s.mus[name] = mu
+	}
+	return mu
 }
 
 // path returns the file path for the given agent name.

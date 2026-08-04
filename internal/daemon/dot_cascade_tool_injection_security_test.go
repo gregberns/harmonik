@@ -34,6 +34,7 @@ func loadInjectionToolNode(t *testing.T, sid string) *dot.Node {
 	src := `digraph inj {
   schema_version="1";
   version="1.0";
+  workflow_id="tool-injection-fixture";
   start_node="run";
   terminal_node_ids="run";
   run [type="non-agentic", handler_ref="shell", idempotency_class="idempotent", tool_command="echo __SID__"];

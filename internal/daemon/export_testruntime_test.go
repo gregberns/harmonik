@@ -171,7 +171,14 @@ type TestRuntimeParams struct {
 	// so that `git worktree add` succeeds.
 	//
 	// Supply an explicit factory only to intercept or wrap worktree creation
-	// (e.g. mergeToMainCommittingFactory for merge-to-main tests).
+	// (e.g. the conflict factory in TestMergeToMain_NonFFReopen, which advances
+	// the target branch after the worktree exists).
+	//
+	// A factory that COMMITS into the new worktree makes the run's first node
+	// fail: the node reads the worktree HEAD before it launches the agent and
+	// requires HEAD to move past that baseline, so a commit the factory already
+	// made cannot satisfy it. Let the fake handler commit instead — see
+	// mergeToMainCommittingHandlerArgs.
 	//
 	// Bead ref: hk-kqdpf.1, hk-ngw3d.
 	WorktreeFactory func(ctx context.Context, projectDir, runID, headSHA string) (wtPath string, cleanup func(), err error)

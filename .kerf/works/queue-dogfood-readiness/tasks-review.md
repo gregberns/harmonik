@@ -28,3 +28,22 @@ tasks. Re-review this shared core boundary before finalization.
 
 APPROVE. This verdict applies to the pre-amendment task list. No reviewer
 started a daemon or changed operational state.
+
+---
+
+## Folded in from lane bravo's parallel pass (2026-08-03)
+
+Lane bravo ran the same pass on branch `work/queue-dogfood-readiness` before any
+lane contract named that branch. The two passes reached the same shape. Bravo's
+text is kept below because it names evidence, measurements and review records
+this document does not. The plan of record stays T1..T12 plus T5a in
+`07-tasks.md`. Where the two disagree on behaviour, the section above wins.
+
+### Tasks review — Queue dogfood readiness
+
+#### Round 1 — APPROVED
+
+Every changelog entry has an implementation task. The dependency graph is a
+DAG and reserves daemon work for Alpha and queue work for Bravo. All eighteen
+scenario and exploratory validation beads are listed as explicit dependent
+work. The tasks are ready for implementation after the spec is finalized.

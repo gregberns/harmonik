@@ -657,3 +657,34 @@ Five calls an agent must not make. The first three block the candidate.
    is 681 commits behind. That gap is why the lint delta, the required check and
    every new worktree base are stale. Nobody has measured what closing it costs,
    and it is the one item here that is hard to reverse.
+
+---
+
+# Appendix B — lane bravo's task numbers, mapped (2026-08-03)
+
+Lane bravo planned the same work as seven numbered tasks on branch
+`work/queue-dogfood-readiness` before any lane contract named that branch. Its
+code shipped against those seven numbers. The plan of record is T1..T12 plus
+T5a above. The map below exists so bravo's shipped code is scored against the
+card it actually satisfies, and not marked incomplete against a card it never
+claimed.
+
+| Bravo task | Subject | Card of record |
+| --- | --- | --- |
+| 1 | Durable queue recovery, `QM-058` and `QM-059`, one transaction owner | T1 |
+| 2 | Terminal-recovery record and drain, `EM-053a` and the RSM amendment | T5 and T6 |
+| 3 | Recovery command and observation, `PL-032`, `PL-033`, `EV-051` | T2 and T3 |
+| 4 | Workspace recovery lease, `WM-041` | no card — see below |
+| 5 | Ordered drain and proof policy, `ON-052` | T5, T6 acceptance, and T7 |
+| 6 | Readiness handoff and scratch proof, schema version 3 | T9 |
+| 7 | Read-only stale-ledger triage | T8, evidence in `08-stale-graph-triage.md` |
+
+**Bravo task 4 has no card of record.** `WM-041` asks workspace lifecycle and
+startup adoption to hold the committed worktree and branch until terminal
+recovery picks an outcome. No T-card covers it. Raise it before T10 closes.
+
+**Two numbering differences to expect.** Bravo's task 6 states assessor handoff
+schema version 3. Card T9 and `05-changelog.md` state version 2. Bravo's task 3
+routes observation through `EV-051`, a Class-F record. Card T3 routes it through
+`queue_recovered`, a Class-O cross-bus event. Neither is in code today. T3 owns
+the choice between them.

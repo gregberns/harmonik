@@ -41,3 +41,35 @@ an overloaded development host.
 - `ON-INV-006`: normal control surfaces do not bypass graceful drain.
 - Session decisions: merge-or-reopen before drain completes and no silent
   watchdog bypass.
+
+---
+
+## Folded in from lane bravo's parallel pass (2026-08-03)
+
+Lane bravo ran the same pass on branch `work/queue-dogfood-readiness` before any
+lane contract named that branch. The two passes reached the same shape. Bravo's
+text is kept below because it names evidence, measurements and review records
+this document does not. The plan of record stays T1..T12 plus T5a in
+`07-tasks.md`. Where the two disagree on behaviour, the section above wins.
+
+### Operator NFR change design
+
+#### Current state
+
+Ordered drain stops new dispatch and releases resources after checkpointing.
+It does not name the post-commit interval or its timeout result.
+
+#### Target state
+
+Add committed-before-merge as a special drain outcome. Its per-step timeout
+either completes the terminal ladder or leaves the durable recovery record.
+Resource release follows the selected owner. The controlled proof records load,
+timeouts, stop point, and retained artifacts. New storage remains N-1 readable.
+
+#### Rationale
+
+A global short wait followed by cancellation cannot be an operator-safe drain.
+
+#### Requirements traceability
+
+Addresses ordered-drain and controlled-load requirements.

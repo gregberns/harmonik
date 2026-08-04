@@ -113,6 +113,64 @@ func TestQuarantineReason_ReportsTheCauseForTheShutQueueOnly(t *testing.T) {
 	}
 }
 
+// Raw in-memory writers do not prove that durable recovery completed. They
+// must leave a recorded I/O failure in place. A new QueueStore starts after an
+// operator resolves the I/O fault.
+func TestRawQueueWriters_PreserveQuarantine(t *testing.T) {
+	t.Parallel()
+
+	const name = "alpha"
+	quarantineErr := errors.New("queue write failed")
+
+	cases := []struct {
+		name  string
+		write func(*QueueStore)
+	}{
+		{
+			name: "set_queue",
+			write: func(store *QueueStore) {
+				store.SetQueue(&queue.Queue{Name: name})
+			},
+		},
+		{
+			name: "set_queue_by_name",
+			write: func(store *QueueStore) {
+				store.SetQueueByName(name, &queue.Queue{Name: name})
+			},
+		},
+		{
+			name: "locked_set_queue",
+			write: func(store *QueueStore) {
+				locked := store.LockForMutation()
+				defer locked.Done()
+				locked.SetQueue(&queue.Queue{Name: name})
+			},
+		},
+		{
+			name: "locked_set_queue_by_name",
+			write: func(store *QueueStore) {
+				locked := store.LockForMutation()
+				defer locked.Done()
+				locked.LockedSetQueueByName(name, &queue.Queue{Name: name})
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			store := NewQueueStore()
+			store.quarantined[name] = quarantineErr
+
+			tc.write(store)
+
+			if got := store.QuarantineReason(name); !errors.Is(got, quarantineErr) {
+				t.Errorf("QuarantineReason(%q) = %v, want %v", name, got, quarantineErr)
+			}
+		})
+	}
+}
+
 // A replacement refused before any I/O leaves the queue usable. Quarantining
 // here would shut a queue over a malformed request, which is not what QM-001
 // describes and would take the daemon down for a caller's mistake.

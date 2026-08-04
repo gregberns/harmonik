@@ -1085,6 +1085,96 @@ func TestRunQueueResume_DaemonDown(t *testing.T) {
 	}
 }
 
+func TestRunQueueRecover_HappyPath(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	var capturedOp string
+	var capturedQueue string
+	queueCliFixtureStartEchoServer(t, projectDir, func(raw []byte) []byte {
+		msg := queueCliFixtureDecodeRequest(t, raw)
+		queueCliFixtureCapture(t, msg, "op", &capturedOp)
+		queueCliFixtureCapture(t, msg, "queue", &capturedQueue)
+		return queueCliFixtureSuccessResponse(t, map[string]any{
+			"result":  "accepted",
+			"receipt": map[string]string{"receipt_id": "0190b3c4-9001-7000-8000-000000000010"},
+		})
+	})
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueRecover(context.Background(), []string{"--project", projectDir, "investigate"}, &out, &errOut)
+	if got != 0 {
+		t.Errorf("RunQueueRecover happy-path: exit = %d, want 0; stderr=%q", got, errOut.String())
+	}
+	if capturedOp != "queue-recover" {
+		t.Errorf("RunQueueRecover: op = %q, want queue-recover", capturedOp)
+	}
+	if capturedQueue != "investigate" {
+		t.Errorf("RunQueueRecover: queue = %q, want investigate", capturedQueue)
+	}
+	if !strings.Contains(out.String(), "recovery: accepted") {
+		t.Errorf("RunQueueRecover: stdout = %q, want accepted result", out.String())
+	}
+	if !strings.Contains(out.String(), "0190b3c4-9001-7000-8000-000000000010") {
+		t.Errorf("RunQueueRecover: stdout = %q, want receipt ID", out.String())
+	}
+}
+
+func TestRunQueueRecover_NoOpIncludesReceipt(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	queueCliFixtureStartEchoServer(t, projectDir, func(_ []byte) []byte {
+		return queueCliFixtureSuccessResponse(t, map[string]any{
+			"result":  "no-op",
+			"receipt": map[string]string{"receipt_id": "0190b3c4-9001-7000-8000-000000000013"},
+		})
+	})
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueRecover(context.Background(), []string{"--project", projectDir, "main"}, &out, &errOut)
+	if got != 0 {
+		t.Errorf("RunQueueRecover no-op: exit = %d, want 0; stderr=%q", got, errOut.String())
+	}
+	if !strings.Contains(out.String(), "recovery: no-op") || !strings.Contains(out.String(), "000000000013") {
+		t.Errorf("RunQueueRecover no-op: stdout = %q, want result and receipt", out.String())
+	}
+}
+
+func TestRunQueueRecover_RejectedResponse(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	queueCliFixtureStartEchoServer(t, projectDir, func(_ []byte) []byte {
+		return queueCliFixtureErrorResponse(t, -32012, "queue is not paused by failure")
+	})
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueRecover(context.Background(), []string{"--project", projectDir, "main"}, &out, &errOut)
+	if got != 1 {
+		t.Errorf("RunQueueRecover rejected: exit = %d, want 1", got)
+	}
+	if !strings.Contains(out.String(), "queue is not paused by failure") {
+		t.Errorf("RunQueueRecover rejected: stdout = %q, want rejection message", out.String())
+	}
+}
+
+func TestRunQueueRecover_DaemonDown(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueRecover(context.Background(), []string{"--project", projectDir, "main"}, &out, &errOut)
+	if got != 17 {
+		t.Errorf("RunQueueRecover daemon-down: exit = %d, want 17", got)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // submit --queue flag tests
 // ---------------------------------------------------------------------------

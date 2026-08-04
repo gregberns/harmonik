@@ -2212,3 +2212,14 @@ v0.3 chose (c) — path-scoping under `<run_id>/` — because it is a structural
 **Why the invariant EM-INV-004 was reframed to be genuinely cross-subsystem.** r2's skeptic flagged EM-INV-004 as borderline under the template's selection test: v0.2 framed it as "no subsystem may implement a mechanism that atomically rolls back prior checkpoints" with an adjective list of constrained subsystems, which reads as a §4 requirement with scope gloss. v0.3 reframes the invariant as "any subsystem that writes to git, Beads, or workspace state MUST NOT implement an undo-previous-N-operations primitive" — a property that each of execution-model, workspace-model, beads-integration, and reconciliation could violate independently at their authoring surfaces. The invariant now passes the selection test: a subsystem could ship a conforming local requirement yet still violate this invariant by shipping a composable primitive. The failure mode the invariant guards is composition-level atomic undo, which no single §4 can prevent on its own.
 
 **Why the main-loop protocol was elevated to §7.4.** r2's orchestrator-implementer review found that v0.2's §7.2 (checkpoint-and-emit) and §7.3 (cascade) are clean drop-in pseudocode but the end-to-end main loop — from bead-claim to run-termination — is not expressible as a closed function against the spec alone. Three specific gaps: the `pick_one → create_run → dispatch` prefix has no owning section; the "when does a run end" decision lacks a single requirement; the dispatch-to-cascade handoff has no protocol analog. v0.3 adds §7.4 with `orchestrator_main_loop` and `execute_workflow` pseudocode, anchored by normative EM-015a (run_started emission), EM-015b (run_completed/run_failed emission), and EM-015c (terminal detection). S01 (Orchestrator Core) now has a single reading target rather than a four-spec cross-read.
+
+## Amendment — terminal recovery record
+
+### EM-053a — Durable committed-run recovery
+
+Before shutdown may release a run with a committed branch and incomplete
+terminal ladder, the daemon MUST persist a terminal-recovery record. The record
+MUST identify the run, bead, queue item, branch tip, and ladder stage. Startup
+MUST use that record with Git and Beads to select exactly one action: continue
+the existing ladder or retain reviewable recovery. It MUST NOT dispatch, merge,
+close, or advance the queue a second time.

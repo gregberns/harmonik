@@ -59,8 +59,21 @@ type FailedRecoveryOutcome struct {
 	QueueID string
 
 	// Rearmed lists the bead IDs moved from failed back to pending, in
-	// group-then-item order.
+	// group-then-item order. It is read back off the durable receipt, not off
+	// the in-memory mutation, so the list an operator sees is the list the
+	// receipt will still name after a restart.
 	Rearmed []core.BeadID
+
+	// Receipt is the durable proof of this recovery. A committed recovery
+	// always carries one. It is what makes the answer re-checkable after the
+	// daemon is gone.
+	Receipt queue.FailedRecoveryReceipt
+
+	// AlreadyRecovered is true when this call found the queue already active
+	// behind Receipt and mutated nothing. Repeating a recovery is safe and
+	// returns the same receipt; it is not a second recovery and must not read
+	// as one.
+	AlreadyRecovered bool
 }
 
 // errRecoveryStatusRaced marks the narrow window where the queue left
@@ -69,38 +82,32 @@ type FailedRecoveryOutcome struct {
 var errRecoveryStatusRaced = errors.New("queuewiring: queue left paused-by-failure during recovery")
 
 // RecoverFailed moves one queue out of `paused-by-failure` and back into
-// dispatch. It is the production caller of queue.ResumeFromFailure.
+// dispatch. It is the single production entry point for queue recovery.
 //
 // Order of work:
 //
-//  1. Refuse a quarantined queue. QM-001 makes a quarantine sticky, and
-//     recovery is a mutation, so it cannot clear one.
-//  2. Refuse a missing queue, and refuse any status other than
-//     paused-by-failure.
-//  3. Run the QM-052b ledger preflight over every failed item. Every bead must
+//  1. Refuse a missing queue.
+//  2. Answer an already-recovered queue with its existing receipt and no
+//     mutation. Repeating the request is safe by design (QM-058a).
+//  3. Refuse any other status than paused-by-failure. A quarantined queue in
+//     any other status refuses with queue_quarantined, because failed recovery
+//     is the ONLY operation permitted to act on a quarantined queue, and only
+//     while it is paused by failure (QM-059).
+//  4. Run the QM-052b ledger preflight over every failed item. Every bead must
 //     be open. A missing bead, a read error, or a non-open bead refuses with no
 //     mutation, no write, and no dispatch wake.
-//  4. Re-arm the failed items and flip the queue to active inside one QM-001
-//     transaction, then wake dispatch.
+//  5. Commit the receipt-bound recovery transaction, then wake dispatch.
 //
 // Every refusal returns a *queue.RecoveryError carrying one of the seven
 // QM-052b reasons. A write failure or a stale snapshot leaves memory and disk
 // at the prior candidate.
 //
-// Success means the queue mutation is durable. It does not mean any item has
-// dispatched.
+// Success means the queue mutation AND its receipt are durable. It does not
+// mean any item has dispatched.
 //
-// Spec ref: specs/queue-model.md §8.3b QM-052b.
+// Spec ref: specs/queue-model.md §8.3b QM-052b, QM-058a, QM-059.
 func (s *QueueStore) RecoverFailed(ctx context.Context, req FailedRecoveryRequest) (FailedRecoveryOutcome, error) {
 	name := queue.NormaliseQueueName(req.Name)
-
-	if quarantineErr := s.QuarantineReason(name); quarantineErr != nil {
-		return FailedRecoveryOutcome{}, &queue.RecoveryError{
-			Reason:         queue.RecoveryReasonQueueQuarantined,
-			NormalizedName: name,
-			Cause:          quarantineErr,
-		}
-	}
 
 	snapshot := s.Snapshot(name)
 	if snapshot.Queue == nil {
@@ -109,7 +116,20 @@ func (s *QueueStore) RecoverFailed(ctx context.Context, req FailedRecoveryReques
 			NormalizedName: name,
 		}
 	}
-	if snapshot.Queue.Status != queue.QueueStatusPausedByFailure {
+
+	alreadyRecovered := snapshot.Queue.Status == queue.QueueStatusActive &&
+		snapshot.Queue.FailedRecoveryReceiptID != nil
+
+	if !alreadyRecovered && snapshot.Queue.Status != queue.QueueStatusPausedByFailure {
+		if quarantineErr := s.QuarantineReason(name); quarantineErr != nil {
+			return FailedRecoveryOutcome{}, &queue.RecoveryError{
+				Reason:         queue.RecoveryReasonQueueQuarantined,
+				NormalizedName: name,
+				QueueID:        snapshot.Queue.QueueID,
+				ObservedStatus: snapshot.Queue.Status,
+				Cause:          quarantineErr,
+			}
+		}
 		return FailedRecoveryOutcome{}, &queue.RecoveryError{
 			Reason:         queue.RecoveryReasonQueueNotRecoverable,
 			NormalizedName: name,
@@ -118,34 +138,38 @@ func (s *QueueStore) RecoverFailed(ctx context.Context, req FailedRecoveryReques
 		}
 	}
 
-	if err := recoveryPreflight(ctx, req.Beads, name, snapshot.Queue); err != nil {
-		return FailedRecoveryOutcome{}, err
+	if !alreadyRecovered {
+		if err := recoveryPreflight(ctx, req.Beads, name, snapshot.Queue); err != nil {
+			return FailedRecoveryOutcome{}, err
+		}
 	}
 
-	var rearmed []core.BeadID
-	result := s.Transact(ctx, TransactionRequest{
-		Snapshot:      snapshot,
-		ProjectDir:    req.ProjectDir,
-		OperationKind: queue.OperationResume,
-		WakeRequired:  true,
-		Mutate: func(candidate *queue.Queue) error {
-			ids, ok := queue.ResumeFromFailure(candidate)
-			if !ok {
-				return errRecoveryStatusRaced
-			}
-			rearmed = ids
-			return nil
-		},
-	})
-	if err := recoveryTransactionError(name, snapshot.Queue.QueueID, result); err != nil {
+	result := s.commitFailedRecovery(ctx, req.ProjectDir, name)
+	if err := recoveryTransactionError(name, snapshot.Queue.QueueID, result.TransactionResult); err != nil {
 		return FailedRecoveryOutcome{}, err
 	}
 
 	return FailedRecoveryOutcome{
-		Name:    name,
-		QueueID: snapshot.Queue.QueueID,
-		Rearmed: rearmed,
+		Name:             name,
+		QueueID:          snapshot.Queue.QueueID,
+		Rearmed:          rearmedFromReceipt(result.Receipt),
+		Receipt:          result.Receipt,
+		AlreadyRecovered: result.AlreadyRecovered,
 	}, nil
+}
+
+// rearmedFromReceipt reads the re-armed bead IDs off the durable receipt.
+//
+// The in-memory mutation knows the same list, but the receipt is the record
+// that outlives the process. Reporting the receipt's list means the answer an
+// operator reads is the answer a later reader of the receipt gets, and a
+// receipt that lost an item cannot be hidden by a healthy in-memory list.
+func rearmedFromReceipt(receipt queue.FailedRecoveryReceipt) []core.BeadID {
+	ids := make([]core.BeadID, 0, len(receipt.RecoveredItems))
+	for _, item := range receipt.RecoveredItems {
+		ids = append(ids, core.BeadID(item.BeadID))
+	}
+	return ids
 }
 
 // recoveryPreflight asserts every failed item's bead is open before recovery

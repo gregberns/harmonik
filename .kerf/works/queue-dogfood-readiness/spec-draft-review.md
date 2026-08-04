@@ -43,3 +43,29 @@ cross-boundary review of the immutable Git-backed claim and its recovery use.
 That review must confirm that the claim contains the dispatch head, resolved
 merge target, and optional remote endpoint, and that neither JSONL nor a
 daemon-local registry can fill a missing field.
+
+---
+
+## Folded in from lane bravo's parallel pass (2026-08-03)
+
+Lane bravo ran the same pass on branch `work/queue-dogfood-readiness` before any
+lane contract named that branch. The two passes reached the same shape. Bravo's
+text is kept below because it names evidence, measurements and review records
+this document does not. The plan of record stays T1..T12 plus T5a in
+`07-tasks.md`. Where the two disagree on behaviour, the section above wins.
+
+### Spec Draft review — Queue dogfood readiness
+
+#### Round 1 — APPROVED
+
+The draft directory contains all nine target documents and a changelog. Each
+draft began as the current complete document. The only changes are version
+updates and the nine reviewed amendments. The amendment identifiers are free in
+their source documents. The cross-references form one direction: queue recovery
+→ terminal recovery record → run drain → lifecycle, operator, workspace, and
+event duties → assessor and scratch proof.
+
+The readiness gate is version 3 of the assessor schema. Its required candidate,
+profile, and artifact fields prevent a PASS from widening the controlled batch.
+The validation ledger has one scenario and one exploratory test for each target
+area. No draft changes production behavior until a later implementation pass.

@@ -78,3 +78,51 @@ records are on disk.
 5. `specs/assessor-handoff-schema.md`
 6. `decompose-review.md`
 7. Current bead records for the blockers named in `01-problem-space.md`
+
+---
+
+## Folded in from lane bravo's parallel pass (2026-08-03)
+
+Lane bravo ran the same pass on branch `work/queue-dogfood-readiness` before any
+lane contract named that branch. Its text is kept below because it names targets
+and records this document does not. The plan of record stays T1..T12 plus T5a in
+`07-tasks.md`. Where the two disagree, the section above wins.
+
+### Queue dogfood readiness — Session
+
+#### Current pass
+
+The work is shelved at **Ready**. `kerf square` passed with all expected
+artifacts. The work is ready for finalization and implementation. The fleet
+daemon was not started.
+
+#### Decisions made
+
+- Failed-item recovery becomes a durable queue transaction. It is distinct from
+  drain resume and returns a durable receipt.
+- A committed but unmerged run gets one durable recovery record and one
+  terminal action. It retains its original worktree until recovery completes.
+- A readiness gate is assessor-only. Schema version 3 pins its candidate,
+  canary profile, decision owner, and proof artifacts.
+- The first canary remains one repeat-safe local stream item at concurrency one.
+  It excludes append, remote, Pi, cross-repository, and wave work.
+
+#### Ledger triage
+
+The four historical finding IDs are absent from this machine ledger. No closure
+was made. Current source has their named regression tests. See
+`ledger-triage.md` for the evidence boundary.
+
+#### Suggested next steps
+
+1. Review and finalize the ready work before implementation.
+2. Implement `07-tasks.md` in dependency order. Alpha owns daemon and workspace
+   work. Bravo owns queue, CLI, schema/runbook, and triage.
+3. Do not alter registry or mission state without operator authority.
+
+#### Reading order
+
+1. `07-tasks.md`
+2. `05-changelog.md`
+3. `05-spec-drafts/`
+4. `ledger-triage.md`

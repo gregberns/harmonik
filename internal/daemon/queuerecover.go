@@ -42,15 +42,26 @@ type QueueRecoveryHandler interface {
 
 // QueueRecoverResult is the success payload of `queue-recover`.
 //
+// Result is "accepted" for a recovery this call committed and "no-op" for a
+// queue that was already recovered behind the same receipt. The two are the
+// same success to the transaction layer and a different answer to an operator,
+// so they are named apart on the wire.
+//
+// Receipt is the durable proof. It is always present on a success. A payload
+// that claims a result and carries no receipt describes a recovery nothing can
+// re-check, and the CLI refuses to print it as a success.
+//
 // RearmedCount is carried next to Rearmed so a caller that only wants the shape
 // of the answer does not have to length-check a list that may be empty for a
 // legitimate reason (a queue can park by failure and later have its items
 // re-armed by another path).
 type QueueRecoverResult struct {
-	Queue        string        `json:"queue"`
-	QueueID      string        `json:"queue_id"`
-	Rearmed      []core.BeadID `json:"rearmed"`
-	RearmedCount int           `json:"rearmed_count"`
+	Queue        string                      `json:"queue"`
+	QueueID      string                      `json:"queue_id"`
+	Result       string                      `json:"result"`
+	Receipt      queue.FailedRecoveryReceipt `json:"receipt"`
+	Rearmed      []core.BeadID               `json:"rearmed"`
+	RearmedCount int                         `json:"rearmed_count"`
 }
 
 // QueueRecoveryController implements QueueRecoveryHandler over the live
@@ -85,9 +96,15 @@ func (c *QueueRecoveryController) HandleQueueRecover(ctx context.Context, queueN
 	if err != nil {
 		return QueueRecoverResult{}, err
 	}
+	result := "accepted"
+	if outcome.AlreadyRecovered {
+		result = "no-op"
+	}
 	return QueueRecoverResult{
 		Queue:        outcome.Name,
 		QueueID:      outcome.QueueID,
+		Result:       result,
+		Receipt:      outcome.Receipt,
 		Rearmed:      outcome.Rearmed,
 		RearmedCount: len(outcome.Rearmed),
 	}, nil

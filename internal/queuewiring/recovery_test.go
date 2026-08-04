@@ -264,11 +264,16 @@ func TestRecoverFailed_RefusesUnwritableProjectDirWithRecoveryWriteFailed(t *tes
 	}
 }
 
-func TestRecoverFailed_RefusesQuarantinedQueueWithQueueQuarantined(t *testing.T) {
-	t.Parallel()
-	store, projectDir := failureParkedFixture(t)
-
-	// Quarantine the queue the way QM-001 does: a failed write.
+// quarantineByFailedWrite parks a real QM-001 quarantine on the fixture queue
+// by letting one recovery write fail against a read-only queues directory, then
+// repairs the directory. It returns with the queue quarantined and still parked
+// at paused-by-failure.
+//
+// It seeds the quarantine through the production write path on purpose. Writing
+// the quarantine map directly would prove the refusal branch and nothing about
+// whether a failed write reaches it.
+func quarantineByFailedWrite(t *testing.T, store *QueueStore, projectDir string) {
+	t.Helper()
 	queuesDir := filepath.Join(projectDir, ".harmonik", "queues")
 	if err := os.Chmod(queuesDir, 0o500); err != nil { //nolint:gosec // a directory needs the execute bit to stay traversable
 		t.Fatalf("chmod queues dir: %v", err)
@@ -281,12 +286,132 @@ func TestRecoverFailed_RefusesQuarantinedQueueWithQueueQuarantined(t *testing.T)
 	if err := os.Chmod(queuesDir, 0o700); err != nil { //nolint:gosec // a directory needs the execute bit to stay traversable
 		t.Fatalf("restore queues dir: %v", err)
 	}
+	if store.QuarantineReason(queue.QueueNameMain) == nil {
+		t.Fatal("the failed write left no quarantine; the rest of this test would prove nothing")
+	}
+}
 
-	// The quarantine is sticky: recovery must not clear it by retrying.
+// QM-059: a quarantine clears only through an explicit durable recovery
+// classification, and failed recovery is the one operation allowed to act on a
+// quarantined queue that is parked at paused-by-failure. Without this the
+// queue has no exit at all: every ordinary transaction is refused and no
+// operator command can reopen it short of restarting the daemon.
+func TestRecoverFailed_ClearsAnIOQuarantineOnTheQueueItRecovers(t *testing.T) {
+	t.Parallel()
+	store, projectDir := failureParkedFixture(t)
+	quarantineByFailedWrite(t, store, projectDir)
+
+	outcome, err := store.RecoverFailed(context.Background(), FailedRecoveryRequest{
+		ProjectDir: projectDir,
+		Name:       queue.QueueNameMain,
+		Beads:      stubRecoveryLedger{status: map[core.BeadID]queue.BeadStatus{"hk-broke": queue.BeadStatusOpen}},
+	})
+	if err != nil {
+		t.Fatalf("RecoverFailed over a quarantined paused-by-failure queue: %v", err)
+	}
+	if outcome.Receipt.ReceiptID == "" {
+		t.Fatal("recovery reported success with no receipt ID")
+	}
+	if reason := store.QuarantineReason(queue.QueueNameMain); reason != nil {
+		t.Fatalf("QuarantineReason = %v after a durable recovery, want nil", reason)
+	}
+	if got := store.QueueByName(queue.QueueNameMain); got.Status != queue.QueueStatusActive {
+		t.Fatalf("queue status = %q, want %q", got.Status, queue.QueueStatusActive)
+	}
+}
+
+// The other half of QM-059: the permission is scoped to paused-by-failure. A
+// quarantined queue in any other status is still refused, and it is refused
+// with its own reason rather than the generic not-recoverable one, so an
+// operator can tell "wrong status" from "this queue is shut".
+func TestRecoverFailed_RefusesAQuarantinedQueueThatIsNotPausedByFailure(t *testing.T) {
+	t.Parallel()
+	store, projectDir := failureParkedFixture(t)
+	quarantineByFailedWrite(t, store, projectDir)
+
+	drained := store.QueueByName(queue.QueueNameMain)
+	drained.Status = queue.QueueStatusPausedByDrain
+	store.SetQueueByName(queue.QueueNameMain, drained)
+	if store.QuarantineReason(queue.QueueNameMain) == nil {
+		t.Fatal("a raw setter cleared the quarantine; QM-059 forbids that")
+	}
+
 	_, err := store.RecoverFailed(context.Background(), FailedRecoveryRequest{
 		ProjectDir: projectDir,
 		Name:       queue.QueueNameMain,
 		Beads:      stubRecoveryLedger{status: map[core.BeadID]queue.BeadStatus{"hk-broke": queue.BeadStatusOpen}},
 	})
 	requireRecoveryReason(t, err, queue.RecoveryReasonQueueQuarantined, -32032)
+}
+
+// QM-058a: repeating the request reads back the receipt already named by the
+// queue. It mints nothing and re-arms nothing a second time. An operator who
+// runs the command twice must not get a second recovery of items that another
+// pass has since dispatched.
+func TestRecoverFailed_RepeatingTheRequestReturnsTheSameReceiptAndMutatesNothing(t *testing.T) {
+	t.Parallel()
+	store, projectDir := failureParkedFixture(t)
+	beads := stubRecoveryLedger{status: map[core.BeadID]queue.BeadStatus{"hk-broke": queue.BeadStatusOpen}}
+
+	first, err := store.RecoverFailed(context.Background(), FailedRecoveryRequest{
+		ProjectDir: projectDir, Name: queue.QueueNameMain, Beads: beads,
+	})
+	if err != nil {
+		t.Fatalf("first RecoverFailed: %v", err)
+	}
+	if first.AlreadyRecovered {
+		t.Fatal("the first recovery reported itself as already recovered")
+	}
+
+	second, err := store.RecoverFailed(context.Background(), FailedRecoveryRequest{
+		ProjectDir: projectDir, Name: queue.QueueNameMain, Beads: beads,
+	})
+	if err != nil {
+		t.Fatalf("second RecoverFailed: %v", err)
+	}
+	if !second.AlreadyRecovered {
+		t.Fatal("the second recovery did not report itself as a repeat")
+	}
+	if second.Receipt.ReceiptID != first.Receipt.ReceiptID {
+		t.Fatalf("second receipt ID = %q, want the first receipt %q — a repeat minted a new recovery",
+			second.Receipt.ReceiptID, first.Receipt.ReceiptID)
+	}
+}
+
+// The receipt is what makes a recovery re-checkable after the daemon is gone.
+// It has to be a file on disk, named by the recovered queue, and it has to name
+// the items that were re-armed. A receipt that is only an in-memory value
+// proves nothing after a restart.
+func TestRecoverFailed_WritesTheReceiptToDiskNamedByTheRecoveredQueue(t *testing.T) {
+	t.Parallel()
+	store, projectDir := failureParkedFixture(t)
+
+	outcome, err := store.RecoverFailed(context.Background(), FailedRecoveryRequest{
+		ProjectDir: projectDir,
+		Name:       queue.QueueNameMain,
+		Beads:      stubRecoveryLedger{status: map[core.BeadID]queue.BeadStatus{"hk-broke": queue.BeadStatusOpen}},
+	})
+	if err != nil {
+		t.Fatalf("RecoverFailed: %v", err)
+	}
+
+	recovered := store.QueueByName(queue.QueueNameMain)
+	if recovered.FailedRecoveryReceiptID == nil {
+		t.Fatal("the recovered queue names no receipt ID; nothing later can find its receipt")
+	}
+	if *recovered.FailedRecoveryReceiptID != outcome.Receipt.ReceiptID {
+		t.Fatalf("queue receipt ID = %q, outcome receipt ID = %q — they must be the same receipt",
+			*recovered.FailedRecoveryReceiptID, outcome.Receipt.ReceiptID)
+	}
+
+	onDisk, _, readErr := queue.ReadFailedRecoveryReceipt(projectDir, *recovered)
+	if readErr != nil {
+		t.Fatalf("ReadFailedRecoveryReceipt: %v", readErr)
+	}
+	if onDisk.ReceiptID != outcome.Receipt.ReceiptID {
+		t.Fatalf("on-disk receipt ID = %q, want %q", onDisk.ReceiptID, outcome.Receipt.ReceiptID)
+	}
+	if len(onDisk.RecoveredItems) != 1 || onDisk.RecoveredItems[0].BeadID != "hk-broke" {
+		t.Fatalf("on-disk recovered items = %v, want the one re-armed bead", onDisk.RecoveredItems)
+	}
 }

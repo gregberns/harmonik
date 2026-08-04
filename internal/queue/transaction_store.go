@@ -17,12 +17,14 @@ type QueueSnapshot struct {
 // TransactionRequest describes one clone-mutate-persist-install operation.
 // The live registry owns execution of this request.
 type TransactionRequest struct {
-	Snapshot       QueueSnapshot
-	ProjectDir     string
-	OperationKind  OperationKind
-	WakeRequired   bool
-	ArchiveHandoff *ArchiveHandoffPlan
-	Mutate         func(*Queue) error
+	Snapshot                     QueueSnapshot
+	ProjectDir                   string
+	TransactionID                string
+	OperationKind                OperationKind
+	WakeRequired                 bool
+	ArchiveHandoff               *ArchiveHandoffPlan
+	FailedRecoveryReceiptBinding *FailedRecoveryReceiptBinding
+	Mutate                       func(*Queue) error
 
 	// Precondition, when non-nil, runs under the live registry write lock after
 	// snapshot validation and before Mutate. It receives copies of all other

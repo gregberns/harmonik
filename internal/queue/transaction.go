@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -52,6 +53,7 @@ const (
 	OperationAdvance         OperationKind = "advance"
 	OperationPause           OperationKind = "pause"
 	OperationResume          OperationKind = "resume"
+	OperationFailedRecovery  OperationKind = "failed-recovery"
 	OperationEagerRefill     OperationKind = "eager-refill"
 	OperationBudgetCharge    OperationKind = "budget-charge"
 	OperationReviewCharge    OperationKind = "review-charge"
@@ -77,21 +79,65 @@ type ArchiveHandoff struct {
 	SuccessorArchiveIntentSHA256      string `json:"successor_archive_intent_sha256"`
 }
 
-// ReplaceIntentV1 is the event-free universal replacement record. Completion
-// receipt binding is intentionally fixed to null by CQ-02I.
+// ReplaceIntentV1 is the event-free universal replacement record.
 type ReplaceIntentV1 struct {
-	SchemaVersion            int             `json:"schema_version"`
-	TransactionID            string          `json:"transaction_id"`
-	OperationKind            OperationKind   `json:"operation_kind"`
-	NormalizedName           string          `json:"normalized_name"`
-	QueueID                  string          `json:"queue_id"`
-	CanonicalBasename        string          `json:"canonical_basename"`
-	PriorState               string          `json:"prior_state"`
-	CandidateSHA256          string          `json:"candidate_sha256"`
-	CandidateTempBasename    string          `json:"candidate_temp_basename"`
-	WakeRequired             bool            `json:"wake_required"`
-	CompletionReceiptBinding any             `json:"completion_receipt_binding,omitempty"`
-	ArchiveHandoffBinding    *ArchiveHandoff `json:"archive_handoff_binding,omitempty"`
+	SchemaVersion                int                           `json:"schema_version"`
+	TransactionID                string                        `json:"transaction_id"`
+	OperationKind                OperationKind                 `json:"operation_kind"`
+	NormalizedName               string                        `json:"normalized_name"`
+	QueueID                      string                        `json:"queue_id"`
+	CanonicalBasename            string                        `json:"canonical_basename"`
+	PriorState                   string                        `json:"prior_state"`
+	CandidateSHA256              string                        `json:"candidate_sha256"`
+	CandidateTempBasename        string                        `json:"candidate_temp_basename"`
+	WakeRequired                 bool                          `json:"wake_required"`
+	CompletionReceiptBinding     any                           `json:"completion_receipt_binding,omitempty"`
+	FailedRecoveryReceiptBinding *FailedRecoveryReceiptBinding `json:"failed_recovery_receipt_binding,omitempty"`
+	ArchiveHandoffBinding        *ArchiveHandoff               `json:"archive_handoff_binding,omitempty"`
+}
+
+// FailedRecoveryReceiptBinding fixes the exact durable receipt that proves a
+// failed queue recovery. The replace intent owns this binding until both the
+// recovered queue and receipt are durable.
+//
+// Spec ref: specs/queue-model.md QM-058a.
+type FailedRecoveryReceiptBinding struct {
+	ReceiptID            string `json:"receipt_id"`
+	TransactionID        string `json:"transaction_id"`
+	Basename             string `json:"basename"`
+	SchemaVersion        int    `json:"schema_version"`
+	CanonicalBytesBase64 string `json:"canonical_bytes_base64"`
+	SHA256               string `json:"sha256"`
+}
+
+// FailedRecoveryReceipt is the immutable record for one failed queue recovery.
+// Its bytes are bound into the same replace intent as the recovered queue.
+type FailedRecoveryReceipt struct {
+	SchemaVersion        int                  `json:"schema_version"`
+	RecordType           string               `json:"record_type"`
+	QueueID              string               `json:"queue_id"`
+	ReceiptID            string               `json:"receipt_id"`
+	TransactionID        string               `json:"transaction_id"`
+	NormalizedName       string               `json:"normalized_name"`
+	PriorQueueSHA256     string               `json:"prior_queue_sha256"`
+	RecoveredQueueSHA256 string               `json:"recovered_queue_sha256"`
+	RecoveredItems       []FailedRecoveryItem `json:"recovered_items"`
+	RecoveredAt          string               `json:"recovered_at"`
+}
+
+// FailedRecoveryItem names one failed item that recovery re-armed.
+type FailedRecoveryItem struct {
+	BeadID       string  `json:"bead_id"`
+	RetiredRunID *string `json:"retired_run_id"`
+}
+
+// FailedRecoveryPlan contains the exact candidate and receipt binding that a
+// QueueStore writes for one paused-by-failure queue.
+type FailedRecoveryPlan struct {
+	TransactionID string
+	Candidate     Queue
+	Receipt       FailedRecoveryReceipt
+	Binding       *FailedRecoveryReceiptBinding
 }
 
 // ArchiveIntentV1 is the exact successor record for linked archive handoff.
@@ -130,14 +176,16 @@ type ArchiveRecoveryFacts struct {
 
 // ReplacementPlan contains exact bytes fixed before namespace I/O.
 type ReplacementPlan struct {
-	ProjectDir     string
-	OperationKind  OperationKind
-	NormalizedName string
-	QueueID        string
-	PriorBytes     []byte
-	CandidateBytes []byte
-	WakeRequired   bool
-	ArchiveHandoff *ArchiveHandoffPlan
+	ProjectDir                   string
+	TransactionID                string
+	OperationKind                OperationKind
+	NormalizedName               string
+	QueueID                      string
+	PriorBytes                   []byte
+	CandidateBytes               []byte
+	WakeRequired                 bool
+	ArchiveHandoff               *ArchiveHandoffPlan
+	FailedRecoveryReceiptBinding *FailedRecoveryReceiptBinding
 }
 
 // ReplacementCommit is returned after executing a replacement plan.
@@ -281,6 +329,17 @@ func writeReplacement(ctx context.Context, plan ReplacementPlan, ops namespaceOp
 	if err := syncDirectory(qDir, ops); err != nil {
 		return replacementFailure(intent, OutcomeCommitIndeterminate, fmt.Errorf("sync canonical: %w", err))
 	}
+	if intent.FailedRecoveryReceiptBinding != nil {
+		if err := writeFailedRecoveryReceipt(
+			plan.ProjectDir,
+			intent.QueueID,
+			intent.TransactionID,
+			intent.FailedRecoveryReceiptBinding,
+			ops,
+		); err != nil {
+			return replacementFailure(intent, OutcomeCommitIndeterminate, fmt.Errorf("failed recovery receipt: %w", err))
+		}
+	}
 	return ReplacementCommit{
 		NamespaceResult: NamespaceResult{Outcome: OutcomeCommittedDurable},
 		Intent:          intent,
@@ -291,12 +350,18 @@ func prepareReplacement(plan ReplacementPlan) (ReplaceIntentV1, []byte, error) {
 	if err := validateArchiveOperationCoupling(plan.OperationKind, plan.ArchiveHandoff); err != nil {
 		return ReplaceIntentV1{}, nil, err
 	}
-	transactionID, err := newUUIDv7()
-	if err != nil {
-		return ReplaceIntentV1{}, nil, fmt.Errorf("transaction id: %w", err)
+	transactionID := plan.TransactionID
+	if transactionID == "" {
+		var err error
+		transactionID, err = newUUIDv7()
+		if err != nil {
+			return ReplaceIntentV1{}, nil, fmt.Errorf("transaction id: %w", err)
+		}
 	}
+	plan.TransactionID = transactionID
 	var successorID string
 	if plan.ArchiveHandoff != nil {
+		var err error
 		successorID, err = newUUIDv7()
 		if err != nil {
 			return ReplaceIntentV1{}, nil, fmt.Errorf("successor archive intent id: %w", err)
@@ -342,6 +407,23 @@ func prepareReplacementWithIDs(plan ReplacementPlan, transactionID, successorID 
 			return ReplaceIntentV1{}, nil, errors.New("prior name does not match plan")
 		}
 		prior = digestHex(plan.PriorBytes)
+		if err := validateFailedRecoveryPlan(
+			plan,
+			parsedPrior,
+			candidate,
+			prior,
+			digestHex(plan.CandidateBytes),
+		); err != nil {
+			return ReplaceIntentV1{}, nil, err
+		}
+	} else if err := validateFailedRecoveryPlan(
+		plan,
+		Queue{},
+		candidate,
+		prior,
+		digestHex(plan.CandidateBytes),
+	); err != nil {
+		return ReplaceIntentV1{}, nil, err
 	}
 	candidateDigest := digestHex(plan.CandidateBytes)
 	candidateBase := fmt.Sprintf("%s.candidate-%s", name, transactionID)
@@ -356,17 +438,18 @@ func prepareReplacementWithIDs(plan ReplacementPlan, transactionID, successorID 
 		return ReplaceIntentV1{}, nil, err
 	}
 	intent := ReplaceIntentV1{
-		SchemaVersion:         1,
-		TransactionID:         transactionID,
-		OperationKind:         plan.OperationKind,
-		NormalizedName:        name,
-		QueueID:               plan.QueueID,
-		CanonicalBasename:     name + ".json",
-		PriorState:            prior,
-		CandidateSHA256:       candidateDigest,
-		CandidateTempBasename: candidateBase,
-		WakeRequired:          plan.WakeRequired,
-		ArchiveHandoffBinding: handoff,
+		SchemaVersion:                1,
+		TransactionID:                transactionID,
+		OperationKind:                plan.OperationKind,
+		NormalizedName:               name,
+		QueueID:                      plan.QueueID,
+		CanonicalBasename:            name + ".json",
+		PriorState:                   prior,
+		CandidateSHA256:              candidateDigest,
+		CandidateTempBasename:        candidateBase,
+		WakeRequired:                 plan.WakeRequired,
+		FailedRecoveryReceiptBinding: plan.FailedRecoveryReceiptBinding,
+		ArchiveHandoffBinding:        handoff,
 	}
 	if err := validateReplaceIntent(intent); err != nil {
 		return ReplaceIntentV1{}, nil, err
@@ -386,6 +469,244 @@ func validateArchiveOperationCoupling(kind OperationKind, handoff *ArchiveHandof
 		return errors.New("archive handoff requires cancellation operation")
 	}
 	return nil
+}
+
+func validateFailedRecoveryPlan(
+	plan ReplacementPlan,
+	prior, candidate Queue,
+	priorSHA256, candidateSHA256 string,
+) error {
+	binding := plan.FailedRecoveryReceiptBinding
+	if plan.OperationKind != OperationFailedRecovery {
+		if binding != nil {
+			return errors.New("failed recovery receipt binding requires failed-recovery operation")
+		}
+		return nil
+	}
+	if binding == nil {
+		return errors.New("failed-recovery operation requires receipt binding")
+	}
+	if prior.Status != QueueStatusPausedByFailure || candidate.Status != QueueStatusActive {
+		return errors.New("failed-recovery requires paused-by-failure prior and active candidate")
+	}
+	if candidate.FailedRecoveryReceiptID == nil || *candidate.FailedRecoveryReceiptID != binding.ReceiptID {
+		return errors.New("failed-recovery candidate does not bind receipt ID")
+	}
+	return validateFailedRecoveryReceiptBinding(
+		binding,
+		candidate.QueueID,
+		plan.TransactionID,
+		plan.NormalizedName,
+		priorSHA256,
+		candidateSHA256,
+	)
+}
+
+func validateFailedRecoveryReceiptBinding(
+	binding *FailedRecoveryReceiptBinding,
+	queueID string,
+	transactionID string,
+	normalizedName string,
+	priorSHA256 string,
+	recoveredSHA256 string,
+) error {
+	if binding == nil || binding.SchemaVersion != 1 ||
+		validateUUIDv7(binding.ReceiptID) != nil ||
+		validateUUIDv7(binding.TransactionID) != nil ||
+		binding.TransactionID != transactionID ||
+		binding.Basename != queueID+"--"+binding.ReceiptID+".json" ||
+		!validSHA256(binding.SHA256) ||
+		!validSHA256(priorSHA256) ||
+		!validSHA256(recoveredSHA256) {
+		return errors.New("invalid failed recovery receipt binding")
+	}
+	data, err := base64.StdEncoding.DecodeString(binding.CanonicalBytesBase64)
+	if err != nil || len(data) == 0 || digestHex(data) != binding.SHA256 {
+		return errors.New("invalid failed recovery receipt bytes")
+	}
+	var receipt FailedRecoveryReceipt
+	if err := strictJSON(data, &receipt); err != nil ||
+		receipt.SchemaVersion != binding.SchemaVersion ||
+		receipt.RecordType != "failed-recovery" ||
+		receipt.QueueID != queueID ||
+		receipt.ReceiptID != binding.ReceiptID ||
+		receipt.TransactionID != transactionID ||
+		receipt.NormalizedName != normalizedName ||
+		receipt.PriorQueueSHA256 != priorSHA256 ||
+		receipt.RecoveredQueueSHA256 != recoveredSHA256 ||
+		receipt.RecoveredItems == nil ||
+		!validRecoveryTimestamp(receipt.RecoveredAt) ||
+		!validFailedRecoveryItems(receipt.RecoveredItems) {
+		return errors.New("failed recovery receipt does not match binding")
+	}
+	return nil
+}
+
+func validRecoveryTimestamp(value string) bool {
+	parsed, err := time.Parse("2006-01-02T15:04:05.000Z", value)
+	return err == nil && parsed.UTC().Format("2006-01-02T15:04:05.000Z") == value
+}
+
+func validFailedRecoveryItems(items []FailedRecoveryItem) bool {
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		if item.BeadID == "" {
+			return false
+		}
+		if _, ok := seen[item.BeadID]; ok {
+			return false
+		}
+		seen[item.BeadID] = struct{}{}
+		if item.RetiredRunID != nil {
+			id, err := uuid.Parse(*item.RetiredRunID)
+			if err != nil || id.String() != *item.RetiredRunID {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// PrepareFailedRecovery creates the candidate queue and immutable receipt for
+// one paused-by-failure queue. The caller must pass its exact snapshot to the
+// QueueStore transaction that writes this plan.
+func PrepareFailedRecovery(prior Queue, recoveredAt time.Time) (FailedRecoveryPlan, error) {
+	if prior.Status != QueueStatusPausedByFailure {
+		return FailedRecoveryPlan{}, errors.New("failed recovery requires paused-by-failure queue")
+	}
+	priorBytes, err := json.Marshal(prior)
+	if err != nil {
+		return FailedRecoveryPlan{}, fmt.Errorf("marshal failed recovery prior: %w", err)
+	}
+	var candidate Queue
+	if err := strictJSON(priorBytes, &candidate); err != nil {
+		return FailedRecoveryPlan{}, fmt.Errorf("clone failed recovery queue: %w", err)
+	}
+	recoveredItems := failedRecoveryItems(candidate)
+	if _, ok := ResumeFromFailure(&candidate); !ok {
+		return FailedRecoveryPlan{}, errors.New("resume paused-by-failure queue")
+	}
+	receiptID, err := newUUIDv7()
+	if err != nil {
+		return FailedRecoveryPlan{}, fmt.Errorf("failed recovery receipt id: %w", err)
+	}
+	transactionID, err := newUUIDv7()
+	if err != nil {
+		return FailedRecoveryPlan{}, fmt.Errorf("failed recovery transaction id: %w", err)
+	}
+	candidate.FailedRecoveryReceiptID = &receiptID
+	candidate.Name = NormaliseQueueName(candidate.Name)
+	candidateBytes, err := json.Marshal(candidate)
+	if err != nil {
+		return FailedRecoveryPlan{}, fmt.Errorf("marshal recovered queue: %w", err)
+	}
+	recoveredAt = recoveredAt.UTC().Truncate(time.Millisecond)
+	receipt := FailedRecoveryReceipt{
+		SchemaVersion:        1,
+		RecordType:           "failed-recovery",
+		QueueID:              candidate.QueueID,
+		ReceiptID:            receiptID,
+		TransactionID:        transactionID,
+		NormalizedName:       candidate.Name,
+		PriorQueueSHA256:     digestHex(priorBytes),
+		RecoveredQueueSHA256: digestHex(candidateBytes),
+		RecoveredItems:       recoveredItems,
+		RecoveredAt:          recoveredAt.Format("2006-01-02T15:04:05.000Z"),
+	}
+	receiptBytes, err := json.Marshal(receipt)
+	if err != nil {
+		return FailedRecoveryPlan{}, fmt.Errorf("marshal failed recovery receipt: %w", err)
+	}
+	binding := &FailedRecoveryReceiptBinding{
+		ReceiptID:            receiptID,
+		TransactionID:        transactionID,
+		Basename:             candidate.QueueID + "--" + receiptID + ".json",
+		SchemaVersion:        receipt.SchemaVersion,
+		CanonicalBytesBase64: base64.StdEncoding.EncodeToString(receiptBytes),
+		SHA256:               digestHex(receiptBytes),
+	}
+	if err := validateFailedRecoveryReceiptBinding(
+		binding,
+		candidate.QueueID,
+		transactionID,
+		candidate.Name,
+		digestHex(priorBytes),
+		digestHex(candidateBytes),
+	); err != nil {
+		return FailedRecoveryPlan{}, err
+	}
+	return FailedRecoveryPlan{
+		TransactionID: transactionID,
+		Candidate:     candidate,
+		Receipt:       receipt,
+		Binding:       binding,
+	}, nil
+}
+
+func failedRecoveryItems(q Queue) []FailedRecoveryItem {
+	items := make([]FailedRecoveryItem, 0)
+	for _, group := range q.Groups {
+		for _, item := range group.Items {
+			if item.Status != ItemStatusFailed {
+				continue
+			}
+			entry := FailedRecoveryItem{BeadID: string(item.BeadID)}
+			if item.RunID != nil {
+				runID := *item.RunID
+				entry.RetiredRunID = &runID
+			}
+			items = append(items, entry)
+		}
+	}
+	return items
+}
+
+// ReadFailedRecoveryReceipt reads the immutable receipt named by a recovered
+// queue. It verifies the receipt identity and the recovered queue digest.
+func ReadFailedRecoveryReceipt(projectDir string, recovered Queue) (FailedRecoveryReceipt, []byte, error) {
+	if recovered.FailedRecoveryReceiptID == nil {
+		return FailedRecoveryReceipt{}, nil, errors.New("recovered queue has no failed recovery receipt ID")
+	}
+	name := NormaliseQueueName(recovered.Name)
+	recovered.Name = name
+	recoveredBytes, err := json.Marshal(recovered)
+	if err != nil {
+		return FailedRecoveryReceipt{}, nil, fmt.Errorf("marshal recovered queue: %w", err)
+	}
+	path := filepath.Join(
+		failedRecoveryReceiptsDir(projectDir),
+		recovered.QueueID+"--"+*recovered.FailedRecoveryReceiptID+".json",
+	)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return FailedRecoveryReceipt{}, nil, err
+	}
+	var receipt FailedRecoveryReceipt
+	if err := strictJSON(data, &receipt); err != nil {
+		return FailedRecoveryReceipt{}, nil, fmt.Errorf("decode failed recovery receipt: %w", err)
+	}
+	binding := &FailedRecoveryReceiptBinding{
+		ReceiptID:            receipt.ReceiptID,
+		TransactionID:        receipt.TransactionID,
+		Basename:             filepath.Base(path),
+		SchemaVersion:        receipt.SchemaVersion,
+		CanonicalBytesBase64: base64.StdEncoding.EncodeToString(data),
+		SHA256:               digestHex(data),
+	}
+	if err := validateFailedRecoveryReceiptBinding(
+		binding,
+		recovered.QueueID,
+		receipt.TransactionID,
+		name,
+		receipt.PriorQueueSHA256,
+		digestHex(recoveredBytes),
+	); err != nil {
+		return FailedRecoveryReceipt{}, nil, err
+	}
+	if receipt.ReceiptID != *recovered.FailedRecoveryReceiptID {
+		return FailedRecoveryReceipt{}, nil, errors.New("failed recovery receipt ID does not match queue")
+	}
+	return receipt, data, nil
 }
 
 func validateCancellationCoupling(
@@ -550,6 +871,9 @@ func classifyReplaceIntent(projectDir string, intent ReplaceIntentV1, ops namesp
 	if err := validateReplaceIntent(intent); err != nil {
 		return ReplaceRefuse, err
 	}
+	if intent.FailedRecoveryReceiptBinding != nil {
+		return classifyFailedRecoveryIntent(projectDir, intent, ops)
+	}
 	qDir := queuesDir(projectDir)
 	canonical, canonicalPresent, err := readOptional(filepath.Join(qDir, intent.CanonicalBasename), ops)
 	if err != nil {
@@ -574,6 +898,102 @@ func classifyReplaceIntent(projectDir string, intent ReplaceIntentV1, ops namesp
 	}
 }
 
+func classifyFailedRecoveryIntent(
+	projectDir string,
+	intent ReplaceIntentV1,
+	ops namespaceOps,
+) (ReplaceRecoveryAction, error) {
+	qDir := queuesDir(projectDir)
+	canonical, canonicalPresent, err := readOptional(filepath.Join(qDir, intent.CanonicalBasename), ops)
+	if err != nil {
+		return ReplaceRefuse, err
+	}
+	candidate, candidatePresent, err := readOptional(filepath.Join(qDir, intent.CandidateTempBasename), ops)
+	if err != nil {
+		return ReplaceRefuse, err
+	}
+	receiptPath := filepath.Join(failedRecoveryReceiptsDir(projectDir), intent.FailedRecoveryReceiptBinding.Basename)
+	receipt, receiptPresent, err := readOptional(receiptPath, ops)
+	if err != nil {
+		return ReplaceRefuse, err
+	}
+	expectedReceipt, err := base64.StdEncoding.DecodeString(intent.FailedRecoveryReceiptBinding.CanonicalBytesBase64)
+	if err != nil {
+		return ReplaceRefuse, err
+	}
+	switch {
+	case canonicalPresent && digestHex(canonical) == intent.CandidateSHA256 && !candidatePresent &&
+		(!receiptPresent || bytes.Equal(receipt, expectedReceipt)):
+		return ReplacePromoteCanonical, nil
+	case priorMatches(intent.PriorState, canonical, canonicalPresent) &&
+		(!candidatePresent || digestHex(candidate) == intent.CandidateSHA256) && !receiptPresent:
+		return ReplaceNotCommitted, nil
+	default:
+		return ReplaceRefuse, errors.New("failed recovery intent facts are corrupt, mismatched, or third-state")
+	}
+}
+
+// RecoverFailedReplaceIntent completes a failed-recovery transaction after a
+// restart. It accepts only the exact durable intent bytes for the named queue.
+// It does not install memory or wake dispatch. The startup owner does that only
+// after this function returns a durable action.
+func RecoverFailedReplaceIntent(projectDir string, intentBytes []byte) (ReplaceRecoveryAction, error) {
+	intent, err := decodeReplaceIntent(intentBytes)
+	if err != nil {
+		return ReplaceRefuse, err
+	}
+	if intent.FailedRecoveryReceiptBinding == nil {
+		return ReplaceRefuse, errors.New("replace intent has no failed recovery receipt binding")
+	}
+	return recoverFailedReplaceIntent(projectDir, intent, intentBytes, osNamespaceOps())
+}
+
+func recoverFailedReplaceIntent(
+	projectDir string,
+	intent ReplaceIntentV1,
+	intentBytes []byte,
+	ops namespaceOps,
+) (ReplaceRecoveryAction, error) {
+	durableIntent, present, err := readOptional(replaceIntentPath(projectDir, intent.NormalizedName), ops)
+	if err != nil || !present || !bytes.Equal(durableIntent, intentBytes) {
+		return ReplaceRefuse, errors.New("durable failed recovery intent differs")
+	}
+	action, err := classifyFailedRecoveryIntent(projectDir, intent, ops)
+	if err != nil {
+		return action, err
+	}
+	switch action {
+	case ReplacePromoteCanonical:
+		if err := writeFailedRecoveryReceipt(
+			projectDir,
+			intent.QueueID,
+			intent.TransactionID,
+			intent.FailedRecoveryReceiptBinding,
+			ops,
+		); err != nil {
+			return ReplaceRefuse, fmt.Errorf("write failed recovery receipt: %w", err)
+		}
+		if err := cleanupReplaceIntent(projectDir, intent.NormalizedName, ops); err != nil {
+			return ReplaceRefuse, fmt.Errorf("cleanup failed recovery intent: %w", err)
+		}
+		return ReplacePromoteCanonical, nil
+	case ReplaceNotCommitted:
+		candidatePath := filepath.Join(queuesDir(projectDir), intent.CandidateTempBasename)
+		if err := ops.remove(candidatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return ReplaceRefuse, fmt.Errorf("remove failed recovery candidate: %w", err)
+		}
+		if err := syncDirectory(queuesDir(projectDir), ops); err != nil {
+			return ReplaceRefuse, fmt.Errorf("sync failed recovery candidate removal: %w", err)
+		}
+		if err := cleanupReplaceIntent(projectDir, intent.NormalizedName, ops); err != nil {
+			return ReplaceRefuse, fmt.Errorf("cleanup failed recovery intent: %w", err)
+		}
+		return ReplaceNotCommitted, nil
+	default:
+		return ReplaceRefuse, errors.New("unsupported failed recovery action")
+	}
+}
+
 func classifyReplacementFailure(projectDir string, intent ReplaceIntentV1, cause error, ops namespaceOps) ReplacementCommit {
 	action, err := classifyReplaceIntent(projectDir, intent, ops)
 	switch action {
@@ -593,7 +1013,10 @@ func replacementFailure(intent ReplaceIntentV1, outcome NamespaceOutcome, err er
 // CleanupReplaceIntent removes the exact resolved intent and makes its absence
 // directory-durable. It is valid only after committed canonical durability.
 func CleanupReplaceIntent(projectDir, normalizedName string) error {
-	ops := osNamespaceOps()
+	return cleanupReplaceIntent(projectDir, normalizedName, osNamespaceOps())
+}
+
+func cleanupReplaceIntent(projectDir, normalizedName string, ops namespaceOps) error {
 	path := replaceIntentPath(projectDir, NormaliseQueueName(normalizedName))
 	if err := ops.remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -738,6 +1161,9 @@ func validateReplaceIntent(intent ReplaceIntentV1) error {
 	if !validReplaceIntentEnvelope(intent) {
 		return errors.New("invalid or unsupported replace intent")
 	}
+	if err := validateFailedRecoveryIntentCoupling(intent); err != nil {
+		return err
+	}
 	if (intent.OperationKind == OperationCancellation) != (intent.ArchiveHandoffBinding != nil) {
 		return errors.New("invalid cancellation/archive handoff coupling")
 	}
@@ -756,6 +1182,30 @@ func validateReplaceIntent(intent ReplaceIntentV1) error {
 	)
 }
 
+func validateFailedRecoveryIntentCoupling(intent ReplaceIntentV1) error {
+	binding := intent.FailedRecoveryReceiptBinding
+	if intent.OperationKind != OperationFailedRecovery {
+		if binding != nil {
+			return errors.New("failed recovery receipt binding requires failed-recovery operation")
+		}
+		if intent.CompletionReceiptBinding != nil {
+			return errors.New("completion receipt binding is not supported")
+		}
+		return nil
+	}
+	if intent.CompletionReceiptBinding != nil || intent.ArchiveHandoffBinding != nil {
+		return errors.New("failed-recovery intent has incompatible binding")
+	}
+	return validateFailedRecoveryReceiptBinding(
+		binding,
+		intent.QueueID,
+		intent.TransactionID,
+		intent.NormalizedName,
+		intent.PriorState,
+		intent.CandidateSHA256,
+	)
+}
+
 func validReplaceIntentEnvelope(intent ReplaceIntentV1) bool {
 	return intent.SchemaVersion == 1 &&
 		validateUUIDv7(intent.TransactionID) == nil &&
@@ -764,8 +1214,7 @@ func validReplaceIntentEnvelope(intent ReplaceIntentV1) bool {
 		validateUUIDv7(intent.QueueID) == nil &&
 		intent.CanonicalBasename == intent.NormalizedName+".json" &&
 		validSHA256(intent.CandidateSHA256) &&
-		intent.CandidateTempBasename == intent.NormalizedName+".candidate-"+intent.TransactionID &&
-		intent.CompletionReceiptBinding == nil
+		intent.CandidateTempBasename == intent.NormalizedName+".candidate-"+intent.TransactionID
 }
 
 func validOperationKind(kind OperationKind) bool {
@@ -779,6 +1228,7 @@ func validOperationKind(kind OperationKind) bool {
 		OperationAdvance,
 		OperationPause,
 		OperationResume,
+		OperationFailedRecovery,
 		OperationEagerRefill,
 		OperationBudgetCharge,
 		OperationReviewCharge,
@@ -871,6 +1321,49 @@ func validateUUIDv7(value string) error {
 
 func replaceIntentPath(projectDir, name string) string {
 	return filepath.Join(queuesDir(projectDir), name+".replace-intent")
+}
+
+func failedRecoveryReceiptsDir(projectDir string) string {
+	return filepath.Join(queuesDir(projectDir), ".failed-recovery-receipts")
+}
+
+func writeFailedRecoveryReceipt(
+	projectDir string,
+	queueID string,
+	transactionID string,
+	binding *FailedRecoveryReceiptBinding,
+	ops namespaceOps,
+) error {
+	data, err := base64.StdEncoding.DecodeString(binding.CanonicalBytesBase64)
+	if err != nil {
+		return err
+	}
+	var receipt FailedRecoveryReceipt
+	if err := strictJSON(data, &receipt); err != nil {
+		return err
+	}
+	if err := validateFailedRecoveryReceiptBinding(
+		binding,
+		queueID,
+		transactionID,
+		receipt.NormalizedName,
+		receipt.PriorQueueSHA256,
+		receipt.RecoveredQueueSHA256,
+	); err != nil {
+		return err
+	}
+	root := failedRecoveryReceiptsDir(projectDir)
+	if err := ops.mkdirAll(root, 0o700); err != nil {
+		return err
+	}
+	if err := syncDirectory(queuesDir(projectDir), ops); err != nil {
+		return err
+	}
+	install := durableNoReplace(filepath.Join(root, binding.Basename), data, ops)
+	if install.State != noReplaceInstalled {
+		return install.Err
+	}
+	return syncDirectory(root, ops)
 }
 
 func archiveIntentPath(projectDir, name string) string {

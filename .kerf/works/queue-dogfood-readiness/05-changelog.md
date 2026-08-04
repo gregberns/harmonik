@@ -23,3 +23,26 @@ Step 9, durability, ledger, and lane records. It introduces no separate target.
 The four operational records are not new normative specs. The two new records
 have the declared `docs/` paths above. The lane and Step 9 draft filenames are
 Kerf component names. Each contains the complete target file named above.
+
+---
+
+## Folded in from lane bravo's parallel pass (2026-08-03)
+
+Lane bravo ran the same pass on branch `work/queue-dogfood-readiness` before any
+lane contract named that branch. Its text is kept below because it names targets
+and records this document does not. The plan of record stays T1..T12 plus T5a in
+`07-tasks.md`. Where the two disagree, the section above wins.
+
+### Queue dogfood readiness — Spec draft changelog
+
+| Target | Status | Change design |
+|---|---|---|
+| `queue-model.md` | modified | Durable failed recovery and transaction owner |
+| `execution-model.md` | modified | Terminal-recovery record |
+| `run-state-machine.md` | modified | One shutdown terminal spine |
+| `process-lifecycle.md` | modified | Recovery command and readiness gate |
+| `operator-nfr.md` | modified | Post-commit drain outcome |
+| `workspace-model.md` | modified | Recovery worktree disposition |
+| `event-model.md` | modified | Durable recovery observation |
+| `assessor-handoff-schema.md` | modified | Version-3 readiness gate |
+| `scratch-daemon-runbook.md` | modified | Restricted readiness procedure |

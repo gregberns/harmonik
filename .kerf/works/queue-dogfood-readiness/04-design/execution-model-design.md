@@ -63,3 +63,38 @@ so recovery has one reliable authority without reviving daemon-local state.
 - Existing requirements: `EM-016`, `EM-023a`, `EM-024`, `EM-025a`, `EM-031`,
   `EM-031a`, `EM-031b`, `EM-052`, `EM-053`, and `EM-053a`.
 - Depends on the run-state-machine shutdown edge and operator drain ordering.
+
+---
+
+## Folded in from lane bravo's parallel pass (2026-08-03)
+
+Lane bravo ran the same pass on branch `work/queue-dogfood-readiness` before any
+lane contract named that branch. The two passes reached the same shape. Bravo's
+text is kept below because it names evidence, measurements and review records
+this document does not. The plan of record stays T1..T12 plus T5a in
+`07-tasks.md`. Where the two disagree on behaviour, the section above wins.
+
+### Execution model change design
+
+#### Current state
+
+The success ladder has merge, push, close, and terminal emission. It has no
+durable representation for a committed branch that stopped before merge.
+
+#### Target state
+
+Add a durable terminal-recovery record keyed by run, bead, queue item, branch
+tip, and stage. The record is written before shutdown can release its recovery
+owner. A record selects exactly one action: finish the existing terminal ladder
+or retain a reviewable recovery state. Reconstruction reads the record with Git
+and Beads and never treats it as fresh dispatch. Queue advance occurs once,
+after the selected terminal action.
+
+#### Rationale
+
+Git and Beads stay reconstruction authorities while the record removes the
+post-commit ambiguity.
+
+#### Requirements traceability
+
+Addresses execution-model requirements and findings in `03-research/`.

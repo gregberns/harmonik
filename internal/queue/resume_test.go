@@ -22,11 +22,13 @@ import (
 // budget (Attempts at MaxItemAttempts), mirroring the workloop's hk-6pspu
 // fail-on-max-attempts path.
 func resumeFixtureFailedItem(beadID string) queue.Item {
+	runID := "run-" + beadID
 	return queue.Item{
 		BeadID:            core.BeadID(beadID),
 		Status:            queue.ItemStatusFailed,
 		Attempts:          queue.MaxItemAttempts,
 		LastFailureReason: "rebase_conflict",
+		RunID:             &runID,
 	}
 }
 
@@ -189,9 +191,8 @@ func TestResumeFromFailure_LeavesNonTerminalGroupsAlone(t *testing.T) {
 // -----------------------------------------------------------------------
 
 // TestRearmFailedItems_ResetsFailedToPending verifies the retry primitive:
-// failed items go failed → pending with Attempts reset to 0 (clearing the
-// MaxItemAttempts skip-gate) and LastFailureReason cleared, while non-failed
-// siblings are untouched.
+// failed items go failed → pending with Attempts reset to 0, failure data
+// cleared, and RunID cleared. Non-failed siblings are untouched.
 func TestRearmFailedItems_ResetsFailedToPending(t *testing.T) {
 	t.Parallel()
 
@@ -230,6 +231,9 @@ func TestRearmFailedItems_ResetsFailedToPending(t *testing.T) {
 			}
 			if it.LastFailureReason != "" {
 				t.Errorf("%s LastFailureReason = %q, want cleared", it.BeadID, it.LastFailureReason)
+			}
+			if it.RunID != nil {
+				t.Errorf("%s RunID = %q, want nil after reactivation", it.BeadID, *it.RunID)
 			}
 		case "hk-done0":
 			if it.Status != queue.ItemStatusCompleted {

@@ -28,3 +28,36 @@ express. Class O preserves queue persistence as the authority.
 - `02-components.md`: event lifecycle requirements.
 - `03-research/event-model/findings.md`.
 - Session decision requiring a distinct post-commit recovery event.
+
+---
+
+## Folded in from lane bravo's parallel pass (2026-08-03)
+
+Lane bravo ran the same pass on branch `work/queue-dogfood-readiness` before any
+lane contract named that branch. The two passes reached the same shape. Bravo's
+text is kept below because it names evidence, measurements and review records
+this document does not. The plan of record stays T1..T12 plus T5a in
+`07-tasks.md`. Where the two disagree on behaviour, the section above wins.
+
+### Event model change design
+
+#### Current state
+
+Queue events show group completion and pause. Queue status cannot prove a
+failed recovery request or result.
+
+#### Target state
+
+Add Class-F failed-recovery requested and completed or rejected events. Their
+payload includes queue, group, item count, prior and current state, recovery
+receipt, retired run identities, and reason. Emit only after durable commit.
+Add one correlation field from terminal recovery to the existing workspace and
+run observations. Keep `run_*` as the only item terminal events.
+
+#### Rationale
+
+An assessor needs audit evidence without treating event log as authority.
+
+#### Requirements traceability
+
+Addresses recovery observation and replay-proof requirements.

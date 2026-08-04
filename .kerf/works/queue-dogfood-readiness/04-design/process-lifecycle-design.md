@@ -36,3 +36,36 @@ recovery is not drain release.
 - `02-components.md`: process lifecycle recovery command and RPC.
 - `03-research/process-lifecycle/findings.md`.
 - Session decisions on synchronous durability and distinct recovery.
+
+---
+
+## Folded in from lane bravo's parallel pass (2026-08-03)
+
+Lane bravo ran the same pass on branch `work/queue-dogfood-readiness` before any
+lane contract named that branch. The two passes reached the same shape. Bravo's
+text is kept below because it names evidence, measurements and review records
+this document does not. The plan of record stays T1..T12 plus T5a in
+`07-tasks.md`. Where the two disagree on behaviour, the section above wins.
+
+### Process lifecycle change design
+
+#### Current state
+
+The queue CLI sends `operator-resume`, which resumes only drain-paused queues.
+Shutdown treats post-commit work as an ordinary checkpoint.
+
+#### Target state
+
+Specify a distinct failed-recovery RPC and CLI command. Define accepted queue
+states, rejected and no-op results, receipt fields, and durable success before
+response. Define committed-but-unmerged work as a drain state: drain its
+existing ladder or persist recovery before exit. Define the controlled batch as
+a separate assessor-gated lifecycle operation.
+
+#### Rationale
+
+The command must not silently claim failed recovery when it only resumes drain.
+
+#### Requirements traceability
+
+Addresses lifecycle command, drain, and assessor-boundary requirements.

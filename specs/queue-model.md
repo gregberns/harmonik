@@ -8,7 +8,7 @@ requirement-prefix: QM
 status: draft
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.1.6
+version: 0.1.7
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-07-27
@@ -69,6 +69,7 @@ RECORD Queue:
                                   -- on-disk file is .harmonik/queues/<name>.json (NQ-A2)
   workers           : Integer     -- per-queue concurrent-dispatch ceiling (QM-066, NQ-B1); omitted/0
                                   -- defaults to --max-concurrent; may oversubscribe (global cap still wins)
+  failed_recovery_receipt_id : UUID | None -- set only by the QM-058 failed-recovery transaction
 ```
 
 > INFORMATIVE: **Named queues have no special semantics (N4).** The `name` field is a durable routing key — it determines which `.harmonik/queues/<name>.json` file the queue persists to and which per-queue worker pool dispatches it. The daemon assigns no special behavior to any particular name. For example, the flywheel bridge (per [/Users/gb/github/harmonik/specs/cognition-loop.md]) routes investigation beads to an 'investigate' named queue — that queue is mechanically identical to 'main'; the routing to a subscription-billed Claude worker is a property of which daemon process subscribes to it, not of the queue-model itself. There is no per-queue budget (N2): the queue-model is a mechanism-tagged subsystem with no gate/hook/budget points per §4.1(f). Any cost governance lives at the credential-isolation layer ([/Users/gb/github/harmonik/specs/credential-isolation.md]), not here.
@@ -336,9 +337,8 @@ RECORD QueueDryRunResponse:
 The daemon/project `QueueStore` is the sole runtime mutation owner. Canonical
 live queues are `.harmonik/queues/<normalized-name>.json`. Legacy
 `.harmonik/queue.json` is a migration-only input for `main`, never a new-write
-target. Queue-owned replace/archive intents and the flat
-`.harmonik/queues/.completion-receipts/` root are protocol records, never live
-queues.
+target. Queue-owned replace/archive intents and flat receipt roots are protocol
+records, never live queues.
 
 ### 3.1 QM-001 — Atomic write discipline
 
@@ -358,7 +358,8 @@ exactly `schema_version`, `transaction_id`, `operation_kind`,
 `normalized_name`, `queue_id`, `canonical_basename`, `prior_state`
 (canonical absence or SHA-256), `candidate_sha256`,
 `candidate_temp_basename`, `wake_required`, and optional
-`completion_receipt_binding` or `archive_handoff_binding`. Installation uses a
+`completion_receipt_binding`, `failed_recovery_receipt_binding`, or
+`archive_handoff_binding`. Installation uses a
 unique sibling temp create/write/fsync/close followed by no-replace install at
 that exact path and queue-directory fsync. Exact existing bytes are
 idempotent; different, corrupt, or unsupported bytes are preserved and refuse
@@ -367,11 +368,13 @@ the name.
 The replace intent MUST bind one UUIDv7 transaction ID, operation kind,
 normalized name, queue ID, exact canonical basename, exact prior state
 (absence or SHA-256 of prior bytes), candidate SHA-256, already-durable
-candidate-temp basename, wake requirement, and any completion-receipt or
-archive-handoff binding. It MUST cover create, submit, append, reservation,
+candidate-temp basename, wake requirement, and any completion-receipt,
+failed-recovery-receipt, or archive-handoff binding. It MUST cover create,
+submit, append, reservation,
 Run-ID patch, activation/advance, pause/resume, eager refill, budget/review
 charge, maintenance/reconciliation, startup/inline/bootstrap, crew placeholder,
-and cancelled-state replacement before archive. It MUST contain no event ID,
+failed recovery, and cancelled-state replacement before archive. It MUST
+contain no event ID,
 effect key, cursor, delivery/acknowledgement state, payload batch, or RPC
 response.
 
@@ -394,8 +397,8 @@ Any third canonical state, changed digest, wrong temp, corrupt/unsupported
 intent, or binding mismatch preserves all evidence and refuses the name.
 Ordinary intent-unlink definite failure retains refusal and retries the exact
 unlink; unlink or parent-sync ambiguity reloads exact absence/presence and
-syncs before release. Final-success and cancellation intents remain through
-their later QM-053/QM-007 cleanup boundaries instead of ordinary cleanup.
+syncs before release. Final-success, failed-recovery, and cancellation intents
+remain through their later cleanup boundaries instead of ordinary cleanup.
 
 Outcomes are typed: `rejected` performs no namespace I/O;
 `not_committed` proves the intended namespace mutation absent;
@@ -426,9 +429,10 @@ and believed that conformed.
 ### 3.2 QM-002 — Read on startup
 
 At PL-005 startup, before readiness or QueueStore installation, the bounded
-same-process startup adapter MUST establish and type-check the receipt root,
-classify every supported replace/archive intent, completion receipt, release
-marker, canonical queue, and legacy-main state, and either converge it or
+same-process startup adapter MUST establish and type-check each receipt root,
+classify every supported replace/archive intent, completion receipt,
+failed-recovery receipt, release marker, canonical queue, and legacy-main
+state, and either converge it or
 retain an exact per-name refusal. It MUST NOT consult JSONL, persisted
 generation, or event delivery state.
 
@@ -1374,3 +1378,105 @@ v0.1.1 — 2026-05-15 — gap-closure pass (hk-089gr). Six additive amendments s
 6. **§3.1 (QM-001) — I/O error behavior.** On any I/O error in the atomic-write sequence, the daemon MUST refuse further mutations, emit `infrastructure_unavailable{failed_prerequisite: queue_write_error}`, and transition to `degraded` state. Operator recovery is `harmonik stop` + restart.
 
 v0.1.0 — initial publication for extqueue work; see kerf/extqueue 05-changelog.md.
+
+## Amendment — durable failed-queue recovery
+
+### QM-058 — Failed recovery transaction
+
+The daemon MUST accept failed recovery only for a queue in
+`paused-by-failure`. One durable queue transaction MUST re-arm only failed
+items, reopen only failed groups, clear each retired `run_id`, and retain every
+completed item. The transaction MUST write a recovery receipt before dispatch
+can resume. A repeated request for the same recovered state MUST return that
+receipt without a second mutation.
+
+### QM-058a — Failed-recovery receipt binding and restart
+
+The failed-recovery operation kind is `failed-recovery`. Before namespace I/O,
+the QueueStore MUST allocate one UUIDv7 `receipt_id`, one UUIDv7 transaction
+ID, and one ISO 8601 millisecond UTC recovery time. It MUST marshal the
+recovered queue with
+`failed_recovery_receipt_id` set to `receipt_id`. It MUST then create exact
+receipt bytes and bind them in the replace intent.
+
+A `failed-recovery` intent MUST carry exactly one failed-recovery receipt
+binding. It MUST NOT carry a completion-receipt or archive-handoff binding.
+Every other operation kind MUST omit the failed-recovery receipt binding.
+
+The immutable receipt path is:
+
+```text
+.harmonik/queues/.failed-recovery-receipts/<queue_id>--<receipt_id>.json
+```
+
+The receipt root is flat. It is not a live queue. Startup MUST establish and
+type-check it before QueueStore installation.
+
+Receipt v1 contains exactly these fields:
+
+```text
+schema_version: 1
+record_type: failed-recovery
+queue_id: UUIDv7
+receipt_id: UUIDv7
+transaction_id: UUIDv7
+normalized_name: String
+prior_queue_sha256: SHA-256
+recovered_queue_sha256: SHA-256
+recovered_items: List<{bead_id: BeadID, retired_run_id: UUID | None}>
+recovered_at: UTC timestamp
+```
+
+The intent binding contains `receipt_id`, the exact basename, schema version,
+base64 receipt bytes, and the SHA-256 of those bytes. Filename, receipt,
+intent, prior canonical queue, and recovered canonical queue identities MUST
+agree. A changed, corrupt, unsupported, or third receipt is a refusal. It
+MUST remain on disk for inspection.
+
+The transaction order is:
+
+```text
+durable candidate temp
+-> durable replace intent with recovery receipt binding
+-> recovered canonical queue and queue-directory fsync
+-> exact recovery receipt and receipt-root fsync
+-> remove the resolved replace intent and fsync the queue directory
+-> clear the recovery quarantine
+-> install memory and generation
+-> wake and emit observation
+```
+
+No dispatch, wake, event, or success response is allowed before receipt-root
+durability. A failed receipt write retains the prior memory state and refuses
+the queue name. It does not clear its quarantine.
+
+Startup classifies an intent with a failed-recovery binding as follows:
+
+1. Exact recovered canonical queue with an absent receipt installs the exact
+   intent-bound receipt, removes and syncs that exact intent, and then installs
+   the queue or enables dispatch.
+2. Exact recovered canonical queue with the exact receipt validates both
+   records against the intent, removes and syncs that exact intent, and then
+   completes recovery.
+3. Exact prior canonical queue with no recovered canonical queue proves no
+   recovery commit. Startup removes only the selected candidate temp, removes
+   and syncs the intent, and keeps the queue paused by failure.
+4. Any other state preserves all records, refuses the name, and enables no
+   dispatch.
+
+After a successful recovery, a request for the same queue reads the receipt
+named by `failed_recovery_receipt_id`. It validates the exact identity and
+returns that receipt. It MUST NOT mint a second receipt or mutate the queue.
+
+### QM-059 — Reservation release owner
+
+Reservation undo, terminal release, session adoption, and failed recovery MUST
+use the QM-001 transaction owner. A raw setter MUST NOT clear quarantine. A
+quarantine clears only through an explicit durable recovery classification.
+
+For a failed-recovery request, that classification is permitted only after the
+exact canonical queue, its intent-bound receipt, and resolved intent are
+durable. Failed recovery is the only operation that can act on a quarantined
+queue in `paused-by-failure`. It retains the quarantine until that
+classification completes. No ordinary transaction or raw setter can clear a
+quarantine.

@@ -8,7 +8,7 @@ requirement-prefix: ON
 spec-category: foundation-cross-cutting
 status: reviewed
 spec-shape: requirements-first
-version: 0.5.8
+version: 0.5.9
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-08-01
@@ -1580,3 +1580,13 @@ This table is published to help downstream specs migrate their inbound citations
 | `[operator-nfr.md §8.N exit-code rows]` | `§8` (table, codes 0–21 stable across N-1) | Exit-code taxonomy rows |
 
 Downstream specs inbound-citing ON events (`operator_pause_status`, `operator_stopped`, `operator_upgrading`, etc.) MUST target `[event-model.md §8.7]` for payload shape and `[operator-nfr.md §4.3]` / `§6.5` for emission timing (per EV-025 payload-shape ownership rule).
+
+## Amendment — post-commit drain
+
+### ON-052 — Terminal recovery drain outcome
+
+Ordered drain MUST treat committed-but-unmerged work as a special outcome. Its
+per-step timeout MUST either complete the terminal ladder or leave the
+EM-053a record. The daemon MUST retain required resources until that selected
+owner permits release. Controlled-load proof MUST record load, timeout, stop
+point, and retained artifacts.

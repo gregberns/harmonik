@@ -9,7 +9,15 @@ package cli
 // status, would silently rewrite item state when the operator asked only to
 // un-pause.
 //
-// Spec ref: specs/queue-model.md §8.3b QM-052b.
+// Two lanes built this verb at the same time and reached the same shape. This
+// file is the union of the two. The flag surface and the re-armed listing come
+// from the socket-registered path. The result-and-receipt contract comes from
+// the receipt-bound recovery transaction: the daemon answers only after the
+// recovery receipt is durable, so an answer with no receipt is not a success
+// and this command refuses to print one as if it were.
+//
+// Spec ref: specs/queue-model.md §8.3b QM-052b and QM-058a;
+// specs/process-lifecycle.md PL-032.
 
 import (
 	"context"
@@ -82,25 +90,50 @@ func RunQueueRecover(ctx context.Context, subArgs []string, out, errOut io.Write
 	return handleResponse(resp, out, outputJSON, renderQueueRecoverText)
 }
 
-// renderQueueRecoverText prints the re-armed bead IDs. An empty list is printed
-// as such rather than omitted: "recovered, nothing re-armed" is a different
-// answer from "recovered 3 items", and the operator needs to tell them apart.
+// renderQueueRecoverText prints the recovery result, its durable receipt, and
+// the re-armed bead IDs.
+//
+// The receipt is required, not decorative. The daemon answers only after the
+// recovery receipt is durable, so a payload that reports `accepted` or `no-op`
+// with no receipt describes a recovery that cannot be proved to have happened.
+// This function refuses that payload rather than print a success line for it.
+//
+// An empty re-armed list is printed as such rather than omitted: "recovered,
+// nothing re-armed" is a different answer from "recovered 3 items", and the
+// operator needs to tell them apart.
 func renderQueueRecoverText(result json.RawMessage, out io.Writer) int {
 	var response struct {
-		Queue        string   `json:"queue"`
-		QueueID      string   `json:"queue_id"`
-		Rearmed      []string `json:"rearmed"`
-		RearmedCount int      `json:"rearmed_count"`
+		Queue        string          `json:"queue"`
+		QueueID      string          `json:"queue_id"`
+		Result       string          `json:"result"`
+		Receipt      json.RawMessage `json:"receipt"`
+		Rearmed      []string        `json:"rearmed"`
+		RearmedCount int             `json:"rearmed_count"`
 	}
 	p := newPrinter(out)
 	if err := json.Unmarshal(result, &response); err != nil {
 		p.printf("%s\n", result)
 		return renderExit(p)
 	}
-	p.printf("recovered: %s\n", response.Queue)
-	p.printf("re-armed: %d\n", response.RearmedCount)
-	for _, id := range response.Rearmed {
-		p.printf("  %s\n", id)
+	switch response.Result {
+	case "accepted", "no-op":
+		if len(response.Receipt) == 0 || string(response.Receipt) == "null" {
+			return exitTransportError
+		}
+		if response.Queue != "" {
+			p.printf("recovered: %s\n", response.Queue)
+		}
+		p.printf("recovery: %s\n", response.Result)
+		p.printf("receipt: %s\n", response.Receipt)
+		p.printf("re-armed: %d\n", response.RearmedCount)
+		for _, id := range response.Rearmed {
+			p.printf("  %s\n", id)
+		}
+		return renderExit(p)
+	case "rejected":
+		p.println("recovery: rejected")
+		return renderExit(p)
+	default:
+		return exitTransportError
 	}
-	return renderExit(p)
 }

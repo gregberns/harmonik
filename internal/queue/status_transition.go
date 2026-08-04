@@ -107,6 +107,7 @@ func ReactivateFailedItem(item *Item) error {
 	item.Status = ItemStatusPending
 	item.Attempts = 0
 	item.LastFailureReason = ""
+	item.RunID = nil
 	return nil
 }
 

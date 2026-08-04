@@ -24,11 +24,18 @@ sessions:
     - id: null
       started: 2026-08-03T04:00:38Z
       ended: 2026-08-03T04:00:38Z
+    - id: null
+      started: 2026-08-03T04:17:38Z
+      ended: 2026-08-03T04:27:08Z
+    - id: null
+      started: 2026-08-03T04:31:57Z
+      ended: 2026-08-03T04:43:48Z
 active_session: null
 depends_on: []
 bead_filter:
 pinned_beads: []
 implementation:
-    branch: null
+    branch: work/queue-dogfood-readiness
     pr: null
-    commits: []
+    commits:
+        - 5cf87dbb05efccc5256e24dde62d15601e5a7334

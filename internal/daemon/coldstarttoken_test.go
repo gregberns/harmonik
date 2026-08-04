@@ -274,6 +274,10 @@ type coldstartRun struct {
 	token       chan struct{}
 	ledger      *runplanacqLedger
 
+	// agent is the stub agent this run launches. start uses it to release the
+	// agent on the way out, so a failing test cannot abandon a live run.
+	agent coldstartAgent
+
 	// atTakeSite closes once the run has built its launch spec, which is the
 	// last step before it takes the token. A test that must observe the run
 	// PARKED at the take waits on this first, so its grace covers scheduling
@@ -289,22 +293,38 @@ func coldstartPrepare(t *testing.T, opt coldstartOptions) *coldstartRun {
 	t.Helper()
 
 	projectDir := remotefixRepo(t)
+
+	// The worktree is handed in rather than created, so no test here depends on
+	// git worktree add against a worker that does not exist.
+	//
+	// It must still be a git repository with one commit. The graph node reads the
+	// worktree HEAD before it launches the agent and keeps that SHA as the node
+	// baseline, and it refuses a baseline it could not read. A bare temp dir made
+	// `git rev-parse HEAD` return empty, so every run here died at "resolve HEAD
+	// before agentic node" and never built a launch spec — which is the step that
+	// takes the cold-start token this whole file measures. Six tests then waited
+	// 30s each for an agent that could not exist.
+	worktreeDir := t.TempDir()
+	hooksockGitInit(t, worktreeDir)
+	worktreeFactory := func(context.Context, string, string, string) (string, func(), error) {
+		return worktreeDir, func() {}, nil
+	}
+
 	// Exit 0: the tunnel readiness probe runs over this shim, and a non-zero exit
 	// refuses the run before it reaches the cold-start token.
-	remotefixSSHShim(t, 0)
+	//
+	// A REMOTE run reads the baseline over the runner, so the HEAD probe arrives
+	// here as an ssh call rather than a local git call. The shim must answer it,
+	// or a remote run stops at the same unreadable baseline that the local git
+	// init above fixes for a local run. The shim is built after the worktree so
+	// it can name it.
+	remotefixSSHShimAnsweringHEAD(t, 0, worktreeDir)
 	remotefixTunnelSeam(t, remotefixIdleTunnel)
 
 	var workerReg *workers.Registry
 	var preSelected *workers.Worker
 	if opt.remote {
 		workerReg, preSelected = remotefixReserveWorker(t)
-	}
-
-	// The worktree is handed in rather than created, so no test here depends on
-	// git worktree add against a worker that does not exist.
-	worktreeDir := t.TempDir()
-	worktreeFactory := func(context.Context, string, string, string) (string, func(), error) {
-		return worktreeDir, func() {}, nil
 	}
 
 	atTakeSite := make(chan struct{})
@@ -342,12 +362,21 @@ func coldstartPrepare(t *testing.T, opt coldstartOptions) *coldstartRun {
 		preSelected: preSelected,
 		token:       opt.token,
 		ledger:      ledger,
+		agent:       opt.agent,
 		atTakeSite:  atTakeSite,
 	}
 }
 
 // start runs beadRunOne on its own goroutine and returns a channel that closes
 // when it returns.
+//
+// It also registers a cleanup that releases the stub agent and waits for the run
+// to return. Most tests here end on a t.Fatal, which skips the letFinish call at
+// the bottom of the test body. The stub agent then sleeps forever, the run
+// goroutine stays parked in WaitForOutcome, and it outlives the test that made
+// it. goleak.VerifyNone in subscribe_test.go inspects the WHOLE process, so that
+// abandoned run turns two unrelated tests red and the failure names this file's
+// stack. A test may fail; it may not leave a run behind.
 func (r *coldstartRun) start(t *testing.T) <-chan struct{} {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 3*coldstartWaitLimit)
@@ -357,6 +386,19 @@ func (r *coldstartRun) start(t *testing.T) <-chan struct{} {
 		defer cancel()
 		runBeadOneTest(ctx, r.deps, r.env, "", r.preSelected, false)
 	}()
+	t.Cleanup(func() {
+		// Plain write, not letFinish: a cleanup must not call t.Fatalf, and the
+		// file is already there on the paths that released the agent normally.
+		//nolint:gosec // G306: a release marker in a per-test temp dir
+		_ = os.WriteFile(r.agent.releasePath, []byte("go\n"), 0o600)
+		select {
+		case <-done:
+		case <-time.After(coldstartWaitLimit):
+			t.Errorf("the run did not return within %v of releasing the stub agent, so it is still "+
+				"live after this test ended and will be reported as a leak somewhere else",
+				coldstartWaitLimit)
+		}
+	})
 	return done
 }
 
@@ -744,6 +786,12 @@ func TestColdStartToken_TheTokenComesBackWhenReadinessTimesOut(t *testing.T) {
 	// Sample the channel while the run is inside its readiness window. The
 	// deadline holds that window open long enough to be seen.
 	seenFull, stopWatch := coldstartWatchForFullChannel(token)
+	// The explicit stop below is the one that makes seenFull readable. This defer
+	// covers the paths that never reach it: any t.Fatal between here and there
+	// leaves the sampler goroutine sleeping for the life of the test binary, and
+	// the goroutine-leak checks in subscribe_test.go then fail on a leak this file
+	// created. stop is idempotent, so both calls are safe.
+	defer stopWatch()
 	done := run.start(t)
 
 	coldstartAwait(t, done)
@@ -814,6 +862,10 @@ func TestColdStartToken_ThreeRemoteColdStartsMayRunAtOnceAndAFourthWaits(t *test
 			readyTimeout: coldstartReadyTimeout,
 		})
 		seenFull, stopWatch := coldstartWatchForFullChannel(token)
+		// See the same defer above: the t.Fatalf directly below skips the explicit
+		// stop, and the abandoned sampler goroutine then fails the goroutine-leak
+		// checks in subscribe_test.go. stop is idempotent.
+		defer stopWatch()
 		done := run.start(t)
 
 		if !agent.waitStarted() {

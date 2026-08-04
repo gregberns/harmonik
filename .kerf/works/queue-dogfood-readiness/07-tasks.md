@@ -20,7 +20,7 @@
 
 ### T2 — Queue-resume transport and CLI
 
-- **What:** Wire `queue-resume` through the live daemon socket and `hk queue
+- **What:** Wire `queue-recover` through the live daemon socket and `hk queue
   resume`. Keep it separate from operator resume, drain release, and handler
   resume.
 - **Spec sections:** `process-lifecycle.md` §4.1 PL-003a, §4.10 PL-028 and

@@ -8,7 +8,7 @@
 
 ## Findings
 
-- Section 1.2 and Appendix A.3 defer `queue-resume` to v0.2. `QM-032` makes
+- Section 1.2 and Appendix A.3 defer `queue-recover` to v0.2. `QM-032` makes
   `complete-with-failures` terminal. `QM-052` requires a new submit after
   restart. This conflicts with the current recovery code and command name.
 - `internal/queue/resume.go` `ResumeFromFailure` re-arms failed items, clears

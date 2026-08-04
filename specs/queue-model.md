@@ -50,7 +50,7 @@ The spec does NOT own: the CLI surface and JSON-RPC transport (owned by [/Users/
 - Per-run state machine, dispatch eligibility, capacity gate — owned by [/Users/gb/github/harmonik/specs/execution-model.md §4.3, §7.1].
 - `br` adapter, `blocks`-edge resolution, bead-status enum — owned by [/Users/gb/github/harmonik/specs/beads-integration.md §4.3, §4.5].
 - Drain pseudocode and pause-class transitions — owned by [/Users/gb/github/harmonik/specs/operator-nfr.md §4.7 ON-027].
-- `queue-resume` / `queue-remove` / `queue-clear` semantics — deferred to v0.2 (see §A.3).
+- `queue-remove` / `queue-clear` semantics — deferred to v0.2 (see §A.3). Failed-queue recovery is NO LONGER deferred: it ships as `queue-recover` per §8.3b QM-052b.
 
 ## 2. Data Model
 
@@ -769,7 +769,7 @@ A group transitions `pending → active` only when (a) its immediate predecessor
 
 ### 5.4 QM-032 — No re-entry of terminal states
 
-A group MUST NOT re-enter `pending` or `active` once it has reached `complete-success` or `complete-with-failures`. v0.1 ships no resume mechanism for `complete-with-failures`; recovery is daemon restart + fresh `queue-submit`. v0.2 will add `queue-resume` per §A.3.
+A group MUST NOT re-enter `pending` or `active` once it has reached `complete-success` or `complete-with-failures` by its own state machine. The one permitted re-entry is the `queue-recover` transaction of §8.3b QM-052b, which reopens a `complete-with-failures` group as part of a single operator-driven recovery. A group MUST NOT resurrect itself.
 
 ### 5.5 QM-034 — Failed items do not interrupt sibling dispatches
 
@@ -1036,7 +1036,61 @@ When the active group reaches `GroupStatus: complete-with-failures` per §5.1 ro
 3. Then attempt
    `queue_paused{queue_id, group_index, fail_count, reason: "group_failure"}`.
 
-No further dispatch occurs while `status == paused-by-failure`. The daemon remains running; the queue's canonical named file persists with `status: paused-by-failure`. v0.1 recovery is daemon restart followed by a fresh `queue-submit` after the operator addresses the failed beads; v0.2 will add `queue-resume`.
+No further dispatch occurs while `status == paused-by-failure`. The daemon remains running; the queue's canonical named file persists with `status: paused-by-failure`. Recovery is the `queue-recover` transaction of §8.3b QM-052b. A daemon restart plus a fresh `queue-submit` remains a valid manual path but is no longer the only one.
+
+### 8.3b QM-052b — Failed-queue recovery
+
+`queue-recover` accepts exactly one selected queue in `paused-by-failure`. The
+verb is DISTINCT from `operator-resume`, which releases a drain pause only. The
+two touch different state, so one verb MUST NOT serve both: a drain release
+changes `Queue.status` alone, while recovery also rewrites per-item status,
+attempt counts, and failure reasons, and reopens groups.
+
+Before any candidate mutation, the daemon MUST read every failed item's Beads
+record. Every such record MUST have status `open`. A missing record, a read
+error, or a non-open record refuses recovery with no queue mutation, no Beads
+write, and no dispatch wake. This stops a durable recovery that cannot claim its
+own work.
+
+Inside one QM-001 transaction the daemon MUST re-arm every failed item in that
+queue: `failed → pending`, `attempts → 0`, and `last_failure_reason → None`. It
+MUST reopen each group that had reached `complete-with-failures` to `active`,
+and set the queue status to `active`. The transaction MUST install the candidate
+durably before it returns success. A write failure or a stale snapshot MUST
+leave memory and persistent state at the prior candidate. A failed replacement
+write MUST retain the quarantine.
+
+After a committed transaction the daemon MUST wake dispatch. Recovery success
+means only that the queue mutation is durable. It does not mean any item has
+dispatched.
+
+The operation MUST refuse a missing queue, a queue in any status other than
+`paused-by-failure`, a quarantined queue, a failed preflight, and every failed
+transaction. It MUST return exactly one typed rejection carrying a `reason` from
+this closed enum:
+
+```
+ENUM QueueRecoveryReason: queue_not_found, queue_not_recoverable,
+                          queue_quarantined, recovery_bead_not_open,
+                          recovery_read_failed, recovery_write_failed,
+                          recovery_stale_snapshot
+```
+
+Codes `-32030` through `-32036` map to those values in that order. These codes
+are the queue-recovery block. They do not reuse the queue-validation block
+`-32010` through `-32019` (§6.11a QM-029b) or the handler reservation `-32020`
+through `-32029`.
+
+A rejected recovery MUST NOT clear handler-pause state. Raw setters and direct
+persistence MUST NOT implement recovery; it requires the named QueueStore
+transaction so status and item state change in one candidate.
+
+`operator-resume` aimed at a queue in `paused-by-failure` MUST be refused with a
+typed error that names `queue-recover`. Reporting success there is forbidden:
+nothing dispatches, so a success reply is a wrong answer rather than an error.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
 
 ### 8.3a QM-052a — Handler-pause gate orthogonality
 
@@ -1091,8 +1145,8 @@ The canonical named queue written under QM-001 retains
 `status: paused-by-failure` or `status: paused-by-drain` across daemon restart.
 On QM-002 read, the queue loads with its persisted pause status and remains
 paused. v0.1 recovery from a persisted pause is daemon restart + fresh
-`queue-submit` after operator action; v0.2 will add `queue-resume` and
-`queue-clear`.
+`queue-submit` after operator action, or the `queue-recover` transaction of
+§8.3b QM-052b for a failure park. `queue-clear` stays deferred.
 
 ### 8.7 QM-056 — `queue_paused.reason` enumeration
 
@@ -1250,7 +1304,6 @@ This is plain round-robin — every candidate queue is treated equally. **Weight
 
 The following operations are explicitly out of scope for v0.1 and reserved for v0.2:
 
-- `queue-resume` — manual transition `paused-by-failure → active` after operator addresses failed beads.
 - `queue-clear` — manual transition `paused-by-drain → (deleted)` for orphan-cleanup paths.
 - `queue-remove` — remove a not-yet-dispatched item from a group.
 - Pause / stop / kill of in-flight runs at the queue layer.

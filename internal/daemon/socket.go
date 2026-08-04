@@ -356,6 +356,7 @@ type SocketHandlers struct {
 	Request   RequestHandler
 	HookRelay HookRelayHandler
 	Queue     QueueHandler
+	Recovery  QueueRecoveryHandler
 	Subscribe SubscribeHandler
 	Operator  OperatorControlHandler
 	Comms     CommsSendHandler
@@ -426,7 +427,7 @@ func Serve(ctx context.Context, sockPath string, hs SocketHandlers) error {
 
 	// Build the router ONCE, before the Accept loop (never per-connection).
 	router := buildSocketRouter(&socketDispatch{
-		h: hs.Request, qh: hs.Queue, oh: hs.Operator, ch: hs.Comms,
+		h: hs.Request, qh: hs.Queue, recoverh: hs.Recovery, oh: hs.Operator, ch: hs.Comms,
 		crewh: hs.Crew, sleepWakeh: hs.SleepWake, stateh: hs.State, dashh: hs.Dashboard,
 	})
 

@@ -219,7 +219,7 @@ Example envelope (informative; non-normative):
 ### 2.10 JSON-RPC request/response payload schemas
 
 The six queue methods (`queue-submit`, `queue-append`, `queue-status`,
-`queue-dry-run`, `queue-cancel`, `queue-resume`) are carried over the daemon's Unix socket per
+`queue-dry-run`, `queue-cancel`, `queue-recover`) are carried over the daemon's Unix socket per
 [/Users/gb/github/harmonik/specs/process-lifecycle.md §4.4 PL-003a]. This
 section defines the normative request and response payload shapes. The
 transport framing (NDJSON, 1 MiB cap, error-code block) is owned by PL-003a;
@@ -1051,7 +1051,7 @@ and repeatable Wake it attempts, in order:
 
 Event payload schemas are owned by [/Users/gb/github/harmonik/specs/event-model.md §8.10].
 
-> INFORMATIVE: `queue-submit` returning `status: active` IS the queue's "start" semantics: group_index 0 activates immediately on submit and the dispatcher picks it up at sub-poll-interval latency (per [/Users/gb/github/harmonik/specs/execution-model.md §4.11 EM-NOTE-WAKE]). There is no separate `start` method — the queue methods are `queue-submit | queue-append | queue-status | queue-dry-run | queue-cancel | queue-resume` per §2.10. A Pi-driven dispatch flow that needs to "start processing" submits the queue; no distinct start verb exists or is required.
+> INFORMATIVE: `queue-submit` returning `status: active` IS the queue's "start" semantics: group_index 0 activates immediately on submit and the dispatcher picks it up at sub-poll-interval latency (per [/Users/gb/github/harmonik/specs/execution-model.md §4.11 EM-NOTE-WAKE]). There is no separate `start` method — the queue methods are `queue-submit | queue-append | queue-status | queue-dry-run | queue-cancel | queue-recover` per §2.10. A Pi-driven dispatch flow that needs to "start processing" submits the queue; no distinct start verb exists or is required.
 
 ### 8.2 QM-051 — Advance
 
@@ -1087,7 +1087,7 @@ is the QM-052b transaction.
 
 ### 8.3b QM-052b — Failed-queue recovery
 
-`queue-resume` accepts exactly one selected queue in `paused-by-failure`.
+`queue-recover` accepts exactly one selected queue in `paused-by-failure`.
 Before candidate mutation, the QueueStore transaction MUST read every failed
 item's Beads record through the BI-013f recovery preflight. Every such record
 MUST have status `open`. A missing record, read error, or non-open record

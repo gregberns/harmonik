@@ -8,7 +8,7 @@
 
 ## Findings
 
-- `PL-003a` and `PL-028` list queue methods and defer `queue-resume`. The
+- `PL-003a` and `PL-028` list queue methods and defer `queue-recover`. The
   amendment must add it in both places and retain name and queue-ID selectors.
 - `RunQueueResume_DaemonDown` already returns exit 17 without a daemon. Keep
   this result and state that it has not recovered a queue.

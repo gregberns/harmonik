@@ -12,7 +12,7 @@ recovery, and completion. It does not replace the owning subsystem specs.
 | --- | --- | --- | --- | --- | --- |
 | Reserve item | QueueStore transaction | Canonical queue candidate with item status and run ID | Dispatch one item and read the canonical queue | Inject candidate-write failure and prove no item becomes dispatched | Source guard may name QueueStore only |
 | Release committed DOT run | Run terminal spine and merge bridge | Git run branch, target branch, and bead terminal state | Stop after commit and prove merge before close | Inject synchronization or merge failure and prove reopen without close | Source guard may require the drain bridge call |
-| Recover failed queue | QueueStore transaction | Canonical queue candidate with re-armed items, active group, and active queue | Call `hk queue resume` and inspect the durable queue before dispatch | Inject replacement failure and prove old bytes, memory, and quarantine remain | Source guard may require the named transaction operation |
+| Recover failed queue | QueueStore transaction | Canonical queue candidate with re-armed items, active group, and active queue | Call `hk queue recover` and inspect the durable queue before dispatch | Inject replacement failure and prove old bytes, memory, and quarantine remain | Source guard may require the named transaction operation |
 | Complete queue | QueueStore transaction and receipt protocol | Completed canonical bytes and immutable completion receipt | Drive final item success and inspect the receipt | Inject a receipt or canonical write failure and prove no completion response | Source guard may require the receipt path |
 
 ## 3. Required proof properties

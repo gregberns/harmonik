@@ -2,15 +2,16 @@
 
 ## Current state
 
-`PL-003a` and `PL-028` defer `queue-resume`. The shipped `hk queue resume`
+`PL-003a` and `PL-028` defer `queue-recover`. The shipped `hk queue resume`
+releases a drain pause only, so recovery needs its own verb.
 command sends `operator-resume`, which emits `operator_resuming`. Queue wiring
 only releases `paused-by-drain`. The CLI can report success before a failed
 queue changes.
 
 ## Target state
 
-Add JSON-RPC `queue-resume` to `PL-003a` and add
-`hk queue resume [--queue <name>] [--queue-id <uuid>]` to `PL-028` and
+Add JSON-RPC `queue-recover` to `PL-003a` and add
+`hk queue recover [--queue <name>] [--queue-id <uuid>]` to `PL-028` and
 `PL-028c`. It calls the direct queue recovery transaction. It does not route
 through `operator-resume`.
 

@@ -32,7 +32,7 @@ event cohort source before asserting a count.
 5. The recovery error surface was incomplete and `-32019` was already used for
    `queue_name_invalid`. QM-029b now maps that existing validation code. QM-052b
    owns the separate typed recovery block `-32020..-32026`.
-6. PL-003a named `queue-resume` but omitted its exact records. It now lists its
+6. PL-003a named `queue-recover` but omitted its exact records. It now lists its
    request selectors and full success response.
 7. The event draft asserted a stale fixed taxonomy count. It now requires an
    implementation to update the current ordinary-cohort count guard and treats
@@ -57,7 +57,7 @@ event cohort source before asserting a count.
 
 ## Consistency Issues Found
 
-`queue-resume` is consistently distinct from operator resume, drain release,
+`queue-recover` is consistently distinct from operator resume, drain release,
 and handler resume. `queue_recovered` is the only recovery observation.
 
 The release claim is the shared boundary between graceful drain and restart

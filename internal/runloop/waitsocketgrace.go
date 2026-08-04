@@ -23,6 +23,7 @@ package runloop
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/handler"
@@ -116,7 +117,11 @@ func WaitWithSocketGrace(
 			// inherited the stdout write-end and is still alive (hk-4c7kw); without
 			// a bound, shutdown would block for the full handler runtime. The reap
 			// (sess.Wait below) returns promptly once the immediate handler exits.
-			_ = sess.Kill(ctx)
+			if killErr := sess.Kill(ctx); killErr != nil {
+				// The child may still be alive, so the bounded watcher wait below is
+				// now the only thing that keeps shutdown moving.
+				slog.WarnContext(ctx, "runloop: kill session on cancellation", "err", killErr)
+			}
 			select {
 			case <-watcher.Done():
 			case <-substrate.After(clk, killWatcherReapGrace): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped (the ctx here is already cancelled)
@@ -126,7 +131,9 @@ func WaitWithSocketGrace(
 		}
 	} else if ctx.Err() != nil {
 		// Substrate path, context already cancelled — kill and fall through.
-		_ = sess.Kill(ctx)
+		if killErr := sess.Kill(ctx); killErr != nil {
+			slog.WarnContext(ctx, "runloop: kill substrate session on cancellation", "err", killErr)
+		}
 	}
 
 	// Step 2: reap the subprocess.
@@ -158,9 +165,16 @@ func WaitWithSocketGrace(
 	}
 
 	// Step 4: slow path — wait up to stopHookGrace for a Stop hook relay.
-	graceCtx, cancel := context.WithTimeout(context.Background(), StopHookGrace)
+	// WithoutCancel, not Background: the grace must outlive a cancelled run ctx,
+	// but it should still carry the run's context values.
+	graceCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), StopHookGrace)
 	defer cancel()
-	rawOutcome, _ := store.WaitForOutcome(graceCtx, runID, claudeSessID)
+	rawOutcome, waitOutcomeErr := store.WaitForOutcome(graceCtx, runID, claudeSessID)
+	if waitOutcomeErr != nil {
+		// The grace expired or the store failed. Either way no relay landed, so
+		// fall through to branch 3 rather than read a half-formed payload.
+		rawOutcome = nil
+	}
 	if rawOutcome != nil {
 		if outcome := parseOutcomePayload(rawOutcome); outcome != nil {
 			return outcome, ei

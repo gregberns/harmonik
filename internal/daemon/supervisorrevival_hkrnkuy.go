@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -83,5 +84,7 @@ func detectAndEmitSupervisorRevival(ctx context.Context, eventsPath string, bus 
 	if err != nil {
 		return
 	}
-	_ = bus.Emit(ctx, core.EventTypeSupervisorRevival, payloadBytes)
+	if emitErr := bus.Emit(ctx, core.EventTypeSupervisorRevival, payloadBytes); emitErr != nil {
+		slog.WarnContext(ctx, "daemon: emit supervisor_revival failed", "err", emitErr, "prior_pid", prior.pid)
+	}
 }

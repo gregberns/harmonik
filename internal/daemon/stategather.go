@@ -262,7 +262,7 @@ func (b *LiveStateBuilder) buildOneSession(ctx context.Context, agent, sessionTy
 		presenceSrc = "both"
 	}
 
-	liveSID, _, _ := keeper.ReadSessionIDFile(b.projectDir, agent)
+	liveSID := liveSessionID(b.projectDir, agent)
 
 	sleepMarker := liveSID != "" && sleepSIDs[strings.ToLower(liveSID)]
 	if !sleepMarker && declaredSID != "" && sleepSIDs[strings.ToLower(declaredSID)] {
@@ -489,7 +489,10 @@ func anySleeping(projectDir string) bool {
 	}
 	dir := filepath.Join(projectDir, sleepingMarkerDir)
 	pattern := filepath.Join(dir, onDiskSleepMarkerPrefix+"*")
-	matches, _ := filepath.Glob(pattern)
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return false // bad pattern: no marker can match either
+	}
 	return len(matches) > 0
 }
 

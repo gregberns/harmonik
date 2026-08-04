@@ -216,7 +216,11 @@ func (t *BandwidthTuner) NotifyRateLimit(retryAfter time.Duration) {
 	until := time.Now().Add(retryAfter).UnixNano()
 	t.rateLimitUntilNanos.Store(until)
 	// Snap to 1 immediately regardless of the normal tuning formula.
-	_, _ = t.ctrl.Set(1)
+	if _, setErr := t.ctrl.Set(1); setErr != nil {
+		// The ceiling did not move, so the fleet keeps dispatching into a
+		// rate-limited API while the backoff window says it backed off.
+		fmt.Fprintf(os.Stderr, "daemon: bandwidth tuner: snap concurrency ceiling to 1 after rate limit: %v\n", setErr)
+	}
 }
 
 // tick is a single tuner evaluation.  It reads transcript usage, computes the
@@ -260,7 +264,9 @@ func (t *BandwidthTuner) tick() {
 
 	current := t.ctrl.Get()
 	if current != target {
-		_, _ = t.ctrl.Set(target)
+		if _, setErr := t.ctrl.Set(target); setErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: bandwidth tuner: set concurrency ceiling to %d: %v\n", target, setErr)
+		}
 	}
 }
 

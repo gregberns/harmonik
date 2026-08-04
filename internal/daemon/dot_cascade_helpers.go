@@ -307,9 +307,7 @@ func runAutoStatusInspection(ctx context.Context, runner tmux.CommandRunner, wtP
 			// own children more reliably than sh -c fork) but same failure class.
 			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 			cmd.Cancel = func() error {
-				if cmd.Process != nil {
-					_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-				}
+				killProcessGroup(cmd.Process, "auto-status inspection")
 				return nil
 			}
 			cmd.WaitDelay = 5 * time.Second
@@ -334,7 +332,7 @@ func runAutoStatusInspection(ctx context.Context, runner tmux.CommandRunner, wtP
 	// D1: deny-side only — absent/non-FAIL markers are treated as absent by
 	// ReadAutoStatusMarker, so C1-only pass-through is preserved.
 	// D4: derived FAIL is terminal; no reviewer-loop re-entry.
-	marker, _ := readAutoStatusMarkerVia(ctx, runner, wtPath)
+	marker := readAutoStatusMarkerOrReport(ctx, runner, wtPath)
 	if marker != nil {
 		c2fc := core.FailureClassDeterministic // HC-059 daemon back-fill when hint absent.
 		if marker.FailureClass != "" {
@@ -468,10 +466,7 @@ func dispatchDotToolNode(ctx context.Context, bus handlercontract.EventEmitter, 
 		// even if a grandchild lingers on the pipe. (hk-me8ru)
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		cmd.Cancel = func() error {
-			if cmd.Process != nil {
-				// Negative PID → deliver to the whole process group.
-				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			}
+			killProcessGroup(cmd.Process, "commit gate")
 			return nil
 		}
 		cmd.WaitDelay = 5 * time.Second
@@ -520,7 +515,7 @@ func dispatchDotToolNode(ctx context.Context, bus handlercontract.EventEmitter, 
 	// the runner, so the re-entering implementer keeps its diagnostic.
 	gateLogPath := filepath.Join(wtPath, ".harmonik", "commit-gate.log")
 	if runner == nil {
-		_ = os.WriteFile(gateLogPath, combined, 0o644)
+		writeGateLog(gateLogPath, combined)
 	}
 
 	outputTail := tailString(string(combined), dotGateOutputTailBytes)
@@ -835,7 +830,11 @@ func incrementCapIfBounded(graph *dot.Graph, cycles *core.CycleCounter, runID co
 			continue
 		}
 		if cap := dotEdgeTraversalCap(e); cap != nil && *cap > 0 {
-			_, _ = cycles.Increment(runID, core.NodeID(fromID), core.NodeID(toID), cap)
+			if _, incErr := cycles.Increment(runID, core.NodeID(fromID), core.NodeID(toID), cap); incErr != nil {
+				// The edge count did not move, so SelectNextEdge cannot enforce the
+				// traversal cap on this edge and the cascade can loop past it.
+				fmt.Fprintf(os.Stderr, "daemon: dot cascade: increment traversal cap for edge %s→%s: %v (cap not enforced)\n", fromID, toID, incErr)
+			}
 		}
 		return
 	}
@@ -881,7 +880,9 @@ func emitDotNoProgressDetected(
 	if err != nil {
 		return
 	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeNoProgressDetected, b)
+	if emitErr := bus.EmitWithRunID(ctx, runID, core.EventTypeNoProgressDetected, b); emitErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: dot cascade: emit no_progress_detected: %v\n", emitErr)
+	}
 }
 
 // graphVersionOr returns the graph's version field or a placeholder when empty
@@ -906,7 +907,9 @@ func emitNodeDispatchRequested(ctx context.Context, bus handlercontract.EventEmi
 	if err != nil {
 		return
 	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeNodeDispatchRequested, b)
+	if emitErr := bus.EmitWithRunID(ctx, runID, core.EventTypeNodeDispatchRequested, b); emitErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: dot cascade: emit node_dispatch_requested: %v\n", emitErr)
+	}
 }
 
 // emitNodeDispatchDecided emits node_dispatch_decided with the cascade-engine
@@ -920,7 +923,9 @@ func emitNodeDispatchDecided(ctx context.Context, bus handlercontract.EventEmitt
 	if err != nil {
 		return
 	}
-	_ = bus.EmitWithRunID(ctx, payload.RunID, core.EventTypeNodeDispatchDecided, b)
+	if emitErr := bus.EmitWithRunID(ctx, payload.RunID, core.EventTypeNodeDispatchDecided, b); emitErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: dot cascade: emit node_dispatch_decided: %v\n", emitErr)
+	}
 }
 
 // emitDotReviewerLaunched emits reviewer_launched (§8.1a.2) for a DOT reviewer
@@ -946,7 +951,9 @@ func emitDotReviewerLaunched(
 	if err != nil {
 		return
 	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeReviewerLaunched, b)
+	if emitErr := bus.EmitWithRunID(ctx, runID, core.EventTypeReviewerLaunched, b); emitErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: dot cascade: emit reviewer_launched: %v\n", emitErr)
+	}
 }
 
 // emitDotReviewerVerdict emits reviewer_verdict for a DOT reviewer node,
@@ -980,7 +987,9 @@ func emitDotReviewerVerdict(
 	if err != nil {
 		return
 	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeReviewerVerdict, b)
+	if emitErr := bus.EmitWithRunID(ctx, runID, core.EventTypeReviewerVerdict, b); emitErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: dot cascade: emit reviewer_verdict: %v\n", emitErr)
+	}
 }
 
 // emitDotImplementerResumed emits implementer_resumed (§8.1a.1) before an
@@ -1009,7 +1018,9 @@ func emitDotImplementerResumed(
 	if err != nil {
 		return
 	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeImplementerResumed, b)
+	if emitErr := bus.EmitWithRunID(ctx, runID, core.EventTypeImplementerResumed, b); emitErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: dot cascade: emit implementer_resumed: %v\n", emitErr)
+	}
 }
 
 // newCapturedSpawnProof returns the once-guarded emitter that a SessionIDCaptured
@@ -1062,4 +1073,40 @@ func newCapturedSpawnProof(ctx context.Context, tap *runloop.PerRunEventTap, run
 			_ = tap.EmitWithRunID(emitCtx, runID, core.EventTypeAgentReady, nil)
 		})
 	}
+}
+
+// killProcessGroup SIGKILLs the whole process group of proc. A negative PID
+// delivers the signal to the group, not just the leader. ESRCH means the group
+// already exited, which is the normal case; anything else leaves live processes
+// behind, so report it. The caller's Cancel still reports success.
+func killProcessGroup(proc *os.Process, label string) {
+	if proc == nil {
+		return
+	}
+	if killErr := syscall.Kill(-proc.Pid, syscall.SIGKILL); killErr != nil && !errors.Is(killErr, syscall.ESRCH) {
+		fmt.Fprintf(os.Stderr, "daemon: dot cascade: kill %s process group %d: %v\n", label, proc.Pid, killErr)
+	}
+}
+
+// writeGateLog writes the full gate output to path. The daemon log only gets a
+// pointer to it, so a failed write costs the operator the whole diagnostic.
+func writeGateLog(path string, combined []byte) {
+	// 0600: the daemon writes it and the operator reads it, both as the same
+	// user. Nothing else needs the file.
+	if writeErr := os.WriteFile(path, combined, 0o600); writeErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: dot cascade: write gate log %q: %v\n", path, writeErr)
+	}
+}
+
+// readAutoStatusMarkerOrReport reads the deny-side auto-status marker. An
+// unreadable marker reads as "absent", so a deny-side FAIL would pass the C2
+// check unseen — report the read failure instead of treating it as clean.
+func readAutoStatusMarkerOrReport(ctx context.Context, runner tmux.CommandRunner, wtPath string) *workspace.AutoStatusMarker {
+	marker, markerErr := readAutoStatusMarkerVia(ctx, runner, wtPath)
+	if markerErr != nil {
+		fmt.Fprintf(os.Stderr,
+			"daemon: dot cascade: read auto-status marker in %q: %v (C2 deny-side check treated as absent)\n",
+			wtPath, markerErr)
+	}
+	return marker
 }

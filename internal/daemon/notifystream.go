@@ -163,7 +163,9 @@ func (n *NotifyStreamConsumer) handleRunCompleted(_ context.Context, evt core.Ev
 		}
 		line = fmt.Sprintf("[%s] success (commit %s)", beadID, short)
 	}
-	_, _ = fmt.Fprintln(n.w, line)
+	if _, writeErr := fmt.Fprintln(n.w, line); writeErr != nil {
+		return fmt.Errorf("notify-stream: write success line for %s: %w", beadID, writeErr)
+	}
 	return nil
 }
 
@@ -185,6 +187,8 @@ func (n *NotifyStreamConsumer) handleRunFailed(_ context.Context, evt core.Event
 	if reason == "" {
 		reason = "unknown"
 	}
-	_, _ = fmt.Fprintf(n.w, "[%s] failed (reason: %s)\n", beadID, reason)
+	if _, writeErr := fmt.Fprintf(n.w, "[%s] failed (reason: %s)\n", beadID, reason); writeErr != nil {
+		return fmt.Errorf("notify-stream: write failure line for %s: %w", beadID, writeErr)
+	}
 	return nil
 }

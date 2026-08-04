@@ -183,10 +183,10 @@ func runWorktreeReclaim(ctx context.Context, port diskReclaimPort, stalePaths []
 		rmCmd := exec.CommandContext(reclaimCtx, "git", "-C", port.projectDir, "worktree", "remove", "--force", "--force", path)
 		if out, rmErr := rmCmd.CombinedOutput(); rmErr != nil {
 			// Fallback: os.RemoveAll for "not a working tree" and similar git errors.
-			_ = os.RemoveAll(path)
+			fallbackErr := os.RemoveAll(path)
 			fmt.Fprintf(os.Stderr,
-				"daemon: disk-check: git worktree remove %s: %v (%s); fell back to os.RemoveAll\n",
-				path, rmErr, strings.TrimSpace(string(out)))
+				"daemon: disk-check: git worktree remove %s: %v (%s); fell back to os.RemoveAll (err=%v)\n",
+				path, rmErr, strings.TrimSpace(string(out)), fallbackErr)
 		}
 	}
 	pruneCmd := exec.CommandContext(reclaimCtx, "git", "-C", port.projectDir, "worktree", "prune")

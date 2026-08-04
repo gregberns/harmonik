@@ -312,7 +312,9 @@ func driveDotWorkflow(
 		noProgressGuardOff = true
 	case strings.HasPrefix(graph.NoProgressGuard, "capped:"):
 		// Already validated by the parser; Atoi cannot fail here.
-		noProgressGuardCap, _ = strconv.Atoi(strings.TrimPrefix(graph.NoProgressGuard, "capped:"))
+		if parsedCap, atoiErr := strconv.Atoi(strings.TrimPrefix(graph.NoProgressGuard, "capped:")); atoiErr == nil {
+			noProgressGuardCap = parsedCap
+		}
 	}
 	consecutiveNoProgressCount := 0
 
@@ -1180,7 +1182,14 @@ func dispatchDotAgenticNode(
 		// os.Remove / WriteReviewTarget would no-op / orphan on box A and the worker
 		// reviewer would never see its brief (produces no verdict). runner == nil for
 		// a local run, restoring the byte-identical box-A path (NFR7).
-		_ = workspace.RemoveReviewVerdictVia(ctx, runner, wtPath)
+		if rmErr := workspace.RemoveReviewVerdictVia(ctx, runner, wtPath); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+			// A real removal failure leaves the prior iteration verdict in place, so
+			// a stalled reviewer reads the stale verdict instead of producing none
+			// (hk-ycxfa). The run continues, but the guard is not in force — say so.
+			fmt.Fprintf(os.Stderr,
+				"daemon: dot cascade: remove stale review verdict in %q: %v (a stalled reviewer may read the prior verdict)\n",
+				wtPath, rmErr)
+		}
 		rtErr := workspace.WriteReviewTargetVia(ctx, runner, workspace.ReviewTargetPayload{
 			WorkspacePath: wtPath,
 			BeadID:        string(beadID),

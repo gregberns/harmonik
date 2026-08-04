@@ -269,7 +269,11 @@ func commitVerdictEmitted(ctx context.Context, worktreePath string, ve core.Verd
 		wipDir := filepath.Join(reconDir, "wip-capture")
 		if mkErr := os.MkdirAll(wipDir, core.HarmonikDirMode); mkErr == nil {
 			if capture, capErr := workspace.CaptureWIP(targetWorktreePath); capErr == nil {
-				_ = workspace.WriteWIPCapture(capture, wipDir)
+				if wipErr := workspace.WriteWIPCapture(capture, wipDir); wipErr != nil {
+					// Non-fatal: the verdict commit proceeds without the capture,
+					// but say so, because a silent loss looks like "no WIP".
+					fmt.Fprintf(os.Stderr, "daemon: verdict executor: write WIP capture to %q: %v (verdict commit proceeds without it)\n", wipDir, wipErr)
+				}
 			}
 		}
 	}

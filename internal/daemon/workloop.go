@@ -285,7 +285,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 			sdCommitSHA = *runTipSHA
 		}
 		go func() {
-			_ = sessiondata.Collect(sessiondata.CollectParams{
+			if collectErr := sessiondata.Collect(sessiondata.CollectParams{
 				RunID:             runID.String(),
 				BeadID:            string(beadID),
 				QueueID:           sdQID,
@@ -297,7 +297,9 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 				EndedAt:           sdEndedAt,
 				ProjectDir:        env.ProjectDir,
 				ClaudeProjectsDir: filepath.Join(os.Getenv("HOME"), ".claude", "projects"),
-			})
+			}); collectErr != nil {
+				fmt.Fprintf(os.Stderr, "daemon: workloop: collect session data for run %s: %v\n", runID, collectErr)
+			}
 		}()
 	}
 
@@ -643,9 +645,15 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 					cleanCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 					defer cancel()
 					rmCmd := sshRunner.Command(cleanCtx, "git", "-C", workerRepoPath, "worktree", "remove", "--force", "--force", wtPath)
-					_ = rmCmd.Run()
+					if rmErr := rmCmd.Run(); rmErr != nil {
+						// The worker keeps the worktree and its disk. Match the local
+						// reclaim path below, which also reports its failure.
+						fmt.Fprintf(os.Stderr, "daemon: workloop: remote worktree remove %s on %s: %v\n", wtPath, workerRepoPath, rmErr)
+					}
 					pruneCmd := sshRunner.Command(cleanCtx, "git", "-C", workerRepoPath, "worktree", "prune")
-					_ = pruneCmd.Run()
+					if pruneErr := pruneCmd.Run(); pruneErr != nil {
+						fmt.Fprintf(os.Stderr, "daemon: workloop: remote worktree prune on %s: %v\n", workerRepoPath, pruneErr)
+					}
 				}
 				return wtPath, cleanup, nil
 			}
@@ -856,7 +864,10 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// classifier onto the machine's AlreadyApprovedOnMain row; the hk-tnui
 	// trailer stamp is the amendTrailers policy (single attempt — DOT has no
 	// merge-retry loop).
-	transitionTID, _ := handles.TIDGen.Next()
+	transitionTID, tidErr := handles.TIDGen.Next()
+	if tidErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: workloop: tidGen.Next (DOT spine transition) bead %s: %v\n", beadID, tidErr)
+	}
 	bridge.Start(ctx, workflowMode)
 	bridge.WireSpine(runloop.SpineArgs{
 		RunRunner:       dotRunner,
@@ -1023,7 +1034,11 @@ func productionWorktreeFactory(ctx context.Context, projectDir, runID, headSHA s
 	// fmt/lint targets resolve their pinned binaries (hk-gb3ln).
 	toolsSrc := filepath.Join(projectDir, ".tools")
 	if _, statErr := os.Lstat(toolsSrc); statErr == nil {
-		_ = os.Symlink(toolsSrc, filepath.Join(wtPath, ".tools"))
+		if linkErr := os.Symlink(toolsSrc, filepath.Join(wtPath, ".tools")); linkErr != nil {
+			// Without the link the worktree's fmt/lint targets cannot find the
+			// pinned binaries, and the failure reads as a broken Makefile.
+			fmt.Fprintf(os.Stderr, "daemon: workloop: symlink .tools into %s: %v\n", wtPath, linkErr)
+		}
 	}
 
 	// The cleanup uses background context so removal is attempted even when the
@@ -1170,7 +1185,9 @@ func emitRunStarted(
 	if err != nil {
 		return
 	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeRunStarted, b)
+	if emitErr := bus.EmitWithRunID(ctx, runID, core.EventTypeRunStarted, b); emitErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: workloop: emit run_started: %v\n", emitErr)
+	}
 }
 
 func emitRunCompleted(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, beadID, owningEpicID, owningEpicAssignee string, success bool, summary string, queueID *string, queueGroupIndex *int, worktreeTipSHA *string) {
@@ -1201,7 +1218,9 @@ func emitRunCompleted(ctx context.Context, bus handlercontract.EventEmitter, run
 	if !success {
 		eventType = core.EventTypeRunFailed
 	}
-	_ = bus.EmitWithRunID(ctx, runID, eventType, b)
+	if emitErr := bus.EmitWithRunID(ctx, runID, eventType, b); emitErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: workloop: emit run_completed/run_failed: %v\n", emitErr)
+	}
 }
 
 // emitImplPresence emits an agent_presence event for a daemon-spawned implementer
@@ -1219,7 +1238,9 @@ func emitImplPresence(ctx context.Context, bus handlercontract.EventEmitter, bea
 	if err != nil {
 		return
 	}
-	_ = bus.Emit(ctx, core.EventType("agent_presence"), b)
+	if emitErr := bus.Emit(ctx, core.EventType("agent_presence"), b); emitErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: workloop: emit agent_presence: %v\n", emitErr)
+	}
 }
 
 // resolveOwningEpicFromRecord scans beadRecord.Edges for a parent-child edge
@@ -1279,7 +1300,9 @@ func emitBeadClosed(ctx context.Context, bus handlercontract.EventEmitter, runID
 	if err != nil {
 		return
 	}
-	_ = bus.Emit(ctx, core.EventTypeBeadClosed, b)
+	if emitErr := bus.Emit(ctx, core.EventTypeBeadClosed, b); emitErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: workloop: emit bead_closed: %v\n", emitErr)
+	}
 }
 
 // emitBeadClosedAndMaybeEpic emits bead_closed then checks whether the closed
@@ -1361,7 +1384,9 @@ func maybeEmitEpicCompleted(ctx context.Context, ports runloop.RunPorts, handles
 	if err != nil {
 		return
 	}
-	_ = ports.Emitter.EmitWithRunID(ctx, runID, core.EventTypeEpicCompleted, b)
+	if emitErr := ports.Emitter.EmitWithRunID(ctx, runID, core.EventTypeEpicCompleted, b); emitErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: workloop: emit epic_completed: %v\n", emitErr)
+	}
 }
 
 // transitionToTerminated advances the per-session lifecycle Machine from its
@@ -1434,7 +1459,9 @@ func emitWorkloopLifecycleTransition(ctx context.Context, m *hclifecycle.Machine
 	if err != nil {
 		return
 	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeLifecycleTransition, b)
+	if emitErr := bus.EmitWithRunID(ctx, runID, core.EventTypeLifecycleTransition, b); emitErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: workloop: emit lifecycle_transition: %v\n", emitErr)
+	}
 }
 
 // emitImplementerEscapedWorktree emits an implementer_escaped_worktree event
@@ -1451,5 +1478,7 @@ func emitImplementerEscapedWorktree(ctx context.Context, bus handlercontract.Eve
 	if err != nil {
 		return
 	}
-	_ = bus.EmitWithRunID(ctx, runID, core.EventTypeImplementerEscapedWorktree, b)
+	if emitErr := bus.EmitWithRunID(ctx, runID, core.EventTypeImplementerEscapedWorktree, b); emitErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: workloop: emit implementer_escaped_worktree: %v\n", emitErr)
+	}
 }

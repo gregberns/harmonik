@@ -118,10 +118,12 @@ func applyBootBackoff(ctx context.Context, projectDir string, rawCfg projectconf
 	if readErr != nil && !os.IsNotExist(readErr) {
 		fmt.Fprintf(os.Stderr, "daemon: restart-backoff: read %q: %v (skipping backoff)\n", path, readErr)
 		// Record the current boot even on read failure, best-effort.
-		_ = writeRestartRecord(ctx, path, restartRecord{
+		if writeErr := writeRestartRecord(ctx, path, restartRecord{
 			SchemaVersion: 1,
 			BootTimesUnix: []int64{now.Unix()},
-		})
+		}); writeErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: restart-backoff: write %q: %v\n", path, writeErr)
+		}
 		return 0
 	}
 

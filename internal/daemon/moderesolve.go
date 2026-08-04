@@ -20,6 +20,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -147,7 +148,9 @@ func emitReviewBypassed(
 	if err != nil {
 		return
 	}
-	_ = bus.Emit(ctx, core.EventTypeReviewBypassed, b)
+	if emitErr := bus.Emit(ctx, core.EventTypeReviewBypassed, b); emitErr != nil {
+		slog.WarnContext(ctx, "daemon: emit review_bypassed failed", "err", emitErr, "bead_id", string(bead.BeadID))
+	}
 }
 
 // resolveWorkflowRef resolves the .dot workflow file path for a bead using the
@@ -237,5 +240,7 @@ func emitBeadLabelConflict(
 	if err != nil {
 		return
 	}
-	_ = bus.Emit(ctx, core.EventTypeBeadLabelConflict, b)
+	if emitErr := bus.Emit(ctx, core.EventTypeBeadLabelConflict, b); emitErr != nil {
+		slog.WarnContext(ctx, "daemon: emit bead_label_conflict failed", "err", emitErr, "bead_id", string(bead.BeadID))
+	}
 }

@@ -141,7 +141,7 @@ func diskSessions(ctx context.Context, projectDir string, now time.Time) ([]Stat
 
 	for _, cr := range crewRecords {
 		alive := tmuxHasSession(ctx, lifecycle.TmuxSessionName(ph, cr.Name))
-		liveSID, _, _ := keeper.ReadSessionIDFile(projectDir, cr.Name)
+		liveSID := liveSessionID(projectDir, cr.Name)
 
 		sleepMarker := sleepSIDs[strings.ToLower(liveSID)] ||
 			(cr.SessionID != "" && sleepSIDs[strings.ToLower(cr.SessionID)])
@@ -174,7 +174,7 @@ func diskSessions(ctx context.Context, projectDir string, now time.Time) ([]Stat
 	if !hasCaptainRecord(crewRecords) {
 		if _, _, err := keeper.ReadCtxFile(projectDir, captainAgentName); err == nil {
 			alive := tmuxHasSession(ctx, lifecycle.TmuxSessionName(ph, captainAgentName))
-			liveSID, _, _ := keeper.ReadSessionIDFile(projectDir, captainAgentName)
+			liveSID := liveSessionID(projectDir, captainAgentName)
 			sleepMarker := sleepSIDs[strings.ToLower(liveSID)]
 			sess := StateSession{
 				Agent:          captainAgentName,
@@ -257,4 +257,15 @@ func diskFailedArchives(projectDir string) ([]string, error) {
 		return nil, fmt.Errorf("disk failed-archive scan: %w", err)
 	}
 	return matches, nil
+}
+
+// liveSessionID returns the agent's current session ID from its session-id file.
+// A missing or unreadable file means the agent has no live session ID, so the
+// result is the empty string in both cases.
+func liveSessionID(projectDir, agent string) string {
+	sid, _, err := keeper.ReadSessionIDFile(projectDir, agent)
+	if err != nil {
+		return ""
+	}
+	return sid
 }

@@ -25,6 +25,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -137,7 +138,10 @@ func (s *hookSessionStore) emitRateLimitStatus(env hookRelayEnvelope, status cor
 	var relayPl struct {
 		RetryAfterSeconds *int `json:"retry_after_seconds,omitempty"`
 	}
-	_ = json.Unmarshal(env.Payload, &relayPl)
+	// A malformed relay payload only costs the optional retry-after hint.
+	if unmarshalErr := json.Unmarshal(env.Payload, &relayPl); unmarshalErr != nil {
+		relayPl.RetryAfterSeconds = nil
+	}
 
 	pl := core.AgentRateLimitStatusPayload{
 		RunID:             core.RunID(runUUID),
@@ -151,5 +155,7 @@ func (s *hookSessionStore) emitRateLimitStatus(env hookRelayEnvelope, status cor
 	if marshalErr != nil {
 		return // non-fatal
 	}
-	_ = s.emitter.EmitWithRunID(context.Background(), core.RunID(runUUID), core.EventTypeAgentRateLimitStatus, plBytes)
+	if emitErr := s.emitter.EmitWithRunID(context.Background(), core.RunID(runUUID), core.EventTypeAgentRateLimitStatus, plBytes); emitErr != nil {
+		slog.WarnContext(context.Background(), "daemon: emit agent_rate_limit_status failed", "err", emitErr, "run_id", runUUID.String())
+	}
 }

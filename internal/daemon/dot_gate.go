@@ -24,6 +24,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -273,7 +274,13 @@ func executeCognitionGate(
 	// REMOTE run (runner != nil) clears the verdict on the WORKER's filesystem,
 	// not box A's (hk-9fe2).
 	verdictPath := filepath.Join(wtPath, gateVerdictRelPath)
-	_ = workspace.RemoveFileVia(ctx, runner, verdictPath)
+	if rmErr := workspace.RemoveFileVia(ctx, runner, verdictPath); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+		// A stale verdict that survives makes the gate read a prior attempt's
+		// answer. The gate still runs, so log it instead of failing the run.
+		fmt.Fprintf(os.Stderr,
+			"daemon: cognition gate: remove stale verdict %q: %v (the gate may read the prior attempt)\n",
+			verdictPath, rmErr)
+	}
 
 	// Write the gate-task.md brief. Routed through runner so a REMOTE run
 	// (runner != nil) writes the brief onto the WORKER's filesystem — a
@@ -721,26 +728,38 @@ func pasteInjectQuitOnGateFile(
 			if clk.Now().After(deadline) {
 				fmt.Fprintf(os.Stderr,
 					"daemon: pasteinject: quit-on-gate-file: timeout waiting for %s; sending /quit\n", verdictPath)
-				_ = qs.SendQuitToLastPane(ctx)
+				if quitErr := qs.SendQuitToLastPane(ctx); quitErr != nil {
+					fmt.Fprintf(os.Stderr,
+						"daemon: pasteinject: quit-on-gate-file: send /quit failed: %v\n", quitErr)
+				}
 				select {
 				case <-ctx.Done():
 				case <-substrate.After(clk, noChangeKillDelay): //nolint:contextcheck // substrate.After is ctx-free by contract (internal/substrate/clock.go After); this select's ctx.Done() case carries cancellation
 				}
 				if killer != nil {
-					_ = killer.Kill(ctx)
+					if killErr := killer.Kill(ctx); killErr != nil {
+						fmt.Fprintf(os.Stderr,
+							"daemon: pasteinject: quit-on-gate-file: kill session failed: %v (the pane may still be alive)\n", killErr)
+					}
 				}
 				return
 			}
 			if gateVerdictExistsVia(ctx, runner, verdictPath) {
 				fmt.Fprintf(os.Stderr,
 					"daemon: pasteinject: quit-on-gate-file: verdict detected at %s; sending /quit\n", verdictPath)
-				_ = qs.SendQuitToLastPane(ctx)
+				if quitErr := qs.SendQuitToLastPane(ctx); quitErr != nil {
+					fmt.Fprintf(os.Stderr,
+						"daemon: pasteinject: quit-on-gate-file: send /quit failed: %v\n", quitErr)
+				}
 				select {
 				case <-ctx.Done():
 				case <-substrate.After(clk, postQuitKillGrace): //nolint:contextcheck // substrate.After is ctx-free by contract (internal/substrate/clock.go After); this select's ctx.Done() case carries cancellation
 				}
 				if killer != nil {
-					_ = killer.Kill(ctx)
+					if killErr := killer.Kill(ctx); killErr != nil {
+						fmt.Fprintf(os.Stderr,
+							"daemon: pasteinject: quit-on-gate-file: kill session failed: %v (the pane may still be alive)\n", killErr)
+					}
 				}
 				return
 			}

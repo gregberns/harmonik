@@ -37,6 +37,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -180,8 +181,10 @@ func (b *DetectorBarrier) emitPanicEvent(ctx context.Context, panicVal interface
 		return
 	}
 
-	_ = b.emitter.Emit(ctx, core.EventTypeReconciliationDetectorPanic, payloadBytes)
-	// Emit errors intentionally discarded: suspension is the authoritative
-	// action; event emission is best-effort observability per RC-020b.
+	// Suspension is the authoritative action. The event is best-effort
+	// observability per RC-020b, so an emit failure only gets a log line.
+	if emitErr := b.emitter.Emit(ctx, core.EventTypeReconciliationDetectorPanic, payloadBytes); emitErr != nil {
+		slog.WarnContext(ctx, "daemon: emit reconciliation_detector_panic failed", "err", emitErr, "detector_class", b.class)
+	}
 	_ = panicVal // panicVal is caught in the closure; value is recorded via ErrorClass
 }

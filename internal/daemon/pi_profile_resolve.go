@@ -23,6 +23,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -124,7 +125,9 @@ func emitProviderSelected(
 	if err != nil {
 		return
 	}
-	_ = bus.Emit(ctx, core.EventTypeProviderSelected, b)
+	if emitErr := bus.Emit(ctx, core.EventTypeProviderSelected, b); emitErr != nil {
+		slog.WarnContext(ctx, "daemon: emit provider_selected failed", "err", emitErr, "run_id", runID.String())
+	}
 }
 
 // hasSingleModelLabel reports whether beadLabels carries EXACTLY ONE

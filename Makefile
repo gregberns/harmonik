@@ -732,6 +732,7 @@ script-tests:  ## Self-tests for the shell the gate depends on
 	scripts/go-test-must-match-test.sh
 	scripts/loadgen-test.sh
 	scripts/gate-fails-closed-test.sh
+	scripts/lint-ceiling-test.sh
 
 # freeze-gates — the per-subsystem "do not move this back" greps. Cheap
 # (sub-second each) and they only ever answer a structural question, so they
@@ -819,26 +820,30 @@ full:  ## THE merge decision: everything in fast over EVERY package, plus lint c
 # ---------------------------------------------------------------------------
 # lint-ceiling — THE HOOK for the whole-tree lint ceiling.
 #
-# `make full` must lint the WHOLE tree, not only the changed lines, and it must
-# fail when the finding count rises above an agreed ceiling. Measured
-# 2026-08-03: 1184 findings full-tree, 682 in production files and 502 in test
-# files. A bare `golangci-lint run` therefore exits non-zero on every commit and
-# is useless as a verdict, which is why `make check` was documented as "never
-# gate on this".
+# `make full` lints the WHOLE tree, not only the changed lines, and fails when
+# the finding count rises above the ceiling in scripts/lint-ceiling.baseline.
+# A bare `golangci-lint run` reports more than a thousand findings, so it exits
+# non-zero on every commit and is useless as a verdict — which is why the old
+# `make check` was documented as "never gate on this", and why the whole-tree
+# linter watched nothing at all.
 #
-# The ceiling itself is being wired by a separate change. THIS TARGET IS THE
-# SEAM. That change should replace the body below with the real check and
-# should not need to touch `make full` at all.
+# The ceiling grandfathers what is already here and refuses what is added. It
+# only ever goes DOWN: a run that comes in under it rewrites the baseline to the
+# lower number, so a fixer commits the new ceiling with the fix and never has to
+# remember a separate bump. scripts/lint-ceiling.sh carries the reasoning for
+# a committed file over a derived number, and for delegating the count to
+# `make lint-full-count` rather than counting twice.
 #
-# Contract for whoever lands it:
-#   - the script is scripts/lint-ceiling.sh;
-#   - exit 0 means at or under the ceiling, non-zero means over it;
-#   - it must fail when the script is missing, which is what happens today.
+# `make fast` lints CHANGED LINES only (the --new-from-rev step in gate-static).
+# The whole-tree pass belongs to the merge decision alone.
+#
+# scripts/lint-ceiling-test.sh holds this target's assertions. It runs inside
+# script-tests, so it runs in both fast and full.
 # ---------------------------------------------------------------------------
 .PHONY: lint-ceiling
-lint-ceiling:  ## Whole-tree lint against an agreed finding ceiling (seam for scripts/lint-ceiling.sh)
+lint-ceiling:  ## Whole-tree lint against the finding ceiling in scripts/lint-ceiling.baseline
 	@if [ ! -x scripts/lint-ceiling.sh ]; then \
-		echo "make full: the whole-tree lint ceiling is not wired yet."; \
+		echo "make full: the whole-tree lint ceiling script is missing."; \
 		echo "  Expected: scripts/lint-ceiling.sh, executable, exit 0 at or under the ceiling."; \
 		echo "  This step FAILS while it is missing. A merge decision with a missing"; \
 		echo "  step has not produced a verdict, and a gate that shrugs at a missing"; \
@@ -965,15 +970,39 @@ release-validate: build-all  ## Optional local sanity check (NOT on the release 
 # ---------------------------------------------------------------------------
 # Lint shorthand
 # ---------------------------------------------------------------------------
+LINT_FULL_TIMEOUT ?= 15m
+
 .PHONY: lint lint-full-count
 lint:  ## golangci-lint run (shorthand)
 	$(TOOLS_DIR)/golangci-lint run
 
-lint-full-count:  ## Publish the full-tree grandfathered lint finding count (not a gate)
+# lint-full-count publishes the number. lint-ceiling judges it. Keeping the
+# count in one place is why scripts/lint-ceiling.sh calls this target instead of
+# running its own golangci-lint.
+#
+# TWO CHANGES WERE NEEDED before it could carry a verdict, both measured
+# 2026-08-03 on this tree.
+#
+#   THE CACHE. This used to run under with-isolated-gocache.sh, which hands the
+#   command a `mktemp -d` GOCACHE and deletes it on exit. Every run therefore
+#   type-checked every dependency from scratch. Cold it did not finish: 8m15s
+#   wall before golangci-lint hit its own cap and exited 4, so the target
+#   published NO COUNT AT ALL. Under with-lane-gocache.sh, which keys the cache
+#   on the checkout root and keeps it, the same run takes 10.7s. That is the
+#   same argument the gate-static comment above makes, and it applies here for
+#   the same reason: this is a recipe that runs on every `make full`, not once
+#   at the end of a tier.
+#
+#   THE CAP. .golangci.yml sets run.timeout to 5m, which is right for the
+#   changed-line runs but is under a cold whole-tree run. Overridden here, and
+#   only here, to a bound that a cold checkout fits inside. NOT disabled: a
+#   linter that hangs must fail rather than hang.
+lint-full-count:  ## Publish the full-tree grandfathered lint finding count (lint-ceiling judges it)
 	@REPORT=$$(mktemp); \
 	trap 'rm -f "$$REPORT"' EXIT; \
 	LINT_STATUS=0; \
-	scripts/with-isolated-gocache.sh $(TOOLS_DIR)/golangci-lint run --allow-parallel-runners --issues-exit-code=0 --max-issues-per-linter=0 --max-same-issues=0 \
+	scripts/with-lane-gocache.sh $(TOOLS_DIR)/golangci-lint run --allow-parallel-runners --issues-exit-code=0 --max-issues-per-linter=0 --max-same-issues=0 \
+		--timeout=$(LINT_FULL_TIMEOUT) \
 		--output.text.path=/dev/null --output.json.path="$$REPORT" >/dev/null || LINT_STATUS=$$?; \
 	if [ "$$LINT_STATUS" -ne 0 ]; then \
 		echo "lint-full-count: golangci-lint failed (exit $$LINT_STATUS)" >&2; \

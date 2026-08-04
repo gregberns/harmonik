@@ -372,7 +372,9 @@ func CancelQueueOnShutdownResult(ctx context.Context, projectDir string, q *Queu
 func ArchiveFailedQueue(_ context.Context, projectDir, name string, t time.Time) (string, error) {
 	src := queuePath(projectDir, name)
 	ts := t.UTC().Format("20060102150405")
-	dst := src + ".failed-" + ts
+	// Build the archive name from FailedArchiveInfix so the writer and every
+	// reader share one definition of the layout (see failedarchivelayout.go).
+	dst := src + FailedArchiveInfix + ts
 
 	if err := os.Rename(src, dst); err != nil {
 		if errors.Is(err, os.ErrNotExist) {

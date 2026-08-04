@@ -125,13 +125,24 @@ type OrphanSweepResult struct {
 	// Bead ref: hk-yhq3m — daemon orphan-sweep must also walk .claude/worktrees/.
 	ClaudeWorktreesSwept int
 
-	// QueueArchivesDeleted is the count of old queue.json archive files removed
-	// by the Gap-4 archive-accumulation sweep (hk-pycay). Keeps the newest N
-	// (default 5, configurable via HARMONIK_QUEUE_ARCHIVE_KEEP_COUNT) per
-	// category; older archives are removed.
-	//
-	// Bead ref: hk-pycay.
-	QueueArchivesDeleted int
+	// QueueArchivesObserved is the count of failed-queue archive files found on
+	// disk by [lifecycle.ObserveQueueArchives]. The sweep only LOOKS. It has
+	// never removed an archive and must not start: deciding which record of a
+	// failed run still has value is a judgment, and the daemon does not make
+	// judgments (CHARTER.md §5; specs/architecture.md §4.2 AR-006).
+	QueueArchivesObserved int
+
+	// QueueArchiveBytes is the total size on disk of the observed archives.
+	// Reported so an operator can see the cost of keeping them.
+	QueueArchiveBytes int64
+
+	// QueueArchivesOverRetention is the count of archives that exceed the
+	// operator's per-queue retention number. It is 0 whenever no operator has
+	// set HARMONIK_QUEUE_ARCHIVE_KEEP_COUNT — there is no default, so "over
+	// retention" is meaningless until somebody chooses a number. These are
+	// candidates for an operator or agent to remove. The daemon removes none
+	// of them.
+	QueueArchivesOverRetention int
 
 	// CoordinatorSessionsSkipped is the count of coordinator (flywheel) tmux
 	// sessions that were SKIPPED by the PL-006d sentinel exclusion: the session
@@ -189,6 +200,9 @@ func (r OrphanSweepResult) ToPayload() core.DaemonOrphanSweepCompletedPayload {
 		CoordinatorSessionsReaped:  r.CoordinatorSessionsReaped,
 		CrewSessionsSkipped:        r.CrewSessionsSkipped,
 		CaptainSessionsSkipped:     r.CaptainSessionsSkipped,
+		QueueArchivesObserved:      r.QueueArchivesObserved,
+		QueueArchiveBytes:          r.QueueArchiveBytes,
+		QueueArchivesOverRetention: r.QueueArchivesOverRetention,
 		SweptAt:                    r.SweptAt.UTC().Format(time.RFC3339),
 	}
 }
@@ -998,19 +1012,21 @@ func RunOrphanSweep(
 	}
 	result.ClaudeWorktreesSwept = len(claudeResult.Orphans)
 
-	// (h) Queue archive accumulation sweep (Gap-4 / hk-pycay).
-	// Keeps the newest N archives per category (default 5; configurable via
-	// HARMONIK_QUEUE_ARCHIVE_KEEP_COUNT) and deletes older ones. Non-fatal:
-	// a removal error is logged but does not abort startup.
-	archiveResult, archiveErr := lifecycle.SweepQueueArchives(projectDir, lifecycle.SweepQueueArchivesConfig{
+	// (h) Failed-queue archive OBSERVATION. This step reports and removes
+	// nothing. The counts ride out on daemon_orphan_sweep_completed and reach
+	// the captain through the boot digest, which is where the "may these go?"
+	// judgment belongs. See internal/lifecycle/queuearchiveobserver.go.
+	result.SweptAt = time.Now()
+	archiveReport, archiveErr := lifecycle.ObserveQueueArchives(projectDir, lifecycle.ObserveQueueArchivesConfig{
+		Now:    result.SweptAt,
 		Logger: cfg.Logger,
 	})
 	if archiveErr != nil {
 		errs = append(errs, fmt.Sprintf("queue-archives: %v", archiveErr))
 	}
-	result.QueueArchivesDeleted = archiveResult.Deleted
-
-	result.SweptAt = time.Now()
+	result.QueueArchivesObserved = archiveReport.Count
+	result.QueueArchiveBytes = archiveReport.TotalBytes
+	result.QueueArchivesOverRetention = archiveReport.OverRetention
 
 	if len(errs) > 0 {
 		return result, fmt.Errorf("daemon: RunOrphanSweep: %s", strings.Join(errs, "; "))

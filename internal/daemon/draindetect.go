@@ -448,15 +448,18 @@ func (d *DrainDetector) collectQueueFacts(facts *FleetFacts) {
 	facts.Queued.Count = len(facts.Queued.NonTerminalItems)
 }
 
-// failedArchives returns the paths of all un-reconciled
-// `.harmonik/queues/*.json.failed-*` archive files. Defense #3 requires
-// scanning DIRECTLY rather than via EnumerateQueueNames (which filters them
-// out): an un-reconciled failed archive is pending operator work.
+// failedArchives returns the paths of all un-reconciled failed-queue archive
+// files. Defense #3 requires scanning the archives DIRECTLY rather than via
+// EnumerateQueueNames (which filters them out): an un-reconciled failed
+// archive is pending operator work.
+//
+// The layout is owned by internal/queue (the package that writes the
+// archives); this reader MUST NOT re-glob by hand. See
+// internal/queue/failedarchivelayout.go for why.
 func (d *DrainDetector) failedArchives() ([]string, error) {
-	pattern := filepath.Join(d.projectDir, ".harmonik", "queues", "*.json.failed-*")
-	matches, err := filepath.Glob(pattern)
+	matches, err := queue.ListFailedArchives(d.projectDir)
 	if err != nil {
-		return nil, fmt.Errorf("glob %q: %w", pattern, err)
+		return nil, fmt.Errorf("drain failed-archive scan: %w", err)
 	}
 	return matches, nil
 }

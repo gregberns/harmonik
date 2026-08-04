@@ -248,12 +248,13 @@ func diskWorkAxes(projectDir string) *FleetFacts {
 	return facts
 }
 
-// diskFailedArchives globs .harmonik/queues/*.json.failed-* directly.
+// diskFailedArchives lists the failed-queue archives on disk. The layout is
+// owned by internal/queue (the package that writes them); this reader MUST NOT
+// re-glob by hand. See internal/queue/failedarchivelayout.go for why.
 func diskFailedArchives(projectDir string) ([]string, error) {
-	pattern := filepath.Join(projectDir, ".harmonik", "queues", "*.json.failed-*")
-	matches, err := filepath.Glob(pattern)
+	matches, err := queue.ListFailedArchives(projectDir)
 	if err != nil {
-		return nil, fmt.Errorf("glob %q: %w", pattern, err)
+		return nil, fmt.Errorf("disk failed-archive scan: %w", err)
 	}
 	return matches, nil
 }

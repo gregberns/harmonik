@@ -5,7 +5,7 @@
 # `make full` covers the format check, go build, go vet, the tagged vet, the
 # subsystem freeze greps, the changed-line lint, a compile of every _test.go
 # file, `go test -short -count=1 ./...` over EVERY package, the whole-tree lint
-# ceiling, the tagged scenario tier, the crash tier and the module hygiene
+# allow list, the tagged scenario tier, the crash tier and the module hygiene
 # checks. Real-daemon E2E tests opt out under -short (skipRealDaemonE2EInShort)
 # because they need br, twin binaries and a live daemon, none of which a hosted
 # runner has.

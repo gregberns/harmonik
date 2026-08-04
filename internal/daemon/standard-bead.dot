@@ -90,8 +90,8 @@ digraph "standard-bead" {
     // It runs the format check, `go build ./...`, `go vet ./...`, the tagged
     // vet, the subsystem freeze greps, the changed-line lint, a compile of
     // every _test.go file, `go test -short -count=1 ./...` over EVERY package,
-    // the whole-tree lint ceiling, the tagged scenario tier, the crash tier and
-    // the module hygiene checks.
+    // the whole-tree lint allow list, the tagged scenario tier, the crash tier
+    // and the module hygiene checks.
     //
     // Fail-closed at every step. No package scoping, no retry, and no path that
     // reports SUCCESS on a timeout, an OOM, a compile failure or an exit code
@@ -117,7 +117,7 @@ digraph "standard-bead" {
         // worst case. 3600s doubles that, which covers a cold cache and a loaded
         // box. A timeout here is a hard FAIL, never an approval.
         timeout="3600",
-        role="commit gate: make full — whole-repo build, vet, tests, lint ceiling and scenario tier, fail-closed; exit 0 = ready for review"
+        role="commit gate: make full — whole-repo build, vet, tests, lint allow list and scenario tier, fail-closed; exit 0 = ready for review"
     ];
 
     // review: agentic reviewer. Emits an Outcome whose preferred_label

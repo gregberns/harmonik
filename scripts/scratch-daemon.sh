@@ -39,6 +39,9 @@
 #   SCRATCH_WORKFLOW_MODE   — daemon --workflow-mode        (default: dot)
 #   SCRATCH_DAEMON_FLAGS    — extra flags appended verbatim to the daemon start
 #   SCRATCH_BATCH_TIMEOUT   — batch: max seconds to await terminal events (default: 1800)
+#   SCRATCH_DEBUG_WIRING    — HARMONIK_DEBUG_WIRING for the daemon (default: 1). Prints
+#                             the composition-root audit table at boot; that table is the
+#                             boot record for the queue-only subsystems posture.
 #
 # Pairs with the fast remote reproducer:
 #   go test -tags=scenario -run TestScenario_RemoteSubstrate_Localhost_E2E ./internal/daemon/
@@ -194,14 +197,20 @@ prov_hash() {
 # provision_matrix_config: patch a freshly-init'd scratch config so the
 # core-loop-proof matrix can boot + run the pi/codex cells (M6 WS4-3).
 #
+# It also applies the checked-in run posture, so the name undersells it: this is the
+# one place a scratch daemon's config differs from what `harmonik init` writes.
+#
 # Two gaps in the `harmonik init` config (both fail-loud, no compiled default):
 #   1. sentinel.liveness_no_progress_n — shipped commented; daemon.Start refuses to
 #      boot without it. Insert `0` (G-liveness off) under the existing sentinel: block
 #      so a throwaway matrix daemon never self-kills mid-run.
-#   2. harnesses.pi — absent; a pi bead can't resolve provider/model. Append the block
-#      from scripts/scratch-config-overlay.yaml.
-# Both edits are idempotent (skipped when the target key is already ACTIVE), so re-init
-# on an existing scratch is a no-op. codex needs no block (model comes from $CODEX_HOME).
+#   2. harnesses.pi — absent; a pi bead can't resolve provider/model.
+# Plus the run posture that init has no opinion about: the queue-only `subsystems:`
+# block, the ops-monitor interval, and the ctx-watchdog gate.
+# Everything except (1) comes from scripts/scratch-config-overlay.yaml, which is the
+# single tracked source. Both edits are idempotent, so re-init on an existing scratch
+# is a no-op — but see (2): the overlay's guard compares CONTENT, so editing the
+# overlay and re-running `init` really does re-apply.
 # ---------------------------------------------------------------------------
 provision_matrix_config() {
     local scratch cfg overlay repo_root
@@ -236,41 +245,52 @@ provision_matrix_config() {
         echo "[scratch-daemon] provision: set sentinel.liveness_no_progress_n: 0"
     fi
 
-    # (2) harnesses.pi (+ codex.stale_wal_max_bytes) from the checked-in overlay.
+    # (2) The whole ACTIVE section of the checked-in overlay: harnesses.pi,
+    # codex.stale_wal_max_bytes, the queue-only `subsystems:` posture, the ops-monitor
+    # interval, and the ctx-watchdog gate.
     #
-    # hk-es4f7: `harmonik init` now ships a DEFAULT harnesses.pi block (provider
-    # openrouter, model openrouter/qwen3-coder) via piConfigExampleYAML(). The old
-    # guard "skip if any 'harnesses:' present" therefore SHADOWED the matrix overlay:
-    # the ornith/DGX pi config never landed, so every pi cell red-failed the forced
-    # core-loop-lt gate (PI-040 OPENROUTER_API_KEY absent + model_selected=openrouter
-    # != pinned ornith). The overlay is the authoritative matrix config, so instead of
-    # skipping we STRIP init's default top-level harnesses:/codex: blocks and append
-    # the overlay's ornith block. Stripping is required because a second top-level
-    # 'harnesses:' key would be a duplicate-key YAML error. Idempotent: re-detect the
-    # already-applied ornith overlay (provider: ornith) and skip.
+    # The guard is CONTENT COMPARISON, not key detection, and that choice is the whole
+    # point of this step. Twice now a key-detection guard has silently shadowed the
+    # overlay: first "skip when any `harnesses:` is present", which hid the ornith pi
+    # config once `harmonik init` started shipping a default one (hk-es4f7); then
+    # "skip when `provider: ornith` is present", which would hide every key ADDED to
+    # the overlay afterwards, because the ornith line was already there. A config block
+    # that silently does not apply is worse than no block. So: read the overlay's active
+    # section, read whatever this script last appended, and re-apply when they differ.
+    #
+    # Applying means DELETE the previously appended section, then STRIP any top-level
+    # key the overlay owns (init writes its own harnesses:/codex:), then append. The
+    # strip is required because a second top-level key of the same name is a
+    # duplicate-key YAML error and the daemon refuses to boot.
+    local overlay_marker overlay_body applied_body
+    overlay_marker="# --- appended by scratch-daemon.sh provision from scratch-config-overlay.yaml ---"
     if [ ! -f "$overlay" ]; then
-        echo "[scratch-daemon] provision: WARNING overlay not found ($overlay) — pi cells will not run" >&2
-    elif grep -qE '^[[:space:]]+provider:[[:space:]]*ornith([[:space:]]|$)' "$cfg"; then
-        echo "[scratch-daemon] provision: ornith harnesses.pi overlay already applied — skipping"
-    else
-        # Strip any existing top-level harnesses:/codex: block (init's default) so the
-        # overlay's version is authoritative and no duplicate top-level key results.
-        # A block runs from its 'harnesses:'/'codex:' key line through all following
-        # indented or blank lines, up to the next top-level key or EOF.
-        awk '
-            /^(harnesses|codex):[[:space:]]*$/ { skip=1; next }
-            skip==1 && /^[[:space:]]/         { next }
-            skip==1 && /^[[:space:]]*$/       { next }
-            { skip=0 }
-            { print }
-        ' "$cfg" > "$cfg.tmp" && mv "$cfg.tmp" "$cfg"
-        {
-            echo ""
-            echo "# --- appended by scratch-daemon.sh provision (M6 WS4-3 / hk-es4f7) from scratch-config-overlay.yaml ---"
-            sed -n '/^# ---8<--- everything below this marker/,$p' "$overlay" | sed '1d'
-        } >> "$cfg"
-        echo "[scratch-daemon] provision: stripped default harnesses/codex + appended ornith overlay from $overlay"
+        echo "[scratch-daemon] provision: WARNING overlay not found ($overlay) — pi cells will not run, and the queue-only subsystems posture is NOT applied" >&2
+        return 0
     fi
+    overlay_body="$(sed -n '/^# ---8<--- everything below this marker/,$p' "$overlay" | sed '1d')"
+    applied_body="$(awk -v m="$overlay_marker" 'found { print } $0 == m { found = 1 }' "$cfg")"
+    if [ "$applied_body" = "$overlay_body" ]; then
+        echo "[scratch-daemon] provision: overlay already applied and identical — skipping"
+        return 0
+    fi
+    # Drop the previously appended section (marker line through EOF), if any.
+    awk -v m="$overlay_marker" '$0 == m { stop = 1 } stop != 1 { print }' "$cfg" > "$cfg.tmp" && mv "$cfg.tmp" "$cfg"
+    # Strip any top-level block the overlay owns. A block runs from its bare key line
+    # through all following indented or blank lines, up to the next top-level key or EOF.
+    awk '
+        /^(harnesses|codex|subsystems|opsmonitor|watchdog):[[:space:]]*$/ { skip=1; next }
+        skip==1 && /^[[:space:]]/         { next }
+        skip==1 && /^[[:space:]]*$/       { next }
+        { skip=0 }
+        { print }
+    ' "$cfg" > "$cfg.tmp" && mv "$cfg.tmp" "$cfg"
+    {
+        echo ""
+        echo "$overlay_marker"
+        printf '%s\n' "$overlay_body"
+    } >> "$cfg"
+    echo "[scratch-daemon] provision: applied overlay from $overlay (harnesses/codex + queue-only subsystems posture)"
 }
 
 # ---------------------------------------------------------------------------
@@ -366,10 +386,19 @@ cmd_up() {
     # seed beads at boot before a cell's subscribe arms). Override with
     # SCRATCH_DISABLE_EAGER_REFILL=0 for scratch runs that want the flywheel.
     local disable_eager="${SCRATCH_DISABLE_EAGER_REFILL:-1}"
+    # Composition-root wiring audit ON by default for scratch daemons. It prints one
+    # row per boot singleton with constructed / ABSENT, derived by reflection from the
+    # live bootState (internal/daemon/wiringlog.go). That table is the BOOT RECORD for
+    # the queue-only subsystems posture: it is how an assessor confirms that a
+    # subsystem switched off in config really was never constructed, rather than
+    # trusting the config. It is a stderr diagnostic only. Set SCRATCH_DEBUG_WIRING=0
+    # to silence it.
+    local debug_wiring="${SCRATCH_DEBUG_WIRING:-1}"
     # shellcheck disable=SC2016
     tmux new-session -d -s "$sess" -c "$scratch" \
         "env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
           HARMONIK_DISABLE_EAGER_REFILL='$disable_eager' \
+          HARMONIK_DEBUG_WIRING='$debug_wiring' \
           '$bin' --project '$scratch' \
           --max-concurrent $max_concurrent \
           --workflow-mode $workflow_mode \

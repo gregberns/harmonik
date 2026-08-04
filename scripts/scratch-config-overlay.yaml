@@ -4,7 +4,11 @@
 # CANNOT run the pi/codex matrix cells: it has no `harnesses.pi` block, so a pi-labelled
 # bead can never resolve its provider/model and the pi cells never reach terminal `pass`.
 # scratch-daemon.sh `init` appends the ACTIVE YAML below (everything past the marker) onto
-# the generated config, idempotently (skipped when a `harnesses:` key is already present).
+# the generated config. The append is idempotent by CONTENT: provision_matrix_config compares
+# the already-applied block against this file and re-applies when they differ. Edit this file
+# and re-run `scratch-daemon.sh init <scratch>` and the change lands. Do not re-add a
+# "skip when key X is present" guard — that guard silently shadowed the whole block once
+# already (hk-es4f7) and a config block that does not apply is worse than no block.
 #
 # The SECOND provisioning gap — `sentinel.liveness_no_progress_n` — is NOT in this file:
 # init ships a `sentinel:` block already, and a second top-level `sentinel:` key would be a
@@ -25,6 +29,67 @@
 # pi model_selected.model = "ornith" to match. If DGX is wedged, swap in the parked
 # OpenRouter block from the fleet config and repoint cells.json accordingly.
 #
+# ===========================================================================
+# THE QUEUE-ONLY RUN POSTURE
+# ===========================================================================
+#
+# The `subsystems:` block below is the run posture for the first assessor pass: the
+# queue is on and the rest of the tooling is off. It is the CHARTER's own test of
+# "done" — an operator names a subsystem, switches it off, and the composition root
+# then never constructs it.
+#
+# READ THIS BEFORE YOU EDIT THE BLOCK.
+#
+# 1. Do NOT switch `socket_listener` off. Every `harmonik queue` verb is a Unix-socket
+#    RPC, and daemon.buildQueueHandler — which builds the queue handler adapter — runs
+#    INSIDE daemon.bindSocket. Switching the socket listener off does not give you
+#    "queue only", it REMOVES the operator's whole queue surface.
+#
+# 2. Do NOT add a name that is not in projectconfig.knownSubsystems. An unknown name
+#    under `subsystems:` is a HARD ERROR (ErrUnknownSubsystem) and the daemon refuses
+#    to boot. A misspelled inner key is a hard error too. Both are deliberate.
+#
+# 3. Absent = ON. Every subsystem is enabled until an explicit `enabled: false`, so
+#    deleting a line here turns the subsystem back ON.
+#
+# WHAT THE DAEMON STILL CONSTRUCTS UNDER THIS POSTURE, AND WHY
+#
+#   socket_listener  ON  — the queue's whole operator surface. Also brings the comms
+#                          and crew handlers, live-state, the dashboard socket surface,
+#                          the operator-pause and concurrency controllers, and the
+#                          drain detector. They ride the same single gate. They cannot
+#                          be dropped without dropping `queue submit` with them.
+#   subscribe_hub    ON  — the assessor's own measuring instrument. `scratch-daemon.sh
+#                          batch` runs `harmonik subscribe --socket <sock>` to await
+#                          terminal events. With the hub off the daemon refuses the
+#                          `subscribe` op, and most clients do not report that refusal
+#                          intact (hk-1dwk2), so the batch would read as "no events"
+#                          and pass empty. Leave it on.
+#
+# NOT SWITCHABLE — these four have no switch, so each carries a mitigation instead.
+#
+#   supervisor watchdog — the scratch daemon runs STANDALONE. scratch-daemon.sh `up`
+#     starts the bare binary in tmux with no `harmonik supervise`, and
+#     assert_not_supervised refuses to operate on a project that has a live supervisor
+#     session. So the supervisor never exists here. A `supervisor_watchdog` subsystem
+#     name is being added on a parallel branch; when it lands, add it to this block.
+#     Until then writing that name here makes the daemon refuse to boot (see rule 2).
+#   ops-monitor schedule — daemon.ensureOpsMonitorSchedule registers the job with no
+#     enable switch. Mitigation: `opsmonitor.interval` below stretches the cadence from
+#     5 minutes to one year. It CANNOT suppress the first fire — schedule.JobNextFire
+#     fires a never-fired interval job immediately on the next tick — so expect exactly
+#     one ops-monitor-check.sh run at boot, and no more.
+#   eager refill — already off. scratch-daemon.sh `up` exports
+#     HARMONIK_DISABLE_EAGER_REFILL=1 by default, so `queue submit` is the only
+#     dispatcher and the daemon does not auto-dispatch ready beads at boot.
+#   boot orphan sweep — daemon.RunOrphanSweep runs on every boot with no switch.
+#     Mitigation is structural: the scratch clone is throwaway and holds no sessions
+#     the sweep can wrongly reap, and isolate_push_target repoints origin at a local
+#     bare repository so nothing the sweep does can reach the fleet checkout.
+#
+# The ctx-watchdog schedule is NOT in that list: it has a switch already
+# (`watchdog.enabled`, read by daemon.ensureCtxWatchdogSchedule), and it is set below.
+#
 # ---8<--- everything below this marker is appended verbatim ---8<---
 codex:
   stale_wal_max_bytes: 1048576   # required by the codex harness (no compiled default; log-classification only)
@@ -40,3 +105,68 @@ harnesses:
     api: openai-completions              # ornith needs "openai-completions", NOT bare "openai"
     api_key_env: ORNITH_API_KEY
     api_key_file: ~/.config/harmonik/ornith.key
+
+# The queue-only run posture. socket_listener and subscribe_hub stay ON and are
+# therefore absent from this block (absent = ON). See the header of
+# scripts/scratch-config-overlay.yaml for why each one stays.
+subsystems:
+  # Closes in_progress beads whose work already merged. It would rewrite bead state
+  # under the assessor between one queue reading and the next.
+  reconciliation_scheduler:
+    enabled: false
+  # Makes the core dispatch loop read the captain's lanes.json and withhold queues.
+  # Nothing in a queue-only pass writes that file.
+  dashboard_gate:
+    enabled: false
+  # A `br ready` shell-out plus an events.jsonl scan every two minutes, emitting an
+  # event with no consumer. In act mode it also blocks dispatch.
+  movement_governor:
+    enabled: false
+  # Sweeps idle completed crews. This pass starts no crews.
+  crew_idle_reap:
+    enabled: false
+  # Rewrites the concurrency ceiling from token rate. The pass pins concurrency at 1
+  # on purpose, so a tuner that moves it would destroy the reading.
+  bandwidth_tuner:
+    enabled: false
+  # Deletes merged and orphaned run/* and worktree-agent-* branches on a 6 h ticker.
+  # The assessor needs those branches to stay put for inspection.
+  branch_reaper:
+    enabled: false
+  # Polls remote workers. This pass configures none.
+  worker_report_loop:
+    enabled: false
+  # Pauses the handler automatically on a rate-limit or budget-exhausted event. An
+  # automatic global pause is indistinguishable from a wedged queue, which is the
+  # exact misreading this pass must not produce. The pause CONTROLLER is not this
+  # switch and stays, so the operator can still pause and resume by hand.
+  # Off is a declared reduction against specs/handler-pause.md HP-012.
+  handler_pause_policy:
+    enabled: false
+  # The daily run-count and USD ceiling. It is the only emitter of
+  # budget_exhausted{budget_scope=handler_account}, and handler_pause_policy above is
+  # its only consumer, so the two move together or one of them is left inert.
+  # OFF MEANS NO DAILY CEILING. The pass bounds spend structurally instead: one named
+  # batch of a known bead count, --max-concurrent 1, and `scratch-daemon.sh down`
+  # when the batch ends. Do not leave this daemon up unattended.
+  daemon_spend_meter:
+    enabled: false
+  # An alarm that emits one event no dispatch path reads.
+  review_gate_anomaly:
+    enabled: false
+  # Retries `br sync --import-only` once after a failed bead-ledger import. The pass
+  # wants to SEE a ledger failure, not have it silently repaired.
+  # Off is a declared reduction against specs/beads-integration.md BL-MRG-004.
+  ledger_import_recovery:
+    enabled: false
+
+# The ops-monitor schedule has no enable switch (daemon.ensureOpsMonitorSchedule).
+# Stretching the interval is the whole mitigation. It still fires once at boot,
+# because schedule.JobNextFire fires a never-fired interval job on the next tick.
+opsmonitor:
+  interval: 8760h
+
+# The ctx-watchdog schedule DOES have a switch. False skips registration entirely,
+# so the job never reaches .harmonik/schedules.json.
+watchdog:
+  enabled: false

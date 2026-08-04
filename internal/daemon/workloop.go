@@ -179,8 +179,29 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// only after the launch. It is replaced below, once they exist. Until then
 	// the run holds only resources that every disposition gives back, so the
 	// partial answer here cannot keep anything standing.
+	//
+	// runHandle is looked up ONCE and held, rather than fetched again at each use.
+	// The exit disposition below reads it from a deferred close, and the force-reap
+	// watchdog (StaleWatcher.forceReap) can Unregister a wedged run while its
+	// goroutine is still unwinding — so a second lookup at close time can miss a
+	// handle the run still owns, and would then throw away the evidence of the very
+	// failure that wedged it. Nil only when the caller registered no handle.
+	runHandle, _ := handles.RunRegistry.Get(runID)
+
+	// A cancelled context means one of two things, and three sites below have to
+	// tell them apart: this disposition, its replacement after the launch, and
+	// the graph's terminal.
+	//
+	// The daemon stopping takes every live run's context down with it. The
+	// stale-run reaper cancels ONE run, and that is the run's own terminal, not
+	// a shutdown. The reaper latches the handle before it cancels precisely so
+	// this can be told (hk-0z5x). A run with no handle cannot have been reaped.
+	daemonStopping := func() bool {
+		return ctx.Err() != nil && !(runHandle != nil && runHandle.Aborted())
+	}
+
 	runScope := &runlease.Scope{}
-	runExit := func() runlease.Exit { return runlease.Exit{DaemonStopping: ctx.Err() != nil} }
+	runExit := func() runlease.Exit { return runlease.Exit{DaemonStopping: daemonStopping()} }
 	defer func() {
 		if relErr := runScope.Close(runlease.Decide(runExit())).Err(); relErr != nil {
 			fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s run %s: giving resources back: %v\n",
@@ -234,13 +255,6 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// terminal events carry it directly, eliminating captain br round-trips.
 	// Best-effort: errors leave the fields empty (non-fatal).
 	owningEpicID, owningEpicAssignee := resolveOwningEpicFromRecord(ctx, handles.BrAdapter, beadRecord)
-	// runHandle is looked up ONCE and held, rather than fetched again at each use.
-	// The exit disposition below reads it from a deferred close, and the force-reap
-	// watchdog (StaleWatcher.forceReap) can Unregister a wedged run while its
-	// goroutine is still unwinding — so a second lookup at close time can miss a
-	// handle the run still owns, and would then throw away the evidence of the very
-	// failure that wedged it. Nil only when the caller registered no handle.
-	runHandle, _ := handles.RunRegistry.Get(runID)
 	// Propagate to RunHandle so StaleWatcher can read the attribution without
 	// its own br calls.
 	if runHandle != nil {
@@ -742,7 +756,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	runExit = func() runlease.Exit {
 		return runlease.Exit{
 			SessionRunsIndependently: false,
-			DaemonStopping:           ctx.Err() != nil,
+			DaemonStopping:           daemonStopping(),
 			EvidenceWorthKeeping:     runHandle != nil && runHandle.CapturedAgentOutput() && !bridge.Success(),
 		}
 	}
@@ -919,7 +933,14 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 			return alreadyApprovedOnMain && strings.Contains(reason, "rebase_dropped_commits")
 		},
 	})
-	if ctx.Err() != nil {
+	// The two cancellations take opposite paths here. A shutdown is a DRAIN: the
+	// run did not fail, it only did not finish, so RSM-021 parks the tip and
+	// collects no sessiondata. A reaped run's cancellation IS its terminal, so it
+	// falls through to the failure spine below, which reopens the bead and emits
+	// run_failed carrying the graph's own cancellation reason. Reading ctx.Err()
+	// here instead of the predicate is what left a reaped run with no terminal
+	// event at all (hk-aekon).
+	if daemonStopping() {
 		drainCtx := context.WithoutCancel(ctx)
 		tipSHA, tipErr := gitprobe.ResolveWorktreeHEADVia(drainCtx, dotRunner, wtPath)
 		if tipErr != nil || tipSHA == headSHA {

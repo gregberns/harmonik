@@ -415,10 +415,11 @@ func TestRC017_PerCategoryDefaultBudgetsMatchSpec(t *testing.T) {
 	tests := []struct {
 		cat               ReconciliationCategory
 		defaultBudgetsecs int
+		playbookRef       string
 	}{
-		{ReconciliationCategoryCat2, 600},
-		{ReconciliationCategoryCat3, 300},
-		{ReconciliationCategoryCat6a, 900},
+		{ReconciliationCategoryCat2, 600, "playbook://cat-2-non-idempotent"},
+		{ReconciliationCategoryCat3, 300, "playbook://cat-3-store-disagreement"},
+		{ReconciliationCategoryCat6a, 900, "playbook://cat-6a-integrity-llm-triageable"},
 	}
 
 	for _, tc := range tests {
@@ -432,11 +433,7 @@ func TestRC017_PerCategoryDefaultBudgetsMatchSpec(t *testing.T) {
 			inp := rc75InvestigatorFixtureInvestigatorInput(t)
 			inp.Category = tc.cat
 			inp.BudgetWallClockSeconds = tc.defaultBudgetsecs
-			if tc.cat == ReconciliationCategoryCat3 {
-				inp.PlaybookRef = "playbook://cat-3-store-disagreement"
-			} else if tc.cat == ReconciliationCategoryCat6a {
-				inp.PlaybookRef = "playbook://cat-6a-integrity-llm-triageable"
-			}
+			inp.PlaybookRef = tc.playbookRef
 			if !inp.Valid() {
 				t.Errorf("RC-017: InvestigatorInput for %q with default budget %ds: Valid() = false, want true",
 					tc.cat, tc.defaultBudgetsecs)

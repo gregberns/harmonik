@@ -293,12 +293,10 @@ func parseBranchingSection(beadBody string) (BranchingConfig, error) {
 	// yaml.Unmarshal already leaves the field as its zero value ("") when the
 	// YAML value is null or empty, so no extra normalisation is needed.
 
-	return BranchingConfig{
-		StartFrom:       shape.StartFrom,
-		LandsOn:         shape.LandsOn,
-		LandingStrategy: shape.LandingStrategy,
-		TargetRepo:      shape.TargetRepo,
-	}, nil
+	// A conversion, not a field-by-field literal: the wire shape and the config
+	// shape must stay identical, and a conversion turns any future drift into a
+	// compile error instead of a silently dropped field.
+	return BranchingConfig(shape), nil
 }
 
 // splitLines splits s on newline boundaries, preserving empty trailing lines

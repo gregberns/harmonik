@@ -258,7 +258,7 @@ func (w resolvedWorkflow) Valid() bool {
 	if w.ReviewPolicy == core.ReviewPolicyNoReview {
 		return noReviewDescriptor && legacySource
 	}
-	return w.ReviewPolicy == core.ReviewPolicyReviewed && !(noReviewDescriptor && legacySource)
+	return w.ReviewPolicy == core.ReviewPolicyReviewed && (!noReviewDescriptor || !legacySource)
 }
 
 // resolveWorkflow returns the parsed graph and every durable selection fact.

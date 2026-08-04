@@ -86,5 +86,5 @@ func validRunStartedPolicyBinding(d WorkflowDescriptor, policy ReviewPolicy, sou
 	if policy == ReviewPolicyNoReview {
 		return noReviewDescriptor && legacySource
 	}
-	return policy == ReviewPolicyReviewed && !(noReviewDescriptor && legacySource)
+	return policy == ReviewPolicyReviewed && (!noReviewDescriptor || !legacySource)
 }

@@ -399,10 +399,7 @@ exit 0
 
 	// Poll until bead is closed (ceiling 25s; the happy path closes at ~8s).
 	deadline := time.After(25 * time.Second)
-	for {
-		if len(requeueLedger.getClosedIDs()) > 0 {
-			break
-		}
+	for len(requeueLedger.getClosedIDs()) == 0 {
 		select {
 		case <-deadline:
 			t.Logf("T4-S3: bead not closed within 25s; reopened=%v closed=%v events=%v",
@@ -505,10 +502,7 @@ func TestT4_CloseBeadError(t *testing.T) {
 
 	// Wait for both beads to be attempted (CloseBead called twice — both will fail).
 	deadline := time.After(7 * time.Second)
-	for {
-		if ledger.getClaimCallCount() >= 2 {
-			break
-		}
+	for ledger.getClaimCallCount() < 2 {
 		select {
 		case <-deadline:
 			t.Logf("T4-S4: only %d claim(s) seen after 7s; closeErr injected; loop may have crashed",
@@ -620,10 +614,7 @@ func TestT4_ConcurrentLoops(t *testing.T) {
 
 	// Wait for at least one close to be recorded.
 	deadline := time.After(5 * time.Second)
-	for {
-		if len(sharedLedger.getClosedIDs()) > 0 {
-			break
-		}
+	for len(sharedLedger.getClosedIDs()) == 0 {
 		select {
 		case <-deadline:
 			t.Log("T4-S5: no bead closed within 5s with two concurrent loops")
@@ -738,10 +729,7 @@ func TestT4_EventOrderingOnCloseError(t *testing.T) {
 	}()
 
 	deadline := time.After(10 * time.Second)
-	for {
-		if ledger.closeCallCount() > 0 {
-			break
-		}
+	for ledger.closeCallCount() == 0 {
 		select {
 		case <-deadline:
 			t.Error("T4-S6: CloseBead was not called within 10s")

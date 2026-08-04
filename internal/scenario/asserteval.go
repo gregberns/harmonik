@@ -568,11 +568,22 @@ func validScenarioGitRef(ref string) bool {
 		return false
 	}
 	for _, r := range ref {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._/-", r)) {
+		if !scenarioGitRefRuneValid(r) {
 			return false
 		}
 	}
 	return true
+}
+
+// scenarioGitRefRuneValid reports whether r may appear in a scenario git ref.
+// The set is ASCII alphanumerics plus the four punctuation marks git refs need.
+func scenarioGitRefRuneValid(r rune) bool {
+	switch {
+	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		return true
+	default:
+		return strings.ContainsRune("._/-", r)
+	}
 }
 
 // commitMessageHasTrailer reports whether the commit message contains a trailer

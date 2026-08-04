@@ -411,6 +411,9 @@ func TestRunEM012_InputMustBeWorkspaceRefNotInlinePayload(t *testing.T) {
 	// Compile-time check: assigning r.Input to a WorkspaceRef variable must
 	// type-check. If Input were changed to []byte or map[string]any, this
 	// assignment would fail to compile, surfacing the breaking change.
+	//nolint:staticcheck // ST1023/QF1011 want the type inferred, but the explicit
+	// type IS the assertion here: it pins Run.Input to WorkspaceRef. Inferring the
+	// type would make the declaration accept whatever Run.Input becomes.
 	var ref WorkspaceRef = r.Input
 	if ref == "" {
 		t.Error("EM-012: Run.Input must be a non-empty WorkspaceRef (workspace reference, not inline payload)")

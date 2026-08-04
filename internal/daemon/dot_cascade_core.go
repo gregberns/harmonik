@@ -508,7 +508,8 @@ func driveDotWorkflow(
 			// meant to rescue. The retry is already gated by reviewerNoVerdictRetries <
 			// dotMaxReviewerNoVerdictRetries; if the retry also stalls, hard-fail fires
 			// below via the exhausted-budget branch.
-			if iterationCount >= 2 && !headAdvanced && !(isReviewer && reviewerNoVerdictRetries > 0) && !firstReviewerEntryWithGreenGate {
+			reviewerRetryInFlight := isReviewer && reviewerNoVerdictRetries > 0
+			if iterationCount >= 2 && !headAdvanced && !reviewerRetryInFlight && !firstReviewerEntryWithGreenGate {
 				// hk-8ps7q — approved-and-done is COMPLETION, not no-progress.
 				//
 				// The no-progress condition (iter ≥ 2 + HEAD unchanged) is met by
@@ -1060,7 +1061,7 @@ func driveDotWorkflow(
 					salvageHead != "" && salvageHead != parentSHA {
 					return dotWorkflowResult{
 						success: true,
-						summary: fmt.Sprintf("dot: commit_gate cap-hit salvaged — committed tip present; auto-advancing to merge (hk-1vlz F42)"),
+						summary: "dot: commit_gate cap-hit salvaged — committed tip present; auto-advancing to merge (hk-1vlz F42)",
 					}
 				}
 			}

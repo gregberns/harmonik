@@ -264,10 +264,7 @@ func (b *LiveStateBuilder) buildOneSession(agent, sessionType, declaredSID strin
 
 	liveSID, _, _ := keeper.ReadSessionIDFile(b.projectDir, agent)
 
-	sleepMarker := false
-	if liveSID != "" && sleepSIDs[strings.ToLower(liveSID)] {
-		sleepMarker = true
-	}
+	sleepMarker := liveSID != "" && sleepSIDs[strings.ToLower(liveSID)]
 	if !sleepMarker && declaredSID != "" && sleepSIDs[strings.ToLower(declaredSID)] {
 		sleepMarker = true
 	}

@@ -312,10 +312,7 @@ func TestCHBINV002_SessionContainsExactlyOneTerminalEvent(t *testing.T) {
 
 	// Wait for the bead to be reopened (exit=1 → ReopenBead path).
 	deadline := time.After(10 * time.Second)
-	for {
-		if len(ledger.reopenedIDs()) > 0 || len(ledger.closedIDs()) > 0 {
-			break
-		}
+	for len(ledger.reopenedIDs()) == 0 && len(ledger.closedIDs()) == 0 {
 		select {
 		case <-deadline:
 			t.Logf("chbInv002: events=%v closed=%v reopened=%v",

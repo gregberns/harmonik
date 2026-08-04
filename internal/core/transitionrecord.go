@@ -24,6 +24,28 @@ type transitionWireState struct {
 	TransitionHistory transitionWireCommitRange `json:"transition_history"`
 }
 
+// transitionWireRemoteEndpoint is the JSON wire shape for RemoteEndpoint
+// (execution-model.md §6.1 RECORD RemoteEndpoint).
+type transitionWireRemoteEndpoint struct {
+	WorkerName string `json:"worker_name"`
+	Host       string `json:"host"`
+	RepoPath   string `json:"repo_path"`
+}
+
+// transitionWireReleaseClaim is the JSON wire shape for ReleaseClaim
+// (execution-model.md §6.1 RECORD ReleaseClaim).
+//
+// remote_endpoint is omitted for local work rather than written as null, so a
+// local claim and a remote claim differ by the presence of the key. §6.1
+// declares the field `RemoteEndpoint | None` and EM-031b treats an
+// incompletely-recorded endpoint as unusable, so absence is the clearer signal.
+type transitionWireReleaseClaim struct {
+	DispatchHeadSHA string                        `json:"dispatch_head_sha"`
+	MergeTargetRef  string                        `json:"merge_target_ref"`
+	MergeTargetSHA  string                        `json:"merge_target_sha"`
+	RemoteEndpoint  *transitionWireRemoteEndpoint `json:"remote_endpoint,omitempty"`
+}
+
 // transitionWire is the JSON wire shape for a Transition sibling file.
 // Field names follow the snake_case convention of execution-model.md §6.1 RECORD Transition.
 // schema_version is included per §4.4.EM-018 and MUST match the commit's
@@ -46,7 +68,52 @@ type transitionWire struct {
 	OutcomeStatus     OutcomeStatus       `json:"outcome_status"`
 	TransitionKind    TransitionKind      `json:"transition_kind"`
 	RollbackToStateID *StateID            `json:"rollback_to_state_id"`
-	SchemaVersion     int                 `json:"schema_version"`
+	// ReleaseClaim is omitted entirely on an ordinary transition. §6.1 declares
+	// the claim "absent on all other transitions", so the key must not appear
+	// as a null on records that carry no claim.
+	ReleaseClaim  *transitionWireReleaseClaim `json:"release_claim,omitempty"`
+	SchemaVersion int                         `json:"schema_version"`
+}
+
+// releaseClaimToWire converts a ReleaseClaim to its wire representation.
+// It returns nil for a nil claim, which the omitempty tag then drops.
+func releaseClaimToWire(c *ReleaseClaim) *transitionWireReleaseClaim {
+	if c == nil {
+		return nil
+	}
+	wire := &transitionWireReleaseClaim{
+		DispatchHeadSHA: c.DispatchHeadSHA,
+		MergeTargetRef:  c.MergeTargetRef,
+		MergeTargetSHA:  c.MergeTargetSHA,
+	}
+	if c.RemoteEndpoint != nil {
+		wire.RemoteEndpoint = &transitionWireRemoteEndpoint{
+			WorkerName: c.RemoteEndpoint.WorkerName,
+			Host:       c.RemoteEndpoint.Host,
+			RepoPath:   c.RemoteEndpoint.RepoPath,
+		}
+	}
+	return wire
+}
+
+// releaseClaimFromWire converts a wire release claim back to its typed form.
+func releaseClaimFromWire(w *transitionWireReleaseClaim) *ReleaseClaim {
+	if w == nil {
+		return nil
+	}
+	claim := &ReleaseClaim{
+		DispatchHeadSHA: w.DispatchHeadSHA,
+		MergeTargetRef:  w.MergeTargetRef,
+		MergeTargetSHA:  w.MergeTargetSHA,
+	}
+	if w.RemoteEndpoint != nil {
+		claim.RemoteEndpoint = &RemoteEndpoint{
+			WorkerName: w.RemoteEndpoint.WorkerName,
+			Host:       w.RemoteEndpoint.Host,
+			RepoPath:   w.RemoteEndpoint.RepoPath,
+		}
+	}
+	return claim
 }
 
 // stateToWire converts a State to its wire representation.
@@ -92,6 +159,7 @@ func MarshalTransitionRecord(tr Transition) ([]byte, error) {
 		OutcomeStatus:     tr.OutcomeStatus,
 		TransitionKind:    tr.TransitionKind,
 		RollbackToStateID: tr.RollbackToStateID,
+		ReleaseClaim:      releaseClaimToWire(tr.ReleaseClaim),
 		SchemaVersion:     tr.SchemaVersion,
 	}
 	data, err := json.Marshal(wire)
@@ -99,6 +167,63 @@ func MarshalTransitionRecord(tr Transition) ([]byte, error) {
 		return nil, fmt.Errorf("MarshalTransitionRecord: %w", err)
 	}
 	return data, nil
+}
+
+// wireToState converts a wire state back to its typed form.
+func wireToState(w transitionWireState) State {
+	return State{
+		StateID:   w.StateID,
+		RunID:     w.RunID,
+		NodeID:    w.NodeID,
+		EnteredAt: w.EnteredAt,
+		TransitionHistory: CommitRange{
+			FirstCommitSHA: w.TransitionHistory.FirstCommitSHA,
+			LastCommitSHA:  w.TransitionHistory.LastCommitSHA,
+		},
+	}
+}
+
+// UnmarshalTransitionRecord decodes the typed JSON bytes of a transition-record
+// sibling file back into a Transition (execution-model.md §4.4.EM-018,
+// §4.4.EM-019).
+//
+// EM-019 requires the record to be retrievable from the checkpoint commit alone,
+// with no cross-commit index. This function is the decode half of that contract:
+// give it the bytes of
+// .harmonik/transitions/<run_id>/<transition_id>.json and it returns the record
+// the daemon wrote.
+//
+// UnmarshalTransitionRecord does NOT validate the decoded record. A caller that
+// depends on the record's shape MUST check Valid() on the result. Recovery paths
+// under §4.7.EM-031b treat a record that fails Valid() as a corrupt claim and
+// take the safe branch.
+//
+// The decoder is strict about JSON syntax and lenient about unknown fields, per
+// the EM-022 N-1 readability contract: a reader at schema version N-1 MUST parse
+// a record written at version N and treat added fields as unknown but non-fatal.
+func UnmarshalTransitionRecord(data []byte) (Transition, error) {
+	var wire transitionWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return Transition{}, fmt.Errorf("UnmarshalTransitionRecord: %w", err)
+	}
+	return Transition{
+		TransitionID:      wire.TransitionID,
+		RunID:             wire.RunID,
+		FromState:         wireToState(wire.FromState),
+		ToState:           wireToState(wire.ToState),
+		ActorRole:         wire.ActorRole,
+		CandidateActions:  wire.CandidateActions,
+		ChosenAction:      wire.ChosenAction,
+		PolicyVersion:     wire.PolicyVersion,
+		Evidence:          Evidence(wire.Evidence),
+		VerifierMetrics:   VerifierMetrics(wire.VerifierMetrics),
+		Confidence:        wire.Confidence,
+		OutcomeStatus:     wire.OutcomeStatus,
+		TransitionKind:    wire.TransitionKind,
+		RollbackToStateID: wire.RollbackToStateID,
+		ReleaseClaim:      releaseClaimFromWire(wire.ReleaseClaim),
+		SchemaVersion:     wire.SchemaVersion,
+	}, nil
 }
 
 // ValidateTransitionSchemaVersion checks that tr.SchemaVersion equals

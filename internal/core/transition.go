@@ -117,6 +117,21 @@ type Transition struct {
 	// rollback is recorded as forward-append, not as a history-rewrite.
 	RollbackToStateID *StateID
 
+	// ReleaseClaim is present on the final pre-release checkpoint of a
+	// committed DOT run and absent on every other transition (EM-031b, §6.1).
+	// It carries the dispatch-head SHA, the resolved merge target, and the
+	// remote endpoint when the run is remote.
+	//
+	// The field is additive under the EM-022 N-1 readability contract: a reader
+	// at the prior schema version parses a record that carries it and treats it
+	// as an unknown, non-fatal field. The wire form omits the key entirely when
+	// the field is nil, so an ordinary transition record is unchanged.
+	//
+	// Once the checkpoint commit lands the claim is immutable per EM-020 and
+	// EM-031b. Use WriteReleaseClaimCheckpoint to write it and ReadReleaseClaim
+	// to read it back.
+	ReleaseClaim *ReleaseClaim
+
 	// SchemaVersion is the schema version of this record under the N-1
 	// readability contract of execution-model.md §4.4.EM-022 and
 	// operator-nfr.md §4.5 ON-018. The current version is 1. Must be > 0.
@@ -140,6 +155,8 @@ type Transition struct {
 //     policy-rollback}; nil for forward, local-patchback, context-restore (EM-044)
 //   - context-restore MUST NOT carry RollbackToStateID (EM-046: context-restore
 //     does not relocate the run's graph position)
+//   - ReleaseClaim is nil, or dereferences to a valid ReleaseClaim (EM-031b).
+//     A nil claim is normal: only the final pre-release checkpoint carries one.
 //   - SchemaVersion > 0
 func (tr Transition) Valid() bool {
 	if uuid.UUID(tr.TransitionID) == uuid.Nil {
@@ -178,6 +195,11 @@ func (tr Transition) Valid() bool {
 		return false
 	}
 	if !needsRollback && tr.RollbackToStateID != nil {
+		return false
+	}
+	// EM-031b: a present claim must be complete. An incomplete claim is the
+	// case recovery cannot act on, so it must never reach a checkpoint commit.
+	if tr.ReleaseClaim != nil && !tr.ReleaseClaim.Valid() {
 		return false
 	}
 	if tr.SchemaVersion <= 0 {

@@ -418,6 +418,29 @@ This requirement names the ShowBead pre-claim guard previously carried as implem
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
+### 4.5b Readiness evidence read surface
+
+The first canary item of a queue dogfood pass is chosen by a person. An assessor who was not there judges that choice later. This section names the evidence the choice must leave behind. Every read in it is read-only: BI-INV-001 continues to apply, and selection is a planning act that MUST NOT change fleet ledger state.
+
+#### BI-013e — Readiness snapshot before first-canary selection
+
+Before first-canary selection, the gate owner MUST retain a readiness snapshot. The snapshot MUST record the capture time, the commands run, the retained output path of every command whose output was retained, the candidate set, the selected item, the exclusion reason for every other candidate, the selected item's live ledger data, the event-log files read, and the terminal-intent inspection.
+
+The selected item MUST be `open`. It MUST be repeat-safe with a stated reason. It MUST be suitable for one local stream run. Planning and selection MUST NOT close, create, or otherwise change fleet Beads state.
+
+The snapshot MUST name each stale graph finding, the source path that was checked, and its disposition. A stale finding MUST also name the commit that fixed it and the focused test that pins the new behaviour. A disposition without both is a judgement and not evidence. A condition that current source still has MUST become a separate new scoped open record with current source evidence and its own source path. The snapshot MUST hold the two sets in separate lists. It MUST NOT tell them apart by a field on one shared list.
+
+The snapshot MUST identify every event-log file it used as evidence. The log rotates, so a capture that spans a rotation names more than one file. The snapshot MUST restate that the JSONL log is observational per §4.7 BI-023.
+
+Every candidate's status in the snapshot MUST come from a live `br show` read at capture time per §4.5a BI-013b. The caller MUST NOT supply it.
+
+The two clauses below bind the assessor's procedure, not the record. No artifact can carry them, and an implementation MUST NOT be read as satisfying them. A scratch event result MUST NOT change the fleet ledger. After a controlled run, scratch evidence MAY be attached to the assessor report and to nothing else.
+
+> INFORMATIVE — implementation, correct as of 2026-08-04 and not part of the requirement. `internal/queue/readiness` carries the read-only obligation above in its types rather than in a check: its `BeadReader` port declares no write method, and the constructor that would accept a caller-supplied status is unexported, so `Capture` is the only way in and it reads every status itself. Operational record: `docs/queue-readiness-ledger-events.md`.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+
 ### 4.6 Bead-ID propagation
 
 #### BI-017 — Run metadata records `bead_id`

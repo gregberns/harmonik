@@ -83,7 +83,9 @@ func TestValidateDot_ParseErrorsBecomeOneDiagnosticEach(t *testing.T) {
 }
 
 func TestValidateDot_WellFormedGraphHasNoParseDiagnostic(t *testing.T) {
-	src := "digraph W {\n  start -> done;\n}\n"
+	// The graph must carry a graph-level workflow_id: WG-055 makes it required,
+	// and a fixture missing it is not the well-formed input this test names.
+	src := "digraph W {\n  workflow_id=\"well-formed-graph\";\n  start -> done;\n}\n"
 	for _, d := range validateDot(src) {
 		if d.Code == "em038_not_parseable" {
 			t.Errorf("well-formed graph reported as not-parseable: %q", d.Detail)

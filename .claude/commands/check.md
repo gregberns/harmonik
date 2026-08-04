@@ -24,7 +24,9 @@ It is not a merge verdict. It tests a chosen subset, so it can be green while th
 make full
 ```
 
-`make full` is the merge decision, and it is what CI runs. Everything `make fast` does, over EVERY package, plus the whole-tree lint ceiling, the tagged scenario tier, the crash tier and the module hygiene checks (`go mod tidy`, forbidden imports, `govulncheck`).
+`make full` is the merge decision, and it is what CI runs. Everything `make fast` does, over EVERY package, plus the whole-tree lint allow list, the tagged scenario tier, the crash tier and the module hygiene checks (`go mod tidy`, forbidden imports, `govulncheck`).
+
+The allow list is `tools/lintreport/allow.txt`. Each line names one tolerated pair of file and linter. A finding whose pair is on the list is grandfathered. A finding whose pair is not on the list fails the build. Clean a file and delete its line, and that file cannot regress.
 
 No package scoping. No retry. No fail-open. A timeout, an out-of-memory kill, a compile failure or an exit code nothing recognises all BLOCK. `scripts/gate-fails-closed-test.sh` holds that property and runs inside both targets.
 

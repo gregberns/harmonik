@@ -60,7 +60,7 @@ digraph "sonnet-triple-review" {
         idempotency_class="idempotent",
         tool_command="make full",
         timeout="3600",
-        role="commit gate: make full — whole-repo build, vet, tests, lint ceiling and scenario tier, fail-closed; exit 0 = ready for review"
+        role="commit gate: make full — whole-repo build, vet, tests, lint allow list and scenario tier, fail-closed; exit 0 = ready for review"
     ];
 
     // review_correctness: Sonnet. Correctness/edge-cases/contracts lens.

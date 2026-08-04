@@ -3,10 +3,34 @@ package runloop
 // scenariogate.go — pre-merge gate that runs //go:build scenario tests when the
 // committed changes touch scenario-tagged files.
 //
-// The commit-gate's default "go test ./..." skips //go:build scenario tests, so
-// a bead that adds a failing scenario test merges green. This gate detects
-// scenario-touching commits and re-runs the relevant tagged package(s) before
-// mergeRunBranchToMain is allowed to proceed.
+// SUPERSEDED, AND SCHEDULED FOR DELETION. Read this before you change anything
+// here.
+//
+// This file was written to keep the daemon in lock-step with a shell gate,
+// scripts/scenario-gate.sh, that the commit_gate node used to run. That script
+// is DELETED. commit_gate now runs `make full`, which runs `go test -short
+// -count=1 ./...` over every package AND the whole tagged scenario tier, and
+// which fails closed at every step. So by the time a run reaches the merge
+// path, the scenario suite has already been run against it by something
+// stricter than this file.
+//
+// What is left here is a second, weaker copy of a decision that is already
+// made. It is delta-scoped, so it only tests packages the diff touched. It is
+// fail-open on a timeout, a signal kill, a compile failure and an exit code it
+// does not recognise, and it retries a genuine failure once and ALLOWS when the
+// retry passes. Those are the five approve-on-failure paths the shell gate had
+// and the reason that gate was removed.
+//
+// It is not a hole today, because it can only ALLOW: commit_gate blocks first
+// and this cannot un-block anything. It is dead weight, and the correct next
+// change is to delete it. That change touches:
+//   - this file and scenariogate_test.go
+//   - the call in runbridge.go (search for runScenarioGateIfNeededVia)
+//   - runbridge_characterization_test.go, which names it
+//   - scripts/runloop-freeze-gate.sh, which lists this file as required and
+//     lists the symbol as forbidden in internal/daemon
+// It is left standing here only so that removal is its own reviewable change
+// rather than a rider on the gate replacement.
 //
 // Detection: a file is "scenario-touching" when it lives under test/scenario/,
 // internal/scenario/, or contains a //go:build scenario (or legacy // +build
@@ -73,10 +97,10 @@ type scenarioGateResult struct {
 // the first genuine FAIL therefore strands SOUND beads whose code was correct.
 // So when the first run classifies as a genuine RED, the gate re-runs the same
 // package(s) ONCE: a real regression fails deterministically on retry (BLOCK); a
-// load-induced flake passes (fail-open, ALLOW).  This mirrors the shell gate
-// scripts/scenario-gate.sh (hk-8b35c), keeping script and daemon in lock-step as
-// standard-bead.dot D3 requires, and extends the OOM/SIGKILL non-block precedent
-// to the one residual flake shape (genuine-FAIL-under-load) it didn't cover.
+// load-induced flake passes (fail-open, ALLOW).  The shell gate this mirrored
+// is deleted, so the standard-bead.dot D3 lock-step requirement no longer
+// applies: D3 now names `make full`, which retries nothing and blocks on the
+// first failure.
 //
 // On git/filesystem errors the gate is skipped (conservative: never false-block
 // a run due to gate machinery failure).
@@ -154,9 +178,9 @@ func runScenarioGateOnceVia(ctx context.Context, runner tmux.CommandRunner, wtPa
 // fails once but not on retry is treated as a load-induced flake and fails open.
 //
 // runOnce is injected so this policy is unit-testable without a real `go test`;
-// the production caller supplies runScenarioGateOnce.  Mirrors the shell gate
-// scripts/scenario-gate.sh (hk-8b35c) so script and daemon agree (standard-bead
-// D3).
+// the production caller supplies runScenarioGateOnce.  The shell gate it once
+// mirrored is deleted, and `make full` — the gate that replaced it — has no
+// retry at all. See the SUPERSEDED note at the top of this file.
 func scenarioGateWithRetry(pkgs []string, runOnce func() scenarioGateResult) scenarioGateResult {
 	first := runOnce()
 	if !first.blocked {

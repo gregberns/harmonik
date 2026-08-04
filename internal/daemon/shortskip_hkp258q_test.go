@@ -4,7 +4,7 @@ import "testing"
 
 // skipRealDaemonE2EInShort excludes heavy real-daemon / real-binary end-to-end
 // tests from the per-bead commit_gate, which runs `go test -short` (see
-// scripts/scenario-gate.sh "affected unit" step). These tests boot a real
+// the gate's unit step). These tests boot a real
 // daemon (daemon.Start), spawn real twin/claude binaries, exercise the
 // review-loop over a real Unix-domain socket, or assert strict event ordering
 // across goroutines — none of which is deterministic enough for a merge gate,

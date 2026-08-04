@@ -95,8 +95,10 @@ skill owns the read/write discipline. Only the traps you cannot look up stay her
 - **Commit with `git commit -F <file>`, never `-m`.** Non-trivial commits require `Reviewed-By:` and
   `Review-Verdict:` trailers (JSON, `schema_version: 1`); a `BLOCK` verdict is never committed.
   Validation is agent-enforced — git hooks are retired. `--no-verify` is forbidden.
-- **Run `/check` after committing.** It judges your commit (`--new-from-rev=HEAD~1`), not the repo.
-  Never gate on bare `make check` — it always exits non-zero by design.
+- **Run `/check` after committing.** Two targets and only two: `make fast` while you work, `make full`
+  before anyone accepts the work. `make full` is the merge decision and it is what CI runs. It tests
+  every package, it never scopes by what changed, and it never approves on a timeout, an OOM, a
+  compile failure or a passing retry.
 
 <!-- end-bv-agent-instructions -->
 

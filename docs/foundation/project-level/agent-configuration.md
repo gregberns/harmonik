@@ -92,14 +92,14 @@ The `CONSTITUTION.md` at repo root lists immutable project foundations. Edits re
 - **Agent reviewer runs on every non-trivial commit** (per `build-practices.md §Agent review on every commit`). Skipping reviewer on a non-trivial commit is a process violation. Verdict lands in two commit trailers: `Reviewed-By: agent-reviewer` (presence marker) + `Review-Verdict:` (structured JSON per `build-practices.md §Commit conventions`). `BLOCK` never lands.
 - **Never amend** in non-interactive workflows. Interactive sessions: amends allowed for cosmetic fixes only, never across sessions.
 - **Never force-push** `main` or `harmonik/integration`. `run/*` branches may be force-pushed by their owning run only. `agent/<codename>` park-branches may be force-pushed by their owning session only.
-- **Pre-commit hook runs `make check-fast`** (Tier 1 gauntlet per `quality-checks.md`): `gofumpt`/`gci` diff, `go vet ./...`, `go build`, `golangci-lint run --new-from-rev=HEAD~1` (includes `depguard` component-graph rules), `go test -short` on touched packages. Hook failure blocks commit; agents fix the root cause, they MUST NOT `--no-verify`.
+- **The inner loop is `make fast`** (per `quality-checks.md §Two gate targets`): `gofumpt`/`gci` check, `go build ./...`, `go vet ./...`, the tagged vet, the subsystem freeze greps, `golangci-lint run --new-from-rev=HEAD~1` (includes `depguard` component-graph rules), a compile of every `_test.go` file, and `go test -short` over the major packages. Git hooks are retired; agents run it through `/check`. A red result is fixed at the root cause, never with `--no-verify`.
 
 ### Go procedures
 
-- **Agent-declared-done runs `make check-full` locally before every non-trivial commit and before completion is reported.** Tier 3 gauntlet (per `quality-checks.md §Three-tier identical gauntlet`) exercises integration + scenario + fast-crash tests. No commit or declaration of completeness without this passing. Post-push CI runs the identical gauntlet; a local pass predicts CI pass. If CI fails after a local pass, treat as environment drift (a bug in setup), not CI-specific behavior; fix forward with a corrective commit.
+- **Agent-declared-done runs `make full` locally before every non-trivial commit and before completion is reported.** It is the merge decision (per `quality-checks.md §Two gate targets`): every package, the whole-tree lint ceiling, the scenario tier, the crash tier and module hygiene. No commit or declaration of completeness without this passing. Post-push CI runs the identical gauntlet; a local pass predicts CI pass. If CI fails after a local pass, treat as environment drift (a bug in setup), not CI-specific behavior; fix forward with a corrective commit.
 - **Adding a package.** Invoke the `go-subsystem-add` skill. It creates the `internal/<pkg>/` dir, adds the component to `.golangci.yml` `linters-settings.depguard.rules` (files: scope + allow matrix per `subsystem-organization.md`), scaffolds `doc.go` + `<pkg>_test.go`. Direct creation without skill is a review failure.
 - **Core types.** Anything that crosses a subsystem boundary goes in `internal/core`; everything else stays in its owning subsystem (subsystem-organization.md §Shared types). Agents violating this are flagged by `depguard` (via `golangci-lint`).
-- **Running tests.** The tiered gauntlets consolidate test tiers — agents run `make check-fast` during iteration, `make check` for work-in-progress verification, `make check-full` before declaring done. The prior `make test` / `make test-integration` / `make test-scenario` / `make test-crash` targets roll up into `make check` (unit+property) and `make check-full` (everything else). All local runs use `-race` by default. Nightly tier (`realagent`) runs only in CI.
+- **Running tests.** Two targets and only two: `make fast` while iterating, `make full` before declaring done. There is no third tier. `make test-scenario`, `make test-integration` and `make test-race-nightly` stay as named lanes, and none of them can block a merge on its own. `make full` runs without `-race`; the nightly `-race` lane is the only place a data race surfaces.
 - **Lint-clean commits.** `go vet`, `golangci-lint run` (includes `depguard` component-graph + `staticcheck` + full enabled set), `gofumpt`, `tools/go-linters/forbid-import` all MUST pass. Allowlist edits (testing.md §Libraries) require explicit justification in the commit body AND trigger the protected-rule-file flow (see below).
 
 ### Commit style
@@ -124,7 +124,7 @@ The `CONSTITUTION.md` at repo root lists immutable project foundations. Edits re
   - `Review-Verdict: {"verdict": "APPROVE|REQUEST_CHANGES", "flags": [...], "notes": "..."}` (structured JSON; see `build-practices.md §Commit conventions`)
 
   `BREAKING CHANGE:` footer when applicable.
-- **Before commit.** `make check-full` passes AND `agent-reviewer` ran with a non-`BLOCK` verdict (APPROVE, or REQUEST_CHANGES with rationale in the commit body).
+- **Before commit.** `make full` passes AND `agent-reviewer` ran with a non-`BLOCK` verdict (APPROVE, or REQUEST_CHANGES with rationale in the commit body).
 - **Run-branch merges to integration** happen via the workflow engine without a PR (runtime behavior, unchanged).
 
 ### Spec adherence
@@ -187,7 +187,7 @@ Before writing `HANDOFF.md`, the main agent runs a self-check:
 2. Did a skill fail or gap show up? → file a bead to author/revise the skill.
 3. Did a memory preference surface? → write the memory file.
 4. Did per-directory rules drift from repo-root rules? → flag.
-5. **Did `make check-full` pass for any code changes this session?** Outcome recorded in `HANDOFF.md`. Failure to record is a process violation. (Sessions that did not touch code MAY skip this item; note the skip.)
+5. **Did `make full` pass for any code changes this session?** Outcome recorded in `HANDOFF.md`. Failure to record is a process violation. (Sessions that did not touch code MAY skip this item; note the skip.)
 6. **Did `agent-reviewer` run on every non-trivial commit this session?** Outcome recorded via the `Reviewed-By:` commit trailer on each commit. A session with non-trivial commits lacking `Reviewed-By:` trailers is a process violation; file a bead to retroactively review and note the gap in the session log.
 Output: a short `## Config review` stanza in the session log entry.
 

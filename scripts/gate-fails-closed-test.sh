@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+# gate-fails-closed-test.sh — proves `make fast` and `make full` cannot approve
+# work that did not pass.
+#
+# The gate this replaced (scripts/scenario-gate.sh) had five ways to allow a
+# merge that never went green: a compile failure, a timeout, a signal kill, an
+# exit code it did not recognise, and a retry that allowed when the second run
+# passed. It had one way to block. This test exists so that shape cannot come
+# back without the build going red.
+#
+# Two kinds of evidence, because either one alone can pass for the wrong reason.
+#
+#   BEHAVIOURAL — put a stub `go` first on PATH, make it exit with the code
+#   under test, and run the REAL gate recipe. Assert two things together: the
+#   gate exited non-zero, AND the stub was actually reached. The second half
+#   matters. "make exited non-zero" is satisfied for free by a gate that died
+#   before it ran anything, which is exactly how an unverified probe reports a
+#   pass while measuring nothing.
+#
+#   STRUCTURAL — expand the whole step list with `make -n` and refuse any
+#   status-swallowing construct in it. A behavioural probe only covers the step
+#   it happened to hit. The structural pass covers every step there is.
+#
+# The recipes under test run the command through `timeout` and through
+# scripts/with-lane-gocache.sh. Those wrappers are where an exit code could
+# quietly change, so the behavioural cases drive the real wrapped recipe rather
+# than a bare `go test`.
+
+set -uo pipefail
+
+# Recursion guard. `make full` runs script-tests, which runs this file, and the
+# behavioural cases below run `make full`. Without a guard that never returns.
+# The OUTER invocation does all the work; the nested one has nothing to add.
+if [ -n "${HARMONIK_GATE_SELFTEST:-}" ]; then
+    echo "gate-fails-closed-test: nested under the gate; the outer run holds the assertions"
+    exit 0
+fi
+
+repo_root=$(git rev-parse --show-toplevel) || {
+    echo "gate-fails-closed-test: not inside a git worktree" >&2
+    exit 1
+}
+cd "$repo_root" || exit 1
+
+failures=0
+assertions=0
+
+fail() {
+    printf 'gate-fails-closed-test: FAIL: %s\n' "$*" >&2
+    failures=$((failures + 1))
+}
+
+pass() {
+    printf 'gate-fails-closed-test: ok: %s\n' "$*"
+}
+
+# ---------------------------------------------------------------------------
+# stub `go`
+#
+# Records every invocation to $GATE_STUB_MARKER, one subcommand per line, then
+# exits with $GATE_STUB_RC. GATE_STUB_RC_AFTER, when set, is used from the
+# second invocation onward — that is how the "a passing second run must not
+# rescue a failing first run" case is built.
+# ---------------------------------------------------------------------------
+make_stub_dir() {
+    local dir="$1"
+    mkdir -p "$dir"
+    cat >"$dir/go" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "${1:-<none>}" >>"$GATE_STUB_MARKER"
+n=$(wc -l <"$GATE_STUB_MARKER" | tr -d ' ')
+if [ "$n" -gt 1 ] && [ -n "${GATE_STUB_RC_AFTER:-}" ]; then
+    exit "$GATE_STUB_RC_AFTER"
+fi
+exit "${GATE_STUB_RC:-0}"
+STUB
+    chmod +x "$dir/go"
+}
+
+# run_gate <target> <injected-rc> [rc-after-first-call]
+#
+# Runs the real make target with the stub `go` first on PATH. Sets three
+# globals rather than echoing, because a `$(...)` capture would run this in a
+# subshell and the marker path would never reach the caller:
+#   RUN_STATUS  make's exit status
+#   RUN_CALLS   how many times the stub `go` was reached
+#   RUN_DIR     the scratch directory, for the caller to remove
+run_gate() {
+    local target="$1" rc="$2" rc_after="${3:-}"
+    RUN_DIR=$(mktemp -d "${TMPDIR:-/tmp}/gate-fc-XXXXXX")
+    make_stub_dir "$RUN_DIR/bin"
+    : >"$RUN_DIR/marker"
+    env PATH="$RUN_DIR/bin:$PATH" \
+        GATE_STUB_MARKER="$RUN_DIR/marker" \
+        GATE_STUB_RC="$rc" \
+        GATE_STUB_RC_AFTER="$rc_after" \
+        HARMONIK_GATE_SELFTEST=1 \
+        make "$target" >"$RUN_DIR/out" 2>&1
+    RUN_STATUS=$?
+    RUN_CALLS=$(wc -l <"$RUN_DIR/marker" | tr -d ' ')
+}
+
+# assert_blocks <label> <target> <injected-rc>
+assert_blocks() {
+    local label="$1" target="$2" rc="$3"
+    assertions=$((assertions + 1))
+    run_gate "$target" "$rc"
+    if [ "$RUN_STATUS" -eq 0 ]; then
+        fail "$label: 'make $target' exited 0 with a \`go\` that returns $rc"
+    elif [ "$RUN_CALLS" -eq 0 ]; then
+        fail "$label: 'make $target' exited $RUN_STATUS but never reached \`go\`, so it proves nothing"
+        sed -n '$p' "$RUN_DIR/out" >&2
+    else
+        pass "$label: 'make $target' blocked (exit $RUN_STATUS) after reaching \`go\` $RUN_CALLS time(s)"
+    fi
+    rm -rf "$RUN_DIR"
+}
+
+# ---------------------------------------------------------------------------
+# BEHAVIOURAL — the five approve-on-failure paths the old gate had.
+#
+# gate-test-compile is the probe target: it is one real recipe line, wrapped in
+# `timeout` and in the lane-gocache wrapper exactly as the heavier steps are, so
+# it exercises the same status path for a fraction of the wall time.
+# ---------------------------------------------------------------------------
+assert_blocks "a genuine test failure"          gate-test-compile 1
+assert_blocks "a compile failure"               gate-test-compile 2
+assert_blocks "a timeout"                       gate-test-compile 124
+assert_blocks "a signal kill (OOM / SIGKILL)"   gate-test-compile 137
+assert_blocks "an exit code nothing recognises" gate-test-compile 99
+
+# The whole merge decision, not just one step of it.
+assert_blocks "the merge decision as a whole"   full 1
+
+# ---------------------------------------------------------------------------
+# BEHAVIOURAL — no retry can rescue a failing run.
+#
+# The stub fails once and then succeeds forever. A gate with a flake-retry goes
+# green here. This one must stay red, and it must have called `go` exactly once,
+# which is the positive evidence that no second attempt was made at all.
+# ---------------------------------------------------------------------------
+assertions=$((assertions + 1))
+run_gate gate-test-compile 1 0
+if [ "$RUN_STATUS" -eq 0 ]; then
+    fail "a passing retry: 'make gate-test-compile' exited 0 after its first run failed"
+elif [ "$RUN_CALLS" -ne 1 ]; then
+    fail "a passing retry: \`go\` ran $RUN_CALLS times, so something retried the failing step"
+else
+    pass "a passing retry: blocked (exit $RUN_STATUS) and \`go\` ran exactly once — no retry exists"
+fi
+rm -rf "$RUN_DIR"
+
+# ---------------------------------------------------------------------------
+# STRUCTURAL — no step of either target may swallow a status.
+#
+# `make -n` expands variables and recurses into the sub-makes, so this reads the
+# real step list rather than the Makefile text. Anything that can turn a failure
+# into an exit 0 is refused by name.
+# ---------------------------------------------------------------------------
+banned_pattern='\|\| true|\|\| exit 0|\|\| :|; *true$|set \+e|--issues-exit-code=0|continue-on-error'
+
+for target in fast full; do
+    assertions=$((assertions + 1))
+    steps=$(HARMONIK_GATE_SELFTEST=1 make -n "$target" 2>/dev/null)
+    if [ -z "$steps" ]; then
+        fail "structural: 'make -n $target' produced nothing, so nothing was checked"
+        continue
+    fi
+    # No exceptions and no exclusion list. Every allowance here is a place a
+    # future step can hide, and two "harmless" ones were already in this
+    # Makefile when this check was written. Both were rewritten to not need the
+    # construct rather than added to a list.
+    # A line that is entirely a shell comment cannot change a status, and the
+    # Makefile's own prose about these constructs would otherwise match itself.
+    # That is a shape test, not an exclusion list.
+    offenders=$(printf '%s\n' "$steps" | grep -vE '^[[:space:]]*#' | grep -nE "$banned_pattern")
+    if [ -n "$offenders" ]; then
+        fail "structural: 'make $target' has step(s) that can swallow a failure:"
+        printf '%s\n' "$offenders" >&2
+    else
+        pass "structural: every step of 'make $target' propagates its exit status"
+    fi
+done
+
+# The gate that was removed must not come back through a side door. Go code
+# names scripts as string literals, so a resurrected caller breaks at run time
+# rather than at build time.
+assertions=$((assertions + 1))
+if [ -e scripts/scenario-gate.sh ]; then
+    fail "scripts/scenario-gate.sh is back; it approves on compile-fail, timeout, signal-kill, an unknown exit code, and a passing retry"
+else
+    pass "scripts/scenario-gate.sh is gone"
+fi
+
+assertions=$((assertions + 1))
+# Comment lines are excluded by SHAPE, not by filename: the Makefile and this
+# file both explain why the script is gone, and that prose must stay allowed
+# while a real caller in any of them stays refused.
+resurrected=$(grep -rnF 'scenario-gate.sh' \
+    Makefile workflow.dot sonnet-triple-review.dot specs .github scripts cmd/harmonik/assets \
+    2>/dev/null | grep -vE ':[0-9]+: *(#|//|\*)' | grep -v 'gate-fails-closed-test.sh:')
+if [ -n "$resurrected" ]; then
+    fail "these still call the deleted scenario-gate.sh:"
+    printf '%s\n' "$resurrected" >&2
+else
+    pass "nothing in the build, the workflow graphs, CI or the shipped assets calls scenario-gate.sh"
+fi
+
+# ---------------------------------------------------------------------------
+printf 'gate-fails-closed-test: %d assertions, %d failed\n' "$assertions" "$failures"
+if [ "$assertions" -lt 10 ]; then
+    printf 'gate-fails-closed-test: only %d assertions ran; this file expects 10\n' "$assertions" >&2
+    exit 1
+fi
+[ "$failures" -eq 0 ]

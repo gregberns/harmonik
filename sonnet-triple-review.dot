@@ -58,9 +58,9 @@ digraph "sonnet-triple-review" {
         type="non-agentic",
         handler_ref="shell",
         idempotency_class="idempotent",
-        tool_command="go build ./... && go vet ./... && go test -run=^$ ./... && bash scripts/scenario-gate.sh",
-        timeout="900",
-        role="commit gate: build + vet + affected-package-scoped unit + scenario tests (fail-open); exit 0 = ready for review"
+        tool_command="make full",
+        timeout="3600",
+        role="commit gate: make full — whole-repo build, vet, tests, lint ceiling and scenario tier, fail-closed; exit 0 = ready for review"
     ];
 
     // review_correctness: Sonnet. Correctness/edge-cases/contracts lens.

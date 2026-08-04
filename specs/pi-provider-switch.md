@@ -59,7 +59,7 @@ DGX/ornith. With no override supplied, resolution yields today's
   seams, the assertions each scenario must make). C6 rides with chani's work.
 - **stilgar** owns the **C5 corpus GATE-WIRING**: scenario fixtures, §10.1
   conformance registration, assertion wiring into the deterministic gates, and the
-  `scripts/scenario-gate.sh` pickup. stilgar wires against the contract chani
+  commit-gate (`make full`) pickup. stilgar wires against the contract chani
   designs; chani does not wire the gate.
 
 ---
@@ -579,7 +579,7 @@ THEIR wire format. Scenario 2: no-label pi argv `--model` = harness-global pi mo
 NOT `sonnet`; counterfactual fails on the leaked model; DOT variant shows tuple
 unchanged. Scenario 3: ornith reasoning bead emits loopback spec + models.json; code
 comment records the live-tunnel operator canary as the separate DoD proof. All three
-hermetic (dummy-key-file + `HOME` temp-dir). `scripts/scenario-gate.sh` picks them up
+hermetic (dummy-key-file + `HOME` temp-dir). The commit gate (`make full`) picks them up
 automatically (internal/daemon always affected); NO YAML scenario added.
 
 **Live-DGX operator canary (separate, NOT CI — DoD proof):** with the DGX loopback
@@ -595,7 +595,7 @@ launch, and an `exploratory-test`-labeled bead for the operator canary.
 
 **Ownership:** chani designs this corpus (scenarios, hermetic-vs-live boundary,
 export seams, assertions); **stilgar wires the gate** (fixtures, §10.1 conformance
-registration, assertion wiring, `scenario-gate.sh` pickup).
+registration, assertion wiring, commit-gate pickup).
 
 ---
 

@@ -250,7 +250,7 @@ func TestScenario_CodexAdapter_FullLifecycle(t *testing.T) {
 	// Dispatch in dot mode over the implementer→reviewer graph this fixture's
 	// handler wrapper models (it was review-loop mode until EM-015d retired it).
 	// The embedded standard-bead.dot default would additionally run its
-	// commit_gate node — go build / go vet / scripts/scenario-gate.sh — inside
+	// commit_gate node — `make full` — inside
 	// this three-file temp worktree, which is not a Go module, so every run
 	// would fail for reasons unrelated to the codex adapter.
 	codexLifecycleFixtureWorkflowDot(t, projectDir)

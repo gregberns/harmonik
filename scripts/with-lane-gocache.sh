@@ -37,14 +37,14 @@
 # cache: 9.15s to fill it, then 1.33s. Under with-isolated-gocache.sh: 8.78s then
 # 8.67s — cold every time, because the cache it just filled is deleted on exit.
 # Same isolation, and the second run is about 6.5x faster. `go build` is the
-# CHEAP case; check-short is `go test -short -race ./...` at `-p=1`, where the
-# compile work being thrown away is far larger. That is why check-short is
+# CHEAP case; `make full` is `go test -short ./...` over every package, where the
+# compile work being thrown away is far larger. That is why the gate is
 # wrapped in this script rather than in that one.
 #
 # DISK, and this one has a sharp edge. Each checkout keeps its own cache, so N
 # checkouts cost N caches, and **a cache outlives the worktree that made it**.
 # Agent worktrees are created and thrown away constantly here, and nothing reaps
-# what they leave behind. `go build ./...` alone fills 157 MiB and a check-short
+# what they leave behind. `go build ./...` alone fills 157 MiB and a `make full`
 # cache carrying -race test objects is larger again. The Go caches under
 # ~/Library/Caches were the single largest item the 2026-07-28 disk sweep found,
 # at 10.5 GiB, so this is not free.

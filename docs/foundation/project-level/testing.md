@@ -10,7 +10,7 @@
 4. **Mocking:** hand-written fakes in `internal/<pkg>/faketest/`. No `gomock`, no `mockery`. Rationale: hand-written fakes are ~20 lines and an agent can read them; generated mocks hide behavior.
 5. **Golden files:** `gotest.tools/v3/golden`. Updated with `go test ./... -update`.
 6. **Subprocess orchestration in tests:** stdlib `os/exec` wrapped by a thin `internal/proctest` helper. No external test-harness libraries.
-7. **Coverage tool:** `go test -cover` + `go tool cover`. Thresholds are enforced by `scripts/coverage-gate.sh`, which runs from `make check` — **not from CI**, which runs `check-short`.
+7. **Coverage tool:** `go test -cover` + `go tool cover`. Thresholds are enforced by `scripts/coverage-gate.sh`, which runs from `make coverage-gates` — **not from CI**, which runs `make full`. The ratchet is a trend measure and does not block a merge.
 8. **Race detector:** `-race` on every CI run of unit + integration + scenario suites.
 9. **Build tags:** `//go:build integration` / `scenario` / `crash` / `nightly`. Default `go test ./...` runs unit + property only. CI explicitly selects tiers.
 10. **Naming:** `TestXxx` for unit, `TestIntegration_Xxx` for integration, `TestScenario_Xxx` for scenario, `TestCrash_Xxx` for crash-recovery, `TestProp_Xxx` for rapid properties.
@@ -97,7 +97,7 @@ Fast subset (3 sites, ~1 min) runs every push under the crash test tier (now tag
 
 ## CI gates
 
-**User-endorsed invariant (2026-04-24):** every check listed here is ALSO executable locally via the `make check-full` target; CI and local run IDENTICAL commands. Agent-declared-done requires `make check-full` to pass locally (see `quality-checks.md §Three-tier identical gauntlet` and `agent-configuration.md`). No CI-only logic is permitted. If CI fails after a local pass, it is environment drift — a bug in setup, not a CI-specific behavior.
+**User-endorsed invariant (2026-04-24):** every check listed here is ALSO executable locally via the `make full` target; CI and local run IDENTICAL commands. Agent-declared-done requires `make full` to pass locally (see `quality-checks.md §Two gate targets` and `agent-configuration.md`). No CI-only logic is permitted. If CI fails after a local pass, it is environment drift — a bug in setup, not a CI-specific behavior.
 
 A merge to `main` requires (each item is a command equally runnable locally):
 

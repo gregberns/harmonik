@@ -1,7 +1,7 @@
-# Tier 2b — non-gating nightly full-parallel -race run (hk-plw4z).
-# Complements check-short's -parallel=2 saturation guard: runs the full test
-# suite with no -short flag and no -parallel cap so real data races surface
-# off the merge-blocking path.  Failure is surfaced in ops-monitor via the
+# Non-gating nightly full-parallel -race run (hk-plw4z).
+# `make full` runs the suite WITHOUT -race, so this lane is the only place a
+# real data race surfaces. It runs the full test suite with no -short flag and
+# no -parallel cap, off the merge-blocking path.  Failure is surfaced in ops-monitor via the
 # checks['nightly-race'] digest signal; it does not block any branch or PR.
 name: Nightly Race
 
@@ -12,7 +12,7 @@ on:
 
 jobs:
   race:
-    name: check-race-full (nightly)
+    name: test-race-nightly
     runs-on: ubuntu-latest
     # Non-gating: not listed as a required status check in branch protection.
     # Do NOT add continue-on-error here. It silences the run conclusion, the step
@@ -44,5 +44,5 @@ jobs:
       - name: Install dev tools
         run: make tools
 
-      - name: make check-race-full
-        run: make check-race-full
+      - name: make test-race-nightly
+        run: make test-race-nightly

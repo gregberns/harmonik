@@ -1,9 +1,18 @@
-# Tier 2 — make check-short
-# Runs gofumpt+gci diff, go vet, go build, golangci-lint, and go test -short
-# -race. Skips real-daemon E2E tests (skipRealDaemonE2EInShort) that require
-# br, twin binaries, and a live daemon — none available on ubuntu-latest.
-# Those tests belong in the separate Tier 3 hk-6hzci lane.
-# Merge-blocking (A5): continue-on-error dropped — check-short failures now block merges.
+# CI runs `make full` — the same merge decision a developer runs locally.
+# There is no CI-only tier and no CI-only step list. If it is green here it is
+# green there, and if it is red here the tree is red.
+#
+# `make full` covers the format check, go build, go vet, the tagged vet, the
+# subsystem freeze greps, the changed-line lint, a compile of every _test.go
+# file, `go test -short -count=1 ./...` over EVERY package, the whole-tree lint
+# ceiling, the tagged scenario tier, the crash tier and the module hygiene
+# checks. Real-daemon E2E tests opt out under -short (skipRealDaemonE2EInShort)
+# because they need br, twin binaries and a live daemon, none of which a hosted
+# runner has.
+#
+# Merge-blocking. Do NOT add continue-on-error: it silences the run, step and
+# check-run conclusions at once, so every REST surface reports success after a
+# real failure.
 name: CI
 
 on:
@@ -13,7 +22,7 @@ on:
 
 jobs:
   check:
-    name: check (Tier 2)
+    name: make full
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,6 +48,6 @@ jobs:
       - name: Install dev tools
         run: make tools
 
-      - name: make check-short
-        run: make check-short
+      - name: make full
+        run: make full
 

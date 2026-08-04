@@ -17,8 +17,8 @@ package daemon
 // This is an internal (package daemon) test: it drives the unexported
 // maybeEmitEpicCompleted and builds testRuntime through ExportedTestRuntime.
 // It carries no build tag on purpose — the scenario-tier coverage of this helper
-// in epiccompleted_scenario_hktfxjp_test.go does not run in check-fast or
-// check-short, and this behaviour is cheap enough to gate on every commit.
+// in epiccompleted_scenario_hktfxjp_test.go does not run in `make fast` or
+// `make full`, and this behaviour is cheap enough to gate on every commit.
 //
 // Every helper here is namespaced with an "epictomb" prefix so it cannot
 // redeclare a symbol in another test file of package daemon — the scenario file

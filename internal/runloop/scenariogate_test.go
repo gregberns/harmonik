@@ -64,7 +64,7 @@ func itoa(n int) string {
 
 // skipScenarioGateSubprocessTests skips under -short: these tests spawn real
 // shell subprocesses to obtain *exec.ExitError values with genuine OS signal
-// shape. Excluded from check-short to de-saturate the -race ./... pass (hk-qpf2g).
+// shape. Excluded from the -race lane to de-saturate the ./... pass (hk-qpf2g).
 func skipScenarioGateSubprocessTests(t *testing.T) {
 	t.Helper()
 	if testing.Short() {

@@ -32,7 +32,7 @@ package daemon
 // # Why the readiness-gate test cancels rather than waits
 //
 // The gate's bound is a ten-second constant. Waiting it out would put ten
-// seconds into check-fast to observe one refusal. The test instead watches the
+// seconds into `make fast` to observe one refusal. The test instead watches the
 // ssh shim's log for the `nc -z` probe — which is the gate and nothing else —
 // and cancels the run only once it has seen one. That is faster AND says more:
 // the probe reaching the shim is positive evidence that the machinery ran,

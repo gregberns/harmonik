@@ -624,7 +624,7 @@ fi
 
 # ── Check nightly-race: last nightly full-parallel -race run on main ─────────
 # Non-gating digest signal: a failing nightly surfaces real data races that
-# check-short's -parallel=2 saturation guard suppresses. (hk-plw4z)
+# `make full`'s no-race run cannot see. (hk-plw4z)
 NIGHTLY_RACE_STATUS=unknown
 if command -v gh >/dev/null 2>&1; then
   _NR_OUT=""
@@ -1419,7 +1419,7 @@ release_due = release_commit_count >= release_due_threshold and ci_status == 'gr
 
 # ── Nightly-race check (hk-plw4z) ────────────────────────────────────────────
 # Non-gating digest signal: the nightly full-parallel -race run surfaces data
-# races that check-short's -parallel=2 saturation guard suppresses.
+# races that `make full`'s no-race run cannot see.
 # 'running' / 'unknown' = no signal; 'not-green' = digest flag.
 nightly_race_failed = nightly_race_status == 'not-green'
 # scenario-nightly (hk-plw4z Part 4): STEP conclusion of the latest scheduled

@@ -5,7 +5,7 @@
 # silent when it breaks. Two checkouts that collide on a key share a cache and
 # reintroduce the corruption the script exists to prevent, with no error. Two
 # recipe lines in one checkout that disagree on a key each build cold, and the
-# only symptom is that check-short got slower.
+# only symptom is that the gate got slower.
 
 set -uo pipefail
 

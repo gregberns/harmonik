@@ -573,10 +573,10 @@ func findMainRepoRoot(start string) string {
 // dispatched in dot mode walks that two-node topology instead of the embedded
 // standard-bead.dot.
 //
-// Why fixtures need this: standard-bead.dot's commit_gate node shells out to
-// `go build` / `go vet` / scripts/scenario-gate.sh inside the run's worktree.
-// A scenario fixture's worktree is a three-file temp git repo, not a Go module,
-// so that gate fails and every run reopens — which says nothing about the queue
+// Why fixtures need this: standard-bead.dot's commit_gate node runs `make full`
+// inside the run's worktree. A scenario fixture's worktree is a three-file temp
+// git repo with no Makefile and no Go module, so that gate fails and every run
+// reopens — which says nothing about the queue
 // mechanics the fixture exists to test. review-loop.dot has no gate: it is
 // exactly the implementer→reviewer→close shape the phase-aware twin wrappers
 // model, and (per its own header) it is the graph the retired review-loop

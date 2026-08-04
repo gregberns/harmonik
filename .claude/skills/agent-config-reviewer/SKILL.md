@@ -114,7 +114,7 @@ Findings → flag: `claude-md-drift`
 
 Inspect `.claude/settings.json` (project-level) for alignment with the current rules:
 
-- Are hooks wired per `build-practices.md` (pre-commit → `make check-fast`)? If
+- Are hooks wired per `build-practices.md` (pre-commit → `make fast`)? If
   hooks are absent, flag — but note that mechanical enforcement is deferred
   (`agent-configuration.md §Deferred / follow-up`).
 - Are permission allowlists consistent with what agents are permitted to do (no

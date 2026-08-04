@@ -373,7 +373,7 @@ func driveDotWorkflow(
 				// while the gate command runs (both local and remote paths).
 				//
 				// hk-t1t00: augment the gate env with HK_GATE_BASE_SHA=parentSHA so
-				// scripts/scenario-gate.sh uses the run's own branch-point as the diff
+				// the deleted scripts/scenario-gate.sh used the run's own branch-point as the diff
 				// base rather than falling back to `git merge-base origin/main HEAD`.
 				// On a remote worker origin/main lags real main, inflating the diff to
 				// hundreds of files → the full test suite exceeds the 900s gate timeout

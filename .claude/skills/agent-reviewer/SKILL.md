@@ -466,7 +466,7 @@ Reviewed-By: agent-reviewer
 Review-Verdict: {"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"All eight checks pass."}
 ```
 
-The pre-commit hook (`lefthook.yml` wired to `make check-fast`) validates that
+The commit-message validation (agent-driven; git hooks are retired) checks that
 `Review-Verdict:` is parseable JSON with `schema_version` and `verdict` present. An
 unparseable trailer blocks the commit. This prevents prompt-injection via a free-text
 verdict field.
@@ -479,7 +479,7 @@ invokes you again before committing.
 ## Trivial commits
 
 Trivial commits (typo, whitespace, one-line obvious fix) MAY skip invocation of this
-skill. The implementer still runs `make check-full` before committing. The `Reviewed-By:`
+skill. The implementer still runs `make full` before committing. The `Reviewed-By:`
 and `Review-Verdict:` trailers are optional for trivial commits.
 
 ---

@@ -1,34 +1,46 @@
 ---
-description: Validate the code you just committed with the repo's delta-scoped gate; fix and re-commit if red.
+description: Validate the code you just committed. `make fast` while you work, `make full` before anyone accepts it.
 ---
 
-# /check — post-commit validation gate
+# /check — validation gate
 
-Git hooks are OUT (lefthook is uninstalled; `.git/hooks/` holds only samples). Validation is now **agent-driven**, and this command is the replacement: run it after every non-trivial `git commit` to verify the code you just committed actually passes our checks.
+Git hooks are out. Validation is agent-driven, and this command is the replacement: run it after every non-trivial `git commit`.
 
-## What to do
+There are two targets. There is no third.
 
-1. Run the fast per-commit gate on what you just committed:
-
-   ```bash
-   make check-fast
-   ```
-
-   `check-fast` is Tier 1: `fmt-check` (fail-closed), `go vet`, `go build`, `golangci-lint --new-from-rev=HEAD~1`, and `go test -short`. The `--new-from-rev` scope is the point — it judges **the lines your commit changed**, not the whole repo, so it answers "did my change pass" and can actually go green.
-
-2. Read the output.
-   - **Green (exit 0):** done. The commit stands.
-   - **Red (non-zero):** something your commit introduced is broken. FIX THE ROOT CAUSE, then re-commit (amend or a follow-up fix commit). Do NOT suppress the finding, do NOT lower the gate, do NOT `--no-verify`. Re-run `/check` until green.
-
-## Before you push / at a milestone
+## While you work
 
 ```bash
-make check-short   # CI Tier 2 merge gate: fmt-check + golangci-lint --new-from-rev=origin/main + go test -short -race
-make check-full    # Tier 3: + integration + scenario + crash suites (~10–15 min)
+make fast
 ```
 
-`check-short` is exactly what CI gates merges on; it must be green before you push.
+`make fast` runs the format check, `go build ./...`, `go vet ./...`, the tagged vet, the subsystem freeze greps, the changed-line lint (`golangci-lint --new-from-rev=HEAD~1`), a compile of every `_test.go` file in the repo, and `go test -short` over the major packages — `internal/core`, `internal/daemon`, `internal/queue`, `internal/queuewiring`, `internal/brcli`, `internal/eventbus`, `internal/runloop`, `internal/workflow` and `cmd/harmonik`. The package list is in the Makefile as `FAST_PKGS`, with the reason for each one.
 
-## Do NOT use bare `make check` as the pass/fail gate
+It is not a merge verdict. It tests a chosen subset, so it can be green while the tree is red.
 
-`make check`'s lint step is a **full** `golangci-lint run` (no `--new-from-rev`). By design that reports **~2,000 pre-existing legacy findings** and always exits non-zero (see `Makefile` §"LINT IS A MERGE-TIME GATE" ~lines 719–723) — it is a whole-repo legacy-debt audit / trend view, **not** a per-commit pass/fail gate. Its other steps (`-race` tests, `go mod tidy` check, coverage gate, `govulncheck`) are useful, but judge whether *your commit* passes by the `--new-from-rev` gates above, never by the full-lint exit code.
+## Before anyone accepts the work
+
+```bash
+make full
+```
+
+`make full` is the merge decision, and it is what CI runs. Everything `make fast` does, over EVERY package, plus the whole-tree lint ceiling, the tagged scenario tier, the crash tier and the module hygiene checks (`go mod tidy`, forbidden imports, `govulncheck`).
+
+No package scoping. No retry. No fail-open. A timeout, an out-of-memory kill, a compile failure or an exit code nothing recognises all BLOCK. `scripts/gate-fails-closed-test.sh` holds that property and runs inside both targets.
+
+## Reading the result
+
+- **Green (exit 0):** done.
+- **Red (non-zero):** fix the root cause, then re-commit (amend or a follow-up commit). Do not suppress the finding, do not lower the gate, do not `--no-verify`. Re-run until green.
+
+`make full` is red on this tree today. `internal/daemon`, `cmd/harmonik` and `internal/keeper` all fail real tests under `go test -short`. That is the gate working. A gate that reports green on a tree with known failures is the defect this one replaced.
+
+## Lanes that are not the gate
+
+None of these can block a merge, and none of them is a third tier:
+
+```bash
+make test-race-nightly   # -race over everything, no -short; the nightly CI lane
+make test-integration    # the integration-tagged tier; needs tmux and a live environment
+make coverage-gates      # the two coverage ratchets; a trend measure, not a verdict
+```

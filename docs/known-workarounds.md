@@ -138,7 +138,7 @@ gh release create "${VERSION}" ./harmonik \
   --prerelease
 
 # 4. Manually run VALIDATE gates (CI Tier 2 + scenario suite):
-make check-full
+make full
 go test -tags=scenario ./tests/scenarios/...
 
 # 5. If all gates pass, promote to stable (CERTIFY):

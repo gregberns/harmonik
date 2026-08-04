@@ -24,7 +24,7 @@ make bootstrap      # == make tools
 
 This installs gofumpt, gci, golangci-lint, and govulncheck into `.tools/` (no global GOPATH pollution).
 
-**Git hooks are retired.** lefthook (and its self-re-arming `install`) was removed because it re-wired itself on every commit. Validation — the Tier 1/Tier 2 gates, secret scan, and commit-message trailers — now runs via the agent-driven validation command (`/check`), not a pre-commit / pre-push / commit-msg hook. The underlying scripts (`scripts/validate-commit-msg.sh`, `scripts/secret-scan.sh`) remain callable directly by that flow. **`--no-verify` is moot** (no hook to bypass); the way to comply is to run `/check` (or `make check`) after committing and fix + re-commit if it comes back red.
+**Git hooks are retired.** lefthook (and its self-re-arming `install`) was removed because it re-wired itself on every commit. Validation — the Tier 1/Tier 2 gates, secret scan, and commit-message trailers — now runs via the agent-driven validation command (`/check`), not a pre-commit / pre-push / commit-msg hook. The underlying scripts (`scripts/validate-commit-msg.sh`, `scripts/secret-scan.sh`) remain callable directly by that flow. **`--no-verify` is moot** (no hook to bypass); the way to comply is to run `/check` (`make fast`, then `make full`) after committing and fix + re-commit if it comes back red.
 
 ## Commit conventions
 
@@ -47,7 +47,7 @@ The JSON trailer is schema-validated by `scripts/validate-commit-msg.sh` (run vi
 
 Trivial commits (typo, whitespace, obvious one-line fix) MAY omit these trailers. `BLOCK` verdicts never land in commits — the agent fixes first.
 
-**`Trivial: true` bypass trailer.** To opt a single commit out of the `Reviewed-By:` / `Review-Verdict:` requirement, add the trailer `Trivial: true` anywhere in the commit message's trailer block (after the blank line separating the body from trailers). `scripts/validate-commit-msg.sh` (run via the agent-driven `/check` flow) detects this trailer and skips the reviewer-trailer check. Use ONLY for: typo fixes, whitespace normalization, obvious one-line corrections, and test-infrastructure trivial changes. The `make check-full` requirement still applies — `Trivial: true` does not bypass linting or tests, only the agent-reviewer trailer.
+**`Trivial: true` bypass trailer.** To opt a single commit out of the `Reviewed-By:` / `Review-Verdict:` requirement, add the trailer `Trivial: true` anywhere in the commit message's trailer block (after the blank line separating the body from trailers). `scripts/validate-commit-msg.sh` (run via the agent-driven `/check` flow) detects this trailer and skips the reviewer-trailer check. Use ONLY for: typo fixes, whitespace normalization, obvious one-line corrections, and test-infrastructure trivial changes. The `make full` requirement still applies — `Trivial: true` does not bypass linting or tests, only the agent-reviewer trailer.
 
 Forbidden: emoji, "WIP" subjects on main, single-word subjects, messages that describe the diff instead of the intent.
 
@@ -84,13 +84,13 @@ Examples: `feat(s04): add claude-twin handler adapter` — `fix(workspace): hono
 <what could break; who/what this blocks on>
 ```
 
-**Required before every non-trivial commit:** `make check-full` passes locally (per `quality-checks.md §Three-tier identical gauntlet`) AND `agent-reviewer` ran with a non-`BLOCK` verdict. The verdict is recorded as the `Reviewed-By:` trailer.
+**Required before every non-trivial commit:** `make full` passes locally (per `quality-checks.md §Two gate targets`) AND `agent-reviewer` ran with a non-`BLOCK` verdict. The verdict is recorded as the `Reviewed-By:` trailer.
 
 ## Agent review on every commit
 
 Before an agent commits, it runs:
 
-1. **`make check-full`** — Tier 3 gauntlet per `quality-checks.md`. Must pass.
+1. **`make full`** — the merge decision per `quality-checks.md`. Must pass.
 2. **`agent-reviewer` skill invocation** — against the agent's own work product (diff from the last `main` tip).
 
 The `agent-reviewer` checks:
@@ -102,7 +102,7 @@ The `agent-reviewer` checks:
 
 Reviewer emits a structured JSON verdict in the `Review-Verdict:` trailer. Three `verdict` enum values: `APPROVE`, `REQUEST_CHANGES`, `BLOCK`. `BLOCK` verdicts are never committed (agent fixes before committing). `REQUEST_CHANGES` verdicts may be committed WITH the trailer + a rationale in the commit body; `flags` array names the specific issues. `APPROVE` verdicts commit normally.
 
-**Trivial commits** (typo, whitespace, one-line obvious fix) MAY skip `agent-reviewer`; they still run `make check-full`.
+**Trivial commits** (typo, whitespace, one-line obvious fix) MAY skip `agent-reviewer`; they still run `make full`.
 
 **Human review happens asynchronously after commit.** The user reads `git log` + diffs on their own cadence; catches what agents miss (premature abstraction, scope creep, subtle spec-misinterpretation, "technically works but wrong"). Human review is NOT a gate — nothing blocks on it.
 
@@ -154,7 +154,7 @@ No "merge all PRs" step — `main` is the working branch and is always the relea
 
 Before cutting a tag:
 
-1. Ensure `main` is green: `make check-full` passes, CI clean on latest commit.
+1. Ensure `main` is green: `make full` passes, CI clean on latest commit.
 2. Update `CHANGELOG.md` (keep-a-changelog format; sections: Added / Changed / Deprecated / Fixed / Removed / Security / Spec).
 3. Verify `internal/release/manifest.go` `BeadsVersion` matches the `br --version` of the tested environment.
 
@@ -182,7 +182,7 @@ All three gates run in parallel; any failure yanks the pre-release automatically
 
 | Gate | Command | Pass criterion |
 |------|---------|----------------|
-| CI Tier 2 | `make check-full` on the tagged commit | Exit 0 |
+| CI | `make full` on the tagged commit | Exit 0 |
 | Scenario tests | `go test -tags=scenario ./tests/scenarios/...` | Exit 0, zero failures |
 | `--version` smoke | Download published binary, run `harmonik --version` | Matches `harmonik v0.y.z (commit: <sha>)` |
 
@@ -231,7 +231,7 @@ No binary signing pre-1.0. Distribution is GitHub releases only until a user ask
 4. **⚑ JSON-structured `agent-reviewer` verdict** (not prose). Prevents prompt-injection; enables audit/metrics. Schema lives in the `agent-reviewer` skill's documentation and is versioned; agents MUST use the current schema.
 5. **⚑ No hard LOC cap on commits.** Commits are naturally smaller than PRs; an explicit ceiling isn't needed. Monitor commit size; add a cap if agents produce megacommits.
 6. **⚑ `spec:` commit type** — non-standard within Conventional Commits; added because spec work dominates early. Alternative: fold into `docs:` or `chore:`.
-7. **⚑ Post-commit CI on main** — re-runs `make check-full`. Failures require fix-forward; no gate that rejects the push. Flag for user: is a remote CI set up (GitHub Actions assumed but not confirmed)?
+7. **⚑ Post-commit CI on main** — re-runs `make full`. Failures require fix-forward; no gate that rejects the push. Flag for user: is a remote CI set up (GitHub Actions assumed but not confirmed)?
 
 ## Deferred / follow-up
 

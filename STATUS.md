@@ -119,7 +119,8 @@ Landed in code by `1f8781730` (confirmed an ancestor of HEAD on 2026-07-30). The
 - JSON-structured agent-reviewer verdict.
 - Aggressive coverage targets (95% core / 90% floor / <0.3% regression gate).
 - `depguard` v2 alone (no `go-arch-lint`).
-- Three-tier `make check-fast` / `check` / `check-full`.
+- Two gate targets, `make fast` and `make full`. No third tier. (Supersedes the earlier three-tier
+  `check-fast` / `check` / `check-full` split, 2026-08-03.)
 - Spec-template structure locked.
 
 ### Daemon model: persistent background process (as of 2026-05-30)

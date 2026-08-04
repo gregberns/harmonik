@@ -98,12 +98,14 @@ and merge / `fixup!` / `squash!` subjects. `--no-verify` is forbidden.
 
 ### Validate after committing
 
-After a non-trivial commit run **`/check`** (or `make check-fast`) to verify the committed code
-passes; if red, fix the root cause and re-commit. `check-fast` is `--new-from-rev=HEAD~1`, so it
-judges your commit, not the repo. Before push / at a milestone run `make check-short` (the CI Tier-2
-merge gate). Do NOT gate on bare `make check` — its full `golangci-lint run` reports ~2k
-pre-existing legacy findings by design and always exits non-zero (a whole-repo audit, not a
-per-commit gate).
+After a non-trivial commit run **`/check`** (`make fast`) to verify the committed code
+passes; if red, fix the root cause and re-commit. `make fast` lints `--new-from-rev=HEAD~1`, so the
+lint judges your commit, and it unit-tests the major packages. `make fast` is not a merge verdict:
+it tests a chosen subset, so it can be green while the tree is red.
+
+Before push, and before you declare work done, run `make full`. That is the merge decision and it is
+what CI runs. It tests every package, it never scopes by what changed, and it never approves on a
+timeout, an out-of-memory kill, a compile failure or a passing retry.
 
 ## UBS Quick Reference for AI Agents
 

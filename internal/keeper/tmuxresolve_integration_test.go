@@ -33,7 +33,7 @@ package keeper
 //
 //	go test -tags=integration -run TestIntegration_ ./internal/keeper/...
 //	# or the umbrella target:
-//	make check-full   # runs `go test -race -tags=integration ./...`
+//	make test-integration   # runs `go test -race -tags=integration ./...`
 //
 // # Safety contract (load-bearing)
 //

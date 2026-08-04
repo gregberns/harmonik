@@ -11,7 +11,7 @@
 - Hook manager: **`lefthook`** (Go-native, single binary, no Python/Node dep).
 - Enforcement: pre-commit hooks + **`agent-reviewer` on every non-trivial commit** (per `build-practices.md`) + **post-push CI status checks on `main`** via GitHub branch protection. No PR-based merge gate (direct-to-main); CI failures fix-forward.
 - Tests: `go test ./... -race -count=1` required in CI; short subset pre-commit.
-- **Local/CI parity:** every CI check is equivalently the local `make check-fast` / `make check` / `make check-full` target. See §Three-tier identical gauntlet.
+- **Local/CI parity:** CI runs `make full`, the same target a developer runs. See §Two gate targets.
 
 ## Formatter
 
@@ -106,7 +106,7 @@ issues: { max-issues-per-linter: 0, max-same-issues: 0, exclude-use-default: fal
 
 They ratchet via `--new-from-rev`, so existing functions are grandfathered but a function a diff rewrites is not. Excluded paths: `_test.go`, `internal/scenario/`, `internal/specaudit/`.
 
-⚠ **Test code therefore has no complexity ceiling of any kind** — 488k lines of it accumulated with 1,035 functions over the 100-line `funlen` limit. Removing `_test.go` from the exclusion was attempted 2026-07-27 and **reverted**: validated against `--new-from-rev=HEAD~1` it reported clean, but the merge-blocking gate is `check-short`'s `--new-from-rev=origin/main` (Makefile), where the change took this branch from 163 to 181 findings — 13 `gocognit`, 4 `cyclop`, 1 `funlen`, several in ordinary table-driven tests rather than bead-named files. Deferred to `hk-csmfe` and sequenced **after** the 885-file bead-named-test deletion, since most of those 18 live in code that deletion removes. **Validate any retry at `origin/main`, never at `HEAD~1`.**
+⚠ **Test code therefore has no complexity ceiling of any kind** — 488k lines of it accumulated with 1,035 functions over the 100-line `funlen` limit. Removing `_test.go` from the exclusion was attempted 2026-07-27 and **reverted**: validated against `--new-from-rev=HEAD~1` it reported clean, but the merge-blocking gate then compared against `origin/main` rather than `HEAD~1`, where the change took this branch from 163 to 181 findings — 13 `gocognit`, 4 `cyclop`, 1 `funlen`, several in ordinary table-driven tests rather than bead-named files. Deferred to `hk-csmfe` and sequenced **after** the 885-file bead-named-test deletion, since most of those 18 live in code that deletion removes. **Validate any retry at `origin/main`, never at `HEAD~1`.**
 
 Declaration-line anchoring also grandfathers a function only while its declaration line is untouched — a rename or signature change re-anchors it.
 
@@ -174,42 +174,40 @@ Explicit **NO** on: `wsl`, `lll`, `gocyclo` (superseded by `cyclop`), `godox`, `
 - Subsystem loggers carry subsystem name + `run_id` (when applicable) as default attributes via `slog.With(...)`.
 - Error-level logs include stack trace via `slog.Any("stack", debug.Stack())` for panic recovery paths.
 
-## Three-tier identical gauntlet — local and CI run the same commands
+## Two gate targets — local and CI run the same commands
 
 **User-endorsed invariant (2026-04-24):** every check an agent needs to declare work complete MUST be executable locally. No CI-only checks. Agents run nearly everything all the time; CI is a mirror, not a moat.
 
-`lefthook.yml` at repo root wires pre-commit / pre-push to the tiers below. Every tier is a `make` target; CI jobs invoke the same make targets — no CI-specific scripting.
+**Superseded 2026-08-03.** This section used to describe three tiers, `make check-fast` / `make check` / `make check-full`, plus `check-short`, `check-report`, `check-race-full` and `check-verdict` — seven names for one question. There are now two targets. Git hooks are retired; validation is agent-driven through `/check`.
 
-**Tier 1 — `make check-fast` (<15s target).** Author-iteration speed. Pre-commit hook runs this subset on staged files:
+**`make fast` — the inner loop.** Run it while you work.
 
-- `gofumpt -l -d` / `gci diff` on STAGED files.
-- `go vet ./...`, `go build ./...`.
-- `golangci-lint run --new-from-rev=HEAD~1` (delta only).
-- `go test -short` on packages with changed files.
+- The format check (`gofumpt` + `gci`, fail-closed), `go build ./...`, `go vet ./...`, and the tagged vet.
+- The subsystem freeze greps (`make freeze-gates`).
+- `golangci-lint run --new-from-rev=HEAD~1` — the lines this commit changed.
+- `go test -run='^$' ./...` — compiles every `_test.go` file and runs none. `go build` does not compile test files.
+- `go test -short` over the major packages. The list is `FAST_PKGS` in the Makefile, with the reason for each package next to it.
 
-**`make agent-review` (pre-commit, invokes `agent-reviewer` skill).** Runs alongside `make check-fast` as a pre-commit command. The `agent-reviewer` skill makes an LLM call; to prevent unbounded hangs that would tempt `--no-verify`, the Makefile target MUST enforce a hard wall-clock timeout (recommended: 60s). When the timeout fires, the target exits non-zero and the commit is blocked with an error message indicating a manual retry. Timeout enforcement is a required acceptance criterion for the `agent-review` make target; see follow-up bead hk-pvcs.10 for the implementation task.
+`make fast` is not a merge verdict. It tests a chosen subset, so it can be green while the tree is red.
 
-**Tier 2 — `make check` (~3–5 min target).** Default pre-push + work-in-progress verification. Full linter + unit + property:
+**`make full` — the merge decision.** It is what CI runs, and it is what an agent runs before declaring work complete.
 
-- Everything in Tier 1 on the full tree (not delta).
-- `golangci-lint run` full tree (includes all component-graph `depguard` rules).
-- `go test -race -count=1 ./...` (unit + property, `-short` off).
-- `go mod tidy` diff check (`go.sum` cleanliness; fails if `go mod tidy` would change files).
-- Coverage gate (`scripts/coverage-gate.sh`).
-- Import allowlist linter (`tools/forbid-import`).
-- `govulncheck ./...`.
+- Everything in `make fast`, over EVERY package: `go test -short -count=1 ./...`.
+- The whole-tree lint against a finding ceiling (`make lint-ceiling`).
+- The tagged scenario tier (`make test-scenario`) and the crash tier.
+- Module hygiene: `go mod tidy` diff check, the import allowlist (`tools/forbid-import`), `govulncheck ./...`.
 
-**Tier 3 — `make check-full` (~10–15 min target).** **Agent declared-done MUST pass this.** Everything in Tier 2 plus:
+No package scoping. No retry. No fail-open. A timeout, an out-of-memory kill, a compile failure or an exit code nothing recognises all BLOCK. `scripts/gate-fails-closed-test.sh` holds that property, and it runs inside both targets.
 
-- `go test -race -tags=integration ./...`.
-- `go test -race -tags=scenario ./test/scenario/...`.
-- `go test -tags=crash ./test/crash/...` (fast subset).
+**Why the scoping went.** The old gate asked git which files changed since main and tested only those packages. `scripts/scenario-gate.sh` implemented that and is deleted. Measured 2026-08-03, whole-repo `go test -short -count=1 ./...` costs about 13 seconds more than `internal/daemon` alone, so the scoping saved 13 seconds. In exchange it could not see a break in a package the change did not touch, which is the usual case because `internal/daemon` imports eight other packages. The same script also had five ways to APPROVE work that never passed — a compile failure, a timeout, a signal kill, an unrecognised exit code, and a retry that allowed when the second run passed — against one way to block.
 
-CI runs **the same make targets** — no CI-only logic. An agent's local `make check-full` pass is a direct predictor of CI pass. If local passes but CI fails: environment drift; treat as a bug in setup, not a CI-specific behavior.
+**Lanes that are not the gate.** None can block a merge and none is a third tier: `make test-race-nightly` (the nightly `-race` lane, the only place a data race surfaces now that `make full` runs without `-race`), `make test-integration` (the integration-tagged tier; needs tmux and a live environment), `make coverage-gates` (the two coverage ratchets; a trend measure, not a verdict).
+
+**`make agent-review`.** Invokes the `agent-reviewer` skill, which makes an LLM call. It enforces a hard wall-clock timeout (`AGENT_REVIEW_TIMEOUT`, default 60s) so an unbounded hang cannot tempt anyone into `--no-verify`. `make review-verdict` cross-checks the stored verdict.
 
 **Excluded from agent done-check** (CI-nightly or on-demand only, per `testing.md`): budget-capped real-agent smoke tests (Tier C), full property-test seeds (`HARMONIK_RAPID_SEED=auto` 10k iterations), full fault-injection site set, `govulncheck` weekly deep scan.
 
-**The rule that makes this work:** agents MUST run `make check-full` before declaring work complete. Enforcement lives in `agent-configuration.md` (session-end ritual names it; `SESSION_HANDOFF.md` writeup records the outcome).
+**The rule that makes this work:** agents MUST run `make full` before declaring work complete. Enforcement lives in `agent-configuration.md`.
 
 ## Commit-blocking vs advisory
 
@@ -223,7 +221,7 @@ Framed as tiers, not "pre-commit vs CI":
 
 Threat model: agent runs `git commit --no-verify` or writes `//nolint:all` to escape local hooks. Counter-pattern:
 
-1. **GitHub branch protection on `main` with required status checks on pushes.** Pushes that fail CI's `make check-full` are marked red but (per `build-practices.md`) are not rejected — the agent fixes forward with a corrective commit. Branch protection prevents force-push and admin-bypass. Not a merge gate (no PRs), but the same commands that run locally also run remotely; divergence surfaces as a red main.
+1. **GitHub branch protection on `main` with required status checks on pushes.** Pushes that fail CI's `make full` are marked red but (per `build-practices.md`) are not rejected — the agent fixes forward with a corrective commit. Branch protection prevents force-push and admin-bypass. Not a merge gate (no PRs), but the same commands that run locally also run remotely; divergence surfaces as a red main.
 2. **`nolintlint` blocks bulk suppression.** Every `//nolint` must name specific linters + carry an explanation + suppress something real. `//nolint:all` fails lint.
 3. **CI posts nolint-density delta on every push** (`git diff HEAD~1 | grep -c //nolint`). Agent-driven spikes are visible without manual diff reading.
 4. **No admin-bypass for branch protection** on `main`. Solo dev is not exempted; rule changes require an explicit config edit.
@@ -244,9 +242,9 @@ Threat model: agent runs `git commit --no-verify` or writes `//nolint:all` to es
 
    Prevents "agent relaxes the gate, then passes its own gate." Rule-change commits are distinguishable from ordinary code commits; silent rule weakening becomes impossible.
 
-**No PR-based gating.** Enforcement relies on: (a) the agent-declared-done ritual running `make check-full` locally before commit; (b) `agent-reviewer` running on every non-trivial commit (per `build-practices.md §Agent review on every commit`); (c) post-push CI re-running the same gauntlet and surfacing failure as a red main. Fix-forward is the recovery, not a block-on-red.
+**No PR-based gating.** Enforcement relies on: (a) the agent-declared-done ritual running `make full` locally before commit; (b) `agent-reviewer` running on every non-trivial commit (per `build-practices.md §Agent review on every commit`); (c) post-push CI re-running the same gauntlet and surfacing failure as a red main. Fix-forward is the recovery, not a block-on-red.
 
-Invariant: **CI mirrors local `make check-full`; local pass predicts CI pass; rule weakening requires a single-concern commit that trips the rule-change surface.**
+Invariant: **CI mirrors local `make full`; local pass predicts CI pass; rule weakening requires a single-concern commit that trips the rule-change surface.**
 
 ## ⚑ Assumptions worth user's eye
 

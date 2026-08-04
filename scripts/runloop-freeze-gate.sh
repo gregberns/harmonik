@@ -81,7 +81,7 @@ done
 # internal/runloop/postreadyhang.go was REMOVED from this list on 2026-07-29. The
 # post-ready-hang detector it held was deleted outright in b714653b5, on evidence
 # that the rationale for keeping it was false. The deletion did not update this
-# list, so the gate reported its own target as missing and failed check-fast for
+# list, so the gate reported its own target as missing and failed `make fast` for
 # every commit after it. The forbidden-source check below still names the file:
 # the detector is gone, so re-creating it inside internal/daemon would reopen the
 # door this gate exists to hold shut.

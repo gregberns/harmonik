@@ -60,16 +60,19 @@ digraph "sub-workflow-commit-gate" {
         role="build + vet + test-compile gate; exit 0 = clean build (incl. test files), non-zero = build, vet, or test-compile failure"
     ];
 
-    // tests: affected-package-scoped scenario gate (fail-open on infra errors).
-    // TERMINAL — its exit code is the Outcome that escapes to the parent
-    // cascade per SW-006 / EM-036a. Exit 0 = SUCCESS; non-zero = FAIL.
+    // tests: the whole-repo test tier, fail-closed. TERMINAL — its exit code is
+    // the Outcome that escapes to the parent cascade per SW-006 / EM-036a.
+    // Exit 0 = SUCCESS; non-zero = FAIL. The earlier form ran an
+    // affected-package-scoped, fail-open script that could report SUCCESS after
+    // a compile failure, a timeout, a signal kill, an exit code it did not
+    // recognise, or a retry that passed once. `make full` has no such path.
     tests [
         type="non-agentic",
         handler_ref="shell",
         idempotency_class="idempotent",
-        tool_command="bash scripts/scenario-gate.sh",
-        timeout="600",
-        role="scenario gate (affected-package-scoped, fail-open); exit 0 = tests pass"
+        tool_command="make full",
+        timeout="3600",
+        role="whole-repo test tier, fail-closed; exit 0 = every test passed"
     ];
 
     // gate_fail: TERMINAL for the build-failure path. Exits 1 so the escaped

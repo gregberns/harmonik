@@ -1,9 +1,9 @@
 # Harmonik Makefile
-# Three-tier check gauntlet (Tier 1 / Tier 2 / Tier 3) + helpers.
-# Local/CI parity: every CI gate invokes these same targets verbatim.
-# See docs/foundation/project-level/quality-checks.md §Three-tier identical gauntlet.
+# Two gate targets and some helpers: `make fast` while you work, `make full`
+# before anyone accepts the work. There is no third tier. Local and CI run the
+# same two targets verbatim.
 
-.DEFAULT_GOAL := check
+.DEFAULT_GOAL := fast
 
 # Tool bin dir — keeps dev tools out of the global GOPATH.
 #
@@ -117,7 +117,7 @@ test-e2e-real-claude:  ## Run real-Claude E2E smoke (requires credentials + bina
 # test-scenario: run the scenario tier with -race and the scenario build tag.
 # Prereq: build-all compiles cmd/harmonik and the twins that daemon scenarios
 # locate without a rebuild.
-# Budget: 10 minutes, matching the scenario sub-run in check-full (Tier 3).
+# Budget: 10 minutes, matching the scenario sub-run in `make full`.
 # Covers all packages that carry //go:build scenario files:
 #   ./test/scenario/...  — top-level scenario package (test/scenario/harness_test.go)
 #   ./internal/daemon/...— daemon-resident scenario tests (scenario_*.go files)
@@ -129,8 +129,7 @@ test-scenario: build-all  ## Run scenario tier (-race, -tags=scenario, 10m budge
 	status=0; \
 	go test -v -race -tags=scenario -timeout 10m ./test/scenario/... ./internal/daemon/... >"$$scenario_log" 2>&1 || status=$$?; \
 	cat "$$scenario_log"; \
-	printf 'scenario skips: '; \
-	grep -c '^--- SKIP:' "$$scenario_log" || true; \
+	awk '/^--- SKIP:/ {n++} END {printf "scenario skips: %d\n", n+0}' "$$scenario_log"; \
 	rm -f "$$scenario_log"; \
 	exit $$status
 
@@ -273,7 +272,7 @@ codex-capture-pane-gate:  ## SC6: forbid `capture-pane` in the structured input-
 # concern left internal/daemon for internal/transport/tunnel, and depguard can
 # only fence the import edge, not the creation of a new file. This grep gate
 # fails if a reverse-tunnel-shaped file or one of the moved symbols reappears in
-# internal/daemon. Wired into check-fast and check-short.
+# internal/daemon. Wired into `make fast` via freeze-gates.
 .PHONY: transport-freeze-gate
 transport-freeze-gate:  ## P2 E4: forbid new reverse-tunnel files or moved symbols in internal/daemon
 	scripts/transport-freeze-gate.sh
@@ -283,7 +282,7 @@ transport-freeze-gate:  ## P2 E4: forbid new reverse-tunnel files or moved symbo
 # pause/resume consumer) left internal/daemon for internal/queuewiring, and
 # depguard can only fence the import edge, not the creation of a new file. This
 # grep gate fails if a queue-ownership-shaped file or one of the moved symbols
-# reappears in internal/daemon. Wired into check-fast and check-short.
+# reappears in internal/daemon. Wired into `make fast` via freeze-gates.
 .PHONY: queuewiring-freeze-gate
 queuewiring-freeze-gate:  ## P2 E3: forbid new queue-ownership files or moved symbols in internal/daemon
 	scripts/queuewiring-freeze-gate.sh
@@ -294,7 +293,7 @@ queuewiring-freeze-gate:  ## P2 E3: forbid new queue-ownership files or moved sy
 # the idle-crew reaper) left internal/daemon for internal/crewrun, and depguard
 # can only fence the import edge, not the creation of a new file. This grep gate
 # fails if a crew-launch-shaped file or one of the moved symbols reappears in
-# internal/daemon. Wired into check-fast and check-short.
+# internal/daemon. Wired into `make fast` via freeze-gates.
 .PHONY: crewrun-freeze-gate
 crewrun-freeze-gate:  ## P2 E2: forbid new crew-launch files or moved symbols in internal/daemon
 	scripts/crewrun-freeze-gate.sh
@@ -305,7 +304,7 @@ crewrun-freeze-gate:  ## P2 E2: forbid new crew-launch files or moved symbols in
 # detector) left internal/daemon for internal/harness/codex, and depguard can
 # only fence the import edge, not the creation of a new file. This grep gate
 # fails if a codex-harness-shaped file or one of the moved symbols reappears in
-# internal/daemon. Wired into check-fast and check-short.
+# internal/daemon. Wired into `make fast` via freeze-gates.
 .PHONY: harnesscodex-freeze-gate
 harnesscodex-freeze-gate:  ## P2 E1a: forbid new codex-harness files or moved symbols in internal/daemon
 	scripts/harnesscodex-freeze-gate.sh
@@ -317,7 +316,7 @@ harnesscodex-freeze-gate:  ## P2 E1a: forbid new codex-harness files or moved sy
 # claude-harness-shaped file or one of the moved symbols reappears in
 # internal/daemon. claudeheartbeat.go (harness-blind heartbeat emitter) and
 # claudeworktreesweep.go (CLI-leftover janitor) are named exceptions — see the
-# script header. Wired into check-fast and check-short.
+# script header. Wired into `make fast` via freeze-gates.
 .PHONY: harnessclaude-freeze-gate
 harnessclaude-freeze-gate:  ## P2 E1b: forbid new claude-harness files or moved symbols in internal/daemon
 	scripts/harnessclaude-freeze-gate.sh
@@ -330,8 +329,8 @@ harnessclaude-freeze-gate:  ## P2 E1b: forbid new claude-harness files or moved 
 # reappears in internal/daemon. pi_profile_resolve.go (claim-time daemon wiring
 # over projectconfig) is a named exception — see the script header. The gate
 # also asserts test-pi-live below still points at a package that HAS the test,
-# because `go test -run` exits 0 on an empty match. Wired into check-fast and
-# check-short.
+# because `go test -run` exits 0 on an empty match. Wired into `make fast` via
+# freeze-gates.
 .PHONY: harnesspi-freeze-gate
 harnesspi-freeze-gate:  ## P2 E1c: forbid new pi-harness files or moved symbols in internal/daemon
 	scripts/harnesspi-freeze-gate.sh
@@ -345,7 +344,7 @@ harnesspi-freeze-gate:  ## P2 E1c: forbid new pi-harness files or moved symbols 
 # or if the daemon re-acquires a raw `git merge` / `git rebase` exec.
 # beadsmergedriver.go (git merge-DRIVER registration), scenariotest/ and
 # branching.go (the WM-019b task-branch landing path) are named exceptions — see
-# the script header. Wired into check-fast and check-short.
+# the script header. Wired into `make fast` via freeze-gates.
 .PHONY: runmerge-freeze-gate
 runmerge-freeze-gate:  ## P2 E5 RT13: forbid new merge-path files or moved symbols in internal/daemon
 	scripts/runmerge-freeze-gate.sh
@@ -366,8 +365,8 @@ projectconfig-freeze-gate:  ## P2 LIFT crit 5: forbid new config-loader files, m
 # backstop) left internal/daemon for internal/runlaunch, internal/substrate and
 # internal/harness/shared. Symbol-anchored, not name-anchored: internal/daemon
 # legitimately keeps ~25 other emit* helpers that are E5 LIFT targets, so a
-# '*events*.go' file scan would fire on correct code. Wired into check-fast and
-# check-short.
+# '*events*.go' file scan would fire on correct code. Wired into `make fast` via
+# freeze-gates.
 .PHONY: runlaunch-freeze-gate
 runlaunch-freeze-gate:  ## P2 E5 RT19b: forbid re-declaring the moved launch-effect symbols in internal/daemon
 	scripts/runlaunch-freeze-gate.sh
@@ -379,7 +378,7 @@ runlaunch-freeze-gate:  ## P2 E5 RT19b: forbid re-declaring the moved launch-eff
 # re-declaring a moved TYPE back in internal/daemon. The daemon KEEPS the concrete
 # adapters + constructors (daemon → runloop, the legal direction); the `= runloop.`
 # forwarding arm allows the daemon-local aliases. Ratcheted: later chunks append
-# their moved run-path filenames/symbols. Wired into check-fast and check-short.
+# their moved run-path filenames/symbols. Wired into `make fast` via freeze-gates.
 .PHONY: runloop-freeze-gate
 runloop-freeze-gate:  ## P2 LIFT L0: forbid re-declaring the moved run-path port/bundle types in internal/daemon
 	scripts/runloop-freeze-gate.sh
@@ -395,8 +394,8 @@ runloop-freeze-gate:  ## P2 LIFT L0: forbid re-declaring the moved run-path port
 # through the seam. Slice RT19c (landed f839121ff) clock-ported the Working-phase
 # watchdogs (pasteinject.go, dot_gate.go's pasteInjectQuitOnGateFile,
 # waitsocketgrace.go, postreadyhang.go) onto the injected ClockPort and added all
-# four to check (2), so they are now IN scope, not out. Wired into check-fast and
-# check-short.
+# four to check (2), so they are now IN scope, not out. Wired into `make fast` via
+# freeze-gates.
 .PHONY: readywait-freeze-gate
 readywait-freeze-gate:  ## P2 E5 RT14: forbid re-hand-rolling the agent_ready wait in internal/daemon
 	scripts/readywait-freeze-gate.sh
@@ -408,7 +407,7 @@ readywait-freeze-gate:  ## P2 E5 RT14: forbid re-hand-rolling the agent_ready wa
 # the import edge, not the creation of a new file. This grep gate fails if a
 # worker-registry-construction file or one of the moved symbols reappears in
 # internal/daemon, or if the daemon re-acquires a direct workers.NewRegistry
-# construction. Wired into check-fast and check-short.
+# construction. Wired into `make fast` via freeze-gates.
 .PHONY: workersbootwire-freeze-gate
 workersbootwire-freeze-gate:  ## P2 E4c: forbid new worker-registry boot-wiring files or moved symbols in internal/daemon
 	scripts/workersbootwire-freeze-gate.sh
@@ -419,8 +418,8 @@ workersbootwire-freeze-gate:  ## P2 E4c: forbid new worker-registry boot-wiring 
 # files to 8 port reads so RT18's re-signature is an 8-line change, not a
 # 108-line one. depguard cannot express "reach this dependency through its
 # port", so this grep gate rations the field per file, asserts EmitterPort is
-# still an alias, and pins each mover to the seam. Wired into check-fast and
-# check-short.
+# still an alias, and pins each mover to the seam. Wired into `make fast` via
+# freeze-gates.
 .PHONY: runloop-emitter-gate
 runloop-emitter-gate:  ## P2 E5 RT16: forbid bypassing EmitterPort with a raw bus-field read in internal/daemon
 	scripts/runloop-emitter-gate.sh
@@ -433,7 +432,7 @@ runloop-emitter-gate:  ## P2 E5 RT16: forbid bypassing EmitterPort with a raw bu
 # declared in workloop.go, if a scheduler symbol is declared anywhere other than
 # scheduler.go, or if either side of the seam is missing — the last case is named
 # so a deleted target fails loudly instead of passing on an empty grep. Wired
-# into check-fast and check-short.
+# into `make fast` via freeze-gates.
 .PHONY: workloop-scheduler-freeze-gate
 workloop-scheduler-freeze-gate:  ## Seam A: forbid moving the dispatch scheduler back into workloop.go
 	scripts/workloop-scheduler-freeze-gate.sh
@@ -619,7 +618,7 @@ secret-scan:  ## Scan staged diff for API keys / credentials / .env files
 # fmt: write gofumpt + gci formatting in-place (used by pre-commit hook and
 #      manually to fix a dirty tree).
 # fmt-check: fail with a non-zero exit code if any file is unformatted (used
-#            by check-fast, check, and CI). gofumpt -l and gci diff both exit 0
+#            by `make fast`, `make full`, and CI). gofumpt -l and gci diff both exit 0
 #            on format drift, so we wrap them with explicit output checks here.
 # ---------------------------------------------------------------------------
 # Order: gci first (import ordering), then gofumpt (blank-line rules). This
@@ -635,91 +634,110 @@ fmt-check:  ## Fail-closed: exit 1 if gofumpt or gci would change any file (run 
 	scripts/go-format.sh check
 
 # ---------------------------------------------------------------------------
-# Tier 1 — check-fast (<15s target)
-# Author-iteration speed.  Pre-commit hook runs this on staged files.
+# THE GATE — two targets, and only two.
+#
+#   make fast   the inner loop. Run it while you work.
+#   make full   the merge decision. Run it before you ask anyone to accept work.
+#
+# Every recipe line below is fail-closed. `make` stops at the first non-zero
+# exit, and no line here carries a `-` prefix, a `|| true`, a `|| exit 0`, or a
+# trailing `if` that can swallow a status. scripts/gate-fails-closed-test.sh
+# holds that property: it re-derives the step list from `make -n` and it also
+# drives a real `make full` with a stub `go` on PATH.
+#
+# WHY the delta-scoped gate is gone. It asked git which files changed since
+# main and then tested only those packages. Two things were wrong with the
+# answer. main is hundreds of commits behind this branch, so the file list was
+# noise. And even from a fresh base the question cannot find a break in a
+# package the change did not touch, which is the usual case here because
+# internal/daemon imports eight other packages. Measured 2026-08-03 on this
+# box: whole-repo `go test -short -count=1 ./...` costs about 13 seconds more
+# than internal/daemon alone. The scoping bought 13 seconds and paid for it
+# with the ability to see. scripts/scenario-gate.sh, which implemented it, is
+# deleted: it had five ways to approve work that never passed (compile failure,
+# timeout, signal kill, unrecognized exit code, and a retry that allowed when
+# the second run passed) against one way to block.
+#
+# fast and full share every static step. They differ in exactly two ways: full
+# tests EVERY package instead of the major set, and full adds the whole-tree
+# lint ceiling, the tagged scenario tier, the crash tier and the module hygiene
+# checks. Keep it that way. A step that belongs to only one of them is how a
+# third tier grows back.
 # ---------------------------------------------------------------------------
-.PHONY: check-fast
-check-fast:  ## Tier 1: fmt-check (fail-closed), go vet, go build, golangci-lint --new-from-rev, go test -short
+
+# FAST_PKGS — the packages `make fast` runs unit tests for.
+#
+# internal/core, internal/daemon, internal/queue and internal/queuewiring are
+# the named core set. The rest are on the same queue-and-bead path and a silent
+# break in any of them is invisible in the four above:
+#
+#   internal/brcli      the bead-ledger adapter. Every bead state transition
+#                       goes through it, so a break here loses work while the
+#                       queue still reports progress.
+#   internal/eventbus   the queue and the run loop are observed only through
+#                       emitted events. A break here makes every other gate,
+#                       watcher and status surface blind at once.
+#   internal/runloop    owns the run state machine that carries a dispatched
+#                       bead from launch to merge, and holds the merge-path
+#                       scenario gate.
+#   internal/workflow   parses and walks the workflow graph that decides what
+#                       a bead does next. workflow.dot is data this package
+#                       reads, so a graph edit is only as safe as this package.
+#   cmd/harmonik        the only way an operator or an agent reaches the queue.
+#                       It is also one of the two packages red today, so
+#                       leaving it out would hide a known break from the inner
+#                       loop.
+#
+# This set is a judgment, not a boundary the compiler enforces. `make full`
+# tests every package and is the only thing a merge may rest on.
+FAST_PKGS := \
+	./internal/core \
+	./internal/daemon \
+	./internal/queue \
+	./internal/queuewiring \
+	./internal/brcli \
+	./internal/eventbus \
+	./internal/runloop \
+	./internal/workflow \
+	./cmd/harmonik
+
+# Per-step wall-clock cap. A hung step must FAIL, never hang and never pass.
+# Two caps, because they catch different hangs:
+#   GATE_GO_TIMEOUT   goes to `go test -timeout`. A test that blocks forever
+#                     panics the test binary and `go test` exits non-zero.
+#   GATE_STEP_SECS    wraps the whole command in `timeout`, which catches a
+#                     hang in the toolchain itself or in a child process the
+#                     test leaked. `timeout` exits 124, which is non-zero, so
+#                     make stops. Absent `timeout`/`gtimeout` the wrapper is
+#                     empty and only the inner cap applies — a hang then hangs,
+#                     which is loud, and it still never reports success.
+GATE_GO_TIMEOUT ?= 25m
+GATE_STEP_SECS  ?= 1800
+GATE_CAP := $(if $(TIMEOUT_BIN),$(TIMEOUT_BIN) --kill-after=30s $(GATE_STEP_SECS)s,)
+
+# When neither `timeout` nor `gtimeout` is installed, GATE_CAP expands to
+# nothing and the outer cap silently disappears. Silently is the problem: a
+# missing guard that says nothing is indistinguishable from a guard that is
+# working. gate-static says so out loud once per run.
+
+# script-tests — the self-tests for the shell the gate itself depends on.
+# 80 shell scripts in this repo decide things and 14 of them have a test. These
+# are those 14 as they apply to the gate path. They cost a few seconds and they
+# guard the parts that fail silently.
+.PHONY: script-tests
+script-tests:  ## Self-tests for the shell the gate depends on
 	scripts/go-format-test.sh
 	scripts/agent-reviewer-run-test.sh
-	$(MAKE) fmt-check
-	go vet ./...
-	go build ./...
-	$(MAKE) vet-tagged
-	$(TOOLS_DIR)/golangci-lint run --allow-parallel-runners --new-from-rev=HEAD~1
-	scripts/transport-freeze-gate.sh
-	scripts/queuewiring-freeze-gate.sh
-	scripts/crewrun-freeze-gate.sh
-	scripts/harnesscodex-freeze-gate.sh
-	scripts/harnessclaude-freeze-gate.sh
-	scripts/harnesspi-freeze-gate.sh
-	scripts/runmerge-freeze-gate.sh
-	scripts/projectconfig-freeze-gate.sh
-	scripts/runlaunch-freeze-gate.sh
-	scripts/runloop-freeze-gate.sh
-	scripts/readywait-freeze-gate.sh
-	scripts/workersbootwire-freeze-gate.sh
-	scripts/runloop-emitter-gate.sh
-	scripts/workloop-scheduler-freeze-gate.sh
-	scripts/queue-status-writer-ratchet.sh
-	@# `|| exit 1` is load-bearing. Without it the recipe line's status comes from
-	@# the trailing `if`, so a refusal from the script is discarded and the gate
-	@# goes green while the diagnostic scrolls past on stderr.
-	@CHANGED_PKGS=$$(scripts/changed-go-packages.sh) || exit 1; \
-	if [ -n "$$CHANGED_PKGS" ]; then \
-		echo "check-fast: testing" $$CHANGED_PKGS; \
-		printf '%s\n' "$$CHANGED_PKGS" | tr '\n' '\0' | xargs -0 go test -short; \
-	else \
-		echo "check-fast: no Go file changed in HEAD, in the working tree, or untracked - skipping go test"; \
-	fi
-
-# ---------------------------------------------------------------------------
-# Tier 2a — check-short (CI gate, ~2-3 min)
-# Runs in CI on every push/PR via .github/workflows/ci.yml.
-# Skips real-daemon E2E tests (skipRealDaemonE2EInShort) that require br,
-# twin binaries, and a live daemon — none available on hosted runners.
-# Those tests live in the separate Tier 3 scenario lane (hk-6hzci).
-# TMPDIR=/tmp: ensures socket-path tests don't hit macOS TMPDIR length limits.
-# ---------------------------------------------------------------------------
-.PHONY: check-short
-check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -short -race (skips real-daemon E2E; hk-jzepv)
-	scripts/go-format-test.sh
-	scripts/changed-go-packages-test.sh
-	@# ~12s, so it lives here rather than in check-fast's <15s budget. It guards
-	@# loadgen.sh's argument parsing, where an omitted option value once turned
-	@# the parser itself into the runaway spin loop the script exists to prevent.
-	scripts/loadgen-test.sh
-	@# Under a second. Guards the cache KEY below, where every failure is silent:
-	@# two checkouts that collide share a cache and the corruption comes back, and
-	@# two wrapped lines that disagree each build cold with nothing to see.
 	scripts/with-lane-gocache-test.sh
-	@# Under a second. Guards the wrapper that every -run-filtered target below
-	@# now goes through. `go test -run <pat>` exits 0 when the pattern matches
-	@# nothing, so a gate wired that way reports green while asserting nothing —
-	@# measured on test-keeper-conformance, which ran zero keeper tests from
-	@# ec66da798 until the corpus registration came back.
 	scripts/go-test-must-match-test.sh
-	scripts/agent-reviewer-run-test.sh
-	$(MAKE) fmt-check
-	@# Every Go step below runs under a GOCACHE private to THIS checkout. The lanes
-	@# used to share one, and a concurrent process invalidating cache facts mid-run
-	@# gives "could not import ... no such file or directory" (measured 2026-07-22,
-	@# documented at the coverage gate), so the second lane had to wait on a
-	@# 2-to-3-minute recipe. The cache is keyed on the checkout root and PERSISTS,
-	@# so each lane stays as warm as the shared cache is today — the wrapper
-	@# computes the same path every time, which is what lets these separate lines
-	@# share one cache. Do NOT swap in with-isolated-gocache.sh: it deletes the
-	@# cache on exit, so every line here would build cold.
-	@#
-	@# This makes two concurrent runs in DIFFERENT checkouts correct. It does not
-	@# make them free, and it does not cover two runs in the SAME checkout. The
-	@# -p=1 -parallel=1 note further down is deliberate and still stands: the runs
-	@# compete for CPU, and a gate result from a loaded box is not evidence either
-	@# way. See LANES.md section 5 before running two at once.
-	scripts/with-lane-gocache.sh go vet ./...
-	scripts/with-lane-gocache.sh go build ./...
-	scripts/with-lane-gocache.sh $(MAKE) vet-tagged
-	scripts/with-lane-gocache.sh $(TOOLS_DIR)/golangci-lint run --allow-parallel-runners --new-from-rev=origin/main
+	scripts/loadgen-test.sh
+	scripts/gate-fails-closed-test.sh
+
+# freeze-gates — the per-subsystem "do not move this back" greps. Cheap
+# (sub-second each) and they only ever answer a structural question, so they
+# belong in the inner loop.
+.PHONY: freeze-gates
+freeze-gates:  ## Subsystem freeze / ratchet greps (structural, sub-second each)
 	scripts/transport-freeze-gate.sh
 	scripts/queuewiring-freeze-gate.sh
 	scripts/crewrun-freeze-gate.sh
@@ -735,88 +753,160 @@ check-short:  ## CI Tier 2: fmt-check + golangci-lint (new-from-rev) + go test -
 	scripts/runloop-emitter-gate.sh
 	scripts/workloop-scheduler-freeze-gate.sh
 	scripts/queue-status-writer-ratchet.sh
-	# PROVEN-GREEN recipe = all THREE knobs together (isolated proof: run
-	# 28969662856, supervise green at 37.2s; daemon pkg green at ~930s):
-	#   -p=1          serialize PACKAGES to kill cross-package -race saturation
-	#   -parallel=1   serialize intra-package t.Parallel to kill shared-state
-	#                 collisions (cmd/harmonik signature-less + brcli/lifecycle
-	#                 0.00s fails)
-	#   -timeout=20m  headroom for the daemon pkg running serially (~930s > the
-	#                 default 10m, else it panics "test timed out after 10m0s")
-	# Restore -parallel=2 only after the colliding pkgs are made hermetic
-	# (see follow-up hk-d515w).
-	TMPDIR=/tmp scripts/with-lane-gocache.sh go test -short -race -count=1 -p=1 -parallel=1 -timeout=20m ./...
 
-# ---------------------------------------------------------------------------
-# check-report — QUIET unified reporter over the check gauntlet (hk-l4sen).
-# Runs EVERY step of a tier but presents ~10 lines on green (one ✓ per step)
-# and, on red, only the failing step's failing lines. Changes presentation
-# only; the step list is derived at runtime from `make -n <target>` so it can
-# never silently drop a step. TIER selects the underlying tier target:
-#   fast  -> check-fast    short -> check-short (default)    full -> check
-# ---------------------------------------------------------------------------
-TIER ?= short
-.PHONY: check-report
-check-report:  ## Quiet reporter: ~10 lines on green, only failing step's lines on red (TIER=fast|short|full, default short)
-	scripts/check-report.sh $(TIER)
-
-# ---------------------------------------------------------------------------
-# Tier 2b — check-race-full (non-gating nightly)
-# Full-parallel -race run with no -short and no -parallel cap.  Used as the
-# nightly CI gate (.github/workflows/nightly-race.yml) to surface data races
-# suppressed by check-short's -parallel=1 saturation guard.  Never blocks
-# merges; result surfaced via ops-monitor checks['nightly-race'] digest.
-# (hk-plw4z)
-# ---------------------------------------------------------------------------
-.PHONY: check-race-full
-check-race-full:  ## Non-gating nightly: go test -race -count=1 ./... (full-parallel, no -short, no -parallel cap; hk-plw4z)
-	TMPDIR=/tmp go test -race -count=1 ./...
-
-# ---------------------------------------------------------------------------
-# Tier 2 — check (~3-5 min target)
-# Default pre-push + work-in-progress verification.
-# ---------------------------------------------------------------------------
-.PHONY: check
-check:  ## Tier 2: fmt-check (fail-closed), full golangci-lint, go test -race, go mod tidy check, coverage gate, govulncheck
-	$(MAKE) fmt-check
-	go vet ./...
-	go build ./...
-	$(TOOLS_DIR)/golangci-lint run
-	go test -race -count=1 ./...
-	@# go mod tidy diff check — fail if tidy would change go.mod or go.sum
-	@cp go.mod go.mod.check
-	@cp go.sum go.sum.check 2>/dev/null || true
-	@go mod tidy
-	@if ! diff -q go.mod go.mod.check >/dev/null 2>&1 || ! diff -q go.sum go.sum.check >/dev/null 2>&1; then \
-		cp go.mod.check go.mod; \
-		[ -f go.sum.check ] && cp go.sum.check go.sum || rm -f go.sum; \
-		rm -f go.mod.check go.sum.check; \
-		echo "ERROR: go mod tidy would change go.mod or go.sum; run 'go mod tidy' and commit the result"; exit 1; \
+# gate-static — everything fast and full share that runs no test.
+#
+# Ordered cheapest-first so the inner loop reports the cheap break first.
+# Every Go step runs under a GOCACHE private to THIS checkout. The lanes used
+# to share one, and a concurrent process invalidating cache facts mid-run gives
+# "could not import ... no such file or directory". The cache is keyed on the
+# checkout root and PERSISTS, so a lane stays as warm as a shared cache would.
+# Do NOT swap in with-isolated-gocache.sh: it deletes the cache on exit, so
+# every line here would build cold.
+.PHONY: gate-static
+gate-static:  ## Shared static half of fast and full: format, build, vet, freeze greps, changed-line lint
+	@if [ -z "$(TIMEOUT_BIN)" ]; then \
+		echo "NOTE: no timeout/gtimeout on PATH, so the per-step wall-clock cap is inert."; \
+		echo "      go test -timeout=$(GATE_GO_TIMEOUT) still bounds a hung TEST, but a hang in"; \
+		echo "      the toolchain itself will hang instead of failing. brew install coreutils."; \
 	fi
-	@cp go.mod.check go.mod
-	@[ -f go.sum.check ] && cp go.sum.check go.sum || rm -f go.sum
-	@rm -f go.mod.check go.sum.check
+	$(MAKE) script-tests
+	$(MAKE) fmt-check
+	scripts/with-lane-gocache.sh go build ./...
+	scripts/with-lane-gocache.sh go vet ./...
+	scripts/with-lane-gocache.sh $(MAKE) vet-tagged
+	$(MAKE) freeze-gates
+	scripts/with-lane-gocache.sh $(TOOLS_DIR)/golangci-lint run --allow-parallel-runners --new-from-rev=HEAD~1
+
+# gate-test-compile — compiles every _test.go file in the repo and runs none of
+# them. `go build ./...` does NOT compile test files, so a test that references
+# an undefined symbol used to reach reviewers as a green commit. This runs no
+# test, so a pre-existing red elsewhere cannot make it fail. Only a build break
+# can, and a test that does not build is a build break.
+.PHONY: gate-test-compile
+gate-test-compile:  ## Compile every _test.go file, run none
+	$(GATE_CAP) scripts/with-lane-gocache.sh go test -run='^$$' -count=1 ./...
+
+# ---------------------------------------------------------------------------
+# make fast — the inner loop.
+# ---------------------------------------------------------------------------
+.PHONY: fast
+fast:  ## THE inner loop: format, build, vet, compile every test, unit-test the major packages, lint changed lines
+	$(MAKE) gate-static
+	$(MAKE) gate-test-compile
+	TMPDIR=/tmp $(GATE_CAP) scripts/with-lane-gocache.sh \
+		go test -short -count=1 -timeout=$(GATE_GO_TIMEOUT) $(FAST_PKGS)
+
+# ---------------------------------------------------------------------------
+# make full — the merge decision.
+#
+# No scoping. No retry. No fail-open. `go test -short -count=1 ./...` is a
+# strict superset of FAST_PKGS, which is why full does not call fast: calling
+# it would test internal/daemon twice and cost about five extra minutes for no
+# extra answer. Everything else fast runs, full runs, in the same order.
+# ---------------------------------------------------------------------------
+.PHONY: full
+full:  ## THE merge decision: everything in fast over EVERY package, plus lint ceiling, scenario tier, crash tier, module hygiene
+	$(MAKE) gate-static
+	$(MAKE) gate-test-compile
+	TMPDIR=/tmp $(GATE_CAP) scripts/with-lane-gocache.sh \
+		go test -short -count=1 -timeout=$(GATE_GO_TIMEOUT) ./...
+	$(MAKE) lint-ceiling
+	$(MAKE) test-scenario
+	$(GATE_CAP) go test -tags=crash -count=1 -timeout=$(GATE_GO_TIMEOUT) ./test/crash/...
+	$(MAKE) module-hygiene
+
+# ---------------------------------------------------------------------------
+# lint-ceiling — THE HOOK for the whole-tree lint ceiling.
+#
+# `make full` must lint the WHOLE tree, not only the changed lines, and it must
+# fail when the finding count rises above an agreed ceiling. Measured
+# 2026-08-03: 1184 findings full-tree, 682 in production files and 502 in test
+# files. A bare `golangci-lint run` therefore exits non-zero on every commit and
+# is useless as a verdict, which is why `make check` was documented as "never
+# gate on this".
+#
+# The ceiling itself is being wired by a separate change. THIS TARGET IS THE
+# SEAM. That change should replace the body below with the real check and
+# should not need to touch `make full` at all.
+#
+# Contract for whoever lands it:
+#   - the script is scripts/lint-ceiling.sh;
+#   - exit 0 means at or under the ceiling, non-zero means over it;
+#   - it must fail when the script is missing, which is what happens today.
+# ---------------------------------------------------------------------------
+.PHONY: lint-ceiling
+lint-ceiling:  ## Whole-tree lint against an agreed finding ceiling (seam for scripts/lint-ceiling.sh)
+	@if [ ! -x scripts/lint-ceiling.sh ]; then \
+		echo "make full: the whole-tree lint ceiling is not wired yet."; \
+		echo "  Expected: scripts/lint-ceiling.sh, executable, exit 0 at or under the ceiling."; \
+		echo "  This step FAILS while it is missing. A merge decision with a missing"; \
+		echo "  step has not produced a verdict, and a gate that shrugs at a missing"; \
+		echo "  step is the fail-open behaviour this gate was built to remove."; \
+		exit 1; \
+	fi
+	scripts/lint-ceiling.sh
+
+# ---------------------------------------------------------------------------
+# module-hygiene — the cheap whole-module checks the old `check` target held.
+# ---------------------------------------------------------------------------
+.PHONY: module-hygiene
+module-hygiene:  ## go.mod/go.sum tidy check, forbidden-import check, govulncheck
+	@# go mod tidy diff check — fail if tidy would change go.mod or go.sum.
+	@# The originals go to a temp directory and come back either way, so the
+	@# check never leaves a tidied tree behind. No step here may end in a
+	@# construct that discards a status. scripts/gate-fails-closed-test.sh
+	@# refuses those in any gate step, because a swallowed status is how a gate
+	@# starts approving work that did not pass.
+	@saved=$$(mktemp -d) && \
+	cp go.mod go.sum "$$saved/" && \
+	go mod tidy; \
+	drift=0; \
+	diff -q go.mod "$$saved/go.mod" >/dev/null 2>&1 || drift=1; \
+	diff -q go.sum "$$saved/go.sum" >/dev/null 2>&1 || drift=1; \
+	cp "$$saved/go.mod" "$$saved/go.sum" .; \
+	rm -rf "$$saved"; \
+	if [ "$$drift" -ne 0 ]; then \
+		echo "ERROR: go mod tidy would change go.mod or go.sum; run 'go mod tidy' and commit the result"; \
+		exit 1; \
+	fi
 	go run ./tools/forbid-import ./...
-	@if [ -x scripts/coverage-gate.sh ]; then scripts/coverage-gate.sh; else echo "coverage-gate.sh not yet present (hk-pvcs.5); skipping"; fi
-	@# cmd/** coverage ratchet. Lives in tier 2, not check-fast: it runs
-	@# `go test -covermode=atomic ./cmd/...`, which blows the 15s fast budget.
-	@# Runs under a private GOCACHE: measured on 2026-07-22, a shared-cache run
-	@# fails with "could not import flag ... no such file or directory" whenever a
-	@# concurrent process invalidates cache facts mid-run. The gate fails closed on
-	@# that, so without isolation it reports a spurious hard failure.
-	scripts/with-isolated-gocache.sh scripts/cmd-coverage-gate.sh
 	$(TOOLS_DIR)/govulncheck ./...
 
 # ---------------------------------------------------------------------------
-# Tier 3 — check-full (~10-15 min target)
-# Agent declared-done MUST pass this.
+# Lanes that are NOT the gate.
+#
+# Each one answers a question `make full` deliberately does not ask. None of
+# them may block a merge, and none of them is a third tier.
 # ---------------------------------------------------------------------------
-.PHONY: check-full
-check-full:  ## Tier 3: everything in check + integration + scenario + crash test suites
-	$(MAKE) check
-	go test -race -tags=integration ./...
-	$(MAKE) test-scenario
-	go test -tags=crash ./test/crash/...
+
+# test-race-nightly — was check-race-full. Renamed because the `check-` prefix
+# said "gate" and this never was one: .github/workflows/nightly-race.yml runs
+# it on a schedule and its result is surfaced through ops-monitor, never as a
+# merge verdict. It is the only -race coverage left now that `make full` runs
+# the suite without -race, so it earns its keep as a lane.
+.PHONY: test-race-nightly
+test-race-nightly:  ## Nightly, non-gating: go test -race -count=1 ./... (full-parallel, no -short)
+	TMPDIR=/tmp go test -race -count=1 ./...
+
+# test-integration — the `integration`-tagged tier. Dropped OUT of the merge
+# decision: it needs tmux and a live environment, `make test-scenario` already
+# covers the real-daemon path it duplicates, and no automated lane ever ran it.
+# Kept runnable so the coverage is not lost, and named so it is findable.
+.PHONY: test-integration
+test-integration:  ## The integration-tagged tier (needs tmux + a live environment; not part of `make full`)
+	go test -race -tags=integration -count=1 ./...
+
+# coverage-gates — the two coverage ratchets. Dropped OUT of the merge decision:
+# each re-runs the suite a second time under -covermode, which roughly doubles
+# the cost of a verdict, and a ratchet measures a trend rather than answering
+# "did this work pass". The old `make check` also invoked coverage-gate.sh
+# behind an `if [ -x ... ]` that PASSED when the script was missing. Here a
+# missing script is a failure like any other.
+.PHONY: coverage-gates
+coverage-gates:  ## Coverage ratchets, internal/** and cmd/** (trend measure; not part of `make full`)
+	scripts/coverage-gate.sh
+	scripts/with-isolated-gocache.sh scripts/cmd-coverage-gate.sh
 
 # ---------------------------------------------------------------------------
 # Keeper acceptance corpus — keeper conformance set (hk-urxa3)
@@ -924,8 +1014,8 @@ agent-review:  ## Run agent-reviewer + verdict cross-check; APPROVE required to 
 		exit 0; \
 	fi
 
-.PHONY: check-verdict
-check-verdict:  ## Cross-check diff-keyed verdict: APPROVE → pass; absent/REQUEST_CHANGES/BLOCK → fail (hk-q6axs.4)
+.PHONY: review-verdict
+review-verdict:  ## Cross-check diff-keyed verdict: APPROVE → pass; absent/REQUEST_CHANGES/BLOCK → fail (hk-q6axs.4)
 	@scripts/check-verdict.sh --diff HEAD~1
 
 # ---------------------------------------------------------------------------

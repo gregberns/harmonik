@@ -105,11 +105,11 @@ The single authoritative map of **which test tier runs where** and **which tier 
 
 | Test layer | Invocation | CI workflow | Merge-blocking? |
 | --- | --- | --- | --- |
-| §1–§5 unit / integration / scenario(in-proc) / crash-recovery(fast) / property — via `-short` | `make check-short` | `ci.yml` → *check (Tier 2)* | **Yes** — blocks merge |
-| gofumpt+gci / vet / build / golangci-lint | `make check-short` | `ci.yml` → *check (Tier 2)* | **Yes** |
+| §1–§5 unit / integration / scenario(in-proc) / crash-recovery(fast) / property — via `-short` | `make full` | `ci.yml` → *make full* | **Yes** — blocks merge |
+| gofumpt+gci / vet / build / golangci-lint | `make fast` (inside `make full`) | `ci.yml` → *make full* | **Yes** |
 | commit-message trailers / secret scan | `scripts/validate-commit-msg.sh` · `make secret-scan` (via `/check`) | *(agent-driven; git hooks retired)* | No |
 | §3 scenario suite (full, `-tags=scenario`, incl. `internal/daemon` scenario files) | `make test-scenario` | `scenario.yml` → *scenario (Tier 3)* | **No today** (`continue-on-error`); WS1.1 flips the **`./test/scenario/...`-only** invocation to a required check — never the daemon bundle, which `t.Skipf`s green on sshd-less runners |
-| full `-race`, no `-short`, uncapped parallel | `make check-race-full` | `nightly-race.yml` | No (nightly shake-out) |
+| full `-race`, no `-short`, uncapped parallel | `make test-race-nightly` | `nightly-race.yml` | No (nightly shake-out) |
 | §6 Docker cross-container remote-substrate E2E | `make test-docker-e2e` | *(none — local / assessor-forced)* | Assessor gate, not CI |
 | §7 subprocess daemon-boot (non-docker) | `make test-subprocess` | *(none — local / assessor-forced; deliberately off CI — `br`-on-PATH dep would skip-to-green)* | Assessor gate, not CI |
 | Core-loop LT gate (real pi/codex/claude cells, forced) | `make core-loop-lt` | *(none — forced-local, WS4-5)* | Assessor LT-leg gate, never CI (non-zero on any non-green cell; emits `MATRIX_JSON` grid) |
@@ -121,7 +121,7 @@ The localhost-SSH + Docker + subprocess tiers are **the assessor's forced-local 
 
 Every change gets a **risk tier**; the risk tier sets the *minimum* set of layers that must pass before it lands.
 
-- **R1 (highest) — daemon / lifecycle core.** A diff touching `internal/daemon/**` or `internal/lifecycle/**` is **auto-R1** by path-glob **floor**. R1 requires: CI Tier 2 (`check-short`) green **and** the full scenario suite (§3) green **and** the assessor-forced Docker remote-substrate E2E (§6) green. These paths carry the highest blast radius (dispatch, crash-recovery, promote/reconcile), so the false-green-proof tiers are mandatory.
+- **R1 (highest) — daemon / lifecycle core.** A diff touching `internal/daemon/**` or `internal/lifecycle/**` is **auto-R1** by path-glob **floor**. R1 requires: CI (`make full`) green **and** the full scenario suite (§3) green **and** the assessor-forced Docker remote-substrate E2E (§6) green. These paths carry the highest blast radius (dispatch, crash-recovery, promote/reconcile), so the false-green-proof tiers are mandatory.
 - **R2 — other product code** (`internal/**` outside the R1 globs, `cmd/**`): CI Tier 2 green **and** any §3 scenario that exercises the touched path green. The assessor raises to R1 when a change reaches into a daemon/lifecycle seam indirectly (e.g. a shared type a daemon path depends on).
 - **R3 — docs / test-only / tooling** (`docs/**`, `*_test.go` with no product-source change, `Makefile`/CI-config where the change is self-evidently inert): CI Tier 2 green. No scenario/Docker requirement.
 
@@ -288,7 +288,7 @@ The flake is the messenger for a **genuine product or infrastructure defect**. T
 - **Coverage thresholds — the authority is `scripts/coverage-gate.sh`, not this document.** It enforces a
   90.0% floor, 95.0% for core packages, and a 0.3pp regression cap against the checked-in
   `coverage.baseline`; `scripts/cmd-coverage-gate.sh` ratchets `cmd/**`. Both run from `make check`.
-  **CI does not run either** — CI runs `check-short`. Do not restate the numbers here; they drift.
+  **CI does not run either** — CI runs `make full`. Do not restate the numbers here; they drift.
   (This bullet previously said "80% line … CI fails the merge if thresholds regress." Both halves were
   false: the wrong number, and a CI gate that does not exist.)
 - **A skipped test is a lie about coverage** — fix it, delete it, or put it behind a build tag. The one

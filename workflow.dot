@@ -8,8 +8,7 @@
 // Topology:
 //   start
 //   → implement (agent: implementer; commit required)
-//   → commit_gate (tool: go build + go vet + scripts/scenario-gate.sh —
-//                  affected-package-scoped unit + scenario tests, fail-open)
+//   → commit_gate (tool: make full — the whole-repo merge decision, fail-closed)
 //     SUCCESS                   → review
 //     FAIL + deterministic      → implement (fix-loop, capped at 3)
 //     FAIL + transient          → commit_gate (self-loop, capped at 2)
@@ -27,14 +26,20 @@
 //
 // Key design decisions:
 //   D1=A: single shell commit_gate node (NOT separate build/test/scenario nodes).
-//   D3=v1.1: the unit + scenario test steps are AFFECTED-PACKAGE-SCOPED and
-//     FAIL-OPEN via scripts/scenario-gate.sh (hk-u830m), superseding the v1
-//     whole-repo `go test ./... && go test -tags=scenario ./...`. The script
-//     mirrors the daemon's affectedScenarioPkgs / classifyScenarioGateError
-//     (internal/daemon/scenariogate.go) so script and daemon agree on which
-//     packages run and on failure-vs-infra-error classification. Required for
-//     the dispatch-default flip (hk-30vlb): a whole-repo gate would let a
-//     pre-existing RED test in an unrelated package block every bead.
+//   D3=v2: the gate is `make full` — WHOLE REPO, fail-closed. This reverses
+//     the affected-package-scoped, fail-open v1.1 gate and deletes the script
+//     that implemented it. Two reasons. Scoping asked git what changed since
+//     main to choose packages: main is hundreds of commits behind, and even
+//     from a fresh base the question cannot find a break in a package the
+//     change did not touch, which is the usual case because internal/daemon
+//     imports eight other packages. Measured 2026-08-03, the whole repo costs
+//     about 13 seconds more than internal/daemon alone, so the scoping bought
+//     nothing. And the script had five ways to APPROVE work that never passed
+//     (compile failure, timeout, signal kill, unrecognized exit code, and a
+//     retry that allowed when the second run passed) against one way to block.
+//     The v1.1 rationale was that a pre-existing RED in an unrelated package
+//     would block every bead. That is true and it is the correct outcome: a
+//     tree with a red test is a tree nothing should merge into. Fix the red.
 //   The SOLE-inbound-edge invariant: no path reaches close except review→close[APPROVE].
 //     This is a golden-test-asserted contract (see internal/workflow/scenario_standard_bead_hkp0kum_test.go).
 //
@@ -86,44 +91,45 @@ digraph "standard-bead" {
         role="implement the bead's change; commit required. On re-entry: address reviewer feedback or fix the build/test failure."
     ];
 
-    // commit_gate: shell gate — build + vet (whole-repo) + affected-package-scoped
-    // tests. The unit and scenario test steps run only the Go packages this bead
-    // actually touched (vs. the merge base), via scripts/scenario-gate.sh, which
-    // is FAIL-OPEN on gate-infrastructure errors (timeout / OOM / compile) and
-    // BLOCKs only on a genuine `--- FAIL`. This is required for standard-bead.dot
-    // to be the dispatch default (hk-30vlb): a whole-repo `go test ./...` would
-    // let a pre-existing RED test in an UNRELATED package block every bead.
-    // build + vet stay whole-repo — a build break anywhere is legitimately fatal.
-    // `go test -run=^$ ./...` is a COMPILE-ONLY test build (no test runs): it
-    // compiles every _test.go file whole-repo and FAILS if any test references an
-    // undefined symbol. This closes the hk-cmry enabling hole — `go build` does
-    // NOT compile test files, and scenario-gate.sh is FAIL-OPEN on compile errors,
-    // so a RED-only commit (tests referencing undefined symbols) used to PASS the
-    // gate and reach the reviewers. A non-compiling test is a build break and is
-    // legitimately fatal, so this stays whole-repo (it runs no tests, so an
-    // unrelated pre-existing test FAILURE cannot block — only a compile break can).
-    // Exit 0 (SUCCESS) → all checks pass → advance to review.
-    // Non-zero deterministic → build / vet / test-compile / genuine test failure → loop back to implement (capped at 3).
+    // commit_gate: `make full` — the merge decision, defined in the Makefile.
+    // It runs the format check, `go build ./...`, `go vet ./...`, the tagged
+    // vet, the subsystem freeze greps, the changed-line lint, a compile of
+    // every _test.go file, `go test -short -count=1 ./...` over EVERY package,
+    // the whole-tree lint ceiling, the tagged scenario tier, the crash tier and
+    // the module hygiene checks.
+    //
+    // Fail-closed at every step. No package scoping, no retry, and no path that
+    // reports SUCCESS on a timeout, an OOM, a compile failure or an exit code
+    // nothing recognised. scripts/gate-fails-closed-test.sh holds that.
+    //
+    // Keeping the gate here rather than in the graph is deliberate: the graph
+    // used to carry its own copy of the command, so the graph and the Makefile
+    // could disagree about what "passing" meant. There is one definition now.
+    // Exit 0 (SUCCESS) → every check passed → advance to review.
+    // Non-zero deterministic → build / vet / test-compile / test failure → loop back to implement (capped at 3).
     // Non-zero transient → infra glitch → self-loop retry (capped at 2).
     // Any other outcome → unconditional fallback → close-needs-attention.
     commit_gate [
         type="non-agentic",
         handler_ref="shell",
         idempotency_class="idempotent",
-        tool_command="go build ./... && go vet ./... && go test -run=^$ ./... && bash scripts/scenario-gate.sh",
-        // hk-a5fxl: 900s was SHORTER than the work this node runs, so a real red
-        // in internal/daemon could never report. Measured: internal/daemon
-        // `go test -short` alone is ~600s (601.4s / 593.5s on two independent
-        // daemons), and scenario-gate.sh retries the whole affected run once on a
-        // first-run FAIL (hk-8b35c) — so a FAILING internal/daemon change costs
-        // ~1200s of tests before build + vet + the whole-repo compile-only pass.
-        // At 900s it timed out deterministically, was classified TRANSIENT, burned
-        // its self-loop budget, and died in close-needs-attention having never
-        // reported WHICH test failed. 1800s clears the measured worst case with
-        // headroom for a loaded box (load average 43.67 was observed during the
-        // gate that produced this bead).
-        timeout="1800",
-        role="commit gate: build + vet + test-compile + affected-package-scoped unit + scenario tests (fail-open); exit 0 = ready for review"
+        tool_command="make full",
+        // The node timeout must clear the work the node does, or a real red can
+        // never report. That is the history here: at 900s this node timed out
+        // deterministically, was classified TRANSIENT, burned its self-loop
+        // budget and died in close-needs-attention having never said WHICH test
+        // failed. 1800s was then sized for a gate that tested only the affected
+        // packages and retried them once.
+        //
+        // `make full` does more and retries nothing. Measured on this box,
+        // 2026-08-03, warm cache: static half about 90s, compile every test file
+        // about 60s, whole-repo `go test -short` 340s, the tagged scenario tier
+        // up to its own 10m budget, module hygiene about 60s. That is roughly
+        // 22 minutes at the worst case. 3600s doubles it, which covers a cold
+        // cache and a loaded box (load average 43.67 has been observed during
+        // this node). A timeout here is a hard FAIL, never an approval.
+        timeout="3600",
+        role="commit gate: make full — whole-repo build, vet, tests, lint ceiling and scenario tier, fail-closed; exit 0 = ready for review"
     ];
 
     // review: agentic reviewer. Emits an Outcome whose preferred_label

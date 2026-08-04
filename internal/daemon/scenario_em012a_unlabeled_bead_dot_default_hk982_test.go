@@ -35,16 +35,16 @@ package daemon_test
 //
 // # Test project worktree
 //
-// The commit_gate in standard-bead.dot runs:
-//   go build ./... && go vet ./... && bash scripts/scenario-gate.sh
+// The commit_gate in standard-bead.dot runs `make full`.
 //
 // To make this pass inside the test worktree we create:
-//   - A minimal go.mod (module em012a-test; go 1.21) — `go build ./...` and
-//     `go vet ./...` report no packages and exit 0 on an empty module.
-//   - scripts/scenario-gate.sh that exits 0.
+//   - A minimal go.mod (module em012a-test; go 1.21) and one doc.go, so the
+//     worktree is a real Go module.
+//   - A Makefile whose `full` target exits 0.
 //
-// Both files are committed to the initial project commit so every worktree
-// derived from that project starts with a passing gate.
+// The Makefile is the fixture's own, not this repo's. What is under test here
+// is mode resolution, not the gate, so the gate is stubbed to pass and every
+// worktree derived from this project starts green.
 //
 // # Handler script (agentic nodes)
 //
@@ -93,7 +93,7 @@ import (
 // em012aProjectDir creates a test project directory with:
 //   - .harmonik/events/ and .harmonik/beads-intents/ directories
 //   - a minimal go.mod (empty module → `go build ./...` exits 0)
-//   - scripts/scenario-gate.sh that exits 0
+//   - a Makefile whose `full` target exits 0
 //
 // All files are staged and committed so the derived worktree starts with a
 // passing commit_gate.
@@ -123,14 +123,11 @@ func em012aProjectDir(t *testing.T) string {
 		t.Fatalf("em012aProjectDir: write doc.go: %v", err)
 	}
 
-	// scripts/scenario-gate.sh — exits 0 so commit_gate passes unconditionally.
-	if err := os.MkdirAll(filepath.Join(dir, "scripts"), 0o755); err != nil {
-		t.Fatalf("em012aProjectDir: mkdir scripts: %v", err)
-	}
-	gateScript := "#!/bin/sh\nexit 0\n"
-	//nolint:gosec // G306: test-only fixture script; not production
-	if err := os.WriteFile(filepath.Join(dir, "scripts", "scenario-gate.sh"), []byte(gateScript), 0o755); err != nil {
-		t.Fatalf("em012aProjectDir: write scenario-gate.sh: %v", err)
+	// Makefile — commit_gate runs `make full`, and this fixture stubs it green
+	// because the subject under test is mode resolution, not the gate.
+	makefile := ".PHONY: full\nfull:\n\t@exit 0\n"
+	if err := os.WriteFile(filepath.Join(dir, "Makefile"), []byte(makefile), 0o644); err != nil {
+		t.Fatalf("em012aProjectDir: write Makefile: %v", err)
 	}
 
 	// Initialise the git repo and commit everything.
@@ -147,7 +144,7 @@ func em012aProjectDir(t *testing.T) string {
 	run("init", "--initial-branch=main")
 	run("config", "user.email", "test@harmonik.local")
 	run("config", "user.name", "Harmonik Test")
-	run("add", "go.mod", "doc.go", "scripts/scenario-gate.sh")
+	run("add", "go.mod", "doc.go", "Makefile")
 	run("commit", "-m", "Initial commit", "--no-gpg-sign")
 
 	return dir
@@ -397,7 +394,7 @@ func TestScenario_EM012a_StandardBeadDotHappyPath(t *testing.T) {
 
 	// Budget: standard-bead.dot happy path runs one implementer + one gate check +
 	// one reviewer. The gate runs `go build/vet` (fast on an empty module) plus the
-	// trivial scenario-gate.sh. Allow generous wall-clock time.
+	// trivial stub Makefile. Allow generous wall-clock time.
 	ctx, cancel := context.WithTimeout(t.Context(), 120*time.Second)
 	defer cancel()
 

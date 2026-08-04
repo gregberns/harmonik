@@ -229,7 +229,7 @@ Five hard-won operational failures, relocated here from the retired AGENT_OPERAT
 **Fix:**
 - Throughput knee is **4–5 wide** on a 10-core box. Start there.
 - Change a live daemon's ceiling without restart: `harmonik queue set-concurrency N`.
-- Biggest safe disk reclaim: `go clean -cache` (~12 GB freed in the incident).
+- Biggest disk reclaim: the per-checkout Go caches, then stale worktrees. Follow the order in [`disk-reclaim.md`](disk-reclaim.md) §0. `go clean -cache` freed ~12 GB in the incident, but it wipes the cache every lane and every terminal is using, so it comes last and only when nothing is building.
 - Before `go install`, always `git fetch && git reset --hard origin/main` — the daemon pushes per-bead merges but your local `main` lags. Rebuilding from stale `main` silently ships a daemon WITHOUT the just-landed fix.
 
 ### Gotcha 3 — EPIC-DEP BLOCKS DISPATCH

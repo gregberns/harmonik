@@ -8,7 +8,6 @@ package daemon
 
 import (
 	"context"
-	"sync"
 	"time"
 )
 
@@ -55,20 +54,18 @@ func ExportedDiskCheckSetCheckInterval(port *diskReclaimPort, d time.Duration) {
 
 // ExportedDiskReclaimPortForTesting projects a disk port from the supplied
 // work-loop values, then installs all test seams. The caller passes the value
-// to ExportedRunWorkLoopWithDiskReclaim so the disk probe and registration use
-// the same cache-reap mutex.
+// to ExportedRunWorkLoopWithDiskReclaim.
+//
+// There is no go-cache seam any more. The daemon does not run
+// `go clean -cache`, so there is no subprocess left to stub on that path.
 func ExportedDiskReclaimPortForTesting(deps testRuntime, interval time.Duration,
-	freeBytes func(string) (uint64, error), goClean func() error,
-	reclaim func(context.Context, string, []string) error, cacheReapMu *sync.RWMutex,
+	freeBytes func(string) (uint64, error),
+	reclaim func(context.Context, string, []string) error,
 ) diskReclaimPort {
 	port := deps.diskReclaim()
 	port.diskCheckIntervalOverride = interval
 	port.diskFreeBytesFunc = freeBytes
-	port.goCacheCleanFunc = goClean
 	port.worktreeReclaimFunc = reclaim
-	if cacheReapMu != nil {
-		port.cacheReapMu = cacheReapMu
-	}
 	return port
 }
 
@@ -78,7 +75,6 @@ func ExportedDiskReclaimPortForTesting(deps testRuntime, interval time.Duration,
 func newTestDiskReclaimPort(deps testRuntime) diskReclaimPort {
 	port := deps.diskReclaim()
 	port.diskFreeBytesFunc = func(string) (uint64, error) { return 1 << 62, nil }
-	port.goCacheCleanFunc = func() error { return nil }
 	port.worktreeReclaimFunc = func(context.Context, string, []string) error { return nil }
 	return port
 }
@@ -88,7 +84,7 @@ func newTestDiskReclaimPort(deps testRuntime) diskReclaimPort {
 // directly (hk-5uezz).
 //
 // NO CALLER at present. diskcheck_hksxlb_test.go, which this comment used to
-// name, was deleted. TestDiskLowBranch covers the go-cache reap but not the
+// name, was deleted. TestDiskLowBranch covers the low-disk branch but not the
 // stale-worktree reclaim, which needs a run registry and UUID-named worktree
 // directories. Wire port.worktreeReclaimFunc when you write that test — it keeps
 // `git worktree remove` out of the run.

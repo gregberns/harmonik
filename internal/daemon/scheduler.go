@@ -1603,12 +1603,6 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 		// abort THIS run without affecting the daemon or other concurrent runs.
 		// The cancel is stored in RunHandle.Cancel for the stale watcher to call.
 		runCtx, runCancel := context.WithCancel(ctx)
-		// hk-y3frr: hold cacheReapMu.RLock for the duration of Register so the
-		// reaper's WLock cannot be acquired while a new run is being inserted into
-		// the registry — and so Register blocks while a reap holds the WLock.
-		if diskReclaim.cacheReapMu != nil {
-			diskReclaim.cacheReapMu.RLock()
-		}
 		dispatchedHandle := &RunHandle{
 			BeadID: beadID,
 			// QueueName tags the run with its dispatching queue so the per-queue
@@ -1628,9 +1622,6 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 			Cancel:          runCancel,
 		}
 		runRegistry.Register(runID, dispatchedHandle)
-		if diskReclaim.cacheReapMu != nil {
-			diskReclaim.cacheReapMu.RUnlock()
-		}
 
 		// hk-hs7ex: hoist SelectWorker to dispatch time (before goroutine start) so
 		// the split gate at Step 2 sees the correct local-vs-remote count on the next

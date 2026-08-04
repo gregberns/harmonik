@@ -502,7 +502,6 @@ func TestAdmissionOrder_DiskLowLatchSkipsClaim(t *testing.T) {
 
 	var callsMu sync.Mutex
 	probeCalls := 0
-	goCleanCalls := 0
 	reclaimCalls := 0
 	diskReclaim := daemon.ExportedDiskReclaimPortForTesting(deps, time.Nanosecond,
 		func(string) (uint64, error) {
@@ -511,19 +510,12 @@ func TestAdmissionOrder_DiskLowLatchSkipsClaim(t *testing.T) {
 			callsMu.Unlock()
 			return 0, nil
 		},
-		func() error {
-			callsMu.Lock()
-			goCleanCalls++
-			callsMu.Unlock()
-			return nil
-		},
 		func(context.Context, string, []string) error {
 			callsMu.Lock()
 			reclaimCalls++
 			callsMu.Unlock()
 			return nil
 		},
-		nil,
 	)
 
 	runAdmissionLoop(t, qs,
@@ -534,13 +526,10 @@ func TestAdmissionOrder_DiskLowLatchSkipsClaim(t *testing.T) {
 	)
 
 	callsMu.Lock()
-	probes, cleans, reclaims := probeCalls, goCleanCalls, reclaimCalls
+	probes, reclaims := probeCalls, reclaimCalls
 	callsMu.Unlock()
 	if probes == 0 {
 		t.Fatal("disk probe did not run; zero ClaimBead calls alone would not prove the latch")
-	}
-	if cleans == 0 {
-		t.Error("low-disk probe did not reach the stubbed go-cache cleanup seam")
 	}
 	if reclaims != 0 {
 		t.Errorf("worktree reclaim stub called %d time(s), want 0 with no stale worktrees", reclaims)
@@ -642,8 +631,8 @@ func TestAdmissionOrder_CooldownRunsBeforePreClaimShowBead(t *testing.T) {
 
 		// tickCount rises once per tick: the disk probe's cadence is overridden below
 		// so it is always due. Free space is reported far above the watermark, so the
-		// probe only counts — it never latches diskLow and never runs the reclaim or
-		// `go clean -cache` subprocesses that would touch this machine.
+		// probe only counts — it never latches diskLow and never runs the worktree
+		// reclaim subprocess that would touch this machine.
 		var tickMu sync.Mutex
 		tickCount := 0
 		params := admissionDeps(t, ledger, qs, qLedger, true, nil)
@@ -657,9 +646,7 @@ func TestAdmissionOrder_CooldownRunsBeforePreClaimShowBead(t *testing.T) {
 				tickMu.Unlock()
 				return 1 << 62, nil
 			},
-			func() error { return nil },
 			func(context.Context, string, []string) error { return nil },
-			nil,
 		)
 
 		runAdmissionLoop(t, qs,

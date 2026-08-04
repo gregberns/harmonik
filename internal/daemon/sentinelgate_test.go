@@ -140,9 +140,7 @@ func TestSentinelGate_QueuePathHoldsWhileTheGovernorTripIsPending(t *testing.T) 
 				tickMu.Unlock()
 				return 1 << 62, nil
 			},
-			func() error { return nil },
 			func(context.Context, string, []string) error { return nil },
-			nil,
 		)
 
 		var snapshot *queue.Queue
@@ -267,9 +265,7 @@ func TestSentinelGate_ReadyPathHoldsWhileTheGovernorTripIsPending(t *testing.T) 
 				tickCount++
 				return 1 << 62, nil
 			},
-			func() error { return nil },
 			func(context.Context, string, []string) error { return nil },
-			nil,
 		)
 
 		runAdmissionLoop(t, qs,

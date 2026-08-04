@@ -101,8 +101,11 @@ parts is a guess wearing a measurement's clothes.
 
 **Two traps in this runbook's own history.** The shared `~/Library/Caches/go-build` is listed below as
 the measured number-one source. It read **7 MiB** on 2026-07-30 — because the daemon's own low-disk
-reap runs `go clean -cache` and had already emptied it. **A small `go-build` reading is evidence the
-reap already ran, not evidence of a clean box.** And `du -x` does **not** confine itself to one volume
+reap ran `go clean -cache` and had already emptied it. **That reap is gone as of 2026-08-03.** The
+daemon now reports a low disk and deletes nothing it does not own, because the cache it was clearing
+is shared with builds it cannot see (§0). So a small `go-build` reading no longer has a standing
+explanation: somebody cleared it by hand, or the box is genuinely cold. Either way the space is in
+§2 and §4, which nothing reaps at all. And `du -x` does **not** confine itself to one volume
 here: firmlinks give `/`, `/Users` and `/System/Volumes/Data` the same device id, so `du -x -s -g /`
 returns more than the disk holds.
 
@@ -118,10 +121,12 @@ du -sh /private/tmp/claude-502/-Users-gb-github-harmonik   # §1
 du -sh /Users/gb/github/harmonik/.beads                    # §3
 ```
 
-Add one more, measured at 8.3 GiB on 2026-07-30 and growing about 3.7 GiB/day while lanes run:
+Add the per-checkout caches. Nothing reaps either one, and they are the first thing to clear
+rather than the last — see §0:
 
 ```bash
-du -sh /Users/gb/github/harmonik-wt-cache   # per-lane go-build + golangci caches; NO reaper owns this
+du -sh /Users/gb/github/harmonik-wt-cache          # 8.3 GiB on 2026-07-30, ~3.7 GiB/day while lanes run
+du -sh ~/Library/Caches/harmonik-lane-gocache      # one dir per checkout; outlives the checkout — see §2
 ```
 
 ## Did the command actually do anything?
@@ -223,14 +228,60 @@ runbook did not mention at all, held another **1.1 GiB**.
 
 ```bash
 du -sh ~/Library/Caches/go-build ~/Library/Caches/golangci-lint
-go clean -cache             # the 9.4 GiB; regenerable, zero risk
-golangci-lint cache clean   # the 1.1 GiB (or rm -rf the directory)
 ```
 
-Both are pure build artifacts — the whole cost of deleting them is one slow
-build and one slow lint. Check them **first**: they are the cheapest large win
-on the box, and unlike §1–§3 they need no liveness reasoning about who owns
-what.
+**Measure these first. Do not clear them first.** This section used to call
+`go clean -cache` "regenerable, zero risk" and put it at the head of the sweep.
+That was wrong, and the daemon acted on the same belief until 2026-08-03.
+`go-build` is the DEFAULT `GOCACHE`, so it is not one person's cache: both
+lanes, every agent worktree, the daemon's merge builds and any terminal the
+operator is using all read and write it at the same time. Clearing it mid-build
+gave concurrent suites "could not import os/context/testing/... no such file or
+directory" — and, worse, builds that reported success without rebuilding
+anything. The cost is not one slow build. It is a wrong answer that looks like a
+right one, on a box where several agents are deciding whether to merge.
+
+Reclaim in this order instead. It runs from what one checkout reads to what
+everything reads:
+
+1. **Per-checkout Go caches — nothing reaps these, and they are the ones that
+   grow.** `/Users/gb/github/harmonik-wt-cache` held 8.3 GiB on 2026-07-30 and
+   grows about 3.7 GiB/day while lanes run.
+   `~/Library/Caches/harmonik-lane-gocache/` holds one directory per checkout,
+   157 MiB and up each, and **outlives the checkout that made it** — agent
+   worktrees are made and dropped constantly here, so many of those directories
+   belong to a checkout that is already gone. `go clean -cache` reaches neither
+   path. See §2 for the full table of the seven places a Go cache lives.
+
+   ```bash
+   du -sh /Users/gb/github/harmonik-wt-cache ~/Library/Caches/harmonik-lane-gocache
+   ls -lt ~/Library/Caches/harmonik-lane-gocache   # newest first: the busy lanes sit at the top
+   rm -rf ~/Library/Caches/harmonik-lane-gocache/<one-directory>
+   ```
+
+   A directory whose checkout is gone, or that no build has written to for
+   hours, is free to delete, and it costs that checkout one cold build. A
+   directory a lane is compiling against right now is **not** free — that is the
+   same mid-build hazard as step 3, at one lane's scale instead of the whole
+   box. This is why the step lists directories before it deletes them.
+
+2. **Stale worktrees — §4.** Deleting a worktree directory never loses a commit;
+   only uncommitted changes are at risk, and §4 shows how to find those first.
+
+3. **The shared `go-build` and `golangci-lint` caches — last, and only when the
+   box is quiet.** Check that nothing is compiling, and prefer to tell the lanes
+   first:
+
+   ```bash
+   pgrep -fl 'go build|go test|golangci-lint|compile' | head
+   go clean -cache             # the 9.4 GiB
+   golangci-lint cache clean   # the 1.1 GiB (or rm -rf the directory)
+   ```
+
+   `pgrep` is a sample, not a guarantee — a build can start one second later.
+   That is the reason this step is third and the reason no automation owns it.
+   An operator can pause the fleet before running it. The daemon could not, so
+   it no longer tries.
 
 The lesson worth carrying past this one cache: *purgeable* is not *purged*.
 macOS reclaims a purgeable cache under its own pressure signals, not because
@@ -352,6 +403,14 @@ lands in `$TMPDIR` as `tmp.XXXXXXXX`, each build leaves 100–190 MB, and
 **nothing owns or reaps them** — the shell that created the variable is long
 gone. An earlier round of the same pattern produced 243 orphans / 23 GB.
 The mitigation for one P1 manufactured a second.
+
+**The thing it was hiding from is gone.** On 2026-08-03 the daemon stopped
+deleting the Go build cache on any path (§0), so no automated process wipes
+`GOCACHE` under a running build any more. A new command does not need a private
+throwaway cache. Use the default `GOCACHE`, or `scripts/with-lane-gocache.sh`
+for a per-checkout one. Retiring the inline `mktemp -d` habit is what stops this
+section from refilling; the orphans already in `$TMPDIR` still have to be swept
+by hand.
 
 `scripts/with-isolated-gocache.sh` is **not** the producer: it uses a
 `harmonik-gocache.XXXXXX` prefix and removes its directory in an `EXIT` trap
@@ -492,7 +551,7 @@ clone at all (§1). Check all five:
 | `/private/tmp/claude-502/…/scratchpad/*` | agent sessions (`isolation: worktree`), plus unregistered `git init`/`clone` |
 | `~/github/harmonik-wt/*` | crew lanes |
 | `.claude/worktrees/agent-*` | Agent-tool worktree isolation |
-| `.harmonik/worktrees/<run-id>` | daemon run workspaces |
+| `.harmonik/worktrees/<run-id>` | daemon run workspaces — the **only** thing the daemon reclaims for itself, and only when free space is below the watermark. It removes a directory here just when the run ID is not in its registry, so an in-flight run is never touched. |
 | `$TMPDIR/tmp.*`, `/tmp/hk-*` | `mktemp -d` scratch projects from `test/exploratory/*.sh`, smoke scripts, and inline Go caches (§2) |
 
 **Deleting a worktree directory never loses a commit.** Branches and objects
@@ -611,9 +670,9 @@ Recorded so the next sweeper does not re-litigate these.
 §0, §1, §2 and §3 regenerate continuously; the rest are one-shot. Re-check them
 whenever free space drops below ~20 GB, and after any stretch with the daemon
 stopped — that is when **both** `.br_history` tiers grow unbounded. §2 grows
-fastest of the four while the hk-gjbpp inline-`mktemp` workaround is in force,
-but §0 is the largest at rest and the cheapest to clear, so it is the one to
-measure first.
+fastest of the four while the inline-`mktemp` habit lasts. §0 is the largest at
+rest, so measure it first — but clear it in the order §0 gives, per-checkout
+caches before the shared one.
 
 Whatever you run, bracket it with `df` (§"Did the command actually do
 anything?"). Every defect corrected in the 2026-07-23 rewrite of this file

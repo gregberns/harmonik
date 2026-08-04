@@ -237,6 +237,62 @@ func TestQueueOnlyPosture_NonQueueSubsystemsAreAbsent(t *testing.T) {
 	}
 }
 
+// qpostKnownListPattern pulls the accepted subsystem names out of the
+// ErrUnknownSubsystem message, which renders them sorted as "(known: a, b, c)".
+// The set itself is unexported, and reading it through the error the schema
+// already promises to print keeps this guard inside the test file.
+var qpostKnownListPattern = regexp.MustCompile(`\(known: ([^)]+)\)`)
+
+// qpostKnownSubsystems returns every name the schema accepts, read from the hard
+// error a deliberately bogus name provokes.
+func qpostKnownSubsystems(t *testing.T) []string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".harmonik"), 0o750); err != nil {
+		t.Fatalf("qpostKnownSubsystems: MkdirAll: %v", err)
+	}
+	bogus := "schema_version: 1\nsubsystems:\n  qpost_not_a_subsystem:\n    enabled: false\n"
+	if err := os.WriteFile(filepath.Join(root, ".harmonik", "config.yaml"), []byte(bogus), 0o600); err != nil {
+		t.Fatalf("qpostKnownSubsystems: WriteFile: %v", err)
+	}
+	_, err := projectconfig.LoadProjectConfig(root)
+	if err == nil {
+		t.Fatal("qpostKnownSubsystems: an unknown subsystem name loaded without error; unknown names must be a hard error")
+	}
+	m := qpostKnownListPattern.FindStringSubmatch(err.Error())
+	if m == nil {
+		t.Fatalf("qpostKnownSubsystems: no %q list in the unknown-subsystem error; error = %v", "known:", err)
+	}
+	names := strings.Split(m[1], ", ")
+	for i := range names {
+		names[i] = strings.TrimSpace(names[i])
+	}
+	return names
+}
+
+// The posture has an opinion about EVERY switchable subsystem. A subsystem added
+// to the schema after this posture was written defaults to ON, so it would join
+// the assessor's "queue only" pass without anyone deciding that it should. This
+// test is what forces that decision, by failing until the new name is placed in
+// one of the two lists above.
+func TestQueueOnlyPosture_CoversEverySwitchableSubsystem(t *testing.T) {
+	t.Parallel()
+
+	decided := make(map[string]struct{})
+	for _, name := range qpostSubsystemsOff {
+		decided[string(name)] = struct{}{}
+	}
+	for _, name := range qpostSubsystemsOn {
+		decided[string(name)] = struct{}{}
+	}
+
+	for _, name := range qpostKnownSubsystems(t) {
+		if _, ok := decided[name]; !ok {
+			t.Errorf("subsystem %q has no place in the queue-only posture; it therefore defaults to ON. Decide: add it to scripts/scratch-config-overlay.yaml and qpostSubsystemsOff, or to qpostSubsystemsOn with the reason it stays", name)
+		}
+	}
+}
+
 // qpostStripListPattern finds the top-level keys scratch-daemon.sh strips before
 // it appends the overlay. The script writes them as one alternation, e.g.
 // /^(harnesses|codex|subsystems):[[:space:]]*$/.

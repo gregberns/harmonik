@@ -193,18 +193,31 @@ Explicit **NO** on: `wsl`, `lll`, `gocyclo` (superseded by `cyclop`), `godox`, `
 **`make full` — the merge decision.** It is what CI runs, and it is what an agent runs before declaring work complete.
 
 - Everything in `make fast`, over EVERY package: `go test -short -count=1 ./...`.
-- The whole-tree lint against a finding ceiling (`make lint-ceiling`).
+- The whole-tree lint, judged against an allow list (`make lint-allow`).
 - The tagged scenario tier (`make test-scenario`) and the crash tier.
 - Module hygiene: `go mod tidy` diff check, the import allowlist (`tools/forbid-import`), `govulncheck ./...`.
 
 No package scoping. No retry. No fail-open. A timeout, an out-of-memory kill, a compile failure or an exit code nothing recognises all BLOCK. `scripts/gate-fails-closed-test.sh` holds that property, and it runs inside both targets.
 
-**The lint ceiling, and why it only goes down.** A bare `golangci-lint run` over this tree reports more than a thousand findings, so it exits non-zero on every commit and cannot be a verdict. The ceiling in `scripts/lint-ceiling.baseline` grandfathers what is already here and refuses what a change adds. Two rules follow from that:
+**The lint allow list.** A bare `golangci-lint run` over this tree reports more than a thousand findings, so it exits non-zero on every commit and cannot be a verdict. The allow list at `tools/lintreport/allow.txt` grandfathers what is already here and refuses what a change adds. It names each tolerated pair of file and linter on its own line, tab-separated:
 
-- A run that comes in OVER the ceiling fails `make full`. Fix the findings you added. To see only those, run `.tools/golangci-lint run --new-from-rev=HEAD~1` — the same check `make fast` runs.
-- A run that comes in UNDER the ceiling rewrites the baseline to the lower number. Commit that file with your fix. There is no separate step to remember, and the ground a fix wins is never given back.
+```
+internal/daemon/workloop.go	errcheck
+```
 
-Raising the number by hand is the one repair that is not allowed. `scripts/lint-ceiling.sh` carries the reasoning, and `scripts/lint-ceiling-test.sh` holds the assertions inside `script-tests`.
+- A finding whose file-and-linter pair is on the list passes.
+- A finding whose pair is NOT on the list fails `make full`. Fix the findings you added. To see only those, run `.tools/golangci-lint run --new-from-rev=HEAD~1` — the same check `make fast` runs.
+- You clean a file, you delete its line. Commit that deletion with the fix. That file can never bring the finding back, so the ground a fix wins is never given back.
+
+Adding a line to grandfather a NEW finding is the one repair that is not allowed. The list is keyed on file and linter rather than on file and line because line numbers rot within days. A list keyed by line would churn on every unrelated edit, and a list nobody keeps current is a list people delete.
+
+**Superseded 2026-08-03 — why a list and not a count.** This step used to compare one number against a committed ceiling in `scripts/lint-ceiling.baseline`, and it could only ratchet down. A count is a weak verdict for three reasons. It falls just as readily when somebody SILENCES a finding as when somebody FIXES one. It cannot tell "fixed two in the daemon, added two in the queue" from "nothing changed". And it never says WHERE the debt sits, so it gives a reader no way to aim.
+
+**The run reports the debt out loud.** Every run prints what it is tolerating, broken down by package and by linter, including a run that passes. "No new lint findings" must never be readable as "this tree is clean". Measured 2026-08-03, the tree carries **1,187 findings across 636 file-and-linter pairs**. **615 of them are in `internal/daemon`** — the package the current program is decomposing. Next largest are `cmd/harmonik` at 159, `internal/core` at 48 and `internal/queue` at 35. By linter: errcheck 307, gosec 199, gocognit 188, gocritic 92, unused 72, revive 69.
+
+`make lint-full-count` still prints a whole-tree finding count for a reader who wants one number. It is a measure and not a verdict. Nothing blocks on it.
+
+`scripts/lint-allow.sh` carries the reasoning and reaches the verdict, `tools/lintreport` judges each finding against the list and prints the report, and `scripts/lint-allow-test.sh` holds the assertions inside `script-tests`.
 
 **Why the scoping went.** The old gate asked git which files changed since main and tested only those packages. `scripts/scenario-gate.sh` implemented that and is deleted. Measured 2026-08-03, whole-repo `go test -short -count=1 ./...` costs about 13 seconds more than `internal/daemon` alone, so the scoping saved 13 seconds. In exchange it could not see a break in a package the change did not touch, which is the usual case because `internal/daemon` imports eight other packages. The same script also had five ways to APPROVE work that never passed — a compile failure, a timeout, a signal kill, an unrecognised exit code, and a retry that allowed when the second run passed — against one way to block.
 

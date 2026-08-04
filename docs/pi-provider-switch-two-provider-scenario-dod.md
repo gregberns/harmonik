@@ -16,9 +16,11 @@ leakage and no claude-tier-3 model leak into the pi family.
 ## Hermetic scenario corpus (authored under C5-wiring, hk-m6uu2.6)
 
 All five scenarios below live in `internal/daemon` (package `daemon_test` /
-`daemon`), require no network, and are picked up automatically by
-`scripts/scenario-gate.sh` — `internal/daemon` is always in the affected-package
-set for any bead touching this epic, so no `//go:build scenario` tag is needed.
+`daemon`), require no network, and are picked up automatically by the commit
+gate — `make full` runs `go test -short -count=1 ./...` over every package, so
+`internal/daemon` always runs and no `//go:build scenario` tag is needed. The
+older wording named `scripts/scenario-gate.sh` and its affected-package set;
+that gate is deleted and there is no package scoping any more.
 
 | Test | File | Proves |
 |---|---|---|

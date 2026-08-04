@@ -247,7 +247,7 @@ The flake is a fixable test-harness defect: shared-state / lock contention, a da
 
 The test is a *legitimate* slow real-daemon E2E (multi-second socket waits, real review loops, strict cross-goroutine event ordering) that is too non-deterministic for a fast merge gate but is still valuable in full CI. Quarantine moves it out of `-short`; it **still runs** in the full CI / Tier-3 lane.
 
-- **Canonical mechanism:** call the shared guard `skipRealDaemonE2EInShort(t)` at the top of the test (defined in `internal/daemon/shortskip_hkp258q_test.go`; ~24 sibling tests already use it). It `t.Skip`s only when `testing.Short()` — the per-bead `commit_gate` runs `-short` (see `scripts/scenario-gate.sh` "affected-unit" step), so the test is skipped there but runs in the full lane.
+- **Canonical mechanism:** call the shared guard `skipRealDaemonE2EInShort(t)` at the top of the test (defined in `internal/daemon/shortskip_hkp258q_test.go`; ~24 sibling tests already use it). It `t.Skip`s only when `testing.Short()` — the per-bead `commit_gate` runs `make full`, whose whole-repo test step passes `-short`, so the test is skipped there but runs in the tagged scenario tier and in `make test-race-nightly`.
 - **Canonical example:** `hk-6ra3p` — three real-daemon review-loop bridge tests (e.g. `TestReviewLoopBridge_CHB009_ReviewerAlwaysMintsFresh`) intermittently failed under `-short` and could flake the per-bead gate for `internal/daemon` beads; quarantined behind the guard.
 - **Hard limits:**
   - Quarantine = move out of `-short` **only**. Never `t.Skip` unconditionally, never delete, never `//nolint`-away the suite.

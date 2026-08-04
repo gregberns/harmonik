@@ -826,16 +826,20 @@ the holder is the claiming actor.
 
 Staffed 2026-08-04 on branch `work/brcli-claim`.
 
-## The daemon package run reports fewer failures than the tests it contains
+## The daemon short suite fails seven tests — measured 2026-08-04 at `7d700522f`
 
-Measured 2026-08-04 at `7d700522f`. `go test -short -count=1 ./internal/daemon/` reported exactly one
-failure, `TestLegacySingleInput_NoReviewDOTAbortedRunReportsImplementerPhase`, in 131 seconds. The
-string `ColdStartToken` does not appear anywhere in that output.
+`go test -short -count=1 ./internal/daemon/` fails **7** tests in 137 seconds:
 
-`go test -short -count=1 -run TestColdStartToken ./internal/daemon/` fails five tests in the same
-checkout at the same commit.
+- Five cold-start-token tests. These are the tests for the defect below — the token is built and
+  threaded into `SharedHandles` and nothing reads it, so a remote run starts its agent while the
+  channel is full.
+- `TestLegacySingleInput_NoReviewDOTAbortedRunReportsImplementerPhase`. An aborted run emits no
+  terminal event, so `run_failed` carries an empty summary instead of the cancellation reason.
+- `TestSurviveShutdown_AFailedGraphModePiRunKeepsTheWorktreeItsCapturedOutputIsIn`.
 
-So the five cold-start failures either pass in the whole-package run or never run in it. Either answer
-is a reporting hole in the gate that decides merges, and it is the same false-green class this program
-exists to remove. **Do not treat a whole-package daemon run as a complete failure list until this is
-resolved.** Re-measure on an unloaded box.
+**A note on how NOT to measure this, because it cost a pass.** An earlier version of this entry
+claimed the whole-package run reported one failure while naming the cold-start tests directly
+reported five, and filed that gap as a reporting hole in the merge gate. There is no such hole. The
+run had been piped through `tail -40`, which cut the earlier failure lines, and the truncated output
+was then read as the complete list. **Do not pipe a test run through `head` or `tail` and then reason
+about the failure count.** Redirect the whole run to a file and count from that.

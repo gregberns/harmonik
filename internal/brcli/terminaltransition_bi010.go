@@ -219,7 +219,34 @@ func (a *Adapter) ClaimBead(
 		// transitions the status without requiring the assignee to be unset.
 		// The same intent-log entry (same ikey) covers both writes, so BI-030
 		// idempotency is maintained.
+		//
+		// The fallback is GATED. `br update --claim` is a compare-and-set, and its
+		// refusal is the whole safety property: it stops one actor from taking a
+		// bead that another actor holds. An unconditional fallback defeats that
+		// guarantee, because `br update --status in_progress` is a blind write that
+		// never looks at the holder. claimFallbackAllowed reads the bead back and
+		// permits the fallback only for the idle pre-assignment the fallback exists
+		// for. When the gate refuses, ClaimBead returns the original claim error and
+		// issues no write — losing the claim is the correct outcome.
+		//
+		// KNOWN LIMIT — the gate never sees a bead at in_progress, which is the state
+		// a live holder is actually in. terminalTransitionWrite runs its own
+		// idempotency check first: when a fresh read shows the bead already at the
+		// intended post-state (in_progress for a claim), it returns nil. So ClaimBead
+		// reports SUCCESS for a bead another actor is running, and neither the
+		// "already assigned" branch nor this gate is reached. No write goes out, so
+		// the gate's no-takeover promise holds, but the caller then dispatches a
+		// second run onto a live bead. That hole is in the shared
+		// terminalTransitionWrite idempotency check (the hk-cw4sx wave-race path),
+		// not in this fallback, and this change does not close it.
 		if strings.Contains(claimErr.Error(), "already assigned") {
+			holder, allowed := a.claimFallbackAllowed(ctx, beadID)
+			if !allowed {
+				return fmt.Errorf(
+					"brcli.ClaimBead: %s is assigned to %q and is not open: refusing the --status in_progress fallback: %w",
+					beadID, holder, claimErr,
+				)
+			}
 			if fallbackErr := a.terminalTransitionWrite(
 				ctx,
 				intentLogDir,
@@ -241,6 +268,67 @@ func (a *Adapter) ClaimBead(
 	// or the write fails — falls back to intent-log provenance signal).
 	_ = writeBeadsOwnedSentinel(a.projectDir, string(beadID)) //nolint:errcheck // best-effort; see hk-11xkn
 	return nil
+}
+
+// claimFallbackAllowed reports whether ClaimBead may run its
+// `br update <bead_id> --status in_progress` fallback after `br update
+// <bead_id> --claim` refused the bead with "already assigned to <name>".
+// It also returns the current assignee so the caller can name the holder in
+// the refusal error.
+//
+// The rule: the fallback runs only when the refusal guards an IDLE
+// pre-assignment, never a live claim.
+//
+//   - status open — the assignee is a routing label that a crew wrote with
+//     `br create --assignee <crew>` (the hk-amed0 case). No run holds the
+//     bead, so the status write takes nothing from anybody. Allowed.
+//   - any other status — another party already moved the bead beyond open.
+//     A blind status write would pull already-closed or otherwise inactive
+//     work back to in_progress under someone else's name. Refused.
+//   - read failure — fail closed. An unknown holder counts as a different
+//     holder, so an unreadable bead is never taken.
+//
+// KNOWN LIMIT — in_progress never reaches this function. terminalTransitionWrite
+// converts an "already assigned" refusal into a nil return when a fresh read
+// shows the bead already at the intended post-state, and in_progress IS the
+// intended post-state of a claim. So the caller never sees an error for a bead a
+// live holder is running, and this gate is never asked about that case. See the
+// KNOWN LIMIT note in ClaimBead.
+//
+// The read goes through ShowBead (`br show <id> --format json`), which is the
+// adapter's structured read surface. The holder is NOT parsed out of the br
+// error text: the error string is a br presentation detail, and BI-005 makes
+// a fresh `br show` the authoritative view of bead state.
+//
+// The guard deliberately does not compare the holder NAME against "our own"
+// actor. br derives the actor from $BEADS_ACTOR, then git user.name, then
+// $USER — none of which this package sets or observes — and the one legitimate
+// case the fallback exists for has a holder name (the crew name) that never
+// equals the daemon's actor. The adapter can read the state of the claim. It
+// cannot read the identity of the actor. Making the identity readable needs
+// harmonik to pass br's `--actor` flag explicitly on every write, which is a
+// wider change than this guard.
+//
+// terminalMu is held by the caller for the whole claim path. ShowBead is a read
+// and never takes terminalMu, so this call does not deadlock.
+//
+// Gating on state rather than on identity matches the spec. BI-010a binds the
+// claim op as open → in_progress, and its status table carries no actor column
+// at all, so harmonik's claim contract is state-based end to end.
+//
+// Spec ref: specs/beads-integration.md §4.4 BI-010a (claim status table, no
+// actor column); §4.3 BI-005 (fresh br show is authoritative); §4.4 BI-010
+// (claim). Bead ref: hk-amed0.
+func (a *Adapter) claimFallbackAllowed(ctx context.Context, beadID core.BeadID) (holder string, allowed bool) {
+	record, err := a.ShowBead(ctx, beadID)
+	if err != nil {
+		// Fail closed: we cannot see who holds the bead, so we do not take it.
+		return "", false
+	}
+	if record.Status != core.CoarseStatusOpen {
+		return record.Assignee, false
+	}
+	return record.Assignee, true
 }
 
 // CloseBead issues the BI-010 close write: in_progress → closed.

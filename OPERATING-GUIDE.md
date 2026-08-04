@@ -231,8 +231,11 @@ harmonik queue set-concurrency 5      # raise or lower the live ceiling; no rest
 ```
 
 **Picking a number:** 4–5 is the knee on a 10-core box. Symptoms you've gone too wide: builds
-crawl, false "stale" alarms fire, or you hit `no space left on device`. If disk is tight, the
-biggest quick reclaim is `go clean -cache` (can free many GB).
+crawl, false "stale" alarms fire, or you hit `no space left on device`. If disk is tight, follow
+[`docs/disk-reclaim.md`](docs/disk-reclaim.md) and reclaim the per-checkout caches and stale
+worktrees first. **Do not run `go clean -cache` while builds are running.** It deletes a cache
+other processes are reading, and the result is a build that reports success without having
+rebuilt anything. Clear the shared cache last, and only on a quiet box.
 
 ---
 
@@ -425,7 +428,7 @@ These are the codes harmonik commands return. The two that matter most day-to-da
 | `harmonik` won't start, says `$TMUX is not set` | You launched it from a plain shell, not inside tmux | Wrap it: `tmux new-session -d -s harmonik-daemon 'harmonik ...'`. The daemon always runs inside tmux. |
 | Started a daemon, got **exit 5** | A daemon is already running (lock held) | That's fine — there should only be one. Use it. |
 | API credit draining fast for no clear reason | An API key in the repo's `.env` got inherited by spawned sessions, billing pay-per-token | Remove `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `CLAUDE_CODE_OAUTH*` from any repo `.env` the daemon can read. Don't pass `--auto-pull` (queue-only is the default). The keep-alive script strips these keys for you. |
-| Builds crawling, false "stale" alarms, `no space left on device` | Concurrency too high — too many parallel repo copies and `go` builds | Drop concurrency live: `harmonik queue set-concurrency 4`. Reclaim disk: `go clean -cache`. |
+| Builds crawling, false "stale" alarms, `no space left on device` | Concurrency too high — too many parallel repo copies and `go` builds | Drop concurrency live: `harmonik queue set-concurrency 4`. Then reclaim disk per [`docs/disk-reclaim.md`](docs/disk-reclaim.md) — per-checkout caches and stale worktrees first. Do NOT run `go clean -cache` while builds are running; it deletes a cache other processes are reading. |
 | Submitted work but **nothing starts** — failure reported with no task actually launching | The task is blocked by an open dependency (often an open epic it was linked to) | Don't link tasks to an open epic as a dependency. Attach via a label instead. Check with `br show <id>` for `blocked_by` entries pointing at an open item. |
 | A task is stuck "launched" but never really ran | Spawn slot didn't free up (intermittent under high concurrency) | Run a touch narrower (`--max-concurrent 4`). Restart the daemon to clear it; the work reconciles on reboot. |
 | Daemon dies repeatedly / queue stalls (exit 17 keeps coming back) | Daemon crash-looping | Use the keep-alive script `./scripts/hk-keeper.sh` (section 2) — it auto-revives the daemon. |

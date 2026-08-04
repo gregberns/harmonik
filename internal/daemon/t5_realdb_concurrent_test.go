@@ -71,8 +71,24 @@ func t5RealDBFixtureSetup(t *testing.T) (projectDir, brWrapper, beadID string) {
 	brWrapper = smokeFixtureBrWrapperScript(t, realBrPath, dbPath)
 
 	// Seed exactly one ready bead.
+	//
+	// The workflow:single label is load-bearing. An UNLABELLED bead resolves to
+	// the REVIEWED graph, whose commit_gate node shells out to a Go build inside
+	// the run worktree. This fixture builds a bare git repo holding one README
+	// and no Makefile, so that gate can only fail. The run then reopens the bead,
+	// the loop picks it up again, and the test sees three run_started events from
+	// ONE loop and reads them as a claim-exclusion failure. Measured before this
+	// label was added: commit_gate failed three times with exit 2, run_started=3,
+	// run_failed=2, and loop B recorded no events at all.
+	//
+	// workflow:single is the sanctioned selector for the no-review graph
+	// (implement then close), which is the shape this test's own header
+	// describes. Commit 13223b56d repaired eight fixtures the same way; this file
+	// was missed because it seeds through a real `br create` rather than a stub
+	// ledger, so it fell outside that sweep.
 	createCmd := exec.CommandContext(t.Context(), brWrapper, "create",
-		"T5 concurrent claim integration bead", "--status", "open", "--silent")
+		"T5 concurrent claim integration bead", "--status", "open",
+		"--labels", "workflow:single", "--silent")
 	createOut, createErr := createCmd.CombinedOutput()
 	if createErr != nil {
 		t.Fatalf("t5RealDBFixtureSetup: br create: %v\n%s", createErr, createOut)

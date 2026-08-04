@@ -37,13 +37,17 @@ package brcli
 //
 // # Version-pin relationship
 //
-// BI-026 and BI-024 (version-pin) are co-enforced: the [CheckBrVersion]
-// handshake (BI-024a, amended by hk-m6243) catches version drift at daemon
-// startup. A version delta (observed != pinned) is a loud WARNING — the daemon
-// logs and continues. Hard-failure (exit code 8) is reserved for exec failure
-// or unparseable output. Schema breakage arising from an actual incompatible
-// `br` surface change surfaces as BrSchemaMismatch or BrOther at call time,
-// regardless of the version pin.
+// There is none any more. BI-024a is now an existence check
+// ([Adapter.CheckBrRunnable]): daemon startup confirms `br` is present and
+// runnable and asserts nothing about the version `br` reports. The pin and the
+// banner parse were removed by operator direction (2026-08-04).
+//
+// BI-026 therefore stands on its own. It is a release-engineering rule about how
+// harmonik responds to a Beads change — absorb it in this package, never fork
+// Beads. It is not enforced by a startup check and never was. The enforcement
+// that does run is call-time: an incompatible `br` surface produces
+// BrSchemaMismatch or BrOther on the call that trips over it, which is where the
+// evidence of breakage actually lives.
 //
 // Tags: mechanism
 // Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent

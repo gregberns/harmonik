@@ -12,7 +12,7 @@
 // outcome as a [Result]. Higher-level methods built on [Adapter.Run] will add
 // the layers mandated by the BI-025 family:
 //
-//   - BI-024a — `br --version` handshake (hk-872.26)
+//   - BI-024a — `br` existence check (hk-872.26)
 //   - BI-025a — exit-code taxonomy / BrError enum (hk-872.28)
 //   - BI-025b — mandatory --format json (hk-872.29)
 //   - BI-025c — subprocess timeout discipline (hk-872.30)

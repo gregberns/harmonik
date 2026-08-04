@@ -158,10 +158,20 @@ same way. It is bravo's, and alpha does not edit it.
 shared branch. Alpha commits here directly and merges the other lane into it.
 
 **Owns** `internal/daemon/**`, `internal/runlease/**`, `internal/runloop/**`,
-`internal/runexec/**`, `internal/workflow/dot/**`, `internal/transport/tunnel/**`,
+`internal/runexec/**`, `internal/workflow/dot/**`, `internal/brcli/**`,
+`internal/transport/tunnel/**`,
 `internal/harness/shared/**`, `specs/run-state-machine.md`,
 `specs/execution-model.md`, and `DECOMPOSITION-MAP.md`. Alpha also owns each extraction contract,
 the daemon construction change, and deletion of the old daemon adapter.
+
+> **`internal/brcli` was added 2026-08-04, after a second audit found it in no lane.** Measured at
+> `7d700522f`: 60 import sites, 47 of them alpha's (`internal/daemon` 44, `internal/runloop` 3) and 13
+> bravo's (`internal/lifecycle` 8, `internal/queuewiring` 3, `cmd/harmonik` 2). The package imports
+> only `internal/core`, so it is a leaf, and it is a separate compile unit from both large packages.
+> §1's collision rule therefore does not decide it and the consumer count does: it is alpha's.
+> Because it collides with no other lane's compile unit, alpha may work it in a separate worktree
+> beside the daemon work. **Any exported-symbol change here breaks alpha's build with no gate that can
+> see it** — announce it the same way §5 requires for a cross-lane package.
 
 > **`internal/runexec` and `internal/workflow/dot` were added 2026-08-03, after an audit found them
 > in NO lane.** Both sit on the critical path and both break alpha's tests, which is the reason for

@@ -805,3 +805,37 @@ deliberately left out of scope — "decide whether the agent did the work". That
 twice, once in the single-mode tail of `beadRunOne` and once in `dispatchDotAgenticNode`, and four of
 its sub-steps already differ, with the default path holding the weaker half. The highest-value
 remaining move is therefore the same move on that step. DECOMPOSITION-MAP §Step 7 states it.
+
+---
+
+## The claim compare-and-set is defeated by its own error handler — measured 2026-08-04 at `7d700522f`
+
+`internal/brcli/terminaltransition_bi010.go`, `ClaimBead`. `br update <bead> --claim` is a genuine
+compare-and-set. It sets assignee and status together and it refuses when another actor already holds
+the bead. That refusal is the safety property.
+
+The code catches the refusal and falls back to `br update <bead> --status in_progress`, a blind write
+that never reads who holds the claim. So a bead held by another actor is silently taken over.
+
+The fallback covers one real case: a crew that creates a bead with `br create --assignee <crew>` then
+claims it itself. That case must keep working. The repair is to read the holder and proceed only when
+the holder is the claiming actor.
+
+**One site, not two.** An earlier note said two. `ReissueTerminalTransition` in
+`reissueintent_bi031.go` uses `--claim` with no fallback and is correct.
+
+Staffed 2026-08-04 on branch `work/brcli-claim`.
+
+## The daemon package run reports fewer failures than the tests it contains
+
+Measured 2026-08-04 at `7d700522f`. `go test -short -count=1 ./internal/daemon/` reported exactly one
+failure, `TestLegacySingleInput_NoReviewDOTAbortedRunReportsImplementerPhase`, in 131 seconds. The
+string `ColdStartToken` does not appear anywhere in that output.
+
+`go test -short -count=1 -run TestColdStartToken ./internal/daemon/` fails five tests in the same
+checkout at the same commit.
+
+So the five cold-start failures either pass in the whole-package run or never run in it. Either answer
+is a reporting hole in the gate that decides merges, and it is the same false-green class this program
+exists to remove. **Do not treat a whole-package daemon run as a complete failure list until this is
+resolved.** Re-measure on an unloaded box.

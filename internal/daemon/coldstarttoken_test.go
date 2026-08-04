@@ -10,8 +10,8 @@ package daemon
 //
 //   - The COLD-START token, held here. One channel for the whole daemon,
 //     capacity 3, built in newTestRuntime and reached through
-//     SharedHandles.AgentSpawnSem. beadRunOne takes one immediately before the
-//     remote agent launch and gives it back as soon as the readiness phase
+//     SharedHandles.AgentSpawnSem. runAgentLaunch takes one immediately before
+//     the remote agent spawn and gives it back as soon as the readiness phase
 //     settles. A LOCAL run never takes one.
 //   - The tmux substrate's own spawn cap, which bounds LOCAL window spawns. It
 //     has a different owner, a different release path, and no coordination with
@@ -55,7 +55,7 @@ package daemon
 //     test stays green, which is what it is for,
 //   - remove the prompt give-back — the window test goes red,
 //   - make a lease spendable twice — the exactly-once test goes red,
-//   - hold the token on a lease the run scope does not hold — the
+//   - hold the token on a lease the launch scope does not hold — the
 //     readiness-timeout test goes red,
 //   - gate a local run too — the local test goes red,
 //   - set the production capacity to 2, and then to 4 — BOTH capacity subtests
@@ -80,6 +80,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -538,7 +539,7 @@ func coldstartFreeSlot(token chan struct{}) bool {
 // appears. The second half is what makes the first mean something. Without it
 // "no agent" would also be true of a fixture that could never launch one.
 //
-// Mutation: delete the take (the select on AgentSpawnSem in beadRunOne). The
+// Mutation: delete the take (the select on AgentSpawnSem in runAgentLaunch). The
 // agent then starts while the channel is full and the first assertion goes red.
 func TestColdStartToken_ARemoteRunTakesATokenBeforeItStartsItsAgent(t *testing.T) {
 	// Not parallel: sets PATH and swaps a package-level seam in
@@ -598,7 +599,7 @@ func TestColdStartToken_ARemoteRunTakesATokenBeforeItStartsItsAgent(t *testing.T
 // local run launched anyway" a statement about the local branch rather than
 // about a channel that never blocked anyone.
 //
-// Mutation: drop the rbc != nil guard on the take. The local run then parks on
+// Mutation: drop the in.Remote guard on the take. The local run then parks on
 // the full channel, no agent appears, and this test fails at the wait.
 func TestColdStartToken_ALocalRunTakesNoColdStartToken(t *testing.T) {
 	// Not parallel: sets PATH and swaps a package-level seam in
@@ -654,9 +655,10 @@ func TestColdStartToken_ALocalRunTakesNoColdStartToken(t *testing.T) {
 // took a token leaves behind, so without the preamble this test would stay green
 // after the take was deleted.
 //
-// Mutation: remove AfterReadyResolved from the launch input, which leaves only
-// the deferred give-back at the end of the run. The channel then stays full for
-// as long as the agent is blocked and this test fails.
+// Mutation: delete the prompt give-back — the coldStart.Release call that sits
+// after the readiness phase in runAgentLaunch — which leaves only the scope's
+// close at the end of the launch. The channel then stays full for as long as the
+// agent is blocked and this test fails.
 func TestColdStartToken_TheTokenComesBackWhenTheColdStartWindowEndsNotWhenTheRunEnds(t *testing.T) {
 	// Not parallel: sets PATH and swaps a package-level seam in
 	// internal/transport/tunnel.
@@ -702,11 +704,11 @@ func TestColdStartToken_TheTokenComesBackWhenTheColdStartWindowEndsNotWhenTheRun
 // exactly as it was found.
 //
 // Both paths do run on this run. The prompt give-back fires when readiness
-// settles, which the test observes directly. The run scope's close then fires
-// when beadRunOne returns, because a defer has no condition. Only the lease
-// between them stops the second from taking a token that belongs to somebody
-// else: a lease runs its give-back at most once, and the scope's close finds it
-// already spent.
+// settles, which the test observes directly. The launch scope's close then fires
+// when the caller runs the deferred launch cleanup, because a defer has no
+// condition. Only the lease between them stops the second from taking a token
+// that belongs to somebody else: a lease runs its give-back at most once, and
+// the scope's close finds it already spent.
 //
 // The sibling token is what makes that visible. A double give-back cannot push
 // the count below zero — it takes the sibling's token instead — so the failure
@@ -764,7 +766,7 @@ func TestColdStartToken_TheTokenComesBackExactlyOnceAcrossBothGiveBackPaths(t *t
 //
 // The two paths are not redundant. When the readiness phase fails on its
 // deadline, the launch returns before the prompt give-back is reached, so the
-// deferred one is the ONLY thing that returns the token. A leak here is silent
+// scope's close is the ONLY thing that returns the token. A leak here is silent
 // and permanent: after three timed-out remote runs the daemon's remote dispatch
 // stops for the rest of its life.
 //
@@ -772,8 +774,9 @@ func TestColdStartToken_TheTokenComesBackExactlyOnceAcrossBothGiveBackPaths(t *t
 // and requires that the token was really held. Without that, "the count is back
 // to one" would also be true of a run that never took a token at all.
 //
-// Mutation: delete the deferred give-back and keep only AfterReadyResolved. The
-// timed-out run then keeps its token and the final count reads 2.
+// Mutation: hold the token on a lease no scope holds, so only the prompt
+// give-back is left. The timed-out run then keeps its token and the final count
+// reads 2.
 func TestColdStartToken_TheTokenComesBackWhenReadinessTimesOut(t *testing.T) {
 	// Not parallel: sets PATH and swaps a package-level seam in
 	// internal/transport/tunnel.
@@ -815,13 +818,23 @@ func TestColdStartToken_TheTokenComesBackWhenReadinessTimesOut(t *testing.T) {
 
 	// The run must have ended on the readiness deadline. Any other reason means
 	// the fixture measured a different path.
+	//
+	// The reason is matched as a SUBSTRING and not for equality. A bare
+	// "agent_ready_timeout" is what the retired imperative tail reopened with;
+	// the graph path names the node that timed out as well, and that node name is
+	// what an operator reading a multi-node graph needs. Equality here pinned the
+	// older format and was red on that count alone at the commit this test was
+	// written against, before any of it measured the token. Substring keeps every
+	// bit of the guard's discriminating power — a run that ended for any OTHER
+	// reason still fails it, and a reason that carries this token can only have
+	// come from the readiness deadline.
 	calls := run.ledger.calls()
 	if len(calls) != 1 {
 		t.Fatalf("ReopenBead call count = %d, want exactly 1\ncalls=%+v", len(calls), calls)
 	}
-	if calls[0].reason != "agent_ready_timeout" {
-		t.Errorf("the run ended for reason %q, want %q — a different reason means this test did not "+
-			"reach the readiness-timeout path", calls[0].reason, "agent_ready_timeout")
+	if !strings.Contains(calls[0].reason, "agent_ready_timeout") {
+		t.Errorf("the run ended for reason %q, want one carrying %q — a different reason means this "+
+			"test did not reach the readiness-timeout path", calls[0].reason, "agent_ready_timeout")
 	}
 
 	agent.letFinish(t)

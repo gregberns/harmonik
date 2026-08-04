@@ -168,7 +168,10 @@ type agentLaunchInput struct {
 	Runner tmuxpkg.CommandRunner
 
 	// Remote marks a run whose agent executes on a worker host. It selects the
-	// longer agent-ready window and arms the D2 credential refusal.
+	// longer agent-ready window, arms the D2 credential refusal, and takes the
+	// cold-start token. Those three are the whole remote/local difference in this
+	// function, and they all read this one field rather than three spellings of
+	// it.
 	Remote bool
 
 	// BaseSubstrate is the substrate to wrap per-run. The caller has already
@@ -247,11 +250,6 @@ type agentLaunchInput struct {
 	// substrate wiring, and only the work loop passes that — so reclaim is what
 	// those launches did before this field existed and what they do now.
 	RunExit func() runlease.Exit
-
-	// AfterReadyResolved runs once the readiness phase has settled and before
-	// the completion wait — single-mode releases its cold-start spawn semaphore
-	// slot here so the gate stays scoped to cold-start. nil for sites with none.
-	AfterReadyResolved func()
 }
 
 // agentLaunchResult is the exit facts. Fail says which boundary was hit;
@@ -699,6 +697,48 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 		})
 	}
 
+	// ── The cold-start token (hk-5z1f0) ─────────────────────────────────────
+	// ONE channel for the whole daemon, capacity 3. A REMOTE launch takes one
+	// here, immediately before the spawn, so no more than three claude cold
+	// starts run at once against the worker. The second (reviewer) cold start
+	// over the reverse tunnel otherwise trips agent_ready_timeout under a full
+	// ramp.
+	//
+	// The gate reads in.Remote, which is the SAME field the D2 credential
+	// refusal and the longer readiness window read. A LOCAL launch builds no
+	// reverse tunnel and carries none of the cost the cap exists for, so it
+	// takes nothing.
+	//
+	// The take lives HERE and not at a call site because this function is the
+	// one agent spawn in the daemon. A new caller is gated by construction, it
+	// cannot pair a take with the wrong give-back, and there is no second copy
+	// of the remote test to keep in step with this one.
+	//
+	// A launch that takes nothing holds a lease born spent: it names the
+	// resource, it can never fire, and the give-back site below needs no test
+	// for whether there is anything to give back (RSM-036).
+	coldStart := runlease.Hold(runlease.ColdStartToken, nil)
+	if in.Remote && handles.AgentSpawnSem != nil {
+		select {
+		case handles.AgentSpawnSem <- struct{}{}:
+		case <-ctx.Done():
+			// Cancelled while waiting for a token, so nothing was spawned and
+			// nothing was taken. This reports through the same refusal channel a
+			// pre-launch guard uses, and the caller decides what it means.
+			refuseLaunch(fmt.Sprintf("cancelled awaiting cold-start token: %v", ctx.Err()))
+			return res
+		}
+		// The scope is the backstop. The token comes back on the readiness edge
+		// below, and on a path that never reaches that edge — a launch error, a
+		// readiness timeout — the scope's close returns it. The lease runs the
+		// give-back at most once across both, so neither path can hand a second
+		// token to a run that is not holding one.
+		coldStart = launchScope.Hold(runlease.ColdStartToken, func() error {
+			<-handles.AgentSpawnSem
+			return nil
+		})
+	}
+
 	res.LaunchedAt = ports.Clock.Now()
 
 	seg := &runloop.DispatchSegment{
@@ -918,9 +958,20 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 	}
 	// Working / Exited / Aborted otherwise: fall through to the completion wait.
 
-	if in.AfterReadyResolved != nil {
-		in.AfterReadyResolved()
-	}
+	// hk-5z1f0: agent_ready has resolved, or the handshake was skipped — the
+	// cold-start window is over, so the token goes back now and not at the end of
+	// the run. Held for the run body, the capacity would bound concurrent RUNS
+	// rather than concurrent cold starts, and three long runs would park every
+	// later remote dispatch for hours.
+	//
+	// Release and not Give: no disposition keeps this token. It is this process's
+	// own bookkeeping, and a surviving agent does not hold it.
+	//
+	// The readiness-timeout return ABOVE skips this line on purpose. That path
+	// has no cold-start window left to close and the scope's close is the only
+	// thing that returns its token.
+	//nolint:errcheck // the give-back is a receive on a channel this launch filled; it cannot fail
+	_ = coldStart.Release()
 
 	res.SocketOutcome, res.Exit = runloop.WaitWithSocketGrace(ctx, ports.Clock, handles.HookStore, watcher, sess,
 		runID.String(), artifacts.ClaudeSessionID)

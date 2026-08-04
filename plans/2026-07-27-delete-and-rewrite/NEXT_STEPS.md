@@ -963,6 +963,32 @@ Each of these has evidence already gathered and a reason it is not the current j
 of them before step 5 above is underway.** Operator direction, 2026-07-28: *"We are not building or
 fixing bugs. We spent weeks fixing bugs in a rotten system and building more and more tech debt."*
 
+**0. Five reads of `main` that break silently the day work stops landing on `main`.** Measured
+2026-08-04 during the branch-model prose change (`a5127b2d3`). That change moved the WRITTEN policy
+off direct-to-main. It changed no runtime default, on purpose, so nothing below is live yet.
+
+**These are not a reason to keep landing on `main`. They are the price of stopping, and it is
+cheaper to pay before the switch than to debug after it.** Operator direction, 2026-08-04: the
+sign-off gate we want is the assessor, then a merge to `main`. So an integration branch is NOT
+needed now, and this item waits with it.
+
+- **`internal/harness/shared/refstrailer.go` runs `git log main` with no override parameter at all.**
+  It feeds dependency subsumption in the scheduler, so work that lands anywhere else becomes
+  invisible and blockers never clear. This is the worst of the five and it fails quietly.
+- `internal/daemon/bootreconcile.go` and `bootworkloop.go` both pass an empty target branch to the
+  reconciliation scanners, so beads never auto-close.
+- The same empty value reaches the branch-reap watcher, so branches are never reaped.
+- `internal/sentinel/governor.go` reads `git log origin/main` for its stall detector, so it would
+  measure zero fleet motion and conclude the fleet had stopped.
+
+Two more facts recorded with them. `harmonik promote --pr` takes its base from configuration and its
+head from a hard-coded literal, so a bare invocation aims at the integration branch rather than at
+`main`; pass both flags explicitly. And `.gitignore` ignores `.harmonik/branching.yaml`, so
+committing one needs an exception line.
+
+**When the switch does happen, set the landing branch and the protected list in the same change.**
+Protecting `main` while it is still the resolved target makes the daemon refuse every merge.
+
 **A. Which part of flywheel we actually want — ANSWERED 2026-07-28, and part of it is a deletion, not a deferral.**
 
 The name covers **two** systems and only one was deleted. The TypeScript agent that *replaced* the

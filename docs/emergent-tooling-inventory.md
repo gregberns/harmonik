@@ -50,8 +50,10 @@ Monitors instantiated by the orchestrator/captain for:
 - Daemon-up heartbeat
 - File tails for `AGENT_COMMS` and per-agent outboxes
 
-### Disk-Watch + `go clean -cache` Pattern
-Worktree and build cache disk pressure hits hard at ~5 GiB / 98% usage — OOM/disk crash threshold documented as hk-dgwf4. Pattern: watch df output, trigger `go clean -cache` proactively before hitting the wall. Note: proactive cache wipe risks removing shared build artifacts mid-build (TOCTOU hazard — see memory reference `cache-reaper-proactive-toctou`).
+### Disk-Watch Pattern — **the `go clean -cache` half is RETIRED (2026-08-03)**
+Worktree and build cache disk pressure hits hard at ~5 GiB / 98% usage — OOM/disk crash threshold documented as hk-dgwf4. The watch half stands: read `df`, and let the daemon's `disk_low` event page you.
+
+The reclaim half does not. Wiping the build cache on a disk signal was tried in three forms — proactive by cadence, reactive on the watermark, and by hand — and the first two are now removed from the daemon. The cache is shared, so no watcher can know a build is not reading it, and a build that loses its cache mid-run can report success without rebuilding anything. Reclaim the per-checkout caches and stale worktrees instead: [`disk-reclaim.md`](disk-reclaim.md) §0.
 
 ---
 

@@ -215,18 +215,17 @@ func (m *loopMaintenance) tickBeforeDispatch(ctx context.Context) maintenanceObs
 	// Periodic coordinator-session reap (hk-t08m).
 	m.reapCoordinatorSessions(ctx)
 
-	// Periodic disk watermark check and reactive go-cache reap (hk-sxlb,
-	// hk-guez). Reactive only — every diskCheckInterval (default 10 min). When
-	// the probe finds available space below the watermark, m.state.diskLow is set
-	// true, a disk_low event is emitted, and `go clean -cache` is run immediately
-	// (reactive reap) — but ONLY when no merge-build is in flight
-	// (runRegistry.Len()==0). If a merge is in flight the reap is skipped and a
-	// loud warning is logged instead (hk-guez fix). The loop then skips dispatch
-	// for this iteration, which is what the diskLow field below asks for.
+	// Periodic disk watermark check (hk-sxlb) — every diskCheckInterval
+	// (default 10 min). When the probe finds available space below the
+	// watermark, m.state.diskLow is set true and a disk_low event is emitted.
+	// The loop then skips dispatch for this iteration, which is what the
+	// diskLow field below asks for. The daemon also removes its own stale run
+	// worktrees on that path, and nothing else.
 	//
-	// A second sub-step used to live here — a cadence-based reap that ran
-	// `go clean -cache` even when disk was healthy. It was REMOVED and must not
-	// be restored (hk-gjbpp); full rationale in the file-level comment on
+	// The daemon used to run `go clean -cache` here as well. It does not any
+	// more, and it must not again: that cache is shared with builds the daemon
+	// cannot see, and deleting it mid-build produced green results from builds
+	// that never ran. Full rationale in the file-level comment on
 	// diskcheck_hksxlb.go.
 	runPeriodicDiskCheck(ctx, m.diskReclaim, &m.state)
 

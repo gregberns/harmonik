@@ -2,10 +2,20 @@ package daemon
 
 import (
 	"context"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/workspace"
 )
 
 // recordingReapAdapter is an ltmux.Adapter that records whether the coordinator
@@ -141,21 +151,21 @@ func TestTickBeforeDispatchHaltShortCircuits(t *testing.T) {
 }
 
 // diskLowFixture builds deps that drive the disk probe BELOW the watermark with
-// every subprocess seam stubbed.
+// the one remaining subprocess seam stubbed.
 //
-// Both real subprocess paths are replaced: goCacheCleanFunc stands in for
-// `go clean -cache` (runGoCleanCache prefers it when non-nil) and
-// worktreeReclaimFunc stands in for the `git worktree remove` / `worktree prune`
-// sequence (runWorktreeReclaim prefers it the same way). Both are wired even
-// though only one is reachable on this fixture, so that if the branch ever grows
-// a new route to either subprocess the test records a call instead of spawning
-// one.
+// worktreeReclaimFunc stands in for the `git worktree remove` /
+// `worktree prune` sequence (runWorktreeReclaim prefers it when non-nil). It is
+// wired even though it is unreachable on this fixture, so that if the branch
+// ever grows a new route to that subprocess the test records a call instead of
+// spawning one.
 //
-// runRegistry is nil, which does two things on purpose. mergeOrRunInFlight
-// reports "idle", so the branch takes the reap path rather than the
-// merge-in-flight warning path. And reclaimStaleWorktrees returns 0 immediately
-// on a nil registry, so the reclaim-was-sufficient early return is skipped and
-// the go-cache reap is reached.
+// There is no go-cache seam. The daemon no longer runs `go clean -cache`, and
+// TestDiskLowNeverDeletesTheGoBuildCache holds that property.
+//
+// runRegistry is nil on purpose: mergeOrRunInFlight reports "idle", so the
+// branch takes the reclaim path rather than the run-in-flight warning path, and
+// reclaimStaleWorktrees returns 0 immediately, so the reclaim-was-sufficient
+// early return is skipped and the probe reaches the report step.
 //
 // bus is nil, so the disk_low event emit is skipped. The event payload is not
 // what this test is about.
@@ -165,10 +175,6 @@ func diskLowFixture(t *testing.T, freeBytes uint64) (diskReclaimPort, *diskSeamC
 	port := diskReclaimPort{
 		projectDir:        t.TempDir(),
 		diskFreeBytesFunc: func(string) (uint64, error) { return freeBytes, nil },
-		goCacheCleanFunc: func() error {
-			calls.goClean++
-			return nil
-		},
 		worktreeReclaimFunc: func(context.Context, string, []string) error {
 			calls.worktreeReclaim++
 			return nil
@@ -179,11 +185,42 @@ func diskLowFixture(t *testing.T, freeBytes uint64) (diskReclaimPort, *diskSeamC
 	return port, calls
 }
 
-// diskSeamCalls counts the stubbed subprocess seams. Named fields rather than two
-// bare *int returns, so a call site cannot silently transpose them.
+// diskSeamCalls counts the stubbed subprocess seams. A named field rather than a
+// bare *int, so a call site cannot silently transpose it with a future sibling.
 type diskSeamCalls struct {
-	goClean         int
 	worktreeReclaim int
+}
+
+// staleWorktreeFixture is diskLowFixture with the stale-worktree reclaim made
+// REACHABLE: a real (empty) run registry plus one UUID-named directory under
+// .harmonik/worktrees/.
+//
+// The reclaim stub counts the call and returns nil WITHOUT removing the
+// directory. Two things follow, and both are wanted. reclaimStaleWorktrees
+// counts zero directories actually gone, so the "reclaim was enough" early
+// return is not taken and the probe reaches the report step. And the directory
+// is still reclaimable on the NEXT probe, which is what makes
+// "the healthy path reclaimed nothing" a real assertion rather than a
+// restatement of an empty fixture.
+func staleWorktreeFixture(t *testing.T, freeBytes uint64) (diskReclaimPort, *diskSeamCalls) {
+	t.Helper()
+	projectDir := t.TempDir()
+	staleDir := filepath.Join(projectDir, workspace.DefaultWorktreeRoot, uuid.NewString())
+	if err := os.MkdirAll(staleDir, 0o750); err != nil {
+		t.Fatalf("create stale worktree dir: %v", err)
+	}
+	calls := &diskSeamCalls{}
+	port := diskReclaimPort{
+		projectDir:        projectDir,
+		runRegistry:       NewRunRegistry(),
+		diskFreeBytesFunc: func(string) (uint64, error) { return freeBytes, nil },
+		worktreeReclaimFunc: func(context.Context, string, []string) error {
+			calls.worktreeReclaim++
+			return nil
+		},
+	}
+	ExportedDiskCheckSetCheckInterval(&port, time.Nanosecond)
+	return port, calls
 }
 
 // TestDiskLowBranch covers the disk-below-watermark branch of the periodic disk
@@ -192,14 +229,13 @@ type diskSeamCalls struct {
 // callers.
 //
 // An earlier version of this file claimed the branch was too expensive to test
-// because it would run `go clean -cache` and `git worktree remove` for real. That
-// was wrong. diskReclaimPort carries goCacheCleanFunc and worktreeReclaimFunc as
-// seams for exactly this purpose, so the branch is cheap. The false
-// claim is recorded here because a comment that talks a reader out of a test they
-// could have written is worse than no comment.
+// because it would run subprocesses for real. That was wrong. diskReclaimPort
+// carries worktreeReclaimFunc as a seam for exactly this purpose, so the branch
+// is cheap. The false claim is recorded here because a comment that talks a
+// reader out of a test they could have written is worse than no comment.
 func TestDiskLowBranch(t *testing.T) {
-	// Below the watermark: latch set, cache reap attempted, no real subprocess.
-	t.Run("below watermark sets diskLow and reaps the go cache", func(t *testing.T) {
+	// Below the watermark: latch set, no real subprocess.
+	t.Run("below watermark sets diskLow", func(t *testing.T) {
 		port, calls := diskLowFixture(t, diskLowWatermarkDefault-1)
 		ms := ExportedNewMaintState()
 
@@ -207,10 +243,6 @@ func TestDiskLowBranch(t *testing.T) {
 
 		if !ExportedDiskCheckDiskLow(ms) {
 			t.Error("free space one byte below the watermark: want diskLow = true")
-		}
-		if calls.goClean != 1 {
-			t.Errorf("go-clean seam called %d times, want 1 — the reactive reap is the point of this branch",
-				calls.goClean)
 		}
 		// Nil runRegistry means no stale worktrees are enumerated, so the reclaim
 		// seam is not reached on this path. Asserted so the fixture's shape stays
@@ -220,27 +252,51 @@ func TestDiskLowBranch(t *testing.T) {
 		}
 	})
 
+	// The low path reclaims the daemon's OWN stale worktrees. This is the
+	// positive control for the recovery subtest below: without it, "the healthy
+	// path reclaimed nothing" would pass on a fixture that could never reclaim
+	// anything at all.
+	t.Run("below watermark reclaims the daemon's own stale worktrees", func(t *testing.T) {
+		port, calls := staleWorktreeFixture(t, diskLowWatermarkDefault-1)
+		ms := ExportedNewMaintState()
+
+		ExportedRunPeriodicDiskCheck(context.Background(), port, ms)
+
+		if !ExportedDiskCheckDiskLow(ms) {
+			t.Error("the stub removes nothing, so free space is still below the watermark: want diskLow = true")
+		}
+		if calls.worktreeReclaim != 1 {
+			t.Errorf("worktree-reclaim seam called %d times, want 1 — a stale run worktree is the one thing the daemon may reclaim",
+				calls.worktreeReclaim)
+		}
+	})
+
 	// The latch must CLEAR when the disk recovers, using the same state handle.
 	// This is the transition, not two independent probes.
-	t.Run("recovery clears the diskLow latch", func(t *testing.T) {
-		port, calls := diskLowFixture(t, diskLowWatermarkDefault-1)
+	t.Run("recovery clears the diskLow latch and reclaims nothing", func(t *testing.T) {
+		port, calls := staleWorktreeFixture(t, diskLowWatermarkDefault-1)
 		ms := ExportedNewMaintState()
 
 		ExportedRunPeriodicDiskCheck(context.Background(), port, ms)
 		if !ExportedDiskCheckDiskLow(ms) {
 			t.Fatal("setup: want diskLow = true before testing recovery")
 		}
+		if calls.worktreeReclaim != 1 {
+			t.Fatalf("setup: worktree-reclaim seam called %d times on the low probe, want 1", calls.worktreeReclaim)
+		}
 
-		// Same deps, same state handle, disk now healthy.
+		// Same deps, same state handle, disk now healthy. The stale worktree is
+		// still on disk and still reclaimable, so a healthy path that reclaimed
+		// would push this counter to 2.
 		port.diskFreeBytesFunc = func(string) (uint64, error) { return 1 << 62, nil }
 		ExportedRunPeriodicDiskCheck(context.Background(), port, ms)
 
 		if ExportedDiskCheckDiskLow(ms) {
 			t.Error("disk recovered above the watermark: want diskLow = false")
 		}
-		if calls.goClean != 1 {
-			t.Errorf("go-clean seam called %d times, want 1 — the healthy path must NOT reap (hk-gjbpp)",
-				calls.goClean)
+		if calls.worktreeReclaim != 1 {
+			t.Errorf("worktree-reclaim seam called %d times, want 1 — a healthy disk must reclaim nothing, and this fixture still has something to reclaim",
+				calls.worktreeReclaim)
 		}
 	})
 
@@ -248,7 +304,7 @@ func TestDiskLowBranch(t *testing.T) {
 	// calling runPeriodicDiskCheck directly, and the observation must carry the
 	// latch out to the loop.
 	t.Run("tickBeforeDispatch reports diskLow to the loop", func(t *testing.T) {
-		port, calls := diskLowFixture(t, diskLowWatermarkDefault-1)
+		port, _ := diskLowFixture(t, diskLowWatermarkDefault-1)
 		m := &loopMaintenance{diskReclaim: port}
 
 		obs := m.tickBeforeDispatch(context.Background())
@@ -262,8 +318,103 @@ func TestDiskLowBranch(t *testing.T) {
 		if !m.state.diskLow {
 			t.Error("the latch must persist on loopMaintenance.state across ticks")
 		}
-		if calls.goClean != 1 {
-			t.Errorf("go-clean seam called %d times through tickBeforeDispatch, want 1", calls.goClean)
-		}
 	})
+}
+
+// TestDiskLowNeverDeletesTheGoBuildCache is the guard on the property this
+// package was changed to hold: a low disk makes the daemon REPORT, never delete
+// a resource it shares.
+//
+// `go clean -cache` empties the default GOCACHE. That cache is read and written
+// at the same time by both lanes, every agent worktree, the daemon's own merge
+// builds, and any terminal the operator is using. Deleting it mid-build produced
+// two failures, and the second is the dangerous one: builds that failed with
+// "could not import os/context/testing/...", and builds that reported success
+// without rebuilding anything. The daemon cannot tell when the delete is safe,
+// because its run registry only sees its own runs.
+//
+// The assertion is source-level, in the same shape as agentlaunch_scope_test.go.
+// A behavioural version would have to point GOCACHE at a scratch directory and
+// look for its contents afterwards, and that means changing a process-wide
+// environment variable while sibling tests in this package shell out to the go
+// toolchain — the test would create the very class of mid-build cache surprise
+// it exists to prevent.
+//
+// The scan covers the whole package, not just diskcheck_hksxlb.go, because the
+// reap does not have to come back in the file it left.
+func TestDiskLowNeverDeletesTheGoBuildCache(t *testing.T) {
+	t.Parallel()
+
+	pkgDir := filepath.Join(repoRootForConformance(), "internal", "daemon")
+	entries, err := os.ReadDir(pkgDir)
+	if err != nil {
+		t.Fatalf("read internal/daemon: %v", err)
+	}
+
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, parseErr := parser.ParseFile(token.NewFileSet(), filepath.Join(pkgDir, name), nil, parser.SkipObjectResolution)
+		if parseErr != nil {
+			t.Fatalf("parse %s: %v", name, parseErr)
+		}
+		if args := goToolchainCleanCalls(file); len(args) != 0 {
+			t.Errorf("internal/daemon/%s runs the go toolchain with %v.\n"+
+				"The daemon must not delete the Go build cache. That cache is shared with builds the daemon cannot see, and deleting it mid-build has produced builds that reported success without rebuilding anything. Detecting a low disk and emitting disk_low is the whole job; reclaiming a shared resource is the operator's call — see docs/disk-reclaim.md. If the daemon must reclaim something itself, reclaim what it owns, the way reclaimStaleWorktrees does.",
+				name, args)
+		}
+	}
+}
+
+// goToolchainCleanCalls returns the literal argument list of every exec call in
+// file that runs `go` with a `clean` subcommand.
+//
+// It matches on the string literals passed to os/exec rather than on a helper
+// name, so restoring the reap under a fresh function name is still caught. A
+// caller that assembles the argument list at run time is NOT caught; that is a
+// deliberate limit, because the file-level comment on diskcheck_hksxlb.go — not
+// this scan — is what tells the next reader why the reap is gone.
+func goToolchainCleanCalls(file *ast.File) [][]string {
+	var found [][]string
+	ast.Inspect(file, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, selOK := call.Fun.(*ast.SelectorExpr)
+		if !selOK || !isIdent(sel.X, "exec") {
+			return true
+		}
+		if sel.Sel.Name != "Command" && sel.Sel.Name != "CommandContext" {
+			return true
+		}
+		var literals []string
+		for _, arg := range call.Args {
+			lit, litOK := unparenExpr(arg).(*ast.BasicLit)
+			if !litOK || lit.Kind != token.STRING {
+				continue
+			}
+			unquoted, unquoteErr := strconv.Unquote(lit.Value)
+			if unquoteErr != nil {
+				continue
+			}
+			literals = append(literals, unquoted)
+		}
+		runsGo, runsClean := false, false
+		for _, l := range literals {
+			switch l {
+			case "go":
+				runsGo = true
+			case "clean":
+				runsClean = true
+			}
+		}
+		if runsGo && runsClean {
+			found = append(found, literals)
+		}
+		return true
+	})
+	return found
 }

@@ -735,6 +735,9 @@ func (p DispatchDeferredPayload) Valid() bool {
 //   - br_subprocesses_killed       — number of orphan br subprocesses killed (OQ-BI-010)
 //   - reconciliation_locks_removed — number of stale reconciliation lock files removed
 //   - stale_intents_observed       — count of stale intent files left for RC Cat 3a
+//   - queue_archives_observed      — count of failed-queue archives found (report only)
+//   - queue_archive_bytes          — total size on disk of those archives
+//   - queue_archives_over_retention — count beyond the operator's retention number, 0 when unset
 //   - swept_at                     — RFC 3339 wall-clock timestamp at sweep completion
 type DaemonOrphanSweepCompletedPayload struct {
 	// TmuxSessionsKilled is the number of orphan tmux sessions killed during the
@@ -840,6 +843,28 @@ type DaemonOrphanSweepCompletedPayload struct {
 	// Bead ref: hk-qp3.
 	CaptainSessionsSkipped int `json:"captain_sessions_skipped"`
 
+	// QueueArchivesObserved is the count of failed-queue archive files
+	// (.harmonik/queues/<name>.json.failed-<ts>) present on disk at sweep
+	// time. Required (must be >= 0).
+	//
+	// This is a REPORT, not a record of work done. The sweep does not remove
+	// archives. Deciding which record of a failed run is still worth keeping
+	// is a judgment, so the daemon surfaces the pile and the captain or the
+	// operator decides (plans/2026-07-27-delete-and-rewrite/CHARTER.md §5;
+	// architecture.md §4.2 AR-006 — this payload stays mechanism-tagged
+	// because it only counts).
+	QueueArchivesObserved int `json:"queue_archives_observed"`
+
+	// QueueArchiveBytes is the total size on disk of those archives.
+	// Required (must be >= 0).
+	QueueArchiveBytes int64 `json:"queue_archive_bytes"`
+
+	// QueueArchivesOverRetention is the count of archives beyond the
+	// operator's per-queue retention number. Zero whenever no operator has set
+	// HARMONIK_QUEUE_ARCHIVE_KEEP_COUNT: there is no compiled-in default, so
+	// nothing is "over" until somebody names a number. Required (must be >= 0).
+	QueueArchivesOverRetention int `json:"queue_archives_over_retention"`
+
 	// SweptAt is the RFC 3339 wall-clock timestamp at sweep completion.
 	// Required (non-empty).
 	SweptAt string `json:"swept_at"`
@@ -855,48 +880,36 @@ type DaemonOrphanSweepCompletedPayload struct {
 //   - BrSubprocessesKilled must be >= 0.
 //   - ReconciliationLocksRemoved must be >= 0.
 //   - StaleIntentsObserved must be >= 0.
+//   - QueueArchivesObserved, QueueArchiveBytes and QueueArchivesOverRetention
+//     must be >= 0.
 //   - SweptAt must be non-empty.
+//
+// Every count in this payload carries the same rule, so they are checked as a
+// list rather than as one branch each. A new count belongs in that list.
 func (p DaemonOrphanSweepCompletedPayload) Valid() bool {
-	if p.TmuxSessionsKilled < 0 {
-		return false
+	counts := []int64{
+		int64(p.TmuxSessionsKilled),
+		int64(p.TmuxWindowsKilled),
+		int64(p.LocksCleared),
+		int64(p.SubprocessesKilled),
+		int64(p.BrSubprocessesKilled),
+		int64(p.ReconciliationLocksRemoved),
+		int64(p.StaleIntentsObserved),
+		int64(p.BeadInProgressReset),
+		int64(p.BeadCat3cClosed),
+		int64(p.CoordinatorSessionsReaped),
+		int64(p.CrewSessionsSkipped),
+		int64(p.CaptainSessionsSkipped),
+		int64(p.QueueArchivesObserved),
+		p.QueueArchiveBytes,
+		int64(p.QueueArchivesOverRetention),
 	}
-	if p.TmuxWindowsKilled < 0 {
-		return false
+	for _, n := range counts {
+		if n < 0 {
+			return false
+		}
 	}
-	if p.LocksCleared < 0 {
-		return false
-	}
-	if p.SubprocessesKilled < 0 {
-		return false
-	}
-	if p.BrSubprocessesKilled < 0 {
-		return false
-	}
-	if p.ReconciliationLocksRemoved < 0 {
-		return false
-	}
-	if p.StaleIntentsObserved < 0 {
-		return false
-	}
-	if p.BeadInProgressReset < 0 {
-		return false
-	}
-	if p.BeadCat3cClosed < 0 {
-		return false
-	}
-	if p.CoordinatorSessionsReaped < 0 {
-		return false
-	}
-	if p.CrewSessionsSkipped < 0 {
-		return false
-	}
-	if p.CaptainSessionsSkipped < 0 {
-		return false
-	}
-	if p.SweptAt == "" {
-		return false
-	}
-	return true
+	return p.SweptAt != ""
 }
 
 // InfrastructureUnavailablePayload is the typed event payload for the

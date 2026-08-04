@@ -51,7 +51,7 @@ package core
 // Spec ref: event-model.md §4.8 EV-029.
 type PayloadCompatEntry struct {
 	// TypeName is the §8 event type name (e.g. "run_started").
-	TypeName string
+	TypeName EventType
 
 	// CurrentVersion is the current schema version of this type's payload (≥ 1).
 	CurrentVersion int
@@ -390,7 +390,7 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 
 // LookupPayloadCompatEntry returns the PayloadCompatEntry for the given
 // event type name, or (PayloadCompatEntry{}, false) if not declared.
-func LookupPayloadCompatEntry(typeName string) (PayloadCompatEntry, bool) {
+func LookupPayloadCompatEntry(typeName EventType) (PayloadCompatEntry, bool) {
 	for _, e := range allPayloadCompatEntries {
 		if e.TypeName == typeName {
 			return e, true

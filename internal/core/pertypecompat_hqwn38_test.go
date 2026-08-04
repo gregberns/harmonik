@@ -57,7 +57,7 @@ func TestEV029_CompatTableCoversAllRegisteredTypes(t *testing.T) {
 	// Build lookup maps.
 	declaredByName := make(map[string]PayloadCompatEntry, len(declared))
 	for _, e := range declared {
-		declaredByName[e.TypeName] = e
+		declaredByName[string(e.TypeName)] = e
 	}
 	registeredNames := make(map[string]bool, len(registered))
 	for name := range registered {
@@ -77,9 +77,9 @@ func TestEV029_CompatTableCoversAllRegisteredTypes(t *testing.T) {
 
 	// Every declared compat entry must correspond to a registered type.
 	for _, e := range declared {
-		t.Run("declared/"+e.TypeName, func(t *testing.T) {
+		t.Run("declared/"+string(e.TypeName), func(t *testing.T) {
 			t.Parallel()
-			if !registeredNames[e.TypeName] {
+			if !registeredNames[string(e.TypeName)] {
 				t.Errorf("EV-029: PayloadCompatEntry for %q exists in allPayloadCompatEntries but the type is NOT registered; "+
 					"remove the stale entry or register the type", e.TypeName)
 			}
@@ -100,7 +100,7 @@ func TestEV029_InitialVersionIsOne(t *testing.T) {
 		if e.PreviousVersion != 0 {
 			continue // not an initial-version entry; handled by TestEV029_NMinus1WindowHolds
 		}
-		t.Run(e.TypeName, func(t *testing.T) {
+		t.Run(string(e.TypeName), func(t *testing.T) {
 			t.Parallel()
 			if e.CurrentVersion != 1 {
 				t.Errorf("EV-029: type %q has PreviousVersion=0 but CurrentVersion=%d; "+
@@ -133,7 +133,7 @@ func TestEV029_NMinus1WindowHolds(t *testing.T) {
 		if e.PreviousVersion == 0 {
 			continue // initial version; vacuously satisfied, handled above
 		}
-		t.Run(e.TypeName, func(t *testing.T) {
+		t.Run(string(e.TypeName), func(t *testing.T) {
 			t.Parallel()
 			if !e.CompatWindowHolds {
 				t.Errorf("EV-029: type %q (v%d → v%d) has CompatWindowHolds=false; "+
@@ -154,7 +154,7 @@ func TestEV029_AdditiveOnlyImpliesCompatWindowHolds(t *testing.T) {
 	t.Parallel()
 
 	for _, e := range AllPayloadCompatEntries() {
-		t.Run(e.TypeName, func(t *testing.T) {
+		t.Run(string(e.TypeName), func(t *testing.T) {
 			t.Parallel()
 			if e.AdditiveOnly && !e.CompatWindowHolds {
 				t.Errorf("EV-029: type %q has AdditiveOnly=true but CompatWindowHolds=false; "+
@@ -174,9 +174,9 @@ func TestEV029_CompatEntryVersionsMatchRegistry(t *testing.T) {
 	t.Parallel()
 
 	for _, e := range AllPayloadCompatEntries() {
-		t.Run(e.TypeName, func(t *testing.T) {
+		t.Run(string(e.TypeName), func(t *testing.T) {
 			t.Parallel()
-			registryVersion, ok := LookupTypeSchemaVersion(e.TypeName)
+			registryVersion, ok := LookupTypeSchemaVersion(string(e.TypeName))
 			if !ok {
 				// Type in compat table but not registered — caught by
 				// TestEV029_CompatTableCoversAllRegisteredTypes; skip here.
@@ -199,7 +199,7 @@ func TestEV029_NoDuplicateCompatEntries(t *testing.T) {
 
 	seen := make(map[string]int)
 	for _, e := range AllPayloadCompatEntries() {
-		seen[e.TypeName]++
+		seen[string(e.TypeName)]++
 	}
 	for typeName, count := range seen {
 		t.Run(typeName, func(t *testing.T) {
@@ -218,7 +218,7 @@ func TestEV029_CurrentVersionNeverLessThanOne(t *testing.T) {
 	t.Parallel()
 
 	for _, e := range AllPayloadCompatEntries() {
-		t.Run(e.TypeName, func(t *testing.T) {
+		t.Run(string(e.TypeName), func(t *testing.T) {
 			t.Parallel()
 			if e.CurrentVersion < 1 {
 				t.Errorf("EV-029: type %q has CurrentVersion=%d; schema versions must be >= 1 per EV-028",
@@ -238,7 +238,7 @@ func TestEV029_PreviousVersionLessThanCurrent(t *testing.T) {
 		if e.PreviousVersion == 0 {
 			continue
 		}
-		t.Run(e.TypeName, func(t *testing.T) {
+		t.Run(string(e.TypeName), func(t *testing.T) {
 			t.Parallel()
 			if e.PreviousVersion >= e.CurrentVersion {
 				t.Errorf("EV-029: type %q has PreviousVersion=%d >= CurrentVersion=%d; "+
@@ -267,7 +267,7 @@ func TestEV029_LookupPayloadCompatEntryRoundTrip(t *testing.T) {
 	t.Parallel()
 
 	for _, e := range AllPayloadCompatEntries() {
-		t.Run(e.TypeName, func(t *testing.T) {
+		t.Run(string(e.TypeName), func(t *testing.T) {
 			t.Parallel()
 			got, ok := LookupPayloadCompatEntry(e.TypeName)
 			if !ok {

@@ -244,7 +244,7 @@ func schemaMismatchSkips(rep *Report, ev core.Event) bool {
 		return false
 	}
 	rep.SchemaMismatches = append(rep.SchemaMismatches, ev.EventID)
-	if entry, ok := core.LookupPayloadCompatEntry(ev.Type); ok && !entry.CompatWindowHolds {
+	if entry, ok := core.LookupPayloadCompatEntry(core.EventType(ev.Type)); ok && !entry.CompatWindowHolds {
 		return true
 	}
 	return false

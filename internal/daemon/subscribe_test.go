@@ -315,6 +315,17 @@ func TestSubscribeHub_DispatchFanOut(t *testing.T) {
 // in the process — running concurrently with other parallel tests produces
 // false positives from those tests' goroutines.
 func TestSubscribeHub_NoGoroutineLeak_OnMultipleCloseCycles(t *testing.T) {
+	// Ignoring the goroutines that already exist is load-bearing, and the
+	// snapshot must be taken HERE rather than at the check below. Not running in
+	// parallel is not enough: an earlier test in this binary drives a real run,
+	// and a run leaves substrate.After timer goroutines sleeping out their full
+	// duration after it ends. A bare VerifyNone reads those as this hub's leak
+	// and names a stack from coldstarttoken_test.go. Taken at the top, the
+	// snapshot covers what the neighbours left and still catches every goroutine
+	// this test creates. Taken at the bottom it would ignore this test's own
+	// leaks and the check would mean nothing.
+	preexisting := goleak.IgnoreCurrent()
+
 	hub := NewSubscribeHub(SubscribeHubConfig{Bus: nil})
 
 	var wg sync.WaitGroup
@@ -350,7 +361,7 @@ func TestSubscribeHub_NoGoroutineLeak_OnMultipleCloseCycles(t *testing.T) {
 
 	// (b) goroutine leak check — goleak retries for ~400ms to allow any
 	// lingering conn-read goroutines to drain after the pipe closes.
-	goleak.VerifyNone(t)
+	goleak.VerifyNone(t, preexisting)
 }
 
 // TestSubscribeHub_HeartbeatActiveRunsFromRegistry verifies that the
@@ -949,6 +960,11 @@ func TestSubscribeHub_SlowFastMultiSubscriberAsymmetry(t *testing.T) {
 // the same reason as TestSubscribeHub_NoGoroutineLeak_OnMultipleCloseCycles:
 // goleak snapshots the full process goroutine set.
 func TestSubscribeHub_DaemonShutdownMidSubscribe(t *testing.T) {
+	// Snapshot the goroutines the neighbours left, for the reason spelled out on
+	// TestSubscribeHub_NoGoroutineLeak_OnMultipleCloseCycles. Taken at the top so
+	// it cannot swallow this test's own leak.
+	preexisting := goleak.IgnoreCurrent()
+
 	hub := NewSubscribeHub(SubscribeHubConfig{Bus: nil})
 
 	srv, cli := net.Pipe()
@@ -995,7 +1011,7 @@ func TestSubscribeHub_DaemonShutdownMidSubscribe(t *testing.T) {
 
 	// Goroutine leak check: after cancel + conn close, all internal goroutines
 	// (read-goroutine, heartbeat) must have exited.
-	goleak.VerifyNone(t)
+	goleak.VerifyNone(t, preexisting)
 }
 
 // TestSubscribeHub_ReapsStalledWriteOnDeadPeer reproduces hk-qsz0p: a

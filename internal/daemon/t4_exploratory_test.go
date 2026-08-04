@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -96,11 +97,15 @@ func (s *t4StubLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
 	}
 	id := s.ready[0]
 	s.ready = s.ready[1:]
-	return []core.BeadRecord{{BeadID: id}}, nil
+	return []core.BeadRecord{{BeadID: id, Labels: workloopFixtureSingleLabels}}, nil
 }
 
 func (s *t4StubLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
-	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen}, nil
+	// workflow:single is load-bearing; see stubBeadLedger.labels. An unlabelled
+	// bead selects the reviewed graph, whose commit gate cannot pass in a fixture
+	// repo that holds one README, so every run here reopened its bead and the
+	// scenarios below read that retry loop as their own subject breaking.
+	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen, Labels: workloopFixtureSingleLabels}, nil
 }
 
 func (s *t4StubLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
@@ -348,7 +353,19 @@ func TestT4_ReopenThenRedispatch(t *testing.T) {
 	handlerDir := t.TempDir()
 	handlerScript := handlerDir + "/handler.sh"
 	counterFile := handlerDir + "/counter"
+	// Iteration 2 COMMITS before it exits 0. The commit has to come from the
+	// handler and not from a worktree factory: the graph node reads the worktree
+	// HEAD just before the launch and keeps it as the node baseline, so a factory
+	// commit is already in the baseline and the node's no-advance guard refuses
+	// the run. git is called by absolute path because the child environment
+	// carries no PATH, and stdout goes to stderr because the handler contract
+	// reads the child's stdout as an NDJSON stream.
+	gitPath, gitErr := exec.LookPath("git")
+	if gitErr != nil {
+		t.Fatalf("T4-S3: git not found on PATH: %v", gitErr)
+	}
 	handlerContent := `#!/bin/sh
+exec 1>&2
 COUNT_FILE=` + counterFile + `
 COUNT=0
 if [ -f "$COUNT_FILE" ]; then
@@ -359,6 +376,7 @@ echo $COUNT > "$COUNT_FILE"
 if [ "$COUNT" -le 1 ]; then
   exit 1
 fi
+` + gitPath + ` commit -q --allow-empty -m 'test: agent advanced HEAD'
 exit 0
 `
 	if err := writeTestFile(t, handlerScript, handlerContent, 0o755); err != nil {
@@ -371,14 +389,7 @@ exit 0
 		Bus:           collector,
 		ProjectDir:    projectDir,
 		HandlerBinary: "/bin/sh",
-		HandlerArgs:   []string{handlerScript},
-		// Advance HEAD via an --allow-empty commit so the single-mode no-commit
-		// guard (hk-mmh8f) does not pre-empt this scenario's own failure/success
-		// logic. Iteration 1's handler exits 1 (intentional failure → reopen via
-		// the non-zero-exit path, unaffected by the advanced HEAD); iteration 2
-		// exits 0 and needs HEAD advanced so the run merges to main and the bead
-		// is closed (rather than being reopened by the no-commit guard).
-		WorktreeFactory:  emptyCommitWorktreeFactory,
+		HandlerArgs:      []string{handlerScript},
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
@@ -704,13 +715,13 @@ func TestT4_EventOrderingOnCloseError(t *testing.T) {
 		Bus:           collector,
 		ProjectDir:    projectDir,
 		HandlerBinary: "/bin/sh",
-		HandlerArgs:   []string{"-c", "exit 0"},
-		// Advance HEAD via an --allow-empty commit so the single-mode no-commit
-		// guard (hk-mmh8f) does NOT reopen the bead before CloseBead is reached.
-		// A bare `exit 0` handler leaves HEAD == parent, which the guard treats
-		// as a no-commit failure (run_failed + ReopenBead); this scenario probes
-		// the close-success ordering, so it needs a real (empty) commit to land.
-		WorktreeFactory:  emptyCommitWorktreeFactory,
+		// The handler commits while it runs, so HEAD advances past the node
+		// baseline and the run reaches CloseBead. A bare `exit 0` leaves HEAD at
+		// the baseline, which the node's no-advance guard treats as a failure
+		// (run_failed + ReopenBead), and this scenario probes the close-success
+		// ordering. The commit cannot live in a worktree factory — see
+		// workloopFixtureAdvanceHeadHandlerArgs.
+		HandlerArgs:      workloopFixtureAdvanceHeadHandlerArgs(t),
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})

@@ -114,9 +114,38 @@ func remotefixRepo(t *testing.T) string {
 // exit refuses the run.
 func remotefixSSHShim(t *testing.T, exitCode int) string {
 	t.Helper()
+	return remotefixSSHShimAnsweringHEAD(t, exitCode, "")
+}
+
+// remotefixSSHShimAnsweringHEAD is remotefixSSHShim for a fixture whose run must
+// get past the node baseline probe.
+//
+// A remote run reads the worktree HEAD over the runner, so `git -C <wt>
+// rev-parse HEAD` arrives at this shim like every other round trip. The plain
+// shim answers it with nothing, and empty is not a SHA: the graph node refuses a
+// baseline it could not read, so the run dies before it builds a launch spec. No
+// real ssh behaves that way against a real worktree.
+//
+// Pass the worktree path and the shim answers that one command from the real
+// repository. Both boxes are this machine in these fixtures, so a local read
+// gives the same SHA the worker would report. Everything else still records and
+// exits with exitCode. Pass "" for the plain recording shim.
+func remotefixSSHShimAnsweringHEAD(t *testing.T, exitCode int, wtPath string) string {
+	t.Helper()
 	binDir := t.TempDir()
 	logPath := filepath.Join(binDir, "ssh-calls.log")
-	shim := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + logPath + "\nexit " + strconv.Itoa(exitCode) + "\n"
+	headAnswer := ""
+	if wtPath != "" {
+		// SSHRunner ships the remote command shell-quoted token by token, so the
+		// argv reads `host -- 'git' '-C' '<path>' 'rev-parse' 'HEAD'`. Match the
+		// verb alone; a pattern that spelled the whole phrase would never match.
+		headAnswer = "case \"$*\" in\n" +
+			"  *rev-parse*) exec git -C " + wtPath + " rev-parse HEAD ;;\n" +
+			"esac\n"
+	}
+	shim := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + logPath + "\n" +
+		headAnswer +
+		"exit " + strconv.Itoa(exitCode) + "\n"
 	// 0o700 rather than 0o600: the shim is put on PATH and must be executable.
 	if err := os.WriteFile(filepath.Join(binDir, "ssh"), []byte(shim), 0o700); err != nil { //nolint:gosec // G306: an exec shim in a per-test temp dir must carry the execute bit
 		t.Fatalf("remotefixSSHShim: write shim: %v", err)

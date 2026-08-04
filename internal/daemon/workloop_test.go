@@ -116,12 +116,33 @@ func workloopFixtureReadJSONLLines(t *testing.T, path string) []string {
 // Stub bead ledger
 // ─────────────────────────────────────────────────────────────────────────────
 
+// workloopFixtureSingleLabels is the label set every work-loop fixture bead
+// carries. The reason it is not empty is written out on stubBeadLedger.labels:
+// an unlabelled bead selects the reviewed graph, whose commit gate runs
+// `make full` in a fixture repo that holds one README and no Makefile.
+var workloopFixtureSingleLabels = []string{"workflow:single"}
+
 // stubBeadLedger implements brcli.Adapter-compatible calls as a lightweight
 // in-memory stub for work loop tests.  Concurrency: all methods are safe to
 // call concurrently.
 type stubBeadLedger struct {
-	mu       sync.Mutex
-	ready    []core.BeadID
+	mu    sync.Mutex
+	ready []core.BeadID
+
+	// labels is what this stub reports on every bead it serves.
+	//
+	// It is load-bearing for any test that drives the real work loop to a close.
+	// An UNLABELLED bead resolves to the REVIEWED graph, whose commit_gate node
+	// shells out to `make full` inside the run worktree. A work-loop fixture
+	// builds a bare git repo holding one README and no Makefile, so that gate can
+	// only fail. The run then reopens the bead, the loop picks it up again, and a
+	// test that waits for a close waits for ever while reading its own subject as
+	// broken. Set it to workflow:single to select the no-review graph — implement
+	// then close — which is the shape those tests' own headers describe.
+	//
+	// Leave it nil where the reviewed graph is what the test means to exercise.
+	labels []string
+
 	closed   []core.BeadID
 	opened   []core.BeadID
 	closeErr error
@@ -138,12 +159,18 @@ func (s *stubBeadLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
 	// Dequeue one bead per Ready call — simulates a draining queue.
 	id := s.ready[0]
 	s.ready = s.ready[1:]
-	return []core.BeadRecord{{BeadID: id}}, nil
+	return []core.BeadRecord{{BeadID: id, Labels: s.labels}}, nil
 }
 
 func (s *stubBeadLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
 	// Stub always reports "open" — pre-claim guard passes unconditionally.
-	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen}, nil
+	//
+	// The labels must be here as well as on Ready. The work loop HYDRATES from
+	// ShowBead and overwrites whatever Ready reported, because `br ready --format
+	// json` omits the labels field. A stub that labels only Ready loses them.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen, Labels: s.labels}, nil
 }
 
 func (s *stubBeadLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, beadID core.BeadID) error {
@@ -326,20 +353,22 @@ func TestWorkLoop_DispatchClosesBead(t *testing.T) {
 	// Seed one ready bead.
 	const beadID = core.BeadID("test-bead-001")
 	ledger := &stubBeadLedger{
-		ready: []core.BeadID{beadID},
+		ready:  []core.BeadID{beadID},
+		labels: workloopFixtureSingleLabels,
 	}
 	collector := &stubEventCollector{}
 
-	// The handler binary will be sh -c 'exit 0' — exits immediately with code 0.
+	// The handler is a shell that makes one empty commit and exits 0. The commit
+	// happens DURING the run, which is what the node's no-advance guard asks for;
+	// see workloopFixtureAdvanceHeadHandlerArgs.
 	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
 		ProjectDir:       projectDir,
 		HandlerBinary:    "/bin/sh",
-		HandlerArgs:      []string{"-c", "exit 0"},
+		HandlerArgs:      workloopFixtureAdvanceHeadHandlerArgs(t),
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
-		WorktreeFactory:  workloopFixturePreCommitWorktreeFactory,
 	})
 
 	// Real productionWorktreeFactory + buildClaudeLaunchSpec run; stopHookGrace
@@ -525,7 +554,8 @@ type concurrentFixtureLedger struct {
 
 func (c *concurrentFixtureLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
 	// Stub always reports "open" — pre-claim guard passes unconditionally.
-	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen}, nil
+	// workflow:single is load-bearing; see stubBeadLedger.labels for why.
+	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen, Labels: workloopFixtureSingleLabels}, nil
 }
 
 func (c *concurrentFixtureLedger) Ready(_ context.Context) ([]core.BeadRecord, error) {
@@ -536,7 +566,7 @@ func (c *concurrentFixtureLedger) Ready(_ context.Context) ([]core.BeadRecord, e
 	}
 	id := c.ready[0]
 	c.ready = c.ready[1:]
-	return []core.BeadRecord{{BeadID: id}}, nil
+	return []core.BeadRecord{{BeadID: id, Labels: workloopFixtureSingleLabels}}, nil
 }
 
 func (c *concurrentFixtureLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
@@ -617,15 +647,18 @@ func TestWorkLoop_TwoConcurrentBeads(t *testing.T) {
 		Bus:              collector,
 		ProjectDir:       projectDir,
 		HandlerBinary:    "/bin/sh",
-		HandlerArgs:      []string{"-c", "sleep 0.2; exit 0"},
+		HandlerArgs:      workloopFixtureAdvanceHeadHandlerArgs(t),
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		MaxConcurrent:    2,
+		// The factory only records which project dir each run was handed. It must
+		// NOT commit: the handler above does that during the run, which is the only
+		// order the node's no-advance guard accepts.
 		WorktreeFactory: func(ctx context.Context, gotProjectDir, runID, headSHA string) (string, func(), error) {
 			runEnvMu.Lock()
 			runEnvProjectDirs[runID] = gotProjectDir
 			runEnvMu.Unlock()
-			return workloopFixturePreCommitWorktreeFactory(ctx, gotProjectDir, runID, headSHA)
+			return daemon.ExportedProductionWorktreeFactory(ctx, gotProjectDir, runID, headSHA)
 		},
 	})
 
@@ -859,11 +892,12 @@ func (c *claimSemFixtureLedger) Ready(_ context.Context) ([]core.BeadRecord, err
 	}
 	id := c.ready[0]
 	c.ready = c.ready[1:]
-	return []core.BeadRecord{{BeadID: id}}, nil
+	return []core.BeadRecord{{BeadID: id, Labels: workloopFixtureSingleLabels}}, nil
 }
 
 func (c *claimSemFixtureLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
-	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen}, nil
+	// workflow:single is load-bearing; see stubBeadLedger.labels for why.
+	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen, Labels: workloopFixtureSingleLabels}, nil
 }
 
 func (c *claimSemFixtureLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
@@ -941,17 +975,17 @@ func TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency(t *testing.T) {
 	ledger := &claimSemFixtureLedger{ready: ready}
 	collector := &stubEventCollector{}
 
-	// Handler exits immediately — we want all 10 beads to process quickly.
+	// Handler makes one empty commit and exits — we want all 10 beads to process
+	// quickly, and the commit has to land during the run for the node to pass.
 	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
 		ProjectDir:       projectDir,
 		HandlerBinary:    "/bin/sh",
-		HandlerArgs:      []string{"-c", "exit 0"},
+		HandlerArgs:      workloopFixtureAdvanceHeadHandlerArgs(t),
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		MaxConcurrent:    maxConcurrent,
-		WorktreeFactory:  workloopFixturePreCommitWorktreeFactory,
 	})
 
 	// Real buildClaudeLaunchSpec + productionWorktreeFactory run; stopHookGrace

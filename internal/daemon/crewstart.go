@@ -608,6 +608,11 @@ func (h *crewHandlerImpl) probeKeeperLiveness(crewName string, grace time.Durati
 //
 // The crew agent remains live; the captain/operator is responsible for
 // remediation (e.g. running `harmonik keeper --agent <crew>`).
+//
+// The context is deliberately detached. This runs on the goroutine that the
+// crew-start RPC starts and then leaves behind, so the RPC context is already
+// cancelled by the time the grace window ends. On the caller's context the
+// alarm would never be raised — the alarm is the whole point of the probe.
 func (h *crewHandlerImpl) reportKeeperWatcherDead(crewName string, grace time.Duration) {
 	ctx := context.Background()
 	fmt.Fprintf(os.Stderr,

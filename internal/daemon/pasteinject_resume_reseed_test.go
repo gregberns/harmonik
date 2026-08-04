@@ -96,7 +96,7 @@ func prrGitRepoWithCommit(t *testing.T) (wtPath, headSHA string) {
 
 	run := func(args ...string) string {
 		t.Helper()
-		cmd := exec.Command("git", args...)
+		cmd := exec.CommandContext(t.Context(), "git", args...)
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(),
 			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
@@ -220,7 +220,7 @@ func TestQuitOnCommit_NoReseedEnterOnceCommitLands(t *testing.T) {
 	t.Cleanup(func() { *daemon.ExportedImplementerReseedGrace = origGrace })
 
 	// Land a second commit so HEAD != initialSHA on the first poll.
-	cmd := exec.Command("git", "commit", "-q", "--allow-empty", "-m", "implementer work")
+	cmd := exec.CommandContext(t.Context(), "git", "commit", "-q", "--allow-empty", "-m", "implementer work")
 	cmd.Dir = wtPath
 	cmd.Env = append(os.Environ(),
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",

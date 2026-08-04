@@ -198,7 +198,6 @@ internal/daemon/branching.go	gosec
 internal/daemon/branching.go	prealloc
 internal/daemon/branching.go	unparam
 internal/daemon/brhistoryrotate.go	funlen
-internal/daemon/busconsumersubsystem_test.go	noctx
 internal/daemon/chbinv002_qo96c_test.go	errcheck
 internal/daemon/chbinv002_qo96c_test.go	gosec
 internal/daemon/claudelaunchspec_fixture_test.go	gosec
@@ -282,7 +281,6 @@ internal/daemon/harnessregistry.go	funlen
 internal/daemon/harnessregistry.go	unconvert
 internal/daemon/harnessregistry_test.go	gosec
 internal/daemon/harnessresolve.go	errcheck
-internal/daemon/harnessresolve_test.go	contextcheck
 internal/daemon/harnessresolve_test.go	copyloopvar
 internal/daemon/hk_lfrub_dot_node_model_leak_test.go	copyloopvar
 internal/daemon/hk_lfrub_dot_pi_launch_e2e_test.go	gosec
@@ -291,7 +289,6 @@ internal/daemon/hk_pkugu_pi_launch_e2e_test.go	unparam
 internal/daemon/hk_pkugu_pi_model_leak_test.go	copyloopvar
 internal/daemon/hk_ytzj2_default_harness_wiring_test.go	copyloopvar
 internal/daemon/hookrelay_chb025.go	errcheck
-internal/daemon/mergetomain_hkftyvo_test.go	contextcheck
 internal/daemon/mergetomain_hkftyvo_test.go	errcheck
 internal/daemon/mergetomain_hkftyvo_test.go	errorlint
 internal/daemon/mergetomain_hkftyvo_test.go	gosec
@@ -302,7 +299,6 @@ internal/daemon/mergetomain_stripruncontext_hk4je_test.go	errorlint
 internal/daemon/mergetomain_stripruncontext_hk4je_test.go	gosec
 internal/daemon/moderesolve.go	errcheck
 internal/daemon/moderesolve_single_override_dot_default_hkgwy_test.go	copyloopvar
-internal/daemon/moderesolve_test.go	contextcheck
 internal/daemon/moderesolve_test.go	copyloopvar
 internal/daemon/noautopull_em066_em067_test.go	errcheck
 internal/daemon/notifystream.go	errcheck
@@ -321,13 +317,11 @@ internal/daemon/pasteinject.go	gocritic
 internal/daemon/pasteinject.go	gosec
 internal/daemon/pasteinject.go	unused
 internal/daemon/pasteinject_resume_reseed_test.go	gocritic
-internal/daemon/pasteinject_resume_reseed_test.go	noctx
 internal/daemon/pasteinject_resume_reseed_test.go	unparam
 internal/daemon/perqueuespendmeter_tigaf11.go	nilerr
 internal/daemon/pi_dgx_reasoning_test.go	gosec
 internal/daemon/pi_no_tier3_leak_test.go	gosec
 internal/daemon/pi_profile_resolve.go	errcheck
-internal/daemon/pi_profile_resolve_test.go	contextcheck
 internal/daemon/pi_profile_resolve_test.go	copyloopvar
 internal/daemon/pi_toolcalls_per_provider_test.go	gosec
 internal/daemon/pi_unknown_profile_refuse_test.go	errcheck
@@ -344,8 +338,6 @@ internal/daemon/reconciliationcadence_rc020a_classb_test.go	revive
 internal/daemon/reconciliationcadence_rc020a_classb_test.go	unparam
 internal/daemon/remote_substrate_b11_test.go	copyloopvar
 internal/daemon/remote_substrate_b11_test.go	gosec
-internal/daemon/remote_substrate_b11_test.go	noctx
-internal/daemon/restartbackoff.go	contextcheck
 internal/daemon/restartbackoff.go	errcheck
 internal/daemon/restartbackoff.go	gocritic
 internal/daemon/reviewgateanomaly_hktnmjy.go	nilerr
@@ -384,9 +376,7 @@ internal/daemon/scheduler.go	gocritic
 internal/daemon/scheduletick.go	contextcheck
 internal/daemon/scheduletick.go	noctx
 internal/daemon/scheduletick_test.go	errcheck
-internal/daemon/scheduletick_test.go	noctx
 internal/daemon/smoke_test.go	gosec
-internal/daemon/socket.go	contextcheck
 internal/daemon/socket_operatorpause_ry8q1_test.go	errcheck
 internal/daemon/socket_operatorpause_ry8q1_test.go	gocritic
 internal/daemon/socket_operatorpause_ry8q1_test.go	unparam
@@ -397,7 +387,6 @@ internal/daemon/spendmeter_hkk3f8g.go	nilerr
 internal/daemon/spendmeter_hkk3f8g.go	revive
 internal/daemon/srt_pi_egress_e2e_test.go	errcheck
 internal/daemon/srt_pi_egress_e2e_test.go	gosec
-internal/daemon/srt_pi_egress_e2e_test.go	noctx
 internal/daemon/stalewatch.go	errcheck
 internal/daemon/stalewatch.go	gocognit
 internal/daemon/stalewatch.go	unconvert
@@ -406,10 +395,8 @@ internal/daemon/stalewatch_wkzlc_test.go	nilerr
 internal/daemon/standardgraph.go	forbidigo
 internal/daemon/standardgraph_sync_test.go	gocritic
 internal/daemon/standardgraph_sync_test.go	gosec
-internal/daemon/statedisk.go	contextcheck
 internal/daemon/statedisk.go	errcheck
 internal/daemon/statedisk.go	exhaustive
-internal/daemon/stategather.go	contextcheck
 internal/daemon/stategather.go	errcheck
 internal/daemon/stategather.go	exhaustive
 internal/daemon/statetypes.go	revive
@@ -428,7 +415,6 @@ internal/daemon/subscribe_test.go	copyloopvar
 internal/daemon/subscribe_test.go	errcheck
 internal/daemon/subscribe_test.go	gocritic
 internal/daemon/subscribe_test.go	gosec
-internal/daemon/subscribe_test.go	noctx
 internal/daemon/supervisorrevival_hkrnkuy.go	errcheck
 internal/daemon/supervisorrevival_hkrnkuy.go	exhaustive
 internal/daemon/survive_shutdown_run_resources_test.go	unparam
@@ -461,7 +447,6 @@ internal/daemon/verdictexecutor_rc025a.go	gocognit
 internal/daemon/verdictexecutor_rc025a.go	gosec
 internal/daemon/verdictexecutor_rc025a_test.go	errcheck
 internal/daemon/verdictexecutor_rc025a_test.go	gosec
-internal/daemon/verdictexecutor_rc025a_test.go	noctx
 internal/daemon/walcheckpoint.go	nilerr
 internal/daemon/walcheckpoint.go	unparam
 internal/daemon/walcheckpoint.go	unused
@@ -478,10 +463,8 @@ internal/daemon/workloop_precommit_factory_test.go	errorlint
 internal/daemon/workloop_precommit_factory_test.go	gocritic
 internal/daemon/workloop_precommit_factory_test.go	gosec
 internal/daemon/workloop_qcancel_ppt32_test.go	errcheck
-internal/daemon/workloop_test.go	contextcheck
 internal/daemon/workloop_test.go	errcheck
 internal/daemon/workloop_test.go	gosec
-internal/daemon/z8ekfixtures_test.go	noctx
 internal/daemon/z8ekfixtures_test.go	unused
 internal/dashboard/types.go	revive
 internal/digest/builder.go	funlen
@@ -568,7 +551,6 @@ internal/runloop/runshell.go	revive
 internal/runloop/scenariogate.go	gosec
 internal/runloop/scenariogate.go	unused
 internal/runloop/scenariogate_test.go	gosec
-internal/runloop/scenariogate_test.go	noctx
 internal/runloop/scenariogate_test.go	testifylint
 internal/runloop/waitsocketgrace.go	errcheck
 internal/runloop/waitsocketgrace.go	revive

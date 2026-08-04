@@ -17,7 +17,7 @@ import (
 // os.ProcessState exit-code semantics rather than a hand-rolled fake.
 func exitErrorWithCode(t *testing.T, code int) error {
 	t.Helper()
-	cmd := exec.Command("sh", "-c", "exit "+itoa(code))
+	cmd := exec.CommandContext(t.Context(), "sh", "-c", "exit "+itoa(code))
 	err := cmd.Run()
 	var exitErr *exec.ExitError
 	require.True(t, errors.As(err, &exitErr), "expected *exec.ExitError for exit %d", code)
@@ -30,7 +30,7 @@ func exitErrorWithCode(t *testing.T, code int) error {
 // ExitCode()==-1) — the real OOM/SIGKILL shape the gate must treat as non-block.
 func killedExitError(t *testing.T) error {
 	t.Helper()
-	cmd := exec.Command("sh", "-c", "sleep 60")
+	cmd := exec.CommandContext(t.Context(), "sh", "-c", "sleep 60")
 	require.NoError(t, cmd.Start())
 	require.NoError(t, cmd.Process.Signal(syscall.SIGKILL))
 	err := cmd.Wait()

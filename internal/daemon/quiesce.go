@@ -300,7 +300,7 @@ func (a *QuiesceArbiter) Subscribe(bus eventbus.EventBus) error {
 //
 // Pattern: same as staleWatcher.StartWatcher.
 func (a *QuiesceArbiter) Start(ctx context.Context) {
-	a.reconcileOrphanedMarkers()
+	a.reconcileOrphanedMarkers(ctx)
 	go a.run(ctx)
 }
 
@@ -322,7 +322,7 @@ func (a *QuiesceArbiter) Start(ctx context.Context) {
 //
 // Best-effort: any per-marker error is logged and skipped; the daemon never
 // fails to start over a bad marker.
-func (a *QuiesceArbiter) reconcileOrphanedMarkers() {
+func (a *QuiesceArbiter) reconcileOrphanedMarkers(ctx context.Context) {
 	if a.cfg.ProjectDir == "" {
 		return
 	}
@@ -380,7 +380,7 @@ func (a *QuiesceArbiter) reconcileOrphanedMarkers() {
 			}
 		} else if sessionID == "captain-session" {
 			agentName = captainAgentName
-			paneTarget = a.resolveCaptainTarget()
+			paneTarget = a.resolveCaptainTarget(ctx)
 		} else {
 			// Unknown session: key the map by session id so the failsafe can still
 			// clear the marker; no pane target → nudge is skipped.
@@ -484,7 +484,7 @@ func (a *QuiesceArbiter) parkAllSessions(ctx context.Context, source SleepSource
 	// landed on a dead pane and the session stayed asleep until the 4h failsafe
 	// (which re-nudged the SAME wrong pane). resolveCaptainTarget now probes
 	// liveness and returns the target of whichever session is actually live.
-	captainTarget := a.resolveCaptainTarget()
+	captainTarget := a.resolveCaptainTarget(ctx)
 	a.parkSession(ctx, captainAgentName, "", "captain-session", captainTarget, source, level)
 
 	// Each crew session.
@@ -511,14 +511,19 @@ func (a *QuiesceArbiter) parkAllSessions(ctx context.Context, source SleepSource
 //  3. Convention-derived "<session>:agent" — last resort so the failsafe still
 //     has a plausible target even when no probe confirmed a live session
 //     (e.g. tmux unavailable in this environment).
-func (a *QuiesceArbiter) resolveCaptainTarget() string {
+//
+// ctx bounds the tmux probe in step 2. A cancelled ctx makes that probe report
+// "not live", so resolution falls to step 3 and still returns a plausible
+// target. ctx is only cancelled when the daemon is going down, and the marker
+// this target lands on is re-resolved by the next boot's reconcile pass.
+func (a *QuiesceArbiter) resolveCaptainTarget(ctx context.Context) string {
 	if a.cfg.ProjectDir != "" {
 		if t := keeper.ResolveTmuxTarget(a.cfg.ProjectDir, captainAgentName, "", nil); t != "" {
 			return t
 		}
 	}
 	// Fallback: the bare "captain" session (the comms-wake pane-mismatch case).
-	if tmuxHasSession(captainAgentName) {
+	if tmuxHasSession(ctx, captainAgentName) {
 		return captainAgentName
 	}
 	// Last resort: convention-derived name with the AGENT window's active pane.
@@ -532,12 +537,17 @@ func (a *QuiesceArbiter) resolveCaptainTarget() string {
 // is live, via `tmux has-session -t "=<name>"`. The "=" anchor forces an exact
 // match (mirrors keeper.tmuxSessionLive, which is unexported). A non-zero exit
 // (absent session / no tmux server) reports false.
-func tmuxHasSession(name string) bool {
+//
+// ctx bounds the probe. A wedged tmux server can make `has-session` block, so a
+// caller that gives up — a cancelled state request, a daemon that is shutting
+// down — must be able to abort it. A cancelled ctx reports false, which is the
+// same answer every other probe failure gives.
+func tmuxHasSession(ctx context.Context, name string) bool {
 	if name == "" {
 		return false
 	}
 	//nolint:gosec // G204: name is a fixed constant (captainAgentName) or a derived session name.
-	cmd := exec.CommandContext(context.Background(), "tmux", "has-session", "-t", "="+name)
+	cmd := exec.CommandContext(ctx, "tmux", "has-session", "-t", "="+name)
 	return cmd.Run() == nil
 }
 

@@ -233,21 +233,29 @@ var errLiveDaemon = errors.New("daemon: live daemon already listening on socket"
 // The dial timeout is 100 ms — sufficient for a local Unix socket handshake
 // on any supported platform.
 //
+// WHY THE PROBE IGNORES CANCELLATION. Every dial error is read as "the socket
+// is stale", and the next step DELETES the file. If the caller's context could
+// cancel the dial, a daemon shutting down while another daemon holds the socket
+// would fail the probe for the wrong reason and delete the live daemon's socket.
+// That turns the PL-003 exclusivity guard into the thing it exists to prevent.
+// So the probe runs on context.WithoutCancel: it keeps the caller's values and
+// its own 100 ms deadline, and only a real dial failure can mark the file stale.
+//
 // Spec ref: specs/process-lifecycle.md §4.1 PL-003 (socket exclusivity, Gap-2).
-func removeStaleSocket(sockPath string) error {
+func removeStaleSocket(ctx context.Context, sockPath string) error {
 	// Fast path: no file at all, nothing to remove.
 	if _, err := os.Stat(sockPath); os.IsNotExist(err) {
 		return nil
 	}
 
 	// Probe: attempt a connection with a short timeout.
-	probeCtx, probeCancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	probeCtx, probeCancel := context.WithTimeout(context.WithoutCancel(ctx), 100*time.Millisecond)
 	defer probeCancel()
 	conn, err := (&net.Dialer{}).DialContext(probeCtx, "unix", sockPath)
 	if err == nil {
 		// Dial succeeded → a live daemon owns this socket.
 		if closeErr := conn.Close(); closeErr != nil {
-			slog.WarnContext(context.Background(), "daemon: stale-socket probe: close probe conn", "err", closeErr)
+			slog.WarnContext(ctx, "daemon: stale-socket probe: close probe conn", "err", closeErr)
 		}
 		return errLiveDaemon
 	}
@@ -391,7 +399,7 @@ func firstQueueHandler(qh []QueueHandler) QueueHandler {
 // Spec ref: specs/process-lifecycle.md §4.1 PL-003 (socket exclusivity), §4.4
 // PL-003a (queue method set); specs/claude-hook-bridge.md §4.6 CHB-015.
 func Serve(ctx context.Context, sockPath string, hs SocketHandlers) error {
-	if err := removeStaleSocket(sockPath); err != nil {
+	if err := removeStaleSocket(ctx, sockPath); err != nil {
 		return fmt.Errorf("daemon: Serve: stale-socket check: %w", err)
 	}
 

@@ -633,6 +633,12 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 				wtPath := workspace.WorktreePath(workerRepoPath, runID, workspace.NoWorktreeRootOverride())
 				// B11: return a cleanup func that removes the remote worktree on
 				// run completion (GC orphaned remote worktrees via the SSHRunner).
+				//
+				// The cleanup context is deliberately detached from the run. This
+				// runs AFTER the run ends, and the common way a run ends with a
+				// worktree still on the worker is that its context was cancelled.
+				// On the run context the remote worktree would leak on exactly the
+				// runs that need reclaiming most. Its own 30s deadline bounds it.
 				cleanup := func() {
 					cleanCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 					defer cancel()

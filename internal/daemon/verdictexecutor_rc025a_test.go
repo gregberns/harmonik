@@ -45,7 +45,7 @@ func ve025aGitInit(t *testing.T, dir string) {
 		{"config", "user.email", "test@harmonik"},
 		{"config", "user.name", "harmonik-test"},
 	} {
-		cmd := exec.Command("git", args...) //nolint:gosec // G204: fixed args; not user input
+		cmd := exec.CommandContext(t.Context(), "git", args...) //nolint:gosec // G204: fixed args; not user input
 		cmd.Dir = dir
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("ve025aGitInit: git %v: %v\n%s", args, err, out)
@@ -59,7 +59,7 @@ func ve025aGitInit(t *testing.T, dir string) {
 		{"add", "README"},
 		{"commit", "-m", "initial"},
 	} {
-		cmd := exec.Command("git", args...) //nolint:gosec // G204: fixed args; not user input
+		cmd := exec.CommandContext(t.Context(), "git", args...) //nolint:gosec // G204: fixed args; not user input
 		cmd.Dir = dir
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("ve025aGitInit: git %v: %v\n%s", args, err, out)
@@ -137,7 +137,7 @@ func ve025aSetupWorktree(t *testing.T, projectDir string, investigatorRunID uuid
 // ve025aCurrentGitHead returns the current HEAD hash of the git repo at dir.
 func ve025aCurrentGitHead(t *testing.T, dir string) string {
 	t.Helper()
-	cmd := exec.Command("git", "rev-parse", "HEAD") //nolint:gosec // G204: fixed args
+	cmd := exec.CommandContext(t.Context(), "git", "rev-parse", "HEAD")
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -149,7 +149,7 @@ func ve025aCurrentGitHead(t *testing.T, dir string) string {
 // ve025aGitLog returns the full formatted git log from dir for assertions.
 func ve025aGitLog(t *testing.T, dir string) string {
 	t.Helper()
-	cmd := exec.Command("git", "log", "--format=fuller", "--no-abbrev-commit") //nolint:gosec // G204: fixed args
+	cmd := exec.CommandContext(t.Context(), "git", "log", "--format=fuller", "--no-abbrev-commit")
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {

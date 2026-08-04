@@ -321,6 +321,13 @@ type Config struct {
 	// When nil the work loop uses ctx (the daemon context) for both dispatch-halt
 	// and in-flight lifetime, preserving backward-compatible behaviour.
 	//
+	// A context in a struct field is normally a smell. It is correct here: this
+	// is not a request scope travelling with a call, it is a SECOND lifetime the
+	// daemon owns for its whole run, and Config is how the caller hands the
+	// daemon its wiring. There is no call to attach it to — daemon.Start already
+	// takes the in-flight context as its first argument, and this is the other
+	// one.
+	//
 	// Bead ref: hk-2o2i9.
 	StopDispatchCtx context.Context
 

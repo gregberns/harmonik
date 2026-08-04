@@ -134,11 +134,11 @@ func mergeToMainFixtureAdvanceMain(t *testing.T, repoRoot string) {
 // mergeToMainFixtureAdvanceMainConflicting creates a diverging commit on main
 // that edits work.txt — the same file the agent writes — producing a rebase
 // conflict. Used to exercise the EM-053 rebase_conflict reopen path.
-func mergeToMainFixtureAdvanceMainConflicting(t *testing.T, repoRoot string) {
+func mergeToMainFixtureAdvanceMainConflicting(ctx context.Context, t *testing.T, repoRoot string) {
 	t.Helper()
 	run := func(args ...string) {
 		t.Helper()
-		cmd := exec.CommandContext(t.Context(), "git", args...)
+		cmd := exec.CommandContext(ctx, "git", args...)
 		cmd.Dir = repoRoot
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -750,7 +750,7 @@ func TestMergeToMain_NonFFReopen(t *testing.T) {
 		if err != nil {
 			return "", nil, err
 		}
-		mergeToMainFixtureAdvanceMainConflicting(t, projectDir)
+		mergeToMainFixtureAdvanceMainConflicting(ctx, t, projectDir)
 		return wtPath, cleanup, nil
 	}
 

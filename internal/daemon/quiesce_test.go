@@ -527,7 +527,7 @@ func TestReconcileOrphanedMarkers(t *testing.T) {
 
 	// Fresh arbiter (the restarted daemon): nothing in the in-memory map yet.
 	arbiter, _, _ := newTestQuiesceArbiter(t, projectDir, nil, 5*time.Second, time.Hour)
-	arbiter.reconcileOrphanedMarkers()
+	arbiter.reconcileOrphanedMarkers(t.Context())
 
 	arbiter.mu.Lock()
 	rec, ok := arbiter.sleeping["paul"]
@@ -604,11 +604,11 @@ func TestResolveCaptainTargetLastResort(t *testing.T) {
 
 	// Guard against a stray live "captain" tmux session on the dev box, which
 	// would legitimately make resolution return the bare name instead.
-	if tmuxHasSession(captainAgentName) {
+	if tmuxHasSession(t.Context(), captainAgentName) {
 		t.Skip("a live bare 'captain' tmux session exists; last-resort path not exercised")
 	}
 
-	got := arbiter.resolveCaptainTarget()
+	got := arbiter.resolveCaptainTarget(t.Context())
 
 	// In a no-tmux test environment, neither the convention session nor the bare
 	// "captain" session is live, so we expect the last-resort convention form.

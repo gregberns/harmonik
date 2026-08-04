@@ -239,7 +239,7 @@ func firstNonLoopbackIPv4() string {
 func nonLoopbackStubModelServer(t *testing.T, bindAddr string) (url string, wasHit func() bool) {
 	t.Helper()
 	var hit atomic.Bool
-	ln, err := net.Listen("tcp", bindAddr+":0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", bindAddr+":0")
 	if err != nil {
 		t.Skipf("cannot bind stub to non-loopback address %q: %v", bindAddr, err)
 	}

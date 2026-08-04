@@ -421,7 +421,7 @@ func subscribeTestStartSocketHub(t *testing.T, hub *SubscribeHub) string {
 // Caller must close the returned conn.
 func subscribeTestDial(t *testing.T, sockPath string, req map[string]any) (net.Conn, *bufio.Reader) {
 	t.Helper()
-	conn, err := net.Dial("unix", sockPath)
+	conn, err := (&net.Dialer{}).DialContext(t.Context(), "unix", sockPath)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

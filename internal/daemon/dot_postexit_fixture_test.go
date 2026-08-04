@@ -134,6 +134,11 @@ type dotFixtureOpts struct {
 	// RunContext replaces the fixture's ordinary timeout context. Tests use it
 	// to stop a live graph run at a precise point, such as after its handler
 	// commits and before the graph driver reaches its terminal node.
+	//
+	// The context lives in the options struct on purpose. dotFixtureOpts is a
+	// bag of knobs, not a call scope: the run context is the thing under test
+	// here, so a test must be able to supply its own instead of taking the
+	// fixture's default.
 	RunContext context.Context
 
 	// HookOutcome is the raw outcome_emitted payload the agent reported, or

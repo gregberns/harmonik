@@ -126,7 +126,7 @@ func diskQueues(ctx context.Context, projectDir string) []StateQueue {
 }
 
 // diskSessions reads crew registry entries and keeper gauge files.
-func diskSessions(_ context.Context, projectDir string, now time.Time) ([]StateSession, error) {
+func diskSessions(ctx context.Context, projectDir string, now time.Time) ([]StateSession, error) {
 	crewRecords, err := crew.List(projectDir)
 	if err != nil {
 		return nil, fmt.Errorf("crew.List: %w", err)
@@ -140,7 +140,7 @@ func diskSessions(_ context.Context, projectDir string, now time.Time) ([]StateS
 	sessions := make([]StateSession, 0, len(crewRecords))
 
 	for _, cr := range crewRecords {
-		alive := tmuxHasSession(lifecycle.TmuxSessionName(ph, cr.Name))
+		alive := tmuxHasSession(ctx, lifecycle.TmuxSessionName(ph, cr.Name))
 		liveSID, _, _ := keeper.ReadSessionIDFile(projectDir, cr.Name)
 
 		sleepMarker := sleepSIDs[strings.ToLower(liveSID)] ||
@@ -173,7 +173,7 @@ func diskSessions(_ context.Context, projectDir string, now time.Time) ([]StateS
 	// Captain (if not in crew registry).
 	if !hasCaptainRecord(crewRecords) {
 		if _, _, err := keeper.ReadCtxFile(projectDir, captainAgentName); err == nil {
-			alive := tmuxHasSession(lifecycle.TmuxSessionName(ph, captainAgentName))
+			alive := tmuxHasSession(ctx, lifecycle.TmuxSessionName(ph, captainAgentName))
 			liveSID, _, _ := keeper.ReadSessionIDFile(projectDir, captainAgentName)
 			sleepMarker := sleepSIDs[strings.ToLower(liveSID)]
 			sess := StateSession{

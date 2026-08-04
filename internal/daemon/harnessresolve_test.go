@@ -60,8 +60,8 @@ func (b *harnessResolveFixtureBus) Emit(_ context.Context, et core.EventType, pa
 	return nil
 }
 
-func (b *harnessResolveFixtureBus) EmitWithRunID(_ context.Context, _ core.RunID, et core.EventType, payload []byte) error {
-	return b.Emit(context.Background(), et, payload)
+func (b *harnessResolveFixtureBus) EmitWithRunID(ctx context.Context, _ core.RunID, et core.EventType, payload []byte) error {
+	return b.Emit(ctx, et, payload)
 }
 
 var _ handlercontract.EventEmitter = (*harnessResolveFixtureBus)(nil)

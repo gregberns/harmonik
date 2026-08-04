@@ -140,6 +140,15 @@ func (s *CursorStore) Get(name string) (string, error) {
 // The write uses temp+rename+fsync discipline: a crash mid-write cannot leave a
 // partially-written cursor file; the old value is always readable by a concurrent
 // Get until the rename commits.
+//
+// # No context parameter, deliberately
+//
+// The only thing a context would reach here is the two cleanup log lines below,
+// which is why they use context.Background(). It must NOT reach the flock or the
+// write: once the read-modify-write starts it has to finish, because a cursor
+// left half-advanced re-delivers or drops messages. Adding the parameter for the
+// log lines alone would also change the signature for callers in other
+// subsystems, which is not worth a log field.
 func (s *CursorStore) Advance(name, eventID string) error {
 	if err := validateCursorName(name); err != nil {
 		return err

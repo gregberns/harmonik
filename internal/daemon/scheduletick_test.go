@@ -358,7 +358,7 @@ func TestScheduleTick_CommandOverlapSkip(t *testing.T) {
 	port, store, _ := newTickPort(t)
 
 	// Spawn a real, alive process whose pid we can record as the prior command.
-	sleeper := exec.Command("sleep", "30")
+	sleeper := exec.CommandContext(t.Context(), "sleep", "30")
 	if err := sleeper.Start(); err != nil {
 		t.Fatalf("start sleeper: %v", err)
 	}

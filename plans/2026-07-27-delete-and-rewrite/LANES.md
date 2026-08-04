@@ -158,17 +158,33 @@ same way. It is bravo's, and alpha does not edit it.
 shared branch. Alpha commits here directly and merges the other lane into it.
 
 **Owns** `internal/daemon/**`, `internal/runlease/**`, `internal/runloop/**`,
-`internal/transport/tunnel/**`, `internal/harness/shared/**`, `specs/run-state-machine.md`,
+`internal/runexec/**`, `internal/workflow/dot/**`, `internal/transport/tunnel/**`,
+`internal/harness/shared/**`, `specs/run-state-machine.md`,
 `specs/execution-model.md`, and `DECOMPOSITION-MAP.md`. Alpha also owns each extraction contract,
 the daemon construction change, and deletion of the old daemon adapter.
+
+> **`internal/runexec` and `internal/workflow/dot` were added 2026-08-03, after an audit found them
+> in NO lane.** Both sit on the critical path and both break alpha's tests, which is the reason for
+> the assignment. `internal/runexec` holds `drainReopen` — the exact function the committed-DOT drain
+> task must change. `internal/workflow/dot` holds the graph-identity rule that broke ten fixtures in
+> `internal/daemon`. An unowned package on the critical path is how work stalls with nobody at fault.
 
 **Works** step 7 piece 1 and the capability ports, then step 8, then steps 10 and 12. See §4 for why
 that order is not the order the map states.
 
 ### Lane `bravo` — the queue's writer, and the duplication outside the core
 
-**Worktree `/Users/gb/github/harmonik-wt/bravo`, branch `work/bravo`.** The initial step 9 work landed
-and merged. Its acceptance condition remains open. Item 1 below closes that condition.
+**Worktree `/Users/gb/github/harmonik-wt/bravo`, branch `work/queue-dogfood-readiness`.** The initial
+step 9 work landed and merged. Its acceptance condition remains open. Item 1 below closes that
+condition.
+
+> **Corrected 2026-08-03. This line said `work/bravo` and was stale by eight commits.** All of the
+> queue recovery code — the durable transaction, the recovery command, and the fault tests — is on
+> `work/queue-dogfood-readiness`, which no handoff and no lane contract named. An audit found it only
+> by listing every branch in the namespace. Five branches now exist under `work/bravo*` and
+> `work/queue-dogfood*`. **Diff a branch against the candidate and record a verdict before you delete
+> it.** A branch that no document names shows up in no status command anyone runs, which is how a
+> whole lane's finished work was nearly lost once already.
 
 **Charter:** everything the "one writer for the queue" idea can honestly reach from outside
 `internal/daemon`, plus the consolidation the map's own measurements already placed outside alpha's

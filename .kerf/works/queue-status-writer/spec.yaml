@@ -1,0 +1,30 @@
+codename: queue-status-writer
+title: Queue status writer
+type: spec
+project:
+    id: gregberns-harmonik
+jig: spec
+jig_version: 1
+status: ready
+status_values:
+    - problem-space
+    - decompose
+    - research
+    - change-design
+    - spec-draft
+    - integration
+    - tasks
+    - ready
+created: 2026-08-01T05:25:36Z
+updated: 2026-08-01T17:56:47Z
+sessions:
+    - id: null
+      started: 2026-08-01T05:25:36Z
+active_session: anonymous
+depends_on: []
+bead_filter:
+pinned_beads: []
+implementation:
+    branch: null
+    pr: null
+    commits: []

@@ -509,7 +509,7 @@ harmonik beads-merge /tmp/git-merge-base /tmp/git-merge-a /tmp/git-merge-b .bead
 
 **Signals verified:** (1) `run_started` (2) `run_completed` (3) commit with `Refs: <bead-id>` on the target branch (4) `reviewer_verdict` (5) `bead_closed`.
 
-**Exit codes:** 0 all 5 signals observed within the timeout · 1 argument/setup/assertion failure · 2 timeout (a signal not observed) · 17 daemon not running.
+**Exit codes:** 0 all 5 signals observed within the timeout · 1 argument/setup/assertion failure, or the daemon refused the event subscription · 2 timeout (a signal not observed) · 17 daemon not running.
 
 **Example**
 ```bash
@@ -565,7 +565,7 @@ harmonik hook-relay Stop
 | `--project DIR` | Project directory | cwd |
 | `--json` | No-op alias; output is already NDJSON | — |
 
-**Exit codes:** 0 stream closed cleanly · 1 argument error or stream write failure · 17 daemon not running.
+**Exit codes:** 0 stream closed cleanly · 1 argument error, stream write failure, or the daemon refused the subscription (it is up and declined; the refusal is reported on stderr and never copied to stdout) · 17 daemon not running.
 
 **Example**
 ```bash
@@ -641,7 +641,7 @@ Block until a specific decision's terminal arrives. Holds an open subscribe stre
 harmonik decisions wait <decision_id> [--socket PATH] [--project DIR]
 ```
 
-**Exit codes:** 0 terminal arrived (or stream closed cleanly) · 1 argument error or read failure · 17 daemon not running.
+**Exit codes:** 0 terminal arrived (the decision was resolved or withdrawn) · 1 argument error, read failure, or the daemon refused the subscription · 17 daemon not running. A refused subscription is never exit 0 *without a terminal*: returning 0 with no terminal would unblock an agent nobody answered. An answer already in the durable log still returns 0 with that answer, because the arm-then-check re-projection runs before the stream is read.
 
 #### `withdraw`
 

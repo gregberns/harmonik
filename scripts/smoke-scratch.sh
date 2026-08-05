@@ -16,7 +16,7 @@
 #
 # Exit codes mirror harmonik smoke:
 #   0  — PASS (all 5 signals observed)
-#   1  — setup or assertion failure
+#   1  — setup or assertion failure, or the daemon refused the event subscription
 #   2  — timeout
 #   17 — daemon not running (startup failure)
 #

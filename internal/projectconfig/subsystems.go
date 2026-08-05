@@ -217,19 +217,21 @@ const (
 	// subscribe and MUST NOT tail events.jsonl outside cold start), and
 	// specs/event-model.md EV-037 (reconnect MUST supply since_event_id).
 	//
-	// READ THIS BEFORE YOU SET IT. The daemon refuses loudly, but only two of the
-	// six clients of this op check the response envelope, so the refusal does not
-	// reach an operator intact. `subscribe --follow` and `comms recv
-	// --follow`/`--wait` report it and exit 1. Plain `harmonik subscribe` copies
-	// the refusal to stdout and exits 0. `harmonik run` through the daemon exits
-	// 1 with no reason. `harmonik smoke` reports it as a timeout. Worst,
-	// `decisions wait` and `raise --wait` return at once with empty output and
-	// exit 0, so a blocked agent reads "no decision" and carries on. That gap is
-	// in cmd/harmonik, it is older than this switch, and this switch is the first
-	// thing that makes it reachable. RECORDED AS hk-1dwk2 (P1), NOT FIXED HERE.
-	// It is rated P1 because hitl-decisions N5/N8 make waiting on an open
-	// subscribe stream a MUST, so a `decisions wait` that returns empty and
-	// succeeds against a refused subscription is a conformance break.
+	// The daemon refuses this op loudly when the hub is off, and every client of
+	// it now reports that refusal instead of reading it as an empty stream
+	// (hk-1dwk2, FIXED). Four of the seven client paths used to swallow it:
+	// plain `harmonik subscribe` copied the refusal to stdout and exited 0,
+	// `harmonik run` exited 1 with no reason, `harmonik smoke` reported it as a
+	// timeout, and — worst — `decisions wait` and `raise --wait` returned at
+	// once with empty output and exit 0, so a blocked agent read "no decision"
+	// and carried on. That last one was the P1: hitl-decisions N5/N8 make
+	// waiting on an open subscribe stream a MUST, so succeeding against a
+	// refused subscription was a conformance break, not only a bad message.
+	// cmd/harmonik/subscriberefusal.go now holds the single definition of what a
+	// refusal looks like, and every client shares it.
+	//
+	// Turning this switch off is still a declared reduction in conformance per
+	// the SPEC clauses above. What has changed is that it now fails loudly.
 	SubsystemSubscribeHub SubsystemName = "subscribe_hub"
 
 	// SubsystemSupervisorWatchdog names the daemon-side supervisor liveness

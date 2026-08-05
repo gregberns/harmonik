@@ -430,6 +430,15 @@ func decisionsBlockedWait(absProject, sockPath, decisionID string) int {
 		if len(line) == 0 {
 			continue
 		}
+		// A refused subscription must never read as "no answer yet, then the
+		// stream ended" — that returns 0 and unblocks an agent nobody answered,
+		// which breaks the §4 / N5 requirement that a blocked agent wait on an
+		// OPEN stream. The refusal carries no "type", so the core.Event decode
+		// below would skip it silently (hk-1dwk2).
+		if reason, refused := subscribeRefusalReason(line); refused {
+			fmt.Fprintf(os.Stderr, "harmonik decisions wait: daemon refused the subscription: %s\n", reason)
+			return 1
+		}
 		// Heartbeat lines carry "type":"heartbeat" and no decision payload; the
 		// core.Event decode below yields a non-terminal type and is skipped.
 		var evt core.Event
@@ -770,9 +779,15 @@ resolve, or "withdrawn: <reason>" on withdrawal. Dedupes on event_id (N2);
 applies the first terminal (N3 first-writer-wins).
 
 EXIT CODES
-  0   A terminal arrived (or the stream closed cleanly)
-  1   Argument error or read failure
+  0   A terminal arrived (the decision was resolved or withdrawn)
+  1   Argument error, read failure, or the daemon refused the subscription
   17  Daemon not running (socket missing or ECONNREFUSED)
+
+A refused subscription is never exit 0 WITHOUT a terminal. Returning 0 with no
+terminal would unblock an agent nobody answered, which N5/N8 forbid. An answer
+already in the durable log still returns 0 with that answer: the N8 re-projection
+runs before the stream is read, so a decision that was resolved before the wait
+began is reported normally.
 `)
 }
 

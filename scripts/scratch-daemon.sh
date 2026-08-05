@@ -32,7 +32,14 @@
 #   ./scripts/scratch-daemon.sh cycle  <scratch-path>   # down + build + up (the fast loop)
 #   ./scripts/scratch-daemon.sh batch  <scratch-path> <name> --beads id1,id2,...  # submit + structured pass/fail
 #   ./scripts/scratch-daemon.sh batch  <scratch-path> <name> --file  <queue.json> # submit a queue-file batch
+#   ./scripts/scratch-daemon.sh batch  <scratch-path> <name> --from-events <ndjson> # OFFLINE: fold a captured
+#                             event stream into the same results artifact + BATCH_SUMMARY. No daemon, no submit,
+#                             no subscribe. The <ndjson> file is READ ONLY and is never moved or removed.
 #   ./scripts/scratch-daemon.sh feedback <results-json> [--batch <name>] [--dry-run] # scratch FAILURES -> deduped MAIN-repo beads
+#
+# batch writes TWO artifacts under <scratch>/.harmonik/: the results JSON and a RETAINED
+# event capture (batch-<name>-<queue_id>.events.ndjson). Both paths are printed on the
+# BATCH_SUMMARY line. The capture is kept so an audit step can check event ordering.
 #
 # Options (env vars):
 #   SCRATCH_MAX_CONCURRENT  — daemon --max-concurrent      (default: 1)
@@ -578,13 +585,49 @@ cmd_cycle() {
 #       { "bead", "run_id"|null, "verdict": pass|fail|incomplete, "fail_signature"|null }
 #     where fail_signature is a one-line (<=200ch) excerpt of the run's failure summary.
 #     This artifact is the authoritative machine input for the feedback-bead step.
+#   - A RETAINED event capture at <scratch>/.harmonik/batch-<name>-<queue_id>.events.ndjson:
+#     the raw NDJSON subscribe stream the fold above was computed from. It is kept
+#     after the run, not deleted, because the audit step needs it to judge event
+#     ORDERING once the batch is over — a verdict with no evidence behind it cannot
+#     be checked. The capture is armed BEFORE the submit that mints the queue_id, so
+#     it is written as batch-<name>.events.ndjson and renamed at the end. An
+#     interrupted run leaves its evidence under the un-renamed name, but only until
+#     the next batch of the same <name> truncates that path when it arms its reader.
+#     Completed runs carry the queue_id and never collide. Nothing prunes these.
 #   - Stable stdout lines (grep-able), one BATCH_ITEM per item, tab-separated:
 #       BATCH_SUBMIT  name=<name> queue_id=<id> items=<n>
 #       BATCH_ITEM\t<bead>\t<verdict>\t<run_id|->\t<fail_signature|->
-#       BATCH_SUMMARY name=<name> total=<n> pass=<p> fail=<f> incomplete=<i> results=<path>
+#       BATCH_SUMMARY name=<name> total=<n> pass=<p> fail=<f> incomplete=<i> results=<path> events=<path>
 #   - 'incomplete' = no terminal event before SCRATCH_BATCH_TIMEOUT elapsed.
 #
 # Exit: 0 if every item passed; 1 if any item failed or stayed incomplete.
+# SCRATCH_BATCH_EVENT_TYPES is what the batch capture subscribes to.
+#
+# The first three drive the pass/fail/incomplete fold below and are the minimum
+# the batch needs to reach a verdict. The rest are for the audit step, which
+# judges ORDERING and cannot do so from run terminals alone (hk-ze9mz):
+#
+#   run_started/run_completed/run_failed  the fold's own inputs
+#   bead_closed                           did the work item actually close, and after what
+#   outcome_emitted                       the outcome the daemon recorded for the run
+#   bead_ledger_recovered                 a bead the reconciler had to repair. Only fires
+#                                         after a failed bead sync is retried, so it is
+#                                         quiet on a healthy daemon — but it CAN fire.
+#
+# Two recovery events are deliberately NOT here. Both would add a filter clause
+# that can never match, which is worse than no clause at all: it implies evidence
+# nobody can produce, in a capture whose whole point is evidence.
+#
+#   bead_terminal_transition_recovered  internal/core/eventtype.go marks it
+#     deferred with no emitter. Nothing writes it. Add it when something does.
+#   queue_item_reconciled  it HAS an emitter, and the emitter still cannot reach
+#     us. It fires from reconcileDispatchedItems inside loadStartupState, which
+#     runs before bindSocket, and a subscribe stream is live-only unless it is
+#     given --since-event-id. So the event is always already in the past by the
+#     time any subscriber exists. Capturing it would need a cursor-seeded read
+#     of events.jsonl, not a wider live filter.
+readonly SCRATCH_BATCH_EVENT_TYPES="run_started,run_completed,run_failed,bead_closed,outcome_emitted,bead_ledger_recovered"
+
 cmd_batch() {
     local scratch name mode="" beads_csv="" file="" events_file="" timeout
     scratch="$(guard_path "${1:-}")"
@@ -670,19 +713,26 @@ cmd_batch() {
         echo "[scratch-daemon] batch: OFFLINE fold of captured events ($raw) — no live daemon/subscribe/submit (hk-6eqv9 test seam)"
         echo "BATCH_SUBMIT name=$name queue_id=$queue_id items=$item_count"
     else
-        raw="$(mktemp "${TMPDIR:-/tmp}/scratch-batch.XXXXXX")"
+        # The capture is RETAINED, not a temp file (hk-ze9mz). It used to be a
+        # mktemp file removed on EXIT/INT/TERM, so no evidence survived a batch
+        # and the audit step had nothing to read. It is named from <name> alone
+        # because the reader MUST be armed before the submit that mints the
+        # queue_id; step 7 renames it to carry the queue_id once that is known.
+        raw="$scratch/.harmonik/batch-${name}.events.ndjson"
+        : >"$raw"
         "$bin" subscribe --socket "$sock" \
-            --types run_started,run_completed,run_failed --heartbeat 30s \
+            --types "$SCRATCH_BATCH_EVENT_TYPES" --heartbeat 30s \
             >"$raw" 2>>"$(scratch_log "$scratch")" &
         sub_pid=$!
-        # Tear down the background reader + temp stream on any exit; keep the results file.
-        # sub_pid/raw are function-locals but the EXIT trap fires at SCRIPT exit, by which
-        # point they are out of scope — under `set -u` a bare "$sub_pid" then aborts the
-        # trap with "unbound variable" (leaking the subscribe child + temp file). Guard
-        # both with :- so the cleanup always runs.
+        # Tear down the background reader on any exit; KEEP the results file and the
+        # event capture.
+        # sub_pid is a function-local but the EXIT trap fires at SCRIPT exit, by which
+        # point it is out of scope — under `set -u` a bare "$sub_pid" then aborts the
+        # trap with "unbound variable" (leaking the subscribe child). Guard it with :-
+        # so the cleanup always runs.
         # EXIT alone is not enough: a non-interactive bash does NOT run the EXIT trap on an
         # untrapped SIGINT or SIGTERM, so a Ctrl-C during a batch leaked the child anyway.
-        trap 'kill "${sub_pid:-}" 2>/dev/null || true; rm -f "${raw:-}" 2>/dev/null || true' EXIT INT TERM
+        trap 'kill "${sub_pid:-}" 2>/dev/null || true' EXIT INT TERM
 
         echo "[scratch-daemon] batch: submitting $item_count item(s) to queue '$name' (project=$scratch)"
         local submit_out
@@ -793,7 +843,21 @@ def oneline:
     fail="$(printf '%s' "$results" | jq '[.[] | select(.verdict=="fail")] | length')"
     printf '%s' "$results" \
         | jq -r '.[] | "BATCH_ITEM\t\(.bead)\t\(.verdict)\t\(.run_id // "-")\t\(.fail_signature // "-")"'
-    echo "BATCH_SUMMARY name=$name total=$total pass=$pass fail=$fail incomplete=$incomplete results=$results_file"
+
+    # 7) Pair the retained event capture with the results artifact by renaming it
+    # to carry the queue_id. The subscribe child is stopped FIRST so nothing is
+    # still appending as we rename. The OFFLINE --from-events path is skipped
+    # here: $raw is the caller's own input file and is not ours to move.
+    local events_out="$raw"
+    if [ "$mode" != "events" ]; then
+        if [ -n "$sub_pid" ]; then
+            kill "$sub_pid" 2>/dev/null || true
+            wait "$sub_pid" 2>/dev/null || true
+        fi
+        events_out="$scratch/.harmonik/batch-${name}-${queue_id}.events.ndjson"
+        mv -f "$raw" "$events_out" || events_out="$raw"
+    fi
+    echo "BATCH_SUMMARY name=$name total=$total pass=$pass fail=$fail incomplete=$incomplete results=$results_file events=$events_out"
 
     # Non-zero exit if anything failed or stayed incomplete, so callers can branch on it.
     [ "$fail" -eq 0 ] && [ "$incomplete" -eq 0 ]
@@ -980,7 +1044,12 @@ cmd_feedback() {
 # Dispatch
 # ---------------------------------------------------------------------------
 usage() {
-    sed -n '2,42p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    # Print the header comment block: every line from line 2 until the first
+    # line that is not a comment. This used to be a hardcoded '2,42p' range,
+    # which silently truncated the help text the moment anyone added a line to
+    # the header — the help is derived from the header, so it must not depend on
+    # the header's length.
+    awk 'NR==1 {next} /^#/ {sub(/^# ?/, ""); print; next} {exit}' "${BASH_SOURCE[0]}"
 }
 
 main() {

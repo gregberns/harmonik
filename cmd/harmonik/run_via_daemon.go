@@ -362,6 +362,14 @@ func viaWatchGroupCompletion(
 			continue
 		}
 
+		// A refused subscription carries no "type", so the decode below would
+		// skip it and the wait would end at EOF with exit 1 and no cause named
+		// (hk-1dwk2).
+		if reason, refused := subscribeRefusalReason(line); refused {
+			fmt.Fprintf(os.Stderr, "harmonik run: daemon refused the subscription: %s\n", reason)
+			return 1
+		}
+
 		// All subscribe events have at least a "type" field.
 		var envelope struct {
 			Type    string          `json:"type"`

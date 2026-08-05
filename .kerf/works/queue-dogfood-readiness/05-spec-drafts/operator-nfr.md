@@ -1620,6 +1620,17 @@ Downstream specs inbound-citing ON events (`operator_pause_status`, `operator_st
 > design state the tiebreak: where the two passes disagree, the plan of record
 > wins. This text landed from the losing pass.
 >
+> Retiring it does NOT discharge the authorized change, and that change never
+> landed. `04-design/operator-nfr-design.md` amends four existing requirements
+> in place and creates no new number: `ON-027` step 2 and its completion
+> condition, `ON-030`, `ON-032` (host load, allowed daemon-suite concurrency,
+> one suite at a time, and a broken load rule treated as machine-contention
+> evidence until a controlled rerun classifies it), and the normal signal
+> watchdog. None of the four is in `specs/operator-nfr.md`. So this target took
+> the same loss as `scratch-daemon-runbook.md`: the authorized content was lost
+> rather than landed, while unauthorized content shipped in its place. That is
+> outstanding work, not a cleanup.
+>
 > Bead: `hk-6lt60`.
 
 ### ON-052 — Terminal recovery drain outcome

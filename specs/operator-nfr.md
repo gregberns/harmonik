@@ -1583,10 +1583,43 @@ Downstream specs inbound-citing ON events (`operator_pause_status`, `operator_st
 
 ## Amendment — post-commit drain
 
-### ON-052 — Terminal recovery drain outcome
-
-Ordered drain MUST treat committed-but-unmerged work as a special outcome. Its
-per-step timeout MUST either complete the terminal ladder or leave the
-EM-053a record. The daemon MUST retain required resources until that selected
-owner permits release. Controlled-load proof MUST record load, timeout, stop
-point, and retained artifacts.
+> **ON-052 — Terminal recovery drain outcome — RETIRED 2026-08-05, and the
+> number is not reusable.** It required ordered drain to treat committed-but-
+> unmerged work as a special outcome, required its per-step timeout to either
+> complete the terminal ladder or leave the EM-053a record, required the daemon
+> to retain required resources until "that selected owner" permits release, and
+> required a controlled-load proof to record load, timeout, stop point and
+> retained artifacts.
+>
+> It landed from the losing half of a two-lane design. The plan of record for
+> this target in `05-changelog.md` authorizes "committed DOT drain completion,
+> safe normal-watchdog behavior, and controlled-load evidence". The superseded
+> table's row for this target reads "Post-commit drain outcome", which is the
+> heading this section carries. The work's changelog states the tiebreak: where
+> the two passes disagree, the plan of record wins.
+>
+> It is also unfollowable as written. `ON-027` defines a bounded ordered drain
+> and `ON-029` gives it a per-step timeout whose escalation path SIGKILLs a
+> still-running agent, with `§4.9` requiring a synthesized
+> `agent_warning_silent_hang{reason=drain_forced}` before that kill. A daemon
+> that retains resources until an owner permits release breaks the bounded
+> ladder. A daemon that releases at the timeout breaks this requirement. Either
+> path violates a MUST. The phrase "that selected owner" has no antecedent: it
+> occurs nowhere else in `specs/`.
+>
+> Withdrawing it does NOT discharge the authorized change, which never landed.
+> The change design amends four existing requirements in place and creates no
+> new number: `ON-027` step 2 and its completion condition (each committed DOT
+> run resolves its tip, synchronizes a remote branch, and reaches merge-and-close
+> or reopen before the step completes), `ON-030` (reconstruct unfinished
+> committed release from the run branch and bead state), `ON-032` (record host
+> load and allowed daemon-suite concurrency, require one daemon suite at a time,
+> and treat a result from a broken load rule as machine-contention evidence
+> until a controlled rerun classifies it), and the normal signal watchdog (it
+> may report elapsed time and drain state but MUST NOT exit before graceful
+> drain, using the configured drain-timeout escalation instead of a fixed
+> five-second exit). None of the four is present: `host load`, `suite
+> concurrency` and `machine-contention` each occur zero times in this file. That
+> is outstanding work, not a cleanup.
+>
+> Bead: `hk-6lt60` (the mechanism).

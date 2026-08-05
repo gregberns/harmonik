@@ -160,24 +160,47 @@ func noTxSubsystemFixtureCollectGoSources(t *testing.T, root string) []string {
 // atomically undoes N prior durable writes, violating EM-INV-004. Fix by
 // removing the primitive; recovery from partial failure routes through
 // reconciliation categories per specs/reconciliation/spec.md §8.
+//
+// # WHAT THIS DOES NOT CATCH, stated so nobody mistakes it for the invariant
+//
+// It is a substring match against the named spellings in
+// noTxSubsystemFixtureForbiddenPatterns, and those come from the prose of
+// EM-INV-004. It fails on a primitive that carries one of those names. It says
+// nothing about a primitive that does the same thing under any other name —
+// RollbackAll, RevertBatch, an unnamed loop that walks a transition list
+// backwards. So a green here is evidence that nobody wrote the FORBIDDEN NAMES,
+// not evidence that the invariant holds.
+//
+// That is worth having and it is cheap, but it is a name check. The invariant
+// itself is enforced by review.
 func TestEMINV004_NoSubsystemImplementsWorkflowTransactionality(t *testing.T) {
 	t.Parallel()
 
 	repoRoot := noTxSubsystemFixtureRepoRoot(t)
 
+	// A scanner that scans nothing must say so, loudly. Both checks below used
+	// to be soft: a missing root was skipped silently, and zero files called
+	// t.Skip, which go test reports as not-a-failure. Rename internal/ and this
+	// sensor went green while EM-INV-004 stopped being checked at all. That is
+	// the shape internal/specaudit/eventparity_test.go exists to catch one level
+	// up — enforcement that cannot fail is enforcement that is not happening.
 	var sourceFiles []string
 	for _, rel := range noTxSubsystemFixtureScannedRoots {
 		root := filepath.Join(repoRoot, rel)
-		if _, err := os.Stat(root); os.IsNotExist(err) {
-			// Root doesn't exist yet (e.g., cmd/ before any binary is added);
-			// skip silently — the sensor is still meaningful for roots that exist.
-			continue
+		if _, err := os.Stat(root); err != nil {
+			t.Fatalf("scanned root %q is unreadable (%v); noTxSubsystemFixtureScannedRoots is stale "+
+				"and this sensor is covering less of the tree than it claims", root, err)
 		}
 		sourceFiles = append(sourceFiles, noTxSubsystemFixtureCollectGoSources(t, root)...)
 	}
 
+	// TestEMINV004_SensorCoverage below also fails on an empty corpus. That one
+	// asks whether the CORPUS is there; this one refuses to report a pass on a
+	// run of its OWN that examined nothing. Both are wanted: deleting either
+	// leaves a green somewhere that means nothing.
 	if len(sourceFiles) == 0 {
-		t.Skip("no Go source files found under scanned roots — nothing to check")
+		t.Fatalf("no Go source files found under %v; the sensor scanned nothing, so its result is not a pass",
+			noTxSubsystemFixtureScannedRoots)
 	}
 
 	for _, filePath := range sourceFiles {
@@ -223,8 +246,12 @@ func TestEMINV004_SensorCoverage(t *testing.T) {
 	var total int
 	for _, rel := range noTxSubsystemFixtureScannedRoots {
 		root := filepath.Join(repoRoot, rel)
-		if _, err := os.Stat(root); os.IsNotExist(err) {
-			continue
+		if _, err := os.Stat(root); err != nil {
+			// Same hole as the sensor itself had: a root that is not there was
+			// passed over in silence, so a renamed directory shrank the corpus
+			// with nothing to notice. A guard against no coverage cannot itself
+			// treat missing coverage as normal.
+			t.Fatalf("scanned root %q is unreadable (%v); noTxSubsystemFixtureScannedRoots is stale", root, err)
 		}
 		total += len(noTxSubsystemFixtureCollectGoSources(t, root))
 	}

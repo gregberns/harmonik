@@ -6,13 +6,15 @@ package daemon_test
 // for the remote-substrate Phase 1 feature driven through the PRODUCTION DOT
 // workflow mode (--workflow-mode dot) over a real SSH transport to localhost.
 //
-// # Why a SECOND remote-substrate E2E (DOT-mode) is needed
+// # What this proves
 //
-// scenario_remote_substrate_localhost_test.go proves the SINGLE-mode remote
-// lifecycle (fetch-base → worktree-add on worker → commit → push-branch →
-// box-A-fetch → merge). But PRODUCTION runs in DOT workflow mode, and the DOT
-// path (driveDotWorkflow / dispatchDotAgenticNode, dot_cascade.go) has its OWN
-// HEAD-resolution + spawn sites that single mode never traverses. On a real
+// This is THE remote-substrate lifecycle proof: fetch-base → worktree-add on the
+// worker → commit → push-branch → box-A-fetch → merge, all over a real ssh
+// transport. A "single-mode" twin used to sit beside it in
+// scenario_remote_substrate_localhost_test.go; that file's header records why it
+// is gone. Production runs in DOT workflow mode, and the DOT path
+// (driveDotWorkflow / dispatchDotAgenticNode, dot_cascade.go) owns the
+// HEAD-resolution + spawn sites the remote flow has to get right. On a real
 // worker a DOT run failed with:
 //
 //	dot: resolve HEAD before agentic node "implement" at iteration 0:
@@ -21,10 +23,10 @@ package daemon_test
 //
 // i.e. the DOT workflow ran gitprobe.ResolveWorktreeHEAD LOCALLY on box A against the
 // WORKER's worktree path, instead of via the run's SSHRunner. This test drives
-// the SAME ssh-localhost remote lifecycle as the single-mode E2E but in DOT
-// workflow mode, so every DOT-specific worktree probe is exercised over ssh.
+// the whole ssh-localhost remote lifecycle in DOT workflow mode, so every
+// DOT-specific worktree probe is exercised over ssh.
 //
-// # Topology (identical to the single-mode E2E, all under t.TempDir())
+// # Topology (all under t.TempDir())
 //
 //	origin.git (bare)
 //	  ├── boxA   (projectDir; the daemon's repo; pushes main here)
@@ -32,25 +34,22 @@ package daemon_test
 //
 // The MINIMAL DOT graph used here (start → implement → close) avoids a reviewer
 // node and a commit_gate shell node: those would require a live claude that the
-// /bin/sh stub handler cannot drive. The eager-commit worktree factory (mirroring
-// the single-mode E2E) advances HEAD before the implementer "runs", so the
-// implementer node sees HEAD advanced past parentSHA and returns SUCCESS, the
-// cascade follows the unconditional edge to the `close` success terminal, and the
-// daemon merges the worker's commit to box A main — exactly the assertion the
-// single-mode E2E makes.
+// /bin/sh stub handler cannot drive. The stub implementer handler commits DURING
+// the node, so the implementer node sees HEAD advance past preHeadSHA and returns
+// SUCCESS, the cascade follows the unconditional edge to the `close` success
+// terminal, and the daemon merges the worker's commit to box A main.
 //
-// What this exercises in the DOT path that single mode does NOT:
+// What this exercises in the DOT path:
 //   - driveDotWorkflow's resolve-HEAD-before-agentic-node (dot_cascade.go ~357)
 //   - dispatchDotAgenticNode's preHeadSHA / postHeadSHA / implementer-phase HEAD
 //     reads (dot_cascade.go ~821 / ~1020 / ~1092)
 //   - the agentic-node spawn (newPerRunSubstrate runner threading)
 //
 // Harness lineage: reuses the rsb12* helpers (ledger, git fixture, ssh-available
-// probe) from scenario_remote_substrate_localhost_test.go verbatim — only the
-// workflow-mode wiring (WorkflowModeDefault=dot + a seeded workflow.dot) and a
-// distinct bead/test name differ.
+// probe, run_started worker_name decode) from
+// scenario_remote_substrate_localhost_test.go verbatim.
 //
-// Bead: hk-rs-b12-e2e-localhost (DOT-mode companion).
+// Bead: hk-rs-b12-e2e-localhost.
 
 import (
 	"context"
@@ -127,12 +126,10 @@ const rsb12DotMinimalGraph = `digraph "remote-substrate-dot-e2e" {
 // against a worker reachable over `ssh localhost`, and asserts the commit made in
 // the worker's clone lands on box A's main via the unchanged one-at-a-time merge.
 //
-// It mirrors TestScenario_RemoteSubstrate_Localhost_E2E exactly, EXCEPT the work
-// loop runs in DOT mode (WorkflowModeDefault=dot + a seeded workflow.dot holding
-// rsb12DotMinimalGraph). This surfaces the DOT-specific remote-flow gaps that
-// single mode never traverses.
+// The work loop runs in DOT mode (WorkflowModeDefault=dot + a seeded workflow.dot
+// holding rsb12DotMinimalGraph), which is what production runs.
 //
-// Bead: hk-rs-b12-e2e-localhost (DOT-mode companion).
+// Bead: hk-rs-b12-e2e-localhost.
 func TestScenario_RemoteSubstrate_Localhost_DOT_E2E(t *testing.T) {
 	rsb12RunRemoteDot(t, false)
 }
@@ -157,8 +154,11 @@ func rsb12RunRemoteDot(t *testing.T, shutdownDrain bool) {
 	sshHost := rsb12SSHHost()
 	sshRunner := tmux.SSHRunner{Host: sshHost}
 
-	// ── origin (bare) + worker-clone paths (shared volume under the docker drive;
-	//    see CRUX 2 in the single-mode E2E). ───────────────────────────────────
+	// ── origin (bare) + worker-clone paths. Under the docker drive both live on a
+	//    volume mounted at the SAME absolute path in both containers, so the
+	//    worker's `git fetch origin <baseSHA>` and box A's `git fetch ssh://worker
+	//    <workerDir>` resolve the identical repos across the network. See
+	//    rsb12OriginWorkerDirs and test/docker/README.md. ───────────────────────
 	originDir, workerDir := rsb12OriginWorkerDirs(t)
 	rsb12Git(t, originDir, "init", "--bare", "--initial-branch=main")
 
@@ -212,11 +212,13 @@ func rsb12RunRemoteDot(t *testing.T, shutdownDrain bool) {
 
 	// ── SSHRunner-backed worktree factory (mirrors production remote factory). ─
 	// PRODUCTION-FAITHFUL: create the run-branch worktree on the WORKER via ssh and
-	// return it WITHOUT committing. Unlike the single-mode E2E (which commits
-	// eagerly in the factory), DOT mode captures preHeadSHA AFTER the worktree is
-	// created and BEFORE the implementer launches, then requires postHeadSHA to
+	// return it WITHOUT committing. The graph captures preHeadSHA AFTER the worktree
+	// is created and BEFORE the implementer launches, then requires postHeadSHA to
 	// advance — so the commit MUST happen DURING the node, which is what a real
-	// claude implementer does. Here the stub handler (below) makes that commit.
+	// claude implementer does. Here the stub handler (below) makes that commit. A
+	// factory that commits eagerly is already in the baseline and trips the
+	// no-advance guard in dot_cascade_core.go, which is what retired the
+	// eager-commit twin of this test.
 	worktreeFactory := func(ctx context.Context, _, runID, headSHA string) (string, func(), error) {
 		wtCfg := workspace.NoWorktreeRootOverride().WithRunner(sshRunner)
 		if err := workspace.CreateWorktree(ctx, workerDir, runID, headSHA, wtCfg); err != nil {
@@ -324,7 +326,8 @@ func rsb12RunRemoteDot(t *testing.T, shutdownDrain bool) {
 		bead, closed, reopened, ledger.reopenReasonOf(bead), collector.eventTypes())
 
 	// The cascade must have walked the graph — node_dispatch_requested is emitted
-	// ONLY by driveDotWorkflow, proving the DOT path (not single mode) executed.
+	// ONLY by driveDotWorkflow, so it is the positive evidence that the graph
+	// driver ran rather than the run reaching a terminal state some other way.
 	if !rsb12Contains(collector.eventTypes(), string(core.EventTypeNodeDispatchRequested)) {
 		t.Errorf("DOT-mode remote e2e: node_dispatch_requested not emitted — the cascade "+
 			"driver did not walk the graph (DOT path not exercised); events=%v", collector.eventTypes())
@@ -356,6 +359,23 @@ func rsb12RunRemoteDot(t *testing.T, shutdownDrain bool) {
 		t.Errorf("origin/main (%s) != box A main (%s) — the merge push did not reach origin",
 			originMainSHA, boxAMainSHA)
 	}
+
+	// ── Assert the run was actually ROUTED to the worker (not silently run LOCAL).
+	// The emitted run_started event must carry worker_name == the single registered
+	// worker. A silent route-to-LOCAL regression (SelectWorker returns nil → rbc==nil
+	// → local path) would land the same commit on main yet leave worker_name empty:
+	// every merge assertion above would still pass and the routing regression would
+	// slip through. This makes the routing observable and fails it loud (hk-mcf1z).
+	// TestScenario_RemoteSubstrate_NoWorker_RunStartedWorkerNameEmpty is the negative
+	// guard that proves this assertion is load-bearing.
+	gotWorker, ok := rsb12RunStartedWorkerName(t, collector)
+	if !ok {
+		t.Fatalf("no run_started event captured; events=%v", collector.eventTypes())
+	}
+	if gotWorker != sshHost {
+		t.Errorf("run_started.worker_name = %q, want %q — the run was NOT routed to the ssh worker (silent route-to-LOCAL regression)", gotWorker, sshHost)
+	}
+
 	if shutdownDrain {
 		select {
 		case unchanged := <-checkpointBeforeDrain:
@@ -375,7 +395,7 @@ func rsb12RunRemoteDot(t *testing.T, shutdownDrain bool) {
 		}
 	}
 
-	t.Logf("remote-substrate DOT e2e OK: worker commit synced over ssh localhost and landed on box A main (%s)", boxAMainSHA)
+	t.Logf("remote-substrate DOT e2e OK: worker commit synced over ssh localhost and landed on box A main (%s); run_started.worker_name=%q", boxAMainSHA, gotWorker)
 }
 
 func rsb12CancelAfterCommitMarker(ctx context.Context, cancel context.CancelFunc, marker, localWorkPath string, checkpoint chan<- bool) {

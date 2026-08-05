@@ -924,7 +924,7 @@ func TestM4C7_SeamSurvival_StructuralFloors(t *testing.T) {
 	//         local run threads its runner into the substrate
 	//   - TestReviewLoopReviewerSubstrateRunnerIsNil_hkfxy9        (substrate_runner_parity_hkfxy9_test.go)
 	//         a local reviewer run carries a nil runner
-	//   - TestScenario_RemoteSubstrate_Localhost_E2E               (scenario_remote_substrate_localhost_test.go)
+	//   - TestScenario_RemoteSubstrate_Localhost_DOT_E2E               (scenario_remote_substrate_localhost_dot_test.go)
 	//         the remote path end-to-end over a localhost worker
 	//   - TestScenario_RemoteSubstrate_NoWorker_RunStartedWorkerNameEmpty
 	//         no worker available => the run falls through to local

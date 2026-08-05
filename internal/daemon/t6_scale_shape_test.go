@@ -224,20 +224,26 @@ func t6JSONLContains(t *testing.T, jsonlPath, substr string) bool {
 	return false
 }
 
-// t6CountJSONLEvents reads a JSONL file and counts occurrences of each event type.
+// t6CountJSONLEvents reads a JSONL file and counts events by their EV-001
+// envelope `type` field.
 //
-// NOTE (T6 finding F-001): The current busimpl.Emit appends only the redacted
-// payload bytes to JSONL, not a full EV-001 envelope (which would include "type",
-// "event_id", "schema_version"). As a result, event types cannot be detected by
-// looking for their string name in the log. Instead, we use distinctive payload
-// field names as proxies:
-//   - run_started  → "workspace_path" (core.RunStartedPayload)
-//   - run_completed → "auto-close: exit=0" or "auto-reopen" in summary field
-//   - run_failed   → "success":false in workloopRunCompletedPayload
-//   - daemon_started → "pid" field (DaemonStartedPayload)
+// Read this before you change it. An earlier version of this helper did NOT read
+// `type`. It guessed the event type from distinctive payload substrings —
+// "workspace_path" for run_started, the literal "auto-close: exit=0" for
+// run_completed, `"success":false` for run_failed. A comment called the guessing
+// a finding: JSONL was said to hold only the redacted payload bytes, so the type
+// name was said to be unreadable.
 //
-// This proxy approach is itself a finding: JSONL is not self-describing at the
-// event-type level, contradicting EV-001 which requires the "type" field in the envelope.
+// That is no longer true. busimpl.Emit marshals the COMPLETE envelope, so every
+// line carries "type", "event_id" and "schema_version". The guess outlived the
+// thing it worked around, and then it went quietly wrong: the "auto-close"
+// summary belongs to a workflow driver that no longer runs, so run_completed
+// counted zero on a run where ten beads drained and closed. Count the field the
+// envelope actually has.
+//
+// A line that does not parse, or that carries an empty type, is counted under the
+// empty key. A caller that asserts a real type therefore sees a miscount rather
+// than a silent zero.
 func t6CountJSONLEvents(t *testing.T, jsonlPath string) map[string]int {
 	t.Helper()
 	counts := map[string]int{}
@@ -254,19 +260,14 @@ func t6CountJSONLEvents(t *testing.T, jsonlPath string) map[string]int {
 		if line == "" {
 			continue
 		}
-		// Proxy detection — see NOTE above.
-		if strings.Contains(line, `"workspace_path"`) {
-			counts[string(core.EventTypeRunStarted)]++
+		var env struct {
+			Type string `json:"type"`
 		}
-		if strings.Contains(line, `"auto-close`) || strings.Contains(line, `"auto-reopen`) {
-			counts[string(core.EventTypeRunCompleted)]++
+		if unmarshalErr := json.Unmarshal([]byte(line), &env); unmarshalErr != nil {
+			counts[""]++
+			continue
 		}
-		if strings.Contains(line, `"success":false`) {
-			counts[string(core.EventTypeRunFailed)]++
-		}
-		if strings.Contains(line, `"pid"`) && strings.Contains(line, `"started_at"`) {
-			counts[string(core.EventTypeDaemonStarted)]++
-		}
+		counts[env.Type]++
 	}
 	return counts
 }

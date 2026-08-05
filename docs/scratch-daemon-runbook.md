@@ -37,7 +37,7 @@ It pairs naturally with the fast remote reproducer, which exercises the
 remote-substrate path against a localhost worker (no second machine needed):
 
 ```bash
-go test -tags=scenario -run TestScenario_RemoteSubstrate_Localhost_E2E ./internal/daemon/
+go test -tags=scenario -run TestScenario_RemoteSubstrate_Localhost_DOT_E2E ./internal/daemon/
 ```
 
 — but the harness itself is change-agnostic: any batch of beads, any daemon change.

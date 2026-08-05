@@ -2,9 +2,8 @@
 
 package daemon_test
 
-// scenario_remote_substrate_localhost_test.go — end-to-end scenario coverage for
-// the remote-substrate Phase 1 feature (beads B1–B11), driven over a real SSH
-// transport to localhost (bead hk-rs-b12-e2e-localhost).
+// scenario_remote_substrate_localhost_test.go — the shared rsb12 fixture for the
+// remote-substrate scenarios, plus the no-worker negative guard.
 //
 // The per-bead unit tests prove the remote-substrate halves in isolation:
 //   - internal/transport/codesync/codesync_test.go — argv ORDER of fetch-base /
@@ -13,40 +12,44 @@ package daemon_test
 //     classification, with a RecordingRunner driving exit codes.
 //   - workers/*_test.go — registry slot-tracking, health probes, offline events.
 //
-// What NONE of them exercise (and what hk-rs-b12 demands): the WHOLE remote
-// lifecycle stitched together over a REAL ssh transport, proving a commit made
-// in a worker's repo clone actually lands on box A's main. This test:
+// None of them stitches the WHOLE remote lifecycle together over a real ssh
+// transport. That positive proof lives in
+// scenario_remote_substrate_localhost_dot_test.go
+// (TestScenario_RemoteSubstrate_Localhost_DOT_E2E). This file holds the fixture
+// helpers that test builds on — the ssh pre-flight probe, the git repo helpers,
+// the recording ledger, the shared origin/worker directory resolver — and the
+// negative guard that keeps its worker_name routing assertion load-bearing.
 //
-//   1. registers ONE worker {Name:"localhost", Transport:"ssh", Host:"localhost",
-//      OS:"darwin", RepoPath:<worker clone>, MaxSlots:1, Enabled:true} via the
-//      workers.Registry, so beadRunOne's SelectWorker() returns it and the DD1
-//      code-sync path activates (workloop.go ~2055);
-//   2. drives ONE bead through the production work-loop (ExportedRunWorkLoop)
-//      with SSHRunner{Host:"localhost"} as the worker transport:
-//        (a) fetch-base on the worker        — real `ssh localhost -- git fetch`
-//        (worktree) git worktree add on the worker — real `ssh localhost -- git`
-//        (commit)  a stub agent writes a `Refs: <bead>` commit in the worker wt
-//        (c) box-A direct-SSH fetch of run/<id> straight from the worker repo —
-//            real local `git fetch ssh://localhost<workerDir> run/<id>:refs/...`
-//            (NO worker→GitHub push; box A pulls the branch over SSH — hk-7bwx)
-//        (merge)   the UNCHANGED one-at-a-time mergeRunBranchToMain;
-//   3. asserts the bead reaches a terminal state and inspects box A's main.
+// ── Why the single-mode twin of the DOT e2e is GONE (read before you re-add it) ──
 //
-// Harness lineage: mirrors scenario_multibead_mergeconflict_serial_hktijaj_test.go
-// — same in-process ExportedTestRuntime + ExportedRunWorkLoop driver, same
-// real-throwaway-git-repos-under-t.TempDir pattern, same FIFO recording ledger,
-// same `/bin/sh -c "exit 0"` stub handler (the worktree factory makes the commit,
-// not a real claude subprocess), same skipRealDaemonE2EInShort + t.Parallel.
-// The ONLY additions are: a second (worker) clone, a workers.Registry wired into
-// TestRuntimeParams.WorkerRegistry, an SSHRunner-backed worktree factory, and
-// an `ssh localhost true` pre-flight guard.
+// This file used to carry TestScenario_RemoteSubstrate_Localhost_E2E, a
+// "single-mode" copy of the DOT e2e. It made its commit inside the worktree
+// factory rather than inside the agent. Both halves of that design are now dead:
+//
+//  1. There is no single-mode driver. Every run walks driveDotWorkflow.
+//     WorkflowModeSingle only selects a different GRAPH (the registered
+//     no-review-bead.dot), and resolveWorkflow in workloop_runplan.go selects it
+//     for exactly two compatibility inputs — a queue item whose mode string is
+//     "single", or a bead carrying the exact workflow:single label. A daemon
+//     DEFAULT of single is explicitly refused there and falls through to dot, so
+//     the retired test could not have reached single mode even if it had asked.
+//
+//  2. A commit made in the worktree factory is already in the node baseline. The
+//     graph reads worktree HEAD after the factory returns and before the agent
+//     launches, then requires HEAD to advance. An eager factory commit therefore
+//     trips the no-advance guard in dot_cascade_core.go on purpose. The same
+//     lesson already retired the eager factory in
+//     scenario_multibead_mergeconflict_serial_hktijaj_test.go.
+//
+// The DOT e2e commits from the agent, which is what a real implementer does, and
+// it now carries the run_started.worker_name assertion the retired test owned.
 //
 // Bead: hk-rs-b12-e2e-localhost. Refs (the merged feature): hk-rs-b6-healthcheck-isda,
 // hk-rs-b8-codesync-3fk0, hk-rs-b9-liveness-1m9n, hk-rs-b11-offline-dh57.
 //
-// ── BOX-A REF GAP this E2E proves CLOSED (read before "fixing" a failure) ──
+// ── BOX-A REF GAP the remote e2e proves CLOSED (read before "fixing" a failure) ──
 //
-// This test asserts the worker's commit lands on box A's main. Two gaps had to
+// The DOT e2e asserts the worker's commit lands on box A's main. Two gaps had to
 // be closed for that to hold; both are now fixed in the feature:
 //
 //   1. (historical) fetchRunBranchBoxA must fetch into a LOCAL head
@@ -59,12 +62,12 @@ package daemon_test
 //      `git push origin run/<id>` on the worker failed and box A's
 //      `fetch origin run/<id>` died with `couldn't find remote ref`. Closed: box A
 //      now fetches the branch DIRECTLY from the worker repo over SSH
-//      (`git fetch ssh://<host><repoPath> run/<id>:refs/heads/run/<id>`). In this
-//      test that URL is ssh://localhost<workerDir>; the worker clone has the
+//      (`git fetch ssh://<host><repoPath> run/<id>:refs/heads/run/<id>`). In that
+//      test the URL is ssh://localhost<workerDir>; the worker clone has the
 //      branch locally because the worktree was created with `worktree add -b`.
 //
 // The unit tests cannot catch these (they mock every git call, argv-order only).
-// This test keeps the strict "commit lands on box A main" assertion — do NOT
+// The DOT e2e keeps the strict "commit lands on box A main" assertion — do NOT
 // relax it to noChange-tolerant.
 
 import (
@@ -73,7 +76,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -82,17 +84,12 @@ import (
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
-	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
-	"github.com/gregberns/harmonik/internal/workers"
-	"github.com/gregberns/harmonik/internal/workspace"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Recording ledger (single bead; FIFO; per-bead close/reopen counts)
 //
 // Mirrors multiBeadLedger from the hktijaj scenario, trimmed to a single bead.
-// ClaimBead records the runID→beadID map so the SSHRunner-backed worktree factory
-// (which only receives runID) can stamp the right `Refs:` trailer.
 // ─────────────────────────────────────────────────────────────────────────────
 
 type rsb12Ledger struct {
@@ -103,7 +100,6 @@ type rsb12Ledger struct {
 	closed       map[core.BeadID]int
 	reopened     map[core.BeadID]int
 	reopenReason map[core.BeadID]string
-	runToBead    map[string]core.BeadID
 
 	doneCh   chan struct{}
 	doneOnce sync.Once
@@ -119,7 +115,6 @@ func newRSB12Ledger(beads []core.BeadID) *rsb12Ledger {
 		closed:       make(map[core.BeadID]int),
 		reopened:     make(map[core.BeadID]int),
 		reopenReason: make(map[core.BeadID]string),
-		runToBead:    make(map[string]core.BeadID),
 		doneCh:       make(chan struct{}),
 	}
 }
@@ -151,18 +146,8 @@ func (l *rsb12Ledger) ShowBead(_ context.Context, id core.BeadID) (core.BeadReco
 	}, nil
 }
 
-func (l *rsb12Ledger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, runID core.RunID, _ core.TransitionID, beadID core.BeadID) error {
-	l.mu.Lock()
-	l.runToBead[runID.String()] = beadID
-	l.mu.Unlock()
+func (l *rsb12Ledger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID) error {
 	return nil
-}
-
-func (l *rsb12Ledger) beadForRun(runID string) (core.BeadID, bool) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	b, ok := l.runToBead[runID]
-	return b, ok
 }
 
 func (l *rsb12Ledger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, beadID core.BeadID, _ bool) error {
@@ -316,247 +301,6 @@ func rsb12RequireSSHOrSkip(t *testing.T) {
 		t.Fatalf("%s (HARMONIK_REQUIRE_REMOTE_E2E=1)", msg)
 	}
 	t.Skipf("%s", msg)
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Test — full remote lifecycle over ssh localhost
-// ─────────────────────────────────────────────────────────────────────────────
-
-// TestScenario_RemoteSubstrate_Localhost_E2E drives ONE bead through the entire
-// remote-substrate Phase 1 lifecycle against a worker reachable over
-// `ssh localhost`, and asserts the commit made in the worker's clone lands on
-// box A's main via the unchanged one-at-a-time merge.
-//
-// Topology (all real, all under t.TempDir()):
-//
-//	origin.git (bare)
-//	  ├── boxA   (projectDir; the daemon's repo; pushes main here)
-//	  └── worker (the SSH worker's clone; RepoPath in the worker registry)
-//
-// The worker registry has exactly one worker {Host:"localhost", Transport:"ssh"};
-// SelectWorker() therefore returns it for the single bead, activating the DD1
-// code-sync path. The worktree factory reproduces the production REMOTE factory
-// (workloop.go ~2123): `git worktree add` on the worker via SSHRunner, then the
-// stub agent's `Refs:` commit in the worker worktree. The work loop itself runs
-// the REAL fetch-base (step a), preMergeSync push+box-A-fetch (steps b,c), and
-// mergeRunBranchToMain — all over SSHRunner{Host:"localhost"} / local git.
-//
-// Bead: hk-rs-b12-e2e-localhost.
-func TestScenario_RemoteSubstrate_Localhost_E2E(t *testing.T) {
-	skipRealDaemonE2EInShort(t)
-	t.Parallel()
-
-	// ── Pre-flight guard: ssh localhost must work (no sshd / no key → skip). ──
-	rsb12RequireSSHOrSkip(t)
-
-	const bead = core.BeadID("hk-rs-b12-e2e-localhost")
-	sshHost := rsb12SSHHost()
-	sshRunner := tmux.SSHRunner{Host: sshHost}
-
-	// ── origin (bare) + worker-clone paths ───────────────────────────────────
-	// When HARMONIK_E2E_SHARED_ROOT is set (docker drive) these live on a volume
-	// mounted at the SAME absolute path in both containers, so the worker's
-	// `git fetch origin <baseSHA>` and box A's `git fetch ssh://worker<workerDir>`
-	// resolve the identical repos across the network (CRUX 2).
-	originDir, workerDir := rsb12OriginWorkerDirs(t)
-	rsb12Git(t, originDir, "init", "--bare", "--initial-branch=main")
-
-	// ── box A (projectDir): the daemon's repo. ───────────────────────────────
-	// Rooted under a SHORT /tmp path (not t.TempDir()) so the reverse tunnel's
-	// forward target <projectDir>/.harmonik/daemon.sock fits inside the macOS
-	// 104-byte sockaddr_un.sun_path limit. t.TempDir() on macOS yields a
-	// ~90–127-byte /private/var/folders/... path, which overflows once the
-	// /.harmonik/daemon.sock suffix is appended — `ssh -R` then rejects the
-	// forward spec ("Bad remote forwarding specification") and exits instantly,
-	// so the worker-side listener never binds and the readiness gate times out.
-	// Mirrors cc14ProjectDir in scenario_captain_crew_e2e_hkzi4ej_test.go; the
-	// EvalSymlinks keeps the path canonical (/tmp → /private/tmp on macOS).
-	projectDir, err := os.MkdirTemp("/tmp", "rsb12-")
-	if err != nil {
-		t.Fatalf("MkdirTemp /tmp: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(projectDir) })
-	projectDir = cc14EvalSymlinks(t, projectDir)
-	//nolint:gosec // G301: 0755 matches .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "beads-intents"), 0o755); err != nil {
-		t.Fatalf("mkdir beads-intents: %v", err)
-	}
-	//nolint:gosec // G301
-	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "events"), 0o755); err != nil {
-		t.Fatalf("mkdir events: %v", err)
-	}
-	rsb12Git(t, projectDir, "init", "--initial-branch=main")
-	rsb12GitConfig(t, projectDir)
-	//nolint:gosec // G306: test fixture file
-	if err := os.WriteFile(filepath.Join(projectDir, "README"), []byte("initial\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile README: %v", err)
-	}
-	rsb12Git(t, projectDir, "add", "README")
-	rsb12Git(t, projectDir, "commit", "-m", "init")
-	rsb12Git(t, projectDir, "remote", "add", "origin", originDir)
-	// Push the base so the worker can fetch it (the work loop resolves the base
-	// SHA from box A's main and step (a) fetches it onto the worker from origin).
-	rsb12Git(t, projectDir, "push", "origin", "main")
-
-	// ── worker clone: the SSH worker's repo (registry RepoPath). ─────────────
-	// A real clone of origin so its default fetch refspec + `git push origin`
-	// behave exactly as a production worker's clone does. `git clone` creates
-	// workerDir (t.TempDir yields an empty existing dir clone accepts; the shared
-	// path was RemoveAll'd in rsb12OriginWorkerDirs so it's fresh here too).
-	rsb12Git(t, ".", "clone", originDir, workerDir)
-	rsb12GitConfig(t, workerDir)
-
-	// ── worker registry: one ssh worker (host from HARMONIK_E2E_SSH_HOST). ────
-	cfg := workers.Config{
-		Version: 1,
-		Workers: []workers.Worker{{
-			Name:      sshHost,
-			Transport: "ssh",
-			Host:      sshHost,
-			OS:        runtime.GOOS, // localhost worker == this host; hardcoded "linux" was wrong on darwin (latent trap, c063/c066/c068)
-			RepoPath:  workerDir,
-			MaxSlots:  1,
-			Enabled:   true,
-		}},
-	}
-	reg := workers.NewRegistry(cfg)
-
-	// ── SSHRunner-backed worktree factory (mirrors production remote factory). ─
-	// Creates the run-branch worktree on the WORKER via ssh, then commits a
-	// `Refs: <bead>` file in that worktree (the stub agent's "work"). The commit
-	// lands in the worker's repo — exactly the remote-placement the feature must
-	// then synchronise back to box A.
-	worktreeFactory := func(ctx context.Context, _, runID, headSHA string) (string, func(), error) {
-		wtCfg := workspace.NoWorktreeRootOverride().WithRunner(sshRunner)
-		if err := workspace.CreateWorktree(ctx, workerDir, runID, headSHA, wtCfg); err != nil {
-			return "", nil, err
-		}
-		wtPath := workspace.WorktreePath(workerDir, runID, workspace.NoWorktreeRootOverride())
-
-		// Commit the agent's work in the worker worktree with the run-id trailer
-		// (the daemon's commit-detect keys off the Harmonik-Run-ID trailer).
-		relPath := "remote-work.txt"
-		//nolint:gosec // G306: test fixture file in a throwaway worktree
-		if err := os.WriteFile(filepath.Join(wtPath, relPath), []byte("work from the remote worker\n"), 0o644); err != nil {
-			return "", nil, err
-		}
-		for _, args := range [][]string{
-			{"-C", wtPath, "add", relPath},
-			{"-C", wtPath, "commit", "-m", "feat: remote-substrate e2e work\n\nRefs: " + string(bead), "--trailer", "Harmonik-Run-ID: " + runID},
-		} {
-			cmd := exec.CommandContext(ctx, "git", args...)
-			if out, err := cmd.CombinedOutput(); err != nil {
-				return "", nil, &rsb12CommitError{argv: args, out: string(out), err: err}
-			}
-		}
-
-		cleanup := func() {
-			cleanCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			rm := sshRunner.Command(cleanCtx, "git", "-C", workerDir, "worktree", "remove", "--force", "--force", wtPath)
-			_ = rm.Run()
-			prune := sshRunner.Command(cleanCtx, "git", "-C", workerDir, "worktree", "prune")
-			_ = prune.Run()
-		}
-		return wtPath, cleanup, nil
-	}
-
-	collector := &stubEventCollector{}
-	ledger := newRSB12Ledger([]core.BeadID{bead})
-
-	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
-		BrAdapter:        ledger,
-		Bus:              collector,
-		ProjectDir:       projectDir,
-		HandlerBinary:    "/bin/sh",
-		HandlerArgs:      []string{"-c", "exit 0"},
-		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
-		MaxConcurrent:    1,
-		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
-		WorktreeFactory:  worktreeFactory,
-		WorkerRegistry:   reg, // activates the DD1 remote code-sync path (B8/B11)
-	})
-
-	// 300s ceiling: a safety net, not a budget. The lifecycle makes several real
-	// ssh round-trips (fetch-base, worktree-add, push-branch) plus a local merge;
-	// on a loaded box under `go test -race` these can be starved well past a tight
-	// bound. The work completes long before 300s once it gets CPU + the network.
-	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Second)
-	defer cancel()
-
-	loopDone := make(chan struct{})
-	go func() {
-		defer close(loopDone)
-		daemon.ExportedRunWorkLoop(ctx, deps)
-	}()
-
-	select {
-	case <-ledger.doneCh:
-		cancel()
-	case <-ctx.Done():
-		t.Fatalf("timed out waiting for bead %s to reach a terminal state; events=%v", bead, collector.eventTypes())
-	}
-
-	select {
-	case <-loopDone:
-	case <-time.After(15 * time.Second):
-		t.Error("work loop did not exit within 15s of cancel")
-	}
-
-	// ── Diagnostics: the remote lifecycle either CLOSED the bead (commit landed)
-	//    or REOPENED it (a sync/merge step failed). Surface the reason either way.
-	closed := ledger.closedCount(bead)
-	reopened := ledger.reopenedCount(bead)
-	t.Logf("remote-substrate e2e: bead %s closed=%d reopened=%d reopenReason=%q events=%v",
-		bead, closed, reopened, ledger.reopenReasonOf(bead), collector.eventTypes())
-
-	if reopened > 0 {
-		t.Fatalf("remote bead %s reopened (%d) — a remote-substrate sync/merge step failed: %q",
-			bead, reopened, ledger.reopenReasonOf(bead))
-	}
-	if closed != 1 {
-		t.Fatalf("remote bead %s closed %d times; want 1 (the full ssh-localhost lifecycle must land + close it)", bead, closed)
-	}
-
-	// ── Assert the worker's commit landed on box A's main. ────────────────────
-	// box A's local main was fast-forwarded by mergeRunBranchToMain (update-ref +
-	// push origin main). Check both the remote-work file content and that box A's
-	// main now points at a commit carrying the Refs: trailer.
-	rsb12Git(t, projectDir, "checkout", "main")
-	workPath := filepath.Join(projectDir, "remote-work.txt")
-	if _, err := os.Stat(workPath); err != nil {
-		t.Errorf("worker's remote-work.txt missing on box A main: %v — the remote commit did not land", err)
-	}
-	mainLog := rsb12Git(t, projectDir, "log", "-1", "--format=%B", "main")
-	if !strings.Contains(mainLog, "Refs: "+string(bead)) {
-		t.Errorf("box A main tip commit message does not carry %q; got:\n%s", "Refs: "+string(bead), mainLog)
-	}
-
-	// ── Assert origin's main also advanced (the push origin main step). ───────
-	originMainSHA := rsb12Git(t, originDir, "rev-parse", "main")
-	boxAMainSHA := rsb12Git(t, projectDir, "rev-parse", "main")
-	if originMainSHA != boxAMainSHA {
-		t.Errorf("origin/main (%s) != box A main (%s) — the merge push did not reach origin",
-			originMainSHA, boxAMainSHA)
-	}
-
-	// ── Assert the run was actually ROUTED to the worker (not silently run LOCAL).
-	// The emitted run_started event must carry worker_name == "localhost" — the
-	// single registered worker. A silent route-to-LOCAL regression (SelectWorker
-	// returns nil → rbc==nil → local path, workloop.go ~2055) would land the same
-	// commit on main yet leave worker_name empty: the merge assertions above would
-	// still pass and the routing regression would slip through. This makes the
-	// routing observable and fails it loud (hk-mcf1z). The NoWorker negative guard
-	// below proves this assertion is load-bearing.
-	gotWorker, ok := rsb12RunStartedWorkerName(t, collector)
-	if !ok {
-		t.Fatalf("no run_started event captured; events=%v", collector.eventTypes())
-	}
-	if gotWorker != sshHost {
-		t.Errorf("run_started.worker_name = %q, want %q — the run was NOT routed to the ssh worker (silent route-to-LOCAL regression)", gotWorker, sshHost)
-	}
-
-	t.Logf("remote-substrate e2e OK: worker commit synced over ssh localhost and landed on box A main (%s); run_started.worker_name=%q", boxAMainSHA, gotWorker)
 }
 
 // rsb12RunStartedWorkerName scans the recorded bus events for the run_started

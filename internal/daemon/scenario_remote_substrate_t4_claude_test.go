@@ -9,12 +9,12 @@ package daemon_test
 //
 // # Relationship to the Phase-1 localhost proof
 //
-// scenario_remote_substrate_localhost_test.go (TestScenario_RemoteSubstrate_
-// Localhost_E2E, bead hk-rs-b12-e2e-localhost) already proves the remote git /
+// scenario_remote_substrate_localhost_dot_test.go (TestScenario_RemoteSubstrate_
+// Localhost_DOT_E2E, bead hk-rs-b12-e2e-localhost) already proves the remote git /
 // code-sync / merge LIFECYCLE over real `ssh localhost` — BUT its "agent" is a
-// STUB handler (`/bin/sh -c "exit 0"`) and the commit is fabricated by the
-// worktree factory, not by any Claude. It never spawns claude, never wires a real
-// Substrate, and never emits `agent_ready` / `agent_input_acked`.
+// STUB `/bin/sh` handler that commits a sentinel file, not any Claude. It never
+// spawns claude, never wires a real Substrate, and never emits `agent_ready` /
+// `agent_input_acked`.
 //
 // T4's KEY DIFFERENCE, and the thing this file adds, is the REAL CLAUDE SPAWN
 // PATH: it drives an actual `claude` process on the worker through the production

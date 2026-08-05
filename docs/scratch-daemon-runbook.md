@@ -96,12 +96,24 @@ deterministically:
   of `{ "bead", "run_id"|null, "verdict": "pass"|"fail"|"incomplete", "fail_signature"|null }`.
   `fail_signature` is a one-line (≤200 char) excerpt of the run's failure summary.
   This file is the authoritative input to `feedback`.
+- **Event capture** at `<scratch>/.harmonik/batch-<name>-<queue_id>.events.ndjson` — the
+  raw NDJSON event stream the verdicts above were folded from. It is RETAINED after the
+  run so an audit step can check event ORDERING, which the verdicts alone do not show.
+  The reader is armed before the submit that mints the `queue_id`, so the file is
+  written as `batch-<name>.events.ndjson` and renamed at the end. An interrupted run
+  leaves its evidence under the un-renamed name — but only until the next batch with
+  the same `<name>`, which truncates that path when it arms its own reader. If an
+  interrupted run's capture matters, copy it before re-running. Completed runs are
+  safe: they carry the `queue_id`, so they never collide.
+- Captures accumulate under `.harmonik/` and nothing prunes them. `down` and `cycle`
+  do not, and there is no purge subcommand. Delete them by hand on a long-lived
+  scratch clone.
 - **Stdout lines** (grep-able; `BATCH_ITEM` rows are tab-separated):
 
   ```
   BATCH_SUBMIT  name=<name> queue_id=<id> items=<n>
   BATCH_ITEM<TAB><bead><TAB><verdict><TAB><run_id|-><TAB><fail_signature|->
-  BATCH_SUMMARY name=<name> total=<n> pass=<p> fail=<f> incomplete=<i> results=<path>
+  BATCH_SUMMARY name=<name> total=<n> pass=<p> fail=<f> incomplete=<i> results=<path> events=<path>
   ```
 
 - `incomplete` = no terminal event arrived before `SCRATCH_BATCH_TIMEOUT`.
@@ -138,7 +150,7 @@ Expected stdout (shape):
 ```
 BATCH_SUBMIT  name=smoke queue_id=019ee... items=1
 BATCH_ITEM	hk-test001	pass	019ee...-run	-
-BATCH_SUMMARY name=smoke total=1 pass=1 fail=0 incomplete=0 results=/tmp/hk-scratch/.harmonik/batch-smoke-019ee....json
+BATCH_SUMMARY name=smoke total=1 pass=1 fail=0 incomplete=0 results=/tmp/hk-scratch/.harmonik/batch-smoke-019ee....json events=/tmp/hk-scratch/.harmonik/batch-smoke-019ee....events.ndjson
 ```
 
 After editing daemon code in `/tmp/hk-scratch`, re-run the inner loop and the batch:
@@ -204,7 +216,7 @@ BATCH_SUBMIT  name=remote-substrate queue_id=019ee... items=3
 BATCH_ITEM	hk-remote-a	pass	019ee...-r1	-
 BATCH_ITEM	hk-remote-b	fail	019ee...-r2	worker_unhealthy: ssh dial timeout after 30s
 BATCH_ITEM	hk-remote-c	pass	019ee...-r3	-
-BATCH_SUMMARY name=remote-substrate total=3 pass=2 fail=1 incomplete=0 results=/tmp/hk-scratch/.harmonik/batch-remote-substrate-019ee....json
+BATCH_SUMMARY name=remote-substrate total=3 pass=2 fail=1 incomplete=0 results=/tmp/hk-scratch/.harmonik/batch-remote-substrate-019ee....json events=/tmp/hk-scratch/.harmonik/batch-remote-substrate-019ee....events.ndjson
 ```
 
 The batch exits `1` (one fail), and the results artifact is ready for `feedback`.

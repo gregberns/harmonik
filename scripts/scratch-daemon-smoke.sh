@@ -255,6 +255,9 @@ fi
 # ===========================================================================
 echo "[smoke] --- Phase B: trivial 1-bead pass batch summary ---"
 mk_pass_stream "$ROOT/pass.ndjson" hk-smoke-pass run-pass123
+# Fingerprint the input BEFORE the batch so the untouched-input assertion below
+# compares against the original, not against whatever the batch left behind.
+PASS_STREAM_CKSUM="$(cksum <"$ROOT/pass.ndjson")"
 $SD batch "$SCRATCH" smokepass --from-events "$ROOT/pass.ndjson" >"$ROOT/passbatch.out" 2>&1; bp=$?
 assert_eq 0 "$bp" "pass batch exits 0"
 PASS_ART="$SCRATCH/.harmonik/batch-smokepass-events.json"
@@ -264,6 +267,22 @@ if grep -qE '^BATCH_SUMMARY name=smokepass total=1 pass=1 fail=0 incomplete=0 ' 
     ok "BATCH_SUMMARY line correct (total=1 pass=1)"
 else
     bad "BATCH_SUMMARY line missing/wrong: $(grep BATCH_SUMMARY "$ROOT/passbatch.out" || echo '(none)')"
+fi
+# The capture path is part of the stable output contract (hk-ze9mz): an audit
+# step reads it to judge event ordering, and it can only do that if the batch
+# says where it is.
+if grep -qE '^BATCH_SUMMARY .* events=' "$ROOT/passbatch.out"; then
+    ok "BATCH_SUMMARY reports the event-capture path (events=)"
+else
+    bad "BATCH_SUMMARY has no events= field: $(grep BATCH_SUMMARY "$ROOT/passbatch.out" || echo '(none)')"
+fi
+# HIGHEST-CONSEQUENCE FAILURE MODE. In --from-events mode the capture is the
+# CALLER'S OWN file. The retention change added a rename step, and a rename that
+# forgets to exclude this mode would move or destroy an input the caller owns.
+if [ -f "$ROOT/pass.ndjson" ] && [ "$(cksum <"$ROOT/pass.ndjson")" = "$PASS_STREAM_CKSUM" ]; then
+    ok "--from-events input file is untouched (still present, byte-identical)"
+else
+    bad "--from-events input file was moved or modified by the batch — the caller owns that file"
 fi
 
 # ===========================================================================

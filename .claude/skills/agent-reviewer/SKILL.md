@@ -105,7 +105,7 @@ flag `unverified-citation`.
 
 ## Tier-1 reviewer responsibilities
 
-Perform all eight checks in order. Emit findings per check before the final verdict.
+Perform all nine checks in order. Emit findings per check before the final verdict.
 
 ### 1. Spec alignment
 
@@ -406,6 +406,64 @@ Exemption claimed but bug is clearly reproducible from the bead body → `BLOCK`
 
 Findings → flag: `missing-scenario-test`
 
+### 9. Deletion accounting
+
+The other eight checks all read what the diff ADDS. This one reads what it REMOVES.
+It exists because a reviewer approved a 1412-line deletion with the note "clean
+diff" (hk-2h2fa). Everything the diff left behind was correct. The deletion
+orphaned two subsystems, and four defects came out of it — a run registry with no
+writer, a guard that cannot run, a frozen agent that is never killed, and a
+rate-limit carve-out that can never match. None was found for two days.
+
+**The check is a question, and you must answer it in writing:**
+
+> For each symbol this diff deletes, name every reader that survives it and say
+> what that reader now sees. An empty set, a zero or an absent value is a
+> behaviour change, not a no-op, and a test deleted in the same commit cannot
+> report it.
+
+How to answer it:
+
+1. **List the deleted symbols.** Every function, method, type, field, constant,
+   event name and config key the diff removes. A symbol that moved is not a symbol
+   that went away — confirm a move by finding the new definition, not by assuming
+   one.
+2. **For each, find its surviving readers.** Do not grep for the name and stop.
+   This tree emits and consumes through several call shapes, and a grep sweep for
+   producers has already produced a page of false positives and zero true ones. Use
+   the call graph. Where a symbol is reached through an interface, a registry, a
+   string key or an event type, the grep will be empty and the reader will be real.
+3. **Say what each surviving reader now sees.** This is the part that gets skipped.
+   "Nothing calls it any more" is not an answer. The answers that matter are: the
+   reader now gets an empty list, a zero value, a nil, a default, or a branch that
+   can no longer be taken. Each of those is a behaviour change and needs a finding.
+4. **Check the deleted tests separately.** A test removed in the same commit as the
+   code it covers reports nothing. Nothing goes red, so the gate stays green and
+   says the deletion was safe. For every `_test.go` function the diff deletes, state
+   which behaviour it asserted and where that behaviour is asserted now. If the
+   answer is nowhere, that is the finding, whether or not the production code was
+   also deleted.
+5. **Look for a checklist before you approve.** The 1412-line deletion had one:
+   `plans/2026-07-27-delete-and-rewrite/STEP-7-MODE-BOUNDARY.md` names eighteen
+   capabilities that live only in the code being deleted and states that they must be
+   ported onto the replacement rather than deleted. Thirteen of the eighteen were
+   found late, by walking the code sequentially — the first pass had missed them. The
+   document was in the repo, in the plan directory of the program doing the deleting,
+   and it says the rule out loud: code that moves is not code that goes away. Search
+   `plans/` and `specs/` for the subsystem the diff deletes from. A checklist that
+   exists and is not consulted is a worse failure than one that was never written.
+6. **A deletion-program commit must cite its own checklist.** When the diff deletes
+   from a subsystem a plan document covers, the commit body has to name that document
+   and say which of its items are done. Missing that citation is `REQUEST_CHANGES`
+   with `missing-spec-ref`, and you cannot clear it by finding the checklist yourself
+   — the point is that the author consulted it.
+
+A diff with no deletions satisfies this check trivially — say so and move on. A
+diff whose deletions you cannot account for is `REQUEST_CHANGES`, not `APPROVE`.
+A deletion that orphans a reader with no replacement is `BLOCK`.
+
+Findings → flag: `orphaned-reader`
+
 ---
 
 ## Flag vocabulary
@@ -431,6 +489,7 @@ tags with `x-` to distinguish them from v1 vocabulary.
 | `missing-scenario-test` | Bug bead has no reproducing test at ANY layer in the diff and no valid exemption. Never fire this because a correct unit test is not a scenario test. |
 | `spec-field-name` | Diff uses a wrong field/struct/type name vs. the normative name in the spec or bead enrichment. |
 | `unverified-citation` | Normative doc cites a file/symbol that does not hold what is claimed, or cites a line number instead of a symbol (see §Citing code in a normative doc). |
+| `orphaned-reader` | A deleted symbol still has a surviving reader, or a test deleted alongside the code it covered leaves that behaviour asserted nowhere. `BLOCK` when a reader is orphaned with no replacement. |
 
 ---
 
@@ -444,7 +503,7 @@ object and places it verbatim in the `Review-Verdict:` commit trailer.
   "schema_version": 1,
   "verdict": "APPROVE",
   "flags": [],
-  "notes": "All eight checks pass. Diff matches bead scope and spec alignment."
+  "notes": "All nine checks pass. Diff matches bead scope and spec alignment."
 }
 ```
 
@@ -474,7 +533,7 @@ The implementer records your output as two commit trailers:
 
 ```
 Reviewed-By: agent-reviewer
-Review-Verdict: {"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"All eight checks pass."}
+Review-Verdict: {"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"All nine checks pass."}
 ```
 
 The commit-message validation (agent-driven; git hooks are retired) checks that
@@ -518,9 +577,10 @@ or after it.
 <PASTE SPEC SECTION TEXT HERE — include the section heading and all normative content
 the bead cites>
 
-Perform all eight Tier-1 checks (spec alignment, idiom compliance, test adequacy,
+Perform all nine Tier-1 checks (spec alignment, idiom compliance, test adequacy,
 unwanted-abstraction detection, bead/codename match, production call-site wiring,
-spec field-name conformance, scenario test for bug beads) and emit the JSON verdict.
+spec field-name conformance, scenario test for bug beads, deletion accounting) and
+emit the JSON verdict.
 ```
 
 ---

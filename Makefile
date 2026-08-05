@@ -1205,6 +1205,14 @@ queue-dogfood-readiness: build-harmonik  ## Capture and judge the evidence that 
 	@test -n "$(EVIDENCE)" || { echo "queue-dogfood-readiness: EVIDENCE is required — where to retain the record and the verdict"; exit 2; }
 	@test -n "$(BEADS)" || { echo "queue-dogfood-readiness: BEADS is required — ';'-separated 'bead=why re-running it is safe'"; exit 2; }
 	@test -n "$(CONCURRENCY)" || { echo "queue-dogfood-readiness: CONCURRENCY is required — how many items run at the same time"; exit 2; }
+	@# The daemon count below greps for 'harmonik --project', not 'harmonik daemon'.
+	@# There is no `daemon` subcommand: a harmonik daemon IS `<bin> --project <dir>`,
+	@# which is why scripts/scratch-daemon.sh warns that `pkill -f "harmonik --project"`
+	@# would take the fleet daemon down. The old 'harmonik daemon' pattern matched no
+	@# process on any host, so the count was always zero and the ceiling never fired —
+	@# the fail-open direction internal/queue/readiness checkHost exists to refuse.
+	@# The two words must stay adjacent. 'harmonik queue submit --project X' is a CLI
+	@# call and not a daemon, and the adjacency is what excludes it.
 	@set -eu; \
 	scratch='$(SCRATCH)'; evidence='$(EVIDENCE)'; beads='$(BEADS)'; \
 	mkdir -p "$$evidence"; \
@@ -1232,7 +1240,7 @@ queue-dogfood-readiness: build-harmonik  ## Capture and judge the evidence that 
 	cpus="$$(getconf _NPROCESSORS_ONLN)"; \
 	free_gb="$$(df -k "$$scratch" 2>/dev/null | awk 'NR==2 {printf "%.1f", $$4/1024/1024}')"; \
 	test -n "$$free_gb" || { echo "queue-dogfood-readiness: cannot measure free disk on '$$scratch'"; exit 2; }; \
-	daemons="$$(pgrep -f 'harmonik daemon' 2>/dev/null | wc -l | tr -d ' ')"; \
+	daemons="$$(pgrep -f 'harmonik --project' 2>/dev/null | wc -l | tr -d ' ')"; \
 	echo "  load=$$load cpus=$$cpus free_disk_gb=$$free_gb daemons_alive=$$daemons"; \
 	echo "capturing the readiness record"; \
 	/tmp/harmonik queue readiness capture \

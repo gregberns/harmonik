@@ -469,7 +469,19 @@ Assign both before this work is handed out.
 - **Priority:** below the line for pass one. Assign it; do not hold the
   candidate for it.
 
-### T8a — Queue-only run posture
+### T8a — Queue-only run posture — DONE
+
+> **Done, 2026-08-04, lane mission.** The artifact is the `subsystems:` block in
+> `scripts/scratch-config-overlay.yaml`, under the header section "THE QUEUE-ONLY
+> RUN POSTURE". `scratch-daemon.sh init` appends it onto the generated scratch
+> config. It switches twelve subsystems off and leaves `socket_listener` and
+> `subscribe_hub` on, and the header says why each one stays. The three
+> subsystems that still have no switch each carry a written mitigation there:
+> the ops-monitor schedule (`opsmonitor.interval` stretched to a year), the eager
+> refill (already off through `HARMONIK_DISABLE_EAGER_REFILL`), and the boot
+> orphan sweep (structural — the clone is throwaway and origin is repointed).
+> The "skip the overlay when a `harnesses:` key is present" guard the card asked
+> about is gone, and the header forbids re-adding it.
 
 - **What:** Author and prove the configuration the readiness canary runs under,
   and record what the daemon still constructs with it applied.
@@ -521,7 +533,21 @@ Assign both before this work is handed out.
 - **Depends on:** T0, so a green test can be cited. **Owner:** alpha.
 - **Observed:** verified. **Size:** about an hour.
 
-### T8c — Give the supervisor watchdog a switch
+### T8c — Give the supervisor watchdog a switch — DONE
+
+> **Done, 2026-08-04, lane mission.** The card asked for a fourteenth entry plus
+> a gate at the construction seam, and both exist. `internal/projectconfig`
+> `SubsystemSupervisorWatchdog` (config name `supervisor_watchdog`) is the
+> fourteenth member of `knownSubsystems`. `cmd/harmonik`
+> `startSupervisorWatchdogIfEnabled` is the one construction seam, and it builds
+> nothing when the switch is off. `cmd/harmonik/supervisor_watchdog_gate_test.go`
+> pins that off means never constructed, and
+> `internal/projectconfig/subsystems_test.go` proves every name in the closed set
+> is switchable through the real config edge. The posture sets it off — see the
+> `supervisor_watchdog` entry in `scripts/scratch-config-overlay.yaml`, whose
+> comment states the reason the card gave: a watchdog would revive a supervisor
+> the pass never asked for, and that supervisor would then revive the daemon
+> after `scratch-daemon.sh down`.
 
 - **What:** Add the supervisor watchdog to the switchable set, or make the
   assessor's drain procedure kill the supervisor first and record the
@@ -565,9 +591,20 @@ Assign both before this work is handed out.
 - **What:** Decide whether this is a merge gate under the existing schema or a
   new gate kind. Write the mission file and the report path. Name the candidate
   bead and write the operational test for "repeat-safe". Pick the host-load
-  number the validator compares against. State how the assessor is launched
-  while the fleet daemon is down. State which of the assessor's mandatory legs
-  are waived and why.
+  number the validator compares against. State how the assessor is launched, and
+  which daemon it may kill. State which of the assessor's mandatory legs are
+  waived and why.
+
+  > **Corrected, 2026-08-04, lane mission.** This bullet used to read "state how
+  > the assessor is launched while the fleet daemon is down". That premise is
+  > false and it has already cost one wrongly-filed record. The truth: the fleet
+  > daemon stays UP. The admiral spawns the assessor with
+  > `harmonik crew start assessor --queue assessor-queue-dogfood-readiness-q
+  > --mission <handoff>`, which needs the fleet daemon to serve the launch. The
+  > daemon the assessor kills is the SCRATCH daemon in the throwaway clone, and
+  > `scripts/scratch-daemon.sh` keeps the two apart with `guard_path` (refuses
+  > the script's own repo root) and `assert_not_supervised` (refuses a project
+  > that has a live supervisor session).
 - **Guidance on the canary bead:** a single-file, idempotent, behavior-free edit
   inside the scratch clone that nothing tests and a reviewer can approve on
   first read. It must not touch `internal/daemon`; that package's own test run
@@ -581,6 +618,43 @@ Assign both before this work is handed out.
   assessor's first action is to read the validation record and refuse if it is
   missing or failing.
 - **Depends on:** T8a, T8c, T9. **Owner:** operator decision, not an agent's.
+
+> **Drafted, 2026-08-04, lane mission — the operator still owns the sign-off.**
+> The mission is
+> `.harmonik/crew/missions/assessor-queue-dogfood-readiness.md`. It validates
+> against the handoff schema. The decisions it settles:
+>
+> - **Gate kind: `deploy`, schema version 2. No new kind.** The deploy gate
+>   already means "prove an isolated end-to-end run on one named commit, then
+>   confirm the preconditions the mission names". That is this gate. `commit`
+>   pins the candidate, which is what the research said a branch alone cannot do.
+> - **Report path:**
+>   `plans/2026-07-17-assessor-daemon-campaign/runs/readiness-3c937f5d/ASSESSMENT.md`,
+>   with the other artifacts beside it under `evidence/`. That directory is
+>   tracked. `.harmonik/reports/` is gitignored and cannot carry evidence.
+> - **Candidate items:** three stale path swaps, one per Markdown file —
+>   `docs/known-workarounds.md`, `docs/codex-enablement.md`, and
+>   `docs/design/crew-harness-select-pi.md`. Each rebuilds zero Go packages. No
+>   file is shared, so all three can run at once at concurrency 3. The mission
+>   names the work and not three bead IDs, because a ledger is machine-local and
+>   the clone does not exist yet. The assessor files the three beads in the
+>   scratch clone's own ledger and points `QDR_PROJECT` at that clone, so the
+>   capture reads the right ledger and the fleet ledger stays untouched.
+> - **Host numbers:** load at or below 1.0 per CPU, free disk at or above 10 GB,
+>   at most one daemon and in practice exactly one. A count of zero is a broken
+>   probe, not a clean host, and the mission makes that a refusal.
+> - **Waivers:** the core-loop matrix (the canary batch replaces it) and XT
+>   (T12 owns it, and the mission says so rather than letting the waiver read as
+>   coverage). CR is narrowed to the claimed-done reconciliation of T8a, T8c, T9
+>   and T9a. MG stands in full, and it is **`make full`** — `make check-short`
+>   is retired, and any budget quoted from a `check-short` run describes a gate
+>   that no longer exists.
+>
+> Two things the mission records for the operator rather than deciding.
+> `specs/assessor-handoff-schema.md` carries an amendment adding a `readiness`
+> gate at schema version 3, which contradicts the change design for that same
+> file and its own conflict rule. And T9a looks unlanded — `scratch-daemon.sh
+> batch` still writes its event stream to a `mktemp` file it deletes on exit.
 
 ## Changed cards
 

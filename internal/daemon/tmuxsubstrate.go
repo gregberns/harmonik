@@ -1917,16 +1917,32 @@ func (s *tmuxSubstrate) SpawnCrewSession(ctx context.Context, crewName string, s
 }
 
 // runSessionName returns the deterministic tmux session name for a bead run:
-// "harmonik-<hash>-run-<shortID>" where shortID is the first 12 hex chars of
+// "harmonik-<hash>-run-<shortID>" where shortID is the first 16 hex chars of
 // the runID UUID (hyphens stripped). Parallel to crewSessionName.
+//
+// SIXTEEN, not twelve. Run ids are UUIDv7, whose first 48 bits — hex chars 0
+// through 11 — are a millisecond timestamp. The disambiguating rand_a sequence
+// lives in the two bytes after it, hex chars 12 through 15, so a 12-char prefix
+// is a TIMESTAMP and not a run identity. The daemon dispatches beads
+// concurrently, so two runs starting in the same millisecond took the same
+// session name. Measured before the change: 2000 run ids minted across 8
+// goroutines produced 3 distinct 12-char names and 2000 distinct 16-char ones.
+//
+// That is load-bearing twice over. setUpRunSession writes this name into the
+// run registry record, so a collision put two runs' records on one session
+// name, and the readers cannot tell them apart: the boot sweep exempts one name
+// on behalf of two runs, live-session adoption fires twice on one session death,
+// and dead-session adoption credits whichever record it reaches first. It also
+// decides whether SpawnRunSession's ErrWindowCollision branch is safe, because
+// that branch puts the new agent in the session that already exists.
 func (s *tmuxSubstrate) runSessionName(runID string) (string, error) {
 	if s.projectHash == "" {
 		return "", fmt.Errorf("daemon: runSessionName: project hash unavailable"+
 			" (NewTmuxSubstrate must be built with WithCrewProjectHash): %w", handler.ErrStructural)
 	}
 	short := strings.ReplaceAll(runID, "-", "")
-	if len(short) > 12 {
-		short = short[:12]
+	if len(short) > 16 {
+		short = short[:16]
 	}
 	return lifecycle.TmuxSessionName(s.projectHash, "run-"+short), nil
 }
@@ -1978,6 +1994,13 @@ func (s *tmuxSubstrate) SpawnRunSession(ctx context.Context, runID string, spawn
 			// still be tearing down the first node's session, and refusing here
 			// would fail the node over a race with a teardown that is already under
 			// way.
+			//
+			// "Nothing else can hold it" is a claim about runSessionName, and it
+			// is only true because that name carries 16 hex characters of the run
+			// id rather than 12. At 12 the name is a millisecond timestamp, two
+			// concurrently dispatched runs collide, and this branch then puts a
+			// second run's agent into a live session belonging to a different run.
+			// Read the width note on runSessionName before narrowing it.
 			//
 			// A window in the session that exists is the same thing the run wanted:
 			// an agent outside the daemon's session, in the session the run's

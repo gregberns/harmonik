@@ -52,18 +52,30 @@ type BeadReader interface {
 type CaptureRequest struct {
 	CapturedAt time.Time
 
-	// SelectedID is the canary item. ExcludedIDs are every other bead that was
-	// considered, each with the reason it was set aside.
-	SelectedID       core.BeadID
-	RepeatSafeReason string
-	Posture          Posture
-	ExcludedIDs      []ExcludedID
+	// Posture is the shape of the whole run. It is one value for the request and
+	// not one per item, and [Capture] does not derive its ItemCount from the
+	// length of Selected: the caller states how many items the run carries, and
+	// the record refuses the request when the two disagree. A derived count would
+	// always agree with itself and would prove nothing.
+	Posture Posture
+
+	// Selected names every canary item, each with its own reason for being safe
+	// to run more than once. ExcludedIDs are the beads that were considered and
+	// set aside, each with the reason.
+	Selected    []SelectedID
+	ExcludedIDs []ExcludedID
 
 	Commands        []Command
 	EventLogPaths   []string
 	TerminalIntent  TerminalIntent
 	StaleFindings   []StaleFinding
 	CurrentFindings []CurrentFinding
+}
+
+// SelectedID names one chosen bead and why re-running it is safe.
+type SelectedID struct {
+	BeadID           core.BeadID
+	RepeatSafeReason string
 }
 
 // ExcludedID names a considered-and-rejected bead and why it was rejected.
@@ -74,21 +86,28 @@ type ExcludedID struct {
 
 // Capture reads every candidate from the live ledger and builds the snapshot.
 //
-// Reads happen in a fixed order — the selected bead first, then the excluded
-// ones as given — so two captures of the same request produce the same record
-// and the same sequence of ledger calls.
+// Reads happen in a fixed order — the selected beads in the order given, then
+// the excluded ones — so two captures of the same request produce the same
+// record and the same sequence of ledger calls.
 //
 // A read failure fails the whole capture. A candidate whose status could not be
 // read is not evidence, and a snapshot that quietly dropped it would report a
 // smaller candidate set than the one that was actually considered.
 func Capture(ctx context.Context, ledger BeadReader, req CaptureRequest) (Snapshot, error) {
-	if req.SelectedID == "" {
+	if len(req.Selected) == 0 {
 		return Snapshot{}, ErrNoSelectedItem
 	}
 
-	selected, err := readCandidate(ctx, ledger, req.SelectedID)
-	if err != nil {
-		return Snapshot{}, err
+	selected := make([]SelectedItem, 0, len(req.Selected))
+	for _, sel := range req.Selected {
+		if sel.BeadID == "" {
+			return Snapshot{}, ErrNoSelectedItem
+		}
+		cand, readErr := readCandidate(ctx, ledger, sel.BeadID)
+		if readErr != nil {
+			return Snapshot{}, readErr
+		}
+		selected = append(selected, SelectedItem{Candidate: cand, RepeatSafeReason: sel.RepeatSafeReason})
 	}
 
 	excluded := make([]Exclusion, 0, len(req.ExcludedIDs))
@@ -101,12 +120,9 @@ func Capture(ctx context.Context, ledger BeadReader, req CaptureRequest) (Snapsh
 	}
 
 	return newSnapshot(request{
-		CapturedAt: req.CapturedAt,
-		Selection: Selection{
-			Candidate:        selected,
-			RepeatSafeReason: req.RepeatSafeReason,
-			Posture:          req.Posture,
-		},
+		CapturedAt:      req.CapturedAt,
+		Posture:         req.Posture,
+		Selected:        selected,
 		Excluded:        excluded,
 		Commands:        req.Commands,
 		EventLogPaths:   req.EventLogPaths,

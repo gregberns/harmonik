@@ -81,11 +81,14 @@ VERBS
   dry-run   Validate a queue submission without executing (daemon must be running)
   cancel    Archive a stale queue.json without a live daemon (no daemon required)
   set-concurrency <n>  Set the daemon's concurrent-dispatch ceiling live (daemon must be running)
+  readiness Capture or judge the evidence that a dogfood run is safe to start (no daemon required)
 
 NOTES
   Most verbs require the daemon to be running.
   'cancel' works without a live daemon — use it to clear a queue left by a
   killed daemon (e.g. after SIGTERM of a wedged harmonik process).
+  'readiness' also works without a live daemon, and is meant to: the readiness
+  gate runs before anyone starts one. Run 'harmonik queue readiness --help'.
   Exit code 17 means the daemon is not running (socket absent or ECONNREFUSED).
   Queues are created automatically on first submit to a new name (--queue flag).
   Absent --queue defaults to the 'main' queue.
@@ -479,7 +482,10 @@ EXAMPLES
 		// Without this, `harmonik queue submit --help` reaches the submit handler
 		// and treats "--help" as the queue-file path ("open --help: no such file").
 		// Reuse the verb-position queue help block above; exit 0 like that path.
-		if len(subArgs) >= 1 && (subArgs[0] == "--help" || subArgs[0] == "-h") {
+		// 'readiness' carries its own two-verb help, so the intercept must not
+		// answer for it: an assessor typing `queue readiness --help` needs the
+		// capture-and-validate flags, not the queue verb list.
+		if len(subArgs) >= 1 && verb != "readiness" && (subArgs[0] == "--help" || subArgs[0] == "-h") {
 			fmt.Print(queueTopUsage)
 			return 0
 		}
@@ -505,8 +511,12 @@ EXAMPLES
 			return queuecli.RunQueueCancel(ctx, subArgs, os.Stdout, os.Stderr)
 		case "set-concurrency":
 			return queuecli.RunQueueSetConcurrency(ctx, subArgs, os.Stdout, os.Stderr)
+		case "readiness":
+			// Not a socket call. The readiness gate runs with the fleet daemon
+			// down, so it reaches the ledger directly and never the daemon.
+			return runQueueReadiness(ctx, subArgs, os.Stdout, os.Stderr)
 		default:
-			fmt.Fprintf(os.Stderr, "harmonik queue: unrecognised verb %q; verbs are: submit, append, status, list, pause, resume, recover, dry-run, cancel, set-concurrency\n", verb)
+			fmt.Fprintf(os.Stderr, "harmonik queue: unrecognised verb %q; verbs are: submit, append, status, list, pause, resume, recover, readiness, dry-run, cancel, set-concurrency\n", verb)
 			return 2
 		}
 	}

@@ -424,9 +424,15 @@ The first canary item of a queue dogfood pass is chosen by a person. An assessor
 
 #### BI-013e — Readiness snapshot before first-canary selection
 
-Before first-canary selection, the gate owner MUST retain a readiness snapshot. The snapshot MUST record the capture time, the commands run, the retained output path of every command whose output was retained, the candidate set, the selected item, the exclusion reason for every other candidate, the selected item's live ledger data, the event-log files read, and the terminal-intent inspection.
+Before first-canary selection, the gate owner MUST retain a readiness snapshot. The snapshot MUST record the capture time, the run shape, the commands run, the retained output path of every command whose output was retained, the candidate set, every selected item, the exclusion reason for every other candidate, the live ledger data of every selected item, the event-log files read, and the terminal-intent inspection.
 
-The selected item MUST be `open`. It MUST be repeat-safe with a stated reason. It MUST be suitable for one local stream run. Planning and selection MUST NOT close, create, or otherwise change fleet Beads state.
+A snapshot MAY select more than one item. Every selected item MUST be `open`, and each MUST carry its own stated repeat-safe reason. One reason MUST NOT stand for two items.
+
+The run shape is how many items the run carries, how many run at the same time, and whether the run stays on this machine. The run MUST be local. The snapshot MUST state the item count and the concurrency, and the stated item count MUST equal the number of selected items the snapshot names. The snapshot MUST hold the run shape once, and MUST NOT hold a copy of it on a selected item.
+
+**A pass MUST NOT be limited to one item, and MUST NOT be limited to concurrency one.** An earlier revision of this clause required "one local stream run" and was read as both limits. The operator withdrew that reading on 2026-08-04: a queue that can carry only one item at a time proves nothing worth proving, and the assessor signs off on several items running at the same time. Only the local limit survives.
+
+Planning and selection MUST NOT close, create, or otherwise change fleet Beads state.
 
 The snapshot MUST name each stale graph finding, the source path that was checked, and its disposition. A stale finding MUST also name the commit that fixed it and the focused test that pins the new behaviour. A disposition without both is a judgement and not evidence. A condition that current source still has MUST become a separate new scoped open record with current source evidence and its own source path. The snapshot MUST hold the two sets in separate lists. It MUST NOT tell them apart by a field on one shared list.
 
@@ -436,7 +442,7 @@ Every candidate's status in the snapshot MUST come from a live `br show` read at
 
 The two clauses below bind the assessor's procedure, not the record. No artifact can carry them, and an implementation MUST NOT be read as satisfying them. A scratch event result MUST NOT change the fleet ledger. After a controlled run, scratch evidence MAY be attached to the assessor report and to nothing else.
 
-> INFORMATIVE — implementation, correct as of 2026-08-04 and not part of the requirement. `internal/queue/readiness` carries the read-only obligation above in its types rather than in a check: its `BeadReader` port declares no write method, and the constructor that would accept a caller-supplied status is unexported, so `Capture` is the only way in and it reads every status itself. Operational record: `docs/queue-readiness-ledger-events.md`.
+> INFORMATIVE — implementation, correct as of 2026-08-04 and not part of the requirement. `internal/queue/readiness` carries the read-only obligation above in its types rather than in a check: its `BeadReader` port declares no write method, and the constructor that would accept a caller-supplied status is unexported, so `Capture` is the only way in and it reads every status itself. `harmonik queue readiness capture` and `harmonik queue readiness validate` are the shell in front of it, and `make queue-dogfood-readiness` runs both. Operational record: `docs/queue-readiness-ledger-events.md`.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent

@@ -98,10 +98,11 @@ func recorderWithCandidates() *ledgerRecorder {
 
 func captureRequest() CaptureRequest {
 	return CaptureRequest{
-		CapturedAt:       capturedAt,
-		SelectedID:       "hk-canary",
-		RepeatSafeReason: "single-file comment edit; re-running it reaches the same tree",
-		Posture:          Posture{Local: true, ItemCount: 1, Concurrency: 1},
+		CapturedAt: capturedAt,
+		Posture:    Posture{Local: true, ItemCount: 1, Concurrency: 1},
+		Selected: []SelectedID{
+			{BeadID: "hk-canary", RepeatSafeReason: "single-file comment edit; re-running it reaches the same tree"},
+		},
 		ExcludedIDs: []ExcludedID{
 			{BeadID: "hk-remote", Reason: "needs a remote worker; pass one is local only"},
 			{BeadID: "hk-wave", Reason: "wave queue; pass one is one stream item"},
@@ -110,6 +111,20 @@ func captureRequest() CaptureRequest {
 		EventLogPaths:  []string{".harmonik/events/events.jsonl"},
 		TerminalIntent: TerminalIntent{Dir: ".harmonik/beads-intents"},
 	}
+}
+
+// manyItemCaptureRequest selects three items instead of one and states a run
+// shape to match. It is the request the old one-selection field could not hold.
+func manyItemCaptureRequest() CaptureRequest {
+	req := captureRequest()
+	req.Posture = Posture{Local: true, ItemCount: 3, Concurrency: 3}
+	req.Selected = []SelectedID{
+		{BeadID: "hk-canary", RepeatSafeReason: "single-file comment edit; re-running it reaches the same tree"},
+		{BeadID: "hk-remote", RepeatSafeReason: "the probe is idempotent against a local endpoint"},
+		{BeadID: "hk-wave", RepeatSafeReason: "writes nothing outside its own scratch directory"},
+	}
+	req.ExcludedIDs = nil
+	return req
 }
 
 func TestCapture_ReadsTheLiveLedgerOnceForEveryCandidate(t *testing.T) {
@@ -214,16 +229,67 @@ func TestCapture_TakesTheCandidateStatusFromTheLedgerAndNotTheCaller(t *testing.
 	}
 }
 
+// Every selected item's status comes from its own live read. A capture that
+// read the first one and took the rest from the request would let a closed item
+// into a many-item run.
+func TestCapture_ReadsTheStatusOfEverySelectedItemLive(t *testing.T) {
+	rec := recorderWithCandidates()
+	closed := rec.beads["hk-wave"]
+	closed.Status = core.CoarseStatusClosed
+	rec.beads["hk-wave"] = closed
+
+	_, err := Capture(context.Background(), rec, manyItemCaptureRequest())
+	if !errors.Is(err, ErrSelectedItemNotOpen) {
+		t.Fatalf("err = %v, want ErrSelectedItemNotOpen for the third selected item", err)
+	}
+	want := []string{"show hk-canary", "show hk-remote", "show hk-wave"}
+	if !reflect.DeepEqual(rec.calls, want) {
+		t.Errorf("ledger calls = %v, want %v; each selected item is read in order", rec.calls, want)
+	}
+}
+
+// The many-item record, end to end through the shell.
+func TestCapture_KeepsEverySelectedItemAndItsOwnReason(t *testing.T) {
+	rec := recorderWithCandidates()
+	snap, err := Capture(context.Background(), rec, manyItemCaptureRequest())
+	if err != nil {
+		t.Fatalf("Capture: %v", err)
+	}
+	if len(snap.Selected) != 3 {
+		t.Fatalf("selected items = %d, want 3", len(snap.Selected))
+	}
+	if snap.Posture.ItemCount != 3 || snap.Posture.Concurrency != 3 {
+		t.Errorf("posture = %+v, want three items at concurrency three", snap.Posture)
+	}
+	for _, sel := range snap.Selected {
+		if sel.RepeatSafeReason == "" {
+			t.Errorf("%s lost its repeat-safe reason", sel.Candidate.BeadID)
+		}
+	}
+}
+
 func TestCapture_RefusesARequestThatNamesNoSelectedItem(t *testing.T) {
 	rec := recorderWithCandidates()
 	req := captureRequest()
-	req.SelectedID = ""
+	req.Selected = nil
 
 	if _, err := Capture(context.Background(), rec, req); !errors.Is(err, ErrNoSelectedItem) {
 		t.Errorf("err = %v, want ErrNoSelectedItem", err)
 	}
 	if len(rec.calls) != 0 {
 		t.Errorf("a request with no selection still read the ledger: %v", rec.calls)
+	}
+}
+
+// A request that states a run of three items but names one is refused before
+// any of it reaches a file. This is the check the widened record exists for.
+func TestCapture_RefusesAPostureThatDisagreesWithTheItemsNamed(t *testing.T) {
+	rec := recorderWithCandidates()
+	req := captureRequest()
+	req.Posture.ItemCount = 3
+
+	if _, err := Capture(context.Background(), rec, req); !errors.Is(err, ErrPostureItemCountMismatch) {
+		t.Errorf("err = %v, want ErrPostureItemCountMismatch", err)
 	}
 }
 
@@ -293,8 +359,8 @@ func TestWriteSnapshot_LeavesAFileTheAssessorCanDecode(t *testing.T) {
 	if err := json.Unmarshal(body, &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if got.Selection.Candidate.BeadID != snap.Selection.Candidate.BeadID {
-		t.Errorf("selected item after round trip = %q", got.Selection.Candidate.BeadID)
+	if len(got.Selected) != 1 || got.Selected[0].Candidate.BeadID != snap.Selected[0].Candidate.BeadID {
+		t.Errorf("selected items after round trip = %+v", got.Selected)
 	}
 	if got.Events.Note != EventEvidenceNote {
 		t.Errorf("observational note did not survive the write: %q", got.Events.Note)

@@ -27,10 +27,13 @@ import (
 
 // ValidationSchemaVersion is the schema version stamped into every validation
 // record. Same additive contract as [SchemaVersion].
-const ValidationSchemaVersion = 1
+//
+// Version 2 replaced the single `selected_bead` string with a `selected_beads`
+// list, to match the snapshot's move to several selected items.
+const ValidationSchemaVersion = 2
 
-// QueueKind is how the queue feeds work to the daemon. Pass one runs one stream
-// item; a wave queue is a different dispatch shape and is out of scope.
+// QueueKind is how the queue feeds work to the daemon. Pass one runs stream
+// items; a wave queue is a different dispatch shape and is out of scope.
 type QueueKind string
 
 // The two queue shapes. Pass one runs a stream queue; a wave queue dispatches a
@@ -46,7 +49,7 @@ const (
 // plan that does not match the posture the first assessor pass is allowed to
 // run under, before anyone starts a daemon.
 type RunPlan struct {
-	// Harness is the agent harness the canary item would run on. Pass one is
+	// Harness is the agent harness the canary items would run on. Pass one is
 	// local, and the Pi harness reaches a remote endpoint by construction.
 	Harness string `json:"harness"`
 
@@ -60,13 +63,18 @@ type RunPlan struct {
 
 	QueueKind       QueueKind `json:"queue_kind"`
 	FeedbackEnabled bool      `json:"feedback_enabled"`
-	Concurrency     int       `json:"concurrency"`
 
-	// ItemCount is how many items the queue would carry. It exists so that all
-	// three fields of the snapshot's Posture have a counterpart here and can be
-	// cross-checked; a posture field with nothing to compare against drifts in
-	// silence.
-	ItemCount int `json:"item_count"`
+	// Concurrency is how many items run at the same time, and ItemCount is how
+	// many items the queue carries.
+	//
+	// Neither is pinned to one any more. The operator withdrew that rule: a queue
+	// that can only carry one item at a time proves nothing worth proving, and
+	// the assessor's job is to sign off on several items running at once. What
+	// the validator still does is REFUSE AN UNSTATED NUMBER and cross-check both
+	// against the snapshot, so the evidence records the shape of the run rather
+	// than accepting whatever it was.
+	Concurrency int `json:"concurrency"`
+	ItemCount   int `json:"item_count"`
 }
 
 // isLocal reports whether the plan runs entirely on this machine.
@@ -112,22 +120,29 @@ var DefaultHostLimits = HostLimits{MaxLoadPerCPU: 1.0, MinFreeDiskGB: 10, MaxDae
 // a new reason is a new constant here and a new case in [Validate].
 type RejectionReason string
 
-// Every reason a readiness validation can refuse. Six come from the run shape
-// pass one excludes, three from a host that cannot produce evidence, and one
-// from a plan that disagrees with the snapshot it is being judged against.
+// Every reason a readiness validation can refuse. Five come from the run shape
+// pass one excludes, two from a run shape nobody stated, three from a host that
+// cannot produce evidence, and one from a plan that disagrees with the snapshot
+// it is being judged against.
+//
+// There is no longer a reason for "concurrency is not one". The operator
+// withdrew that rule, and a rejection constant left behind for a rule nobody
+// applies is how a withdrawn rule comes back.
 const (
-	RejectPiHarness         RejectionReason = "pi_harness"
-	RejectRemoteWorker      RejectionReason = "remote_worker"
-	RejectCrossRepository   RejectionReason = "cross_repository"
-	RejectQueueKindUnset    RejectionReason = "queue_kind_unset"
-	RejectWaveQueue         RejectionReason = "wave_queue"
-	RejectFeedbackEnabled   RejectionReason = "feedback_enabled"
-	RejectConcurrencyNotOne RejectionReason = "concurrency_not_one"
-	RejectHostLoad          RejectionReason = "host_load_above_limit"
-	RejectHostDisk          RejectionReason = "host_free_disk_below_limit"
-	RejectDaemonCount       RejectionReason = "daemon_count_above_limit"
-	RejectPostureMismatch   RejectionReason = "plan_contradicts_snapshot_posture"
-	RejectNoHostLimits      RejectionReason = "host_limits_not_set"
+	RejectPiHarness          RejectionReason = "pi_harness"
+	RejectRemoteWorker       RejectionReason = "remote_worker"
+	RejectCrossRepository    RejectionReason = "cross_repository"
+	RejectQueueKindUnset     RejectionReason = "queue_kind_unset"
+	RejectWaveQueue          RejectionReason = "wave_queue"
+	RejectFeedbackEnabled    RejectionReason = "feedback_enabled"
+	RejectConcurrencyUnset   RejectionReason = "concurrency_not_stated"
+	RejectItemCountUnset     RejectionReason = "item_count_not_stated"
+	RejectHostLoad           RejectionReason = "host_load_above_limit"
+	RejectHostDisk           RejectionReason = "host_free_disk_below_limit"
+	RejectDaemonCount        RejectionReason = "daemon_count_above_limit"
+	RejectPostureMismatch    RejectionReason = "plan_contradicts_snapshot_posture"
+	RejectNoHostLimits       RejectionReason = "host_limits_not_set"
+	RejectSnapshotNoSelected RejectionReason = "snapshot_names_no_selected_item"
 )
 
 // Rejection is one refusal, with the measurement that produced it. The detail
@@ -143,11 +158,15 @@ type Rejection struct {
 // Accepted is a plain bool derived from Rejections being empty, and it is
 // stored rather than computed so a reader of the file does not have to know
 // the rule.
+//
+// SelectedBeads is a list and not a single name. A run of three items whose
+// record named one of them would leave the assessor unable to say which three
+// were judged.
 type Validation struct {
 	SchemaVersion  int         `json:"schema_version"`
 	ValidatedAt    time.Time   `json:"validated_at"`
 	SnapshotTaken  time.Time   `json:"snapshot_taken"`
-	SelectedBead   string      `json:"selected_bead"`
+	SelectedBeads  []string    `json:"selected_beads"`
 	Accepted       bool        `json:"accepted"`
 	Rejections     []Rejection `json:"rejections"`
 	Plan           RunPlan     `json:"plan"`
@@ -201,32 +220,49 @@ func Validate(snap Snapshot, plan RunPlan, host HostFacts, limits HostLimits, va
 	default:
 		rejections = append(rejections, Rejection{
 			Reason: RejectWaveQueue,
-			Detail: fmt.Sprintf("queue kind is %q; pass one is one stream item", plan.QueueKind),
+			Detail: fmt.Sprintf("queue kind is %q; pass one runs stream items", plan.QueueKind),
 		})
 	}
 	if plan.FeedbackEnabled {
 		rejections = append(rejections, Rejection{
 			Reason: RejectFeedbackEnabled,
-			Detail: "feedback is on; pass one runs the item once with no feedback loop",
-		})
-	}
-	if plan.Concurrency != 1 {
-		rejections = append(rejections, Rejection{
-			Reason: RejectConcurrencyNotOne,
-			Detail: fmt.Sprintf("plan concurrency is %d; pass one pins it at 1", plan.Concurrency),
+			Detail: "feedback is on; pass one runs each item once with no feedback loop",
 		})
 	}
 
-	// The snapshot already recorded the posture the selected item was judged
+	// An unstated number is a refusal and a stated one is recorded, whatever it
+	// is. That is the whole of what survives the withdrawn one-item rule: the
+	// evidence must SAY how many items ran at once, and a zero says nothing.
+	if plan.Concurrency < 1 {
+		rejections = append(rejections, Rejection{
+			Reason: RejectConcurrencyUnset,
+			Detail: fmt.Sprintf("plan states concurrency %d; the evidence must record how many items run at the same time", plan.Concurrency),
+		})
+	}
+	if plan.ItemCount < 1 {
+		rejections = append(rejections, Rejection{
+			Reason: RejectItemCountUnset,
+			Detail: fmt.Sprintf("plan states %d items; the evidence must record how many items the run carries", plan.ItemCount),
+		})
+	}
+
+	if len(snap.Selected) == 0 {
+		rejections = append(rejections, Rejection{
+			Reason: RejectSnapshotNoSelected,
+			Detail: "the snapshot names no selected item, so there is nothing to judge the plan against",
+		})
+	}
+
+	// The snapshot already recorded the posture the selected items were judged
 	// against. A plan that disagrees with it means one of the two is stale, and
 	// guessing which would be worse than refusing.
-	posture := snap.Selection.Posture
+	posture := snap.Posture
 	if plan.Concurrency != posture.Concurrency ||
 		plan.ItemCount != posture.ItemCount ||
 		plan.isLocal() != posture.Local {
 		rejections = append(rejections, Rejection{
 			Reason: RejectPostureMismatch,
-			Detail: fmt.Sprintf("snapshot judged the item at local=%t items=%d concurrency=%d; plan is local=%t items=%d concurrency=%d",
+			Detail: fmt.Sprintf("snapshot judged the items at local=%t items=%d concurrency=%d; plan is local=%t items=%d concurrency=%d",
 				posture.Local, posture.ItemCount, posture.Concurrency,
 				plan.isLocal(), plan.ItemCount, plan.Concurrency),
 		})
@@ -238,7 +274,7 @@ func Validate(snap Snapshot, plan RunPlan, host HostFacts, limits HostLimits, va
 		SchemaVersion:  ValidationSchemaVersion,
 		ValidatedAt:    validatedAt.UTC(),
 		SnapshotTaken:  snap.CapturedAt,
-		SelectedBead:   string(snap.Selection.Candidate.BeadID),
+		SelectedBeads:  snap.SelectedBeadIDs(),
 		Accepted:       len(rejections) == 0,
 		Rejections:     rejections,
 		Plan:           plan,
@@ -324,13 +360,22 @@ func DecodeSnapshot(r io.Reader) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("%w: file states schema version %d, this build reads %d",
 			ErrSnapshotSchemaUnreadable, decoded.SchemaVersion, SchemaVersion)
 	}
+	// A version-1 file carries `selection` and no `selected`, so it decodes into
+	// a record with no selected item at all. Naming the version in the refusal is
+	// what stops the next reader chasing a missing field that was never there.
+	if decoded.SchemaVersion < SchemaVersion {
+		return Snapshot{}, fmt.Errorf("%w: file states schema version %d, this build reads %d; "+
+			"version %d named one selected item in a `selection` field and version %d names several in `selected`",
+			ErrSnapshotSchemaUnreadable, decoded.SchemaVersion, SchemaVersion, decoded.SchemaVersion, SchemaVersion)
+	}
 	if decoded.Events.Note != EventEvidenceNote {
 		return Snapshot{}, fmt.Errorf("%w: file states %q", ErrSnapshotNoteAltered, decoded.Events.Note)
 	}
 
 	rechecked, err := newSnapshot(request{
 		CapturedAt:      decoded.CapturedAt,
-		Selection:       decoded.Selection,
+		Posture:         decoded.Posture,
+		Selected:        decoded.Selected,
 		Excluded:        decoded.Excluded,
 		Commands:        decoded.Commands,
 		EventLogPaths:   decoded.Events.LogPaths,

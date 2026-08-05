@@ -22,8 +22,8 @@ import (
 
 var validatedAt = time.Date(2026, 8, 4, 18, 0, 0, 0, time.UTC)
 
-// safePlan is the posture pass one is allowed to run under. Each rejection test
-// breaks exactly one thing in it.
+// safePlan is a run shape the gate accepts. Each rejection test breaks exactly
+// one thing in it.
 func safePlan() RunPlan {
 	return RunPlan{
 		Harness:         "claude",
@@ -49,7 +49,7 @@ func goodSnapshot(t *testing.T) Snapshot {
 	return snap
 }
 
-func TestValidate_AcceptsTheOneLocalStreamRunTheGateAllows(t *testing.T) {
+func TestValidate_AcceptsALocalStreamRunOnAQuietHost(t *testing.T) {
 	got := Validate(goodSnapshot(t), safePlan(), quietHost(), DefaultHostLimits, validatedAt)
 
 	if !got.Accepted {
@@ -58,8 +58,8 @@ func TestValidate_AcceptsTheOneLocalStreamRunTheGateAllows(t *testing.T) {
 	if len(got.Rejections) != 0 {
 		t.Errorf("rejections = %+v, want none", got.Rejections)
 	}
-	if got.SelectedBead != "hk-canary" {
-		t.Errorf("selected bead = %q", got.SelectedBead)
+	if !reflect.DeepEqual(got.SelectedBeads, []string{"hk-canary"}) {
+		t.Errorf("selected beads = %q", got.SelectedBeads)
 	}
 	// The record must carry the bar it applied, or a result read later cannot
 	// say which bar it cleared.
@@ -71,19 +71,48 @@ func TestValidate_AcceptsTheOneLocalStreamRunTheGateAllows(t *testing.T) {
 	}
 }
 
-// The rejection matrix T9 names, one case per clause.
+// The operator overruled the one-item rule: a queue that can carry only one
+// item at a time proves nothing worth proving, and the assessor's job is to sign
+// off on several items running at once. This is the test that says so.
+//
+// It is deliberately a full accept and not a "no concurrency rejection" probe.
+// A test that only checked one reason was absent would stay green if some other
+// clause quietly took over the refusal.
+func TestValidate_AcceptsSeveralItemsRunningAtTheSameTime(t *testing.T) {
+	snap := multiItemSnapshot(t)
+	plan := safePlan()
+	plan.ItemCount = 3
+	plan.Concurrency = 3
+
+	got := Validate(snap, plan, quietHost(), DefaultHostLimits, validatedAt)
+	if !got.Accepted {
+		t.Fatalf("three items at concurrency three were rejected: %+v", got.Rejections)
+	}
+	// The evidence must RECORD the shape, not merely tolerate it.
+	if got.Plan.ItemCount != 3 || got.Plan.Concurrency != 3 {
+		t.Errorf("record states items=%d concurrency=%d, want 3 and 3", got.Plan.ItemCount, got.Plan.Concurrency)
+	}
+	if len(got.SelectedBeads) != 3 {
+		t.Errorf("selected beads = %q, want all three named", got.SelectedBeads)
+	}
+}
+
+// The rejection matrix T9 names, one case per clause. Concurrency and item
+// count are no longer on it as "not one"; they are on it as "not stated".
 func TestValidate_RejectsEveryRunShapePassOneExcludes(t *testing.T) {
 	for name, tc := range map[string]struct {
 		damage func(*RunPlan)
 		want   RejectionReason
 	}{
-		"pi harness":       {func(p *RunPlan) { p.Harness = "pi" }, RejectPiHarness},
-		"remote worker":    {func(p *RunPlan) { p.RemoteWorker = "dgx" }, RejectRemoteWorker},
-		"cross repository": {func(p *RunPlan) { p.RepoTarget = "/Users/gb/github/harmonik" }, RejectCrossRepository},
-		"wave queue":       {func(p *RunPlan) { p.QueueKind = QueueKindWave }, RejectWaveQueue},
-		"queue kind unset": {func(p *RunPlan) { p.QueueKind = "" }, RejectQueueKindUnset},
-		"feedback on":      {func(p *RunPlan) { p.FeedbackEnabled = true }, RejectFeedbackEnabled},
-		"concurrency two":  {func(p *RunPlan) { p.Concurrency = 2 }, RejectConcurrencyNotOne},
+		"pi harness":          {func(p *RunPlan) { p.Harness = "pi" }, RejectPiHarness},
+		"remote worker":       {func(p *RunPlan) { p.RemoteWorker = "dgx" }, RejectRemoteWorker},
+		"cross repository":    {func(p *RunPlan) { p.RepoTarget = "/Users/gb/github/harmonik" }, RejectCrossRepository},
+		"wave queue":          {func(p *RunPlan) { p.QueueKind = QueueKindWave }, RejectWaveQueue},
+		"queue kind unset":    {func(p *RunPlan) { p.QueueKind = "" }, RejectQueueKindUnset},
+		"feedback on":         {func(p *RunPlan) { p.FeedbackEnabled = true }, RejectFeedbackEnabled},
+		"concurrency unset":   {func(p *RunPlan) { p.Concurrency = 0 }, RejectConcurrencyUnset},
+		"item count unset":    {func(p *RunPlan) { p.ItemCount = 0 }, RejectItemCountUnset},
+		"negative item count": {func(p *RunPlan) { p.ItemCount = -1 }, RejectItemCountUnset},
 	} {
 		plan := safePlan()
 		tc.damage(&plan)
@@ -152,7 +181,7 @@ func TestValidate_RefusesToJudgeLoadAgainstAnUnmeasuredCPUCount(t *testing.T) {
 	}
 }
 
-// The snapshot recorded the posture the item was judged against. If the plan
+// The snapshot recorded the posture the items were judged against. If the plan
 // disagrees, one of the two is stale and guessing which is worse than refusing.
 func TestValidate_RejectsAPlanThatContradictsTheSnapshotPosture(t *testing.T) {
 	snap := goodSnapshot(t)
@@ -162,6 +191,36 @@ func TestValidate_RejectsAPlanThatContradictsTheSnapshotPosture(t *testing.T) {
 	got := Validate(snap, plan, quietHost(), DefaultHostLimits, validatedAt)
 	if !hasReason(got.Rejections, RejectPostureMismatch) {
 		t.Errorf("rejections = %+v, want the posture mismatch", got.Rejections)
+	}
+}
+
+// A plan for three items judged against a snapshot that names one is the exact
+// mistake the widened record exists to catch. The concurrency rule going away
+// must not take this cross-check with it.
+func TestValidate_RejectsAManyItemPlanAgainstAOneItemSnapshot(t *testing.T) {
+	plan := safePlan()
+	plan.ItemCount = 3
+	plan.Concurrency = 3
+
+	got := Validate(goodSnapshot(t), plan, quietHost(), DefaultHostLimits, validatedAt)
+	if got.Accepted {
+		t.Fatal("accepted a three-item plan against a snapshot that judged one item")
+	}
+	if !hasReason(got.Rejections, RejectPostureMismatch) {
+		t.Errorf("rejections = %+v, want the posture mismatch", got.Rejections)
+	}
+}
+
+// A snapshot with no selected item leaves nothing to judge the plan against. It
+// cannot arrive from [Capture], but it can arrive from a zero value, and a
+// validator that accepted one would report a pass over an empty record.
+func TestValidate_RejectsASnapshotThatNamesNoSelectedItem(t *testing.T) {
+	got := Validate(Snapshot{}, safePlan(), quietHost(), DefaultHostLimits, validatedAt)
+	if got.Accepted {
+		t.Fatal("accepted a plan against an empty snapshot")
+	}
+	if !hasReason(got.Rejections, RejectSnapshotNoSelected) {
+		t.Errorf("rejections = %+v, want the no-selected-item refusal", got.Rejections)
 	}
 }
 
@@ -258,9 +317,9 @@ func reachesPort(t reflect.Type, seen map[reflect.Type]bool) bool {
 // a snapshot read back from disk has been checked by nothing at all.
 func TestDecodeSnapshot_RechecksARecordThatNeverWentThroughTheConstructor(t *testing.T) {
 	// A snapshot that is well-formed JSON and a valid Go Snapshot, but which
-	// violates BI-013e: the selected item is closed.
+	// violates BI-013e: a selected item is closed.
 	bad := goodSnapshot(t)
-	bad.Selection.Candidate.Status = "closed"
+	bad.Selected[0].Candidate.Status = "closed"
 	body, err := json.Marshal(bad)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -282,8 +341,37 @@ func TestDecodeSnapshot_RechecksARecordThatNeverWentThroughTheConstructor(t *tes
 	if err != nil {
 		t.Fatalf("DecodeSnapshot on a good record: %v", err)
 	}
-	if round.Selection.Candidate.BeadID != "hk-canary" {
-		t.Errorf("decoded selected item = %q", round.Selection.Candidate.BeadID)
+	if len(round.Selected) != 1 || round.Selected[0].Candidate.BeadID != "hk-canary" {
+		t.Errorf("decoded selected items = %+v", round.Selected)
+	}
+}
+
+// A many-item record has to survive the file, not just the constructor. The
+// assessor reads the file.
+func TestDecodeSnapshot_KeepsEverySelectedItemAndItsOwnReasonThroughTheFile(t *testing.T) {
+	body, err := json.Marshal(multiItemSnapshot(t))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	round, err := DecodeSnapshot(bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("DecodeSnapshot: %v", err)
+	}
+	if len(round.Selected) != 3 {
+		t.Fatalf("decoded %d selected items, want 3", len(round.Selected))
+	}
+	seen := map[string]bool{}
+	for _, sel := range round.Selected {
+		if sel.RepeatSafeReason == "" {
+			t.Errorf("%s lost its repeat-safe reason", sel.Candidate.BeadID)
+		}
+		if seen[sel.RepeatSafeReason] {
+			t.Errorf("%s shares a reason with an earlier item; each is its own judgement", sel.Candidate.BeadID)
+		}
+		seen[sel.RepeatSafeReason] = true
+	}
+	if round.Posture.ItemCount != 3 {
+		t.Errorf("posture item count = %d, want 3", round.Posture.ItemCount)
 	}
 }
 
@@ -293,6 +381,35 @@ func TestDecodeSnapshot_RefusesInputThatIsNotASnapshotAtAll(t *testing.T) {
 	}
 	if _, err := DecodeSnapshot(strings.NewReader("{}")); err == nil {
 		t.Error("DecodeSnapshot accepted an empty object")
+	}
+}
+
+// A version-1 file names its one item in a `selection` field this build no
+// longer reads, so it would decode into a record with no selected item. Say so
+// in the refusal rather than report an empty selection.
+func TestDecodeSnapshot_RefusesAVersionOneFileByNameRatherThanReadingItEmpty(t *testing.T) {
+	const versionOne = `{
+	  "schema_version": 1,
+	  "captured_at": "2026-08-04T17:30:00Z",
+	  "selection": {
+	    "candidate": {"bead_id": "hk-canary", "title": "t", "status": "open"},
+	    "repeat_safe_reason": "single-file comment edit",
+	    "posture": {"local": true, "item_count": 1, "concurrency": 1}
+	  },
+	  "excluded": [],
+	  "commands": [{"argv": ["br", "show", "hk-canary"]}],
+	  "events": {"log_paths": [".harmonik/events/events.jsonl"], "note": "` + EventEvidenceNote + `"},
+	  "terminal_intent": {"dir": ".harmonik/beads-intents", "pending": []},
+	  "stale_findings": [],
+	  "current_findings": []
+	}`
+
+	_, err := DecodeSnapshot(strings.NewReader(versionOne))
+	if !errors.Is(err, ErrSnapshotSchemaUnreadable) {
+		t.Fatalf("err = %v, want ErrSnapshotSchemaUnreadable", err)
+	}
+	if !strings.Contains(err.Error(), "selected") {
+		t.Errorf("err = %v, want it to name the field that moved", err)
 	}
 }
 
@@ -311,7 +428,7 @@ func TestWriteValidation_LeavesAFileTheAssessorCanDecode(t *testing.T) {
 	if err := json.Unmarshal(body, &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if !got.Accepted || got.SelectedBead != "hk-canary" {
+	if !got.Accepted || !reflect.DeepEqual(got.SelectedBeads, []string{"hk-canary"}) {
 		t.Errorf("validation after round trip = %+v", got)
 	}
 }
@@ -375,6 +492,21 @@ func TestValidate_RejectsAnItemCountThatDisagreesWithTheSnapshotPosture(t *testi
 	got := Validate(goodSnapshot(t), plan, quietHost(), DefaultHostLimits, validatedAt)
 	if !hasReason(got.Rejections, RejectPostureMismatch) {
 		t.Errorf("rejections = %+v, want the posture mismatch on item count", got.Rejections)
+	}
+}
+
+// A concurrency that disagrees with the snapshot is still a refusal even though
+// no particular number is required any more.
+func TestValidate_RejectsAConcurrencyThatDisagreesWithTheSnapshotPosture(t *testing.T) {
+	plan := safePlan()
+	plan.Concurrency = 4
+
+	got := Validate(goodSnapshot(t), plan, quietHost(), DefaultHostLimits, validatedAt)
+	if got.Accepted {
+		t.Fatal("accepted a plan whose concurrency the snapshot never judged")
+	}
+	if !hasReason(got.Rejections, RejectPostureMismatch) {
+		t.Errorf("rejections = %+v, want the posture mismatch on concurrency", got.Rejections)
 	}
 }
 

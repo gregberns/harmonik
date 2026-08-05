@@ -135,6 +135,35 @@
 
 ### T9 — Local readiness and validator targets
 
+> **Amendment B — 2026-08-04, lane bravo, on landing T9.** Three things about
+> this card changed in the doing, and each was measured.
+>
+> 1. **The concurrency and item-count rejections are withdrawn.** The operator
+>    overruled the one-item reading: "If you can only run one work item at a
+>    time, there is no point in this tool. The assessor must test that several
+>    items run at once and sign off on that working." The acceptance line below
+>    that reads "rejects ... non-one concurrency" no longer holds. Every other
+>    rejection stands — Pi, remote worker, cross-repository target, wave queue,
+>    feedback use. The evidence now RECORDS the item count and the concurrency,
+>    and refuses only an unstated one.
+> 2. **Widening the run shape was a record change, not a flag change.** The
+>    snapshot held one selected item in a field, so a widened run shape alone
+>    would have produced a record that claims three items and names one. The
+>    selected items are now a list, each with its own repeat-safe reason, and the
+>    run shape moved to the top of the record. The stated item count must equal
+>    the number of items named.
+> 3. **The schema-version disagreement was about a different artifact.** The
+>    version-2-against-version-3 note in `05-changelog.md` is about
+>    `assessor-handoff-schema.md`, which carries its own number. The readiness
+>    snapshot was at version 1 and is now at version 2, because renaming a field
+>    is breaking. There was nothing to reconcile.
+>
+> Delivered: `harmonik queue readiness capture|validate` in `cmd/harmonik`, and
+> `make queue-dogfood-readiness`. The command lives in the composition root and
+> not in `internal/queue/cli` because the component matrix allows
+> `internal/queue/**` only `$gostd`, uuid and `internal/core`, and a capture
+> reads the ledger through `internal/brcli`.
+
 - **What:** Add the local scratch readiness target and its validator. The
   validator must reject unsafe evidence and make no fleet-daemon or Beads call.
 - **Spec sections:** `scratch-daemon-runbook.md` Queue-readiness procedure;

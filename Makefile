@@ -1158,6 +1158,108 @@ tools:  ## Install pinned dev tools into ./.tools/ (gofumpt, gci, golangci-lint,
 .PHONY: bootstrap
 bootstrap: tools  ## Fresh-clone setup: install pinned dev tools
 
+
+# ---------------------------------------------------------------------------
+# Queue dogfood readiness gate (T9)
+# ---------------------------------------------------------------------------
+# One command that produces the evidence an assessor reads, and the verdict on
+# it. Before this existed the gate had no way in from a terminal: nothing
+# imported internal/queue/readiness, so the record could only be produced from
+# Go, and the reader it was built for is a separate session that cannot.
+#
+# It measures the host here rather than in Go on purpose. The validator is pure
+# and takes plain values, so what a caller measures is what lands in the record.
+# Measuring in the Makefile keeps that seam, and keeps the numbers in front of
+# the person running it.
+#
+# Required inputs. The target refuses without them; it does not guess.
+#   SCRATCH      the throwaway clone the pass may touch
+#   EVIDENCE     the directory to retain the record and the verdict in
+#   BEADS        the canary items, ';'-separated, each 'bead=why re-running it is safe'
+#   CONCURRENCY  how many items run at the same time
+#
+# The item count comes from BEADS because BEADS is the list, and there is no
+# second source for it to disagree with. Concurrency is a separate decision, so
+# it is a separate input. The evidence record still refuses a stated count that
+# does not match the items named — that check guards the direct command, where
+# the two can genuinely disagree.
+#
+# A reason may contain spaces. It must not contain a single quote or a
+# semicolon; both are the separators this target splits on.
+#
+# Optional: HARNESS, QUEUE_KIND, and the three host limits. Naming a limit here
+# is how the operator's number reaches the record instead of a source edit.
+# The project whose ledger and event logs the capture reads. It defaults to the
+# working directory, which is right when the target runs from the fleet
+# checkout. Point it at the checkout that holds .harmonik when it does not — a
+# git worktree has no .harmonik of its own.
+QDR_PROJECT     ?= $(CURDIR)
+QDR_HARNESS     ?= claude
+QDR_QUEUE_KIND  ?= stream
+QDR_MAX_LOAD    ?= 1.0
+QDR_MIN_DISK_GB ?= 10
+QDR_MAX_DAEMONS ?= 1
+.PHONY: queue-dogfood-readiness
+queue-dogfood-readiness: build-harmonik  ## Capture and judge the evidence that a queue dogfood run is safe to start (T9)
+	@test -n "$(SCRATCH)" || { echo "queue-dogfood-readiness: SCRATCH is required — the throwaway clone the pass may touch"; exit 2; }
+	@test -n "$(EVIDENCE)" || { echo "queue-dogfood-readiness: EVIDENCE is required — where to retain the record and the verdict"; exit 2; }
+	@test -n "$(BEADS)" || { echo "queue-dogfood-readiness: BEADS is required — ';'-separated 'bead=why re-running it is safe'"; exit 2; }
+	@test -n "$(CONCURRENCY)" || { echo "queue-dogfood-readiness: CONCURRENCY is required — how many items run at the same time"; exit 2; }
+	@set -eu; \
+	scratch='$(SCRATCH)'; evidence='$(EVIDENCE)'; beads='$(BEADS)'; \
+	mkdir -p "$$evidence"; \
+	item_count=0; \
+	old_ifs="$$IFS"; IFS=';'; \
+	set --; \
+	for pair in $$beads; do \
+		IFS="$$old_ifs"; \
+		pair="$$(printf '%s' "$$pair" | sed -e 's/^ *//' -e 's/ *$$//')"; \
+		if [ -n "$$pair" ]; then \
+			case "$$pair" in \
+				*=*) set -- "$$@" --select "$$pair"; item_count=$$((item_count + 1)) ;; \
+				*) echo "queue-dogfood-readiness: BEADS entry '$$pair' is not 'bead=reason'"; exit 2 ;; \
+			esac; \
+		fi; \
+		IFS=';'; \
+	done; \
+	IFS="$$old_ifs"; \
+	test "$$item_count" -gt 0 || { echo "queue-dogfood-readiness: BEADS named no item"; exit 2; }; \
+	echo "measuring the host"; \
+	case "$$(uname -s)" in \
+		Darwin) load="$$(sysctl -n vm.loadavg | tr -d '{}' | awk '{print $$1}')" ;; \
+		*) load="$$(awk '{print $$1}' /proc/loadavg)" ;; \
+	esac; \
+	cpus="$$(getconf _NPROCESSORS_ONLN)"; \
+	free_gb="$$(df -k "$$scratch" 2>/dev/null | awk 'NR==2 {printf "%.1f", $$4/1024/1024}')"; \
+	test -n "$$free_gb" || { echo "queue-dogfood-readiness: cannot measure free disk on '$$scratch'"; exit 2; }; \
+	daemons="$$(pgrep -f 'harmonik daemon' 2>/dev/null | wc -l | tr -d ' ')"; \
+	echo "  load=$$load cpus=$$cpus free_disk_gb=$$free_gb daemons_alive=$$daemons"; \
+	echo "capturing the readiness record"; \
+	/tmp/harmonik queue readiness capture \
+		--project "$(QDR_PROJECT)" \
+		"$$@" \
+		--item-count "$$item_count" \
+		--concurrency "$(CONCURRENCY)" \
+		--local=true \
+		--out "$$evidence/readiness.json"; \
+	echo "judging it"; \
+	/tmp/harmonik queue readiness validate \
+		--snapshot "$$evidence/readiness.json" \
+		--out "$$evidence/validation.json" \
+		--harness "$(QDR_HARNESS)" \
+		--repo-target "$$scratch" \
+		--scratch-repo "$$scratch" \
+		--queue-kind "$(QDR_QUEUE_KIND)" \
+		--item-count "$$item_count" \
+		--concurrency "$(CONCURRENCY)" \
+		--load-average "$$load" \
+		--cpu-count "$$cpus" \
+		--free-disk-gb "$$free_gb" \
+		--daemons-alive "$$daemons" \
+		--max-load-per-cpu "$(QDR_MAX_LOAD)" \
+		--min-free-disk-gb "$(QDR_MIN_DISK_GB)" \
+		--max-daemons "$(QDR_MAX_DAEMONS)"
+
 # ---------------------------------------------------------------------------
 # Help
 # ---------------------------------------------------------------------------

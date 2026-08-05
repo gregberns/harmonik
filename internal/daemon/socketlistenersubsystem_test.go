@@ -21,14 +21,17 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/projectconfig"
 )
 
@@ -51,22 +54,37 @@ subsystems:
     enabled: false
 `
 
+// sockpartSockPathUnder returns the daemon socket path for a project root.
+func sockpartSockPathUnder(projectDir string) string {
+	return filepath.Join(projectDir, ".harmonik", "daemon.sock")
+}
+
 // sockpartProjectDir creates a project root with the .harmonik/events sub-tree
 // and, when yamlContent is non-empty, a .harmonik/config.yaml holding it.
+//
+// The daemon binds <projectDir>/.harmonik/daemon.sock, so the project root must
+// leave room for that inside sun_path — 104 bytes on darwin, one of which the
+// kernel keeps for the NUL terminator. t.TempDir() embeds the TEST'S OWN NAME
+// and a suffix that is sometimes 9 digits and sometimes 10, so a long test name
+// crosses the line on some runs and not on others. The check below therefore
+// calls lifecycle.ValidateSocketPathLength, the same check the daemon runs
+// before it binds. Do not re-spell the limit here (hk-m3jai).
 func sockpartProjectDir(t *testing.T, yamlContent string) (projectDir, jsonlPath string) {
 	t.Helper()
-	// The socket path must fit in sun_path (104 bytes on darwin); the default
-	// TMPDIR does not on macOS. Same fallback the socket-bind tests use.
-	const harmonikRelSock = "/.harmonik/daemon.sock"
-	const sockpartSunPathMax = 104
 	projectDir = t.TempDir()
-	if len(projectDir)+len(harmonikRelSock) > sockpartSunPathMax {
+	if lifecycle.ValidateSocketPathLength(sockpartSockPathUnder(projectDir)) != nil {
 		dir, err := os.MkdirTemp("/tmp", "sockpart-")
 		if err != nil {
 			t.Fatalf("sockpartProjectDir: MkdirTemp: %v", err)
 		}
 		t.Cleanup(func() { _ = os.RemoveAll(dir) }) //nolint:errcheck // cleanup error unactionable
 		projectDir = dir
+	}
+	// Say it here, in one line. A too-long path otherwise reaches the test as a
+	// ten-second dial timeout ending in `connect: invalid argument`, which reads
+	// as a fault in the subsystem under test.
+	if lenErr := lifecycle.ValidateSocketPathLength(sockpartSockPathUnder(projectDir)); lenErr != nil {
+		t.Fatalf("sockpartProjectDir: no bindable socket path for this test: %v", lenErr)
 	}
 	harmonikDir := filepath.Join(projectDir, ".harmonik")
 	if err := os.MkdirAll(filepath.Join(harmonikDir, "events"), 0o750); err != nil {
@@ -237,5 +255,27 @@ func TestSubsystemPartition_SocketListener_GateConstructsNothing(t *testing.T) {
 	if bs.crewHandler != nil || bs.branchReapWatcher != nil || bs.opPauseCtrl != nil ||
 		bs.concurrencyCtrl != nil || bs.drainDet != nil || bs.queueHandlerAdapter != nil {
 		t.Error("a bootState field was populated behind the disabled socket-listener switch")
+	}
+}
+
+// The fixture must hand back a project root the daemon can bind a socket under,
+// even when the calling test's own name is long. t.TempDir() embeds that name,
+// truncated to 64 characters, then appends a random suffix that is sometimes 9
+// digits and sometimes 10. Only one of the two draws used to cross the line, so
+// a single run proves nothing. Each subtest draws a fresh random.
+//
+// This test's name is deliberately past the 64-character truncation point,
+// which is the case that broke (hk-m3jai).
+func TestSockpartProjectDir_HandsBackABindableSocketPathForALongTestName(t *testing.T) {
+	for i := range 16 {
+		t.Run(strconv.Itoa(i), func(t *testing.T) {
+			projectDir, _ := sockpartProjectDir(t, sockpartBaseConfigYAML)
+			sockPath := sockpartSockPathUnder(projectDir)
+			ln, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", sockPath)
+			if err != nil {
+				t.Fatalf("the fixture returned a %d-byte socket path the kernel refuses: %v", len(sockPath), err)
+			}
+			_ = ln.Close()
+		})
 	}
 }

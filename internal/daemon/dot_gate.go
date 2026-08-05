@@ -461,6 +461,31 @@ func executeCognitionGate(
 		return nil, fmt.Errorf("cognition gate %q: context cancelled", gateRef)
 	}
 
+	// What the evaluator REPORTED decides the gate, not only whether a verdict
+	// file appeared (hk-sb8jy). This function switched on launch.Fail alone and
+	// never read launch.SocketOutcome or launch.Watcher, so an evaluator that
+	// wrote an allow verdict and then signalled FAILURE_SIGNAL, exited non-zero
+	// with nothing reported, or left its progress-stream watcher in error was
+	// still believed, and the workflow proceeded past the gate.
+	//
+	// It runs BEFORE the verdict read so a crashed evaluator is reported as a
+	// crash rather than as a missing file. A gate that cannot be trusted fails
+	// closed: the returned error fails the run, which is the safe direction for a
+	// gate in a way it is not for an implementer.
+	//
+	// There is no budget-kill exemption here, and none is needed. The reviewer
+	// path needs one because pasteInjectQuitOnReviewFile kills on an elapsed
+	// budget and records it in a marker file. pasteInjectQuitOnGateFile writes no
+	// marker, and its only deadline kill fires when no verdict has appeared — in
+	// which case the read below fails anyway.
+	var gateWatcherErr error
+	if launch.Watcher != nil {
+		gateWatcherErr = launch.Watcher.Err()
+	}
+	if reason, failed := dotNodeTerminalFailure(artifacts.HandlerSessionID, launch.Exit, launch.SocketOutcome, gateWatcherErr); failed {
+		return nil, fmt.Errorf("cognition gate %q: %s", gateRef, reason)
+	}
+
 	// Read and parse the gate verdict via runner for remote runs (hk-hd2w6).
 	decision, readErr := readGateVerdictVia(ctx, runner, verdictPath)
 	if readErr != nil {

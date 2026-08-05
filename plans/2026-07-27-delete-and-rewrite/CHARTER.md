@@ -66,15 +66,57 @@ part of the same unit for the same reason. The rule is unchanged.)*
 
 **Specs come after, not before** — with the standing caveat that `AGENTS.md` holds specs normative,
 so a conflict is adjudicated, never silently ignored.
-**Why they come after:** 25% of requirement IDs appear in no Go file, ~28% of those are stale,
+**Why they come after:** 26% of requirement IDs appear in no Go file, ~28% of those are stale,
 and seven would actively regress working code if obeyed. `specs/` is not a trustworthy oracle yet.
+*(The orphan figure is measured, not estimated — re-run
+`python3 plans/2026-07-27-delete-and-rewrite/spec_orphans.py`. See the settled block below.)*
 
 *⚠ Unverified as of 2026-07-30 — the orphan rate is disputed and the evidence for it is missing.*
+*(SUPERSEDED 2026-08-04 — the dispute is settled. The paragraph is kept for the record. Read the
+block below it.)*
 `SPEC-TRIAGE.md` reports 293 orphans of 1,164 IDs, which is 25.2%. A separate measurement on
 2026-07-30 got 325 of 1,180, which is 27.5%. Neither could be re-run here: the machine data that
 report cites — `traceability.csv`, `trace.json` and the `trace.py` generator — is not in the repo.
 The seven regression-risk requirements DO check out: `SPEC-TRIAGE.md` §4 walks ten candidates and
 confirms seven, refutes one and calls two partial.
+
+**✅ SETTLED 2026-08-04. The orphan rate is reproducible, and it is 26.1%.**
+
+**307 orphans of 1,174 requirement IDs (26.1%) at `51bd8aa84`.** The full split is 813
+cited in production (69.3%), 54 cited only in tests (4.6%), 307 cited by no Go file at all
+(26.1%).
+
+**Re-run it yourself. The method is in the repo now:**
+
+```
+python3 plans/2026-07-27-delete-and-rewrite/spec_orphans.py
+```
+
+It takes no arguments, needs no third-party package, and prints its own definitions above its
+numbers so the figure always travels with its method. It counts base requirement IDs
+(`PREFIX-NNN` with an optional letter suffix) whose prefix is registered in `specs/_registry.yaml`,
+and it deliberately excludes open questions, invariants, environment-variable IDs and the other
+sub-forms. It classifies against `git ls-files '*.go'` — tracked files only, which is what keeps a
+nested agent worktree from reading the count ten times too high.
+
+**The dispute resolves in favour of `SPEC-TRIAGE.md`.** The original generator was never committed
+and is not recoverable, so the method was rebuilt from that report's own §1 and §2. The rebuild
+reproduces the report's per-spec table **exactly on 12 of 27 rows**, including every one of the six
+files that hold 62% of the orphans: `claude-launchspec` 14 of 14, `harness-contract` 23 of 24,
+`architecture` 40 of 54, `handler-pause` 30 of 42, `cognition-loop` 36 of 50 against its 37, and
+`operator-nfr` 50 of 89 against its 48 of 88. A rebuilt method that lands on the same numbers for
+the same files is the same method. **`SPEC-TRIAGE.md`'s 25.2% was sound.**
+
+**The gap is tree movement, not method drift.** 385 commits separate the two measurements. The
+production corpus grew from 900 to 916 Go files, which is why production citations rose from 783 to
+813. The test corpus fell from 1,701 files to 1,133, because `ec66da798` deleted 681
+signature-pinning test files, which is the whole of the drop in test-only citations from 88 to 54.
+The ID universe grew from 1,164 to 1,174 as specs were edited.
+
+**Retire the 27.5% figure.** It is the outlier, it recorded no method, and nothing reproduces it.
+
+**Cite 26.1%, with the script named.** The headline sentence above now reads "26% of requirement IDs
+appear in no Go file", and it is backed by evidence that anyone can re-run from a clean clone.
 
 ## 3. The core set — DECIDED, not proposed
 

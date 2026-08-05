@@ -11,15 +11,34 @@ package daemon
 // so nothing sets the independent-session flag and nothing writes a record.
 //
 // The directory is therefore always empty, so every reader takes its empty-set
-// branch on every boot for ever. These tests each pin a DIFFERENT thing that
+// branch on every boot for ever. Three tests here pin a DIFFERENT thing that
 // branch decides. They are RED on purpose and they stay red until a run again
 // records itself before it spawns its agent.
 //
-// Each test drives the REAL run through the fixture in
+// Each drives the REAL run through the fixture in
 // survive_shutdown_run_resources_test.go rather than writing a record by hand.
-// A hand-written record makes every one of these tests pass today, which is
-// exactly why the defect survived: the package already has tests that seed the
-// registry themselves, and they are all green.
+// A hand-written record makes every one of them pass today, which is exactly
+// why the defect survived: the package already has tests that seed the registry
+// themselves, and they are all green.
+//
+// # Why the fourth test is here
+//
+// The three consequence tests are the acceptance criteria for the repair, and
+// on their own they accept a repair that does not work. Each one only needs a
+// record carrying the right BeadID, written at any time, with every other field
+// left zero. That was measured, not reasoned: a probe that wrote
+// Record{SchemaVersion, RunID, BeadID} from the post-launch callback turned all
+// three green, and the property test in internal/run with them.
+//
+// Such a record is useless. adoptDeadRunSessions matches a live session by
+// SessionName and treats an empty one as dead, so it would reset the bead of an
+// agent that is still working. probeRunProcessDead gives up on an empty
+// SessionName. And a record written after the spawn is not written at all for a
+// daemon killed in between, which is the exact crash the registry exists for.
+//
+// So TheRecordIsOnDiskAndNamesTheSessionBeforeTheAgentIsLaunched pins the shape
+// of the record rather than a consequence of its absence. It is what stops the
+// other three from being satisfied by a repair that writes something.
 //
 // Helper prefix: noWriter.
 
@@ -300,8 +319,8 @@ func TestRunSessionAdoption_ARunLaunchedBeforeARestartIsAdoptedAfterIt(t *testin
 // the only two answers it has. A caller cannot tell them apart, and neither can
 // a test that only checks the second one — which is why this test checks all
 // three cases in one place. The seeded bead proves the guard still reports
-// "yes" when the registry is not empty; the unrelated bead proves it is not
-// wired to "yes"; and the real run is the case it gets wrong.
+// "yes" when the registry is not empty. The unrelated bead proves it is not
+// wired to "yes". The real run is the case it gets wrong.
 func TestStrandedBeadGuard_TellsARunningBeadApartFromOneWithNoRun(t *testing.T) {
 	t.Parallel()
 
@@ -328,5 +347,88 @@ func TestStrandedBeadGuard_TellsARunningBeadApartFromOneWithNoRun(t *testing.T) 
 			"the run recorded nothing. The stranded-bead auto-reset therefore fires on a bead "+
 			"whose agent is mid-flight, which is the one case the guard was added to prevent.",
 			surviveRunProbeBead)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The shape of the record — what the three tests above do not constrain
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestRunRegistry_TheRecordIsOnDiskAndNamesTheSessionBeforeTheAgentIsLaunched
+// is the precondition for all three claims above, and it is the one that stops
+// them being satisfied by a repair that writes a record with nothing in it.
+//
+// A run that means to outlive the daemon is discoverable only by name. The next
+// boot lists the registry, reads SessionName and asks tmux whether that session
+// is still there. Two facts have to hold for that to work, and neither is
+// implied by "a record exists":
+//
+//   - The record is on disk BEFORE the agent's session is created. A daemon
+//     killed in between leaves a live tmux session that nothing on disk names —
+//     untracked, unadoptable, and swept as an orphan with no record of what it
+//     was. That crash is the whole reason the registry is durable.
+//   - The record names the session that was actually created. On an empty
+//     SessionName adoptDeadRunSessions treats the run as dead however healthy
+//     the agent is, and resets a bead out from under a working agent.
+//     probeRunProcessDead gives up on the same empty string. On a WRONG
+//     SessionName the next boot asks tmux about a session that does not exist
+//     and reaps a live run.
+//
+// The observation is taken from inside the spawn call itself, through the
+// fixture's onSpawn hook, so the ordering is a fact about the run rather than a
+// reading of the source.
+func TestRunRegistry_TheRecordIsOnDiskAndNamesTheSessionBeforeTheAgentIsLaunched(t *testing.T) {
+	t.Parallel()
+
+	// The daemon stays up. This test is only about what is true at the instant
+	// the agent is launched, and a shutdown would add a second reason for a
+	// record to be absent afterwards.
+	out := surviveRunDriveWith(t, surviveRunOpts{ownSession: true, realWorktree: true})
+
+	if out.adapter.windows() == 0 && len(out.adapter.sessions()) == 0 {
+		t.Fatal("the run never asked tmux for anything, so no agent was launched and there is " +
+			"no spawn for the record to come before.")
+	}
+
+	if out.recordAtSpawnErr != nil {
+		t.Errorf("the run registry held no record when the agent was launched: %v\n"+
+			"A daemon killed between the launch and the write leaves a live session that nothing "+
+			"on disk names. The next boot cannot adopt it and cannot even say what it was.",
+			out.recordAtSpawnErr)
+	}
+
+	if len(out.adapter.sessions()) == 0 {
+		t.Error("the run got no tmux session of its own, so there is no session for the record " +
+			"to name.\n" +
+			"The substrate offered one: this fixture's adapter creates sessions. Nothing asked, " +
+			"because nothing sets the per-run independent-session flag any more. A run inside the " +
+			"daemon's own session dies with the daemon, and no record can save it.")
+	}
+
+	// Everything below reads the record, so it means nothing if there was none.
+	if out.recordAtSpawnErr != nil {
+		return
+	}
+
+	if out.recordAtSpawn.SessionName == "" {
+		t.Error("the record was written with no session name.\n" +
+			"Both adoption passes match on that string. A record without it is adopted as dead " +
+			"however healthy the agent is, so the bead is reset and re-dispatched under a working " +
+			"agent — the opposite of what the record is for.")
+	} else if len(out.adapter.sessions()) > 0 {
+		if got, want := out.recordAtSpawn.SessionName, out.adapter.sessions()[0]; got != want {
+			t.Errorf("the record names session %q but the session created is %q.\n"+
+				"The two must be the same string, or the next boot asks tmux about a session that "+
+				"does not exist and reaps a live run.", got, want)
+		}
+	}
+
+	if out.recordAtSpawn.RunID != out.runID {
+		t.Errorf("record RunID = %q, want %q", out.recordAtSpawn.RunID, out.runID)
+	}
+	if out.recordAtSpawn.BeadID != string(surviveRunProbeBead) {
+		t.Errorf("record BeadID = %q, want %q.\n"+
+			"Without it the adoption pass has a session to check and no bead to reset.",
+			out.recordAtSpawn.BeadID, surviveRunProbeBead)
 	}
 }

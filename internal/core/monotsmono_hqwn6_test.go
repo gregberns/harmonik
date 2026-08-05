@@ -239,33 +239,3 @@ func TestMonoTsMono_EV003_CodeGodocCarriesProcessScopeProhibition(t *testing.T) 
 		}
 	}
 }
-
-// TestMonoTsMono_EV003_ForwardDocSensor is a documentation-marker test for
-// event-model.md §4.1 EV-003 (hk-hqwn.6).
-//
-// EV-003 requires that timestamp_mono_nsec MUST NOT be compared across daemon
-// restarts or across processes, and is meaningful ONLY for intra-process ordering
-// within the emitter's lifetime.
-//
-// This test skips unconditionally because the consumer-side enforcement layer
-// (a runtime guard that rejects cross-process comparisons) is not yet implemented.
-// It exists as a discoverable anchor in the test suite.  When the enforcement
-// layer lands, the implementer SHOULD either:
-//
-//  1. Replace this marker with concrete assertions against the enforcement layer, OR
-//  2. Extend it with those assertions, retaining the EV-003 citation and hk-hqwn.6
-//     traceability.
-//
-// Requirement-traceable bead: hk-hqwn.6.
-func TestMonoTsMono_EV003_ForwardDocSensor(t *testing.T) {
-	t.Log("EV-003 (hk-hqwn.6): timestamp_mono_nsec is process-scoped and NOT cross-process-comparable.")
-	t.Log("MUST NOT be compared across daemon restarts or across processes.")
-	t.Log("Meaningful ONLY for intra-process ordering within the emitter's lifetime.")
-	t.Log("Spec reference: event-model.md §4.1 EV-003.")
-	t.Log("")
-	t.Log("Consumer-side enforcement layer not yet implemented.")
-	t.Log("When that layer lands, the implementer SHOULD:")
-	t.Log("  1. Delete this forward-doc marker, OR")
-	t.Log("  2. Extend it with concrete assertions against the enforcement layer.")
-	t.SkipNow()
-}

@@ -230,35 +230,3 @@ func TestWallClock_EV006_CodeGodocCarriesAdvisoryConstraint(t *testing.T) {
 		}
 	}
 }
-
-// TestWallClock_EV006_ForwardDocSensor is a documentation-marker test for
-// event-model.md §4.2 EV-006 (hk-hqwn.9).
-//
-// EV-006 requires that timestamp_wall MUST NOT be used for ordering decisions
-// across processes, and is for audit, human-readable display, and external
-// correlation only. Cross-process ordering MUST use event_id (UUIDv7) per EV-002.
-//
-// This test skips unconditionally because the consumer-side enforcement layer
-// (a runtime guard that rejects cross-process ordering on timestamp_wall) is not
-// yet implemented. It exists as a discoverable anchor in the test suite. When the
-// enforcement layer lands, the implementer SHOULD either:
-//
-//  1. Replace this marker with concrete assertions against the enforcement layer, OR
-//  2. Extend it with those assertions, retaining the EV-006 citation and hk-hqwn.9
-//     traceability.
-//
-// Requirement-traceable bead: hk-hqwn.9.
-func TestWallClock_EV006_ForwardDocSensor(t *testing.T) {
-	t.Log("EV-006 (hk-hqwn.9): timestamp_wall is advisory for cross-process ordering.")
-	t.Log("MUST NOT be used for ordering decisions across processes.")
-	t.Log("NTP skew, clock adjustments, and container-host time sync make it unreliable.")
-	t.Log("Cross-process ordering MUST use event_id (UUIDv7) per EV-002.")
-	t.Log("timestamp_wall is for audit, human-readable display, and external correlation.")
-	t.Log("Spec reference: event-model.md §4.2 EV-006.")
-	t.Log("")
-	t.Log("Consumer-side enforcement layer not yet implemented.")
-	t.Log("When that layer lands, the implementer SHOULD:")
-	t.Log("  1. Delete this forward-doc marker, OR")
-	t.Log("  2. Extend it with concrete assertions against the enforcement layer.")
-	t.SkipNow()
-}

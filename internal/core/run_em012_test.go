@@ -582,38 +582,3 @@ func TestRunWM003_WorkflowModeJSONRoundTrip(t *testing.T) {
 // ──────────────────────────────────────────────────────────────────────────────
 // Forward-doc marker
 // ──────────────────────────────────────────────────────────────────────────────
-
-// TestRunEM012_ForwardDocDispatchEnforcement is a forward-doc marker for the
-// dispatch-side enforcement of the EM-012 singleton invariant (hk-b3f.12).
-//
-// EM-012 invariant (dispatch level, not yet implemented):
-//
-//	A dispatcher (the orchestrator's outer loop) MUST NOT construct a Run with
-//	more than one WorkflowID or more than one Input. Given a dispatch request,
-//	the dispatcher MUST reject any request that references multiple workflows or
-//	multiple inputs, returning a validation error before allocating a run_id.
-//
-// This test skips unconditionally because the dispatch loop is not yet a Go
-// artifact (bootstrap phase — records and enums only). When the dispatcher
-// lands, the implementer of that bead SHOULD either:
-//
-//  1. Delete this forward-doc marker and add concrete Shape-A assertions that
-//     inject a multi-workflow or multi-input request and assert rejection before
-//     run_id allocation, OR
-//  2. Extend this marker with those assertions, retaining the EM-012 citation
-//     and hk-b3f.12 traceability.
-//
-// Spec reference: execution-model.md §4.3 EM-012.
-// Requirement-traceable bead: hk-b3f.12.
-func TestRunEM012_ForwardDocDispatchEnforcement(t *testing.T) {
-	t.Log("EM-012 (hk-b3f.12): dispatch MUST enforce the singleton-workflow / singleton-input invariant.")
-	t.Log("  Invariant: a dispatcher MUST NOT construct a Run with more than one WorkflowID or Input.")
-	t.Log("  Given a multi-workflow or multi-input request, the dispatcher MUST reject before run_id allocation.")
-	t.Log("")
-	t.Log("  The dispatch loop is not yet a Go artifact (bootstrap phase).")
-	t.Log("  When the dispatcher lands, the implementer SHOULD:")
-	t.Log("    1. Delete this forward-doc marker and add Shape-A assertions, OR")
-	t.Log("    2. Extend it with those assertions (retaining EM-012 citation and hk-b3f.12 traceability).")
-	t.Log("  Spec reference: execution-model.md §4.3 EM-012.")
-	t.SkipNow()
-}

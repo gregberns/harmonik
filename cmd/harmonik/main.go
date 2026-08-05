@@ -956,6 +956,25 @@ EXAMPLES
 		return runHarnessSubcommand(subArgs)
 	}
 
+	// End of the subcommand chain. An argument that reached this point matched
+	// no verb above, and every block above returns, so a positional argument
+	// here names a subcommand that does not exist. Refuse it.
+	//
+	// Without this refusal the argument fell through to flag.Parse and the
+	// process started a daemon against the current directory. A typo therefore
+	// wrote .harmonik/ into whatever directory the operator stood in, and after
+	// a minute the daemon spawned a supervisor to revive itself.
+	//
+	// This check must stay above the daemon setup below. Everything after it
+	// touches the disk.
+	//
+	// Bead ref: hk-j7yo0.
+	if verb, ok := unknownSubcommand(os.Args); ok {
+		fmt.Fprintf(os.Stderr, "harmonik: unknown subcommand %q\n", verb)
+		harmonikUsage()
+		return exitUnknownSubcommand
+	}
+
 	// EV-019 / EV-019a: top-level panic recovery wired at the composition root.
 	//
 	// logFlusher and busFlusher are both nil for now:

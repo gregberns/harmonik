@@ -42,8 +42,8 @@
 #
 # What it still does not catch: a function reached only from a package that
 # does not import the changed one — through an interface satisfied elsewhere,
-# or from a test tagged out of this run (the scenario and crash tiers are not
-# in it). Such a function is reported at 0.0% and the reading is wrong. That is
+# or from a test tagged out of this run (the scenario tier is not in it). Such
+# a function is reported at 0.0% and the reading is wrong. That is
 # the residual false-alarm rate of the method and it is the reason this stays a
 # report. Set CHANGED_FUNC_COVERAGE_WIDE=1 to run the whole module's tests
 # instead, which removes the residual and costs a full instrumented suite.

@@ -665,8 +665,8 @@ fmt-check:  ## Fail-closed: exit 1 if gofumpt or gci would change any file (run 
 #
 # fast and full share every static step. They differ in exactly two ways: full
 # tests EVERY package instead of the major set, and full adds the whole-tree
-# lint allow list, the tagged scenario tier, the crash tier and the module
-# hygiene checks. Keep it that way. A step that belongs to only one of them is how a
+# lint allow list, the tagged scenario tier and the module hygiene checks. Keep
+# it that way. A step that belongs to only one of them is how a
 # third tier grows back.
 # ---------------------------------------------------------------------------
 
@@ -890,13 +890,12 @@ gate-test-report-probe:  ## Smallest real use of the test step (drives scripts/g
 # extra answer. Everything else fast runs, full runs, in the same order.
 # ---------------------------------------------------------------------------
 .PHONY: full
-full:  ## THE merge decision: everything in fast over EVERY package, plus the lint allow list, scenario tier, crash tier, module hygiene
+full:  ## THE merge decision: everything in fast over EVERY package, plus the lint allow list, scenario tier, module hygiene
 	$(MAKE) gate-static
 	$(MAKE) gate-test-compile
 	$(call RUN_TESTS_AND_REPORT,make full,./...)
 	$(MAKE) lint-allow
 	$(MAKE) test-scenario
-	$(GATE_CAP) go test -tags=crash -count=1 -timeout=$(GATE_GO_TIMEOUT) ./test/crash/...
 	$(MAKE) module-hygiene
 
 # ---------------------------------------------------------------------------

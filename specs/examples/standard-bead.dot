@@ -90,8 +90,8 @@ digraph "standard-bead" {
     // It runs the format check, `go build ./...`, `go vet ./...`, the tagged
     // vet, the subsystem freeze greps, the changed-line lint, a compile of
     // every _test.go file, `go test -short -count=1 ./...` over EVERY package,
-    // the whole-tree lint allow list, the tagged scenario tier, the crash tier
-    // and the module hygiene checks.
+    // the whole-tree lint allow list, the tagged scenario tier and the module
+    // hygiene checks.
     //
     // Fail-closed at every step. No package scoping, no retry, and no path that
     // reports SUCCESS on a timeout, an OOM, a compile failure or an exit code

@@ -232,10 +232,15 @@ test-docker-e2e:  ## WS2.3 remote-substrate E2E over ssh across daemon+worker co
 	  docker compose -f $(COMPOSE_E2E) down -v || true; \
 	  exit 1; \
 	fi; \
-	docker compose -f $(COMPOSE_E2E) exec -T daemon \
+	out=$$(docker compose -f $(COMPOSE_E2E) exec -T daemon \
 	  /usr/local/bin/remote-substrate.test \
-	  -test.run '^TestScenario_RemoteSubstrate_Localhost_E2E$$' -test.v; \
+	  -test.run '^TestScenario_RemoteSubstrate_Localhost_DOT_E2E$$' -test.v 2>&1); \
 	rc=$$?; \
+	echo "$$out"; \
+	if [ "$$rc" = "0" ] && ! echo "$$out" | grep -q -- '--- PASS: TestScenario_RemoteSubstrate_Localhost_DOT_E2E'; then \
+	  echo "test-docker-e2e: FATAL no PASS line for the e2e — -test.run matched nothing (a renamed or moved test exits 0 with 'no tests to run')" >&2; \
+	  rc=1; \
+	fi; \
 	docker compose -f $(COMPOSE_E2E) down -v; \
 	exit $$rc
 

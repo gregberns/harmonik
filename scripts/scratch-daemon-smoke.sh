@@ -47,7 +47,7 @@
 #   E  REAL daemon lifecycle — init a throwaway clone, build, up, assert status RUNNING,
 #      down. Proves the daemon stands up isolated (own socket/tmux/binary).
 #   F  remote-substrate scenario — the REAL entry for the remote-substrate path is the
-#      Go scenario test TestScenario_RemoteSubstrate_Localhost_E2E (NOT a queue submit;
+#      Go scenario test TestScenario_RemoteSubstrate_Localhost_DOT_E2E (NOT a queue submit;
 #      `batch --file` is the real entry for live bead PROCESSING). Passing that e2e
 #      needs BOTH a real claude binary (it spawns an agent) AND passwordless ssh
 #      localhost, so Phase F by default only COMPILE-CHECKS the scenario path (builds
@@ -415,14 +415,14 @@ if [ "$FULL" = "1" ]; then
     echo "[smoke] --- Phase F: remote-substrate scenario path ---"
     # The remote-substrate path is exercised by a Go scenario test, NOT a queue
     # submission — `batch --file` is the real entry for live bead PROCESSING, but the
-    # remote-substrate localhost e2e is TestScenario_RemoteSubstrate_Localhost_E2E.
+    # remote-substrate localhost e2e is TestScenario_RemoteSubstrate_Localhost_DOT_E2E.
     # Running it to PASS needs BOTH a real claude binary (it spawns an agent on the
     # remote worker) AND passwordless `ssh localhost`; in a CI/dev box without a real
     # claude it fails at agent-launch. So by default Phase F COMPILE-CHECKS the scenario
     # path (proves it builds under -tags=scenario and the test symbol exists) and runs
     # the full e2e only when SMOKE_SCENARIO_RUN=1 is set (honest PASS/SKIP/FAIL).
-    if grep -q 'func TestScenario_RemoteSubstrate_Localhost_E2E' \
-        "$REPO_ROOT/internal/daemon/scenario_remote_substrate_localhost_test.go" 2>/dev/null; then
+    if grep -q 'func TestScenario_RemoteSubstrate_Localhost_DOT_E2E' \
+        "$REPO_ROOT/internal/daemon/scenario_remote_substrate_localhost_dot_test.go" 2>/dev/null; then
         ok "remote-substrate scenario test symbol present"
     else
         bad "remote-substrate scenario test symbol missing"
@@ -435,7 +435,7 @@ if [ "$FULL" = "1" ]; then
     if [ "${SMOKE_SCENARIO_RUN:-0}" = "1" ]; then
         echo "[smoke] SMOKE_SCENARIO_RUN=1 — executing the full remote-substrate e2e (needs real claude + ssh localhost)"
         if go test -C "$REPO_ROOT" -tags=scenario -count=1 -v \
-            -run TestScenario_RemoteSubstrate_Localhost_E2E ./internal/daemon/ >"$ROOT/scenario.out" 2>&1; then
+            -run TestScenario_RemoteSubstrate_Localhost_DOT_E2E ./internal/daemon/ >"$ROOT/scenario.out" 2>&1; then
             if grep -qE '^[[:space:]]*--- SKIP' "$ROOT/scenario.out"; then
                 ok "remote-substrate e2e SKIPPED (no passwordless ssh localhost) — not a failure"
             else

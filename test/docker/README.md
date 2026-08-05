@@ -35,7 +35,7 @@ are generated inside the containers at boot. The target orchestrates:
    succeeds. If passwordless SSH never comes up it dumps `compose logs`, tears the
    stack down, and exits non-zero (**FATAL** — it does not silently pass).
 3. **Drive** — execs the compiled scenario binary baked into the daemon image:
-   `/usr/local/bin/remote-substrate.test -test.run '^TestScenario_RemoteSubstrate_Localhost_E2E$' -test.v`.
+   `/usr/local/bin/remote-substrate.test -test.run '^TestScenario_RemoteSubstrate_Localhost_DOT_E2E$' -test.v`.
 4. **Teardown** — always `docker compose … down -v` (preserving the drive's exit code),
    which wipes both named volumes so each run starts with fresh keys and fresh repos.
 

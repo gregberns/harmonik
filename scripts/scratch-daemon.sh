@@ -44,7 +44,7 @@
 #                             boot record for the queue-only subsystems posture.
 #
 # Pairs with the fast remote reproducer:
-#   go test -tags=scenario -run TestScenario_RemoteSubstrate_Localhost_E2E ./internal/daemon/
+#   go test -tags=scenario -run TestScenario_RemoteSubstrate_Localhost_DOT_E2E ./internal/daemon/
 #
 # Refs: hk-4tdlw (scratch-clone standalone test-daemon iteration loop).
 

@@ -63,7 +63,13 @@ func RunIDsFromEvents(events []RawEvent) []core.RunID {
 //   - permissions error (SH-024 ii)
 //   - JSON parse error at a non-tail position (SH-024 iii)
 //   - I/O error during read (SH-024 iv)
-//   - bus_overflow event observed (SH-024 v)
+//
+// There is no detector here for events the bus dropped. SH-024 carried one
+// until 2026-08-05 and it could not fire: it looked for bus_overflow, and
+// event-model.md EV-011a's shed path — the only thing that would emit it —
+// is not built. See the RATIONALE under SH-024. If EV-011a is built, a
+// shed event will pass every check above, because the log stays well-formed
+// and merely holds less than it should; the detector has to come back with it.
 //
 // Spec ref: specs/scenario-harness.md §4.6 SH-020, SH-024.
 func ReadEventLog(logPath string) ([]RawEvent, error) {
@@ -88,9 +94,6 @@ func ReadEventLog(logPath string) ([]RawEvent, error) {
 		var ev RawEvent
 		if err := json.Unmarshal(line, &ev); err != nil {
 			return nil, fmt.Errorf("asserteval: JSON parse error at line %d (mid-file corruption per SH-024): %w", i+1, err)
-		}
-		if ev.Type == string(core.EventTypeBusOverflow) {
-			return nil, fmt.Errorf("asserteval: bus_overflow event at line %d: assertion completeness is defeated (SH-024 v)", i+1)
 		}
 		events = append(events, ev)
 	}

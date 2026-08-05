@@ -189,13 +189,6 @@ type finding struct {
 // Recorded 2026-08-04.
 var orphanConsumers = []finding{
 	{
-		Type: "bus_overflow",
-		At:   "internal/scenario/asserteval.go ReadEventLog",
-		Note: "The scenario harness refuses to score a run whose event log dropped events. " +
-			"internal/eventbus has no shed path at all, so the guard has never tripped and an " +
-			"incomplete log is scored as if it were complete.",
-	},
-	{
 		Type: "checkpoint_written",
 		At:   "cmd/harmonik/eval_cmd.go evalReadEvents",
 		Note: "`harmonik eval` reads commit_hash off this event to record which commit each eval " +

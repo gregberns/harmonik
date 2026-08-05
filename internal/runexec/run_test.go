@@ -99,20 +99,6 @@ func TestRun_PreLaunchFailureReopenSpine(t *testing.T) {
 	}
 }
 
-func TestRun_EscapeReopenEmitsEscape(t *testing.T) {
-	m := NewRun(stdRunCfg())
-	m.Step(Event{Kind: EvStartRun, At: at(1)})
-	m.Step(Event{Kind: EvProvisioned, At: at(2)})
-	m.Step(Event{Kind: EvAgentCompleted, At: at(3)})
-	got := m.Step(Event{Kind: EvEscapeDetected, Reason: "escaped", At: at(4)})
-	if !eqKinds(kinds(got), []ActionKind{ActEmit, ActReopenBead, ActEmitRunTerminal}) {
-		t.Fatalf("escape: %v", kinds(got))
-	}
-	if got[0].Type != core.EventTypeImplementerEscapedWorktree {
-		t.Fatalf("escape emit type: %s", got[0].Type)
-	}
-}
-
 func TestRun_MergeRetryThenExhaustedReopen(t *testing.T) {
 	cfg := stdRunCfg()
 	cfg.MaxMergeAttempts = 2

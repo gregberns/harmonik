@@ -64,7 +64,6 @@ const (
 	EvModeOutcome         EventKind = "mode_outcome"
 	EvAgentCompleted      EventKind = "agent_completed" // single-mode dispatch terminal
 	EvCleanExit           EventKind = "clean_exit"      // exit-0 single-mode terminal
-	EvEscapeDetected      EventKind = "escape_detected"
 	EvNoCommitGuardReopen EventKind = "no_commit_guard_reopen"
 	EvGuardsPassed        EventKind = "guards_passed"
 	EvGatePassed          EventKind = "gate_passed"

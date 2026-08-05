@@ -296,14 +296,10 @@ func stepRunModeOutcome(cfg RunConfig, s RunState, ev Event) (RunState, []Action
 	}
 }
 
-// stepRunGuarding: the single-shot post-exit guards (RSM-008). Both guard
-// failures route to the reopen spine; a pass proceeds to Gating.
+// stepRunGuarding: the single-shot post-exit guard (RSM-008). A guard failure
+// routes to the reopen spine; a pass proceeds to Gating.
 func stepRunGuarding(cfg RunConfig, s RunState, ev Event) (RunState, []Action) {
 	switch ev.Kind {
-	case EvEscapeDetected:
-		return finalizeReopen(cfg, s, []Action{
-			{Kind: ActEmit, Type: core.EventTypeImplementerEscapedWorktree, Detail: ev.Reason},
-		}, ev.Reason, ev.Reason)
 	case EvNoCommitGuardReopen:
 		return finalizeReopen(cfg, s, nil, ev.Reason, ev.Reason)
 	case EvGuardsPassed:

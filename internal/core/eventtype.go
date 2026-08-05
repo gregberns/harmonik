@@ -104,17 +104,6 @@ const (
 	// Refs: hk-7qmpp.
 	EventTypeWorkingTreeLocalEditsOverwritten EventType = "working_tree_local_edits_overwritten"
 
-	// EventTypeImplementerEscapedWorktree is emitted by the daemon when, after
-	// the implementer process exits, the MAIN repo's working tree contains
-	// dirty files outside the normal harmonik churn allowlist
-	// (.harmonik/, .claude/, .beads/issues.jsonl). This indicates the
-	// implementer wrote files into the main repo instead of its worktree
-	// (cross-contamination — the run branch will have no commit but main
-	// is now dirty). Durability class: F (terminal-state landmark; the
-	// run is failed on this event).
-	// Refs: hk-6zylj.
-	EventTypeImplementerEscapedWorktree EventType = "implementer_escaped_worktree"
-
 	// EventTypeImplementerPhaseComplete is emitted by the daemon immediately
 	// after the implementer session ends (regardless of how: normal exit,
 	// noChange-timeout kill, or context cancellation) and before any reviewer

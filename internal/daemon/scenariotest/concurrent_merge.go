@@ -339,11 +339,6 @@ func RunConcurrentMerge(t *testing.T, cfg ConcurrentMergeConfig) ConcurrentMerge
 	t.Logf("RunConcurrentMerge: maxConcurrent=%d completed=%d failed=%d stale=%d launchStall=%d closed=%d/%d",
 		res.MaxConcurrent, res.Completed, res.Failed, res.Stale, res.LaunchStall, res.ClosedBeads, cfg.N)
 
-	// ── Assertion: no implementer_escaped_worktree (sibling-exclusion, hk-77q8e)
-	if nEscape := rcmEventCount(t, jsonlPath, string(core.EventTypeImplementerEscapedWorktree)); nEscape > 0 {
-		t.Errorf("RunConcurrentMerge: implementer_escaped_worktree emitted %d time(s); want 0", nEscape)
-	}
-
 	if cfg.ExpectAllComplete {
 		// ── STRONG terminal outcome (post-fix regression guard) ────────────────
 		if res.Completed < cfg.N {

@@ -97,11 +97,6 @@ func registerRunLifecycle() {
 	mustRegister("working_tree_local_edits_overwritten", func() EventPayload {
 		return &WorkingTreeLocalEditsOverwrittenPayload{}
 	})
-	// implementer_escaped_worktree (hk-6zylj): emitted by the daemon workloop
-	// when, after the implementer exits, the MAIN repo's working tree contains
-	// dirty files outside the .harmonik/.claude/.beads churn allowlist —
-	// indicating implementer cross-contamination. Durability class: F.
-	mustRegister("implementer_escaped_worktree", func() EventPayload { return &ImplementerEscapedWorktreePayload{} })
 	// implementer_phase_complete (hk-cd8yu): emitted immediately after the
 	// implementer session ends (normal exit, noChange-timeout kill, or context
 	// cancellation) and before any reviewer phase begins. Closes the diagnostic

@@ -24,7 +24,18 @@ import (
 // this artifact, so the contract here is by construction rather than by
 // citation. Adding a field is non-breaking. Renaming or removing one is
 // breaking and must raise this number.
-const SchemaVersion = 1
+//
+// Version 2 replaced the single `selection` object with a `selected` list, and
+// lifted the posture out of it to the top level. Both are renames, so this is a
+// breaking change: a version-1 reader handed a version-2 file would report an
+// empty selection rather than fail. [DecodeSnapshot] refuses a version it cannot
+// read for that reason.
+//
+// This number is not the assessor handoff schema version. 05-changelog.md
+// records a version-2-against-version-3 disagreement and that disagreement is
+// about specs/assessor-handoff-schema.md, a different artifact with its own
+// number. Do not reconcile the two.
+const SchemaVersion = 2
 
 // EventEvidenceNote is written into every snapshot by [Capture]. A caller
 // cannot supply, edit, or suppress it.
@@ -46,7 +57,9 @@ var (
 	ErrNoSelectedItem           = errors.New("readiness: snapshot names no selected item")
 	ErrSelectedItemNotOpen      = errors.New("readiness: selected item is not open")
 	ErrNoRepeatSafeReason       = errors.New("readiness: selected item has no repeat-safe reason")
-	ErrPostureNotOneLocalRun    = errors.New("readiness: posture is not one local stream run")
+	ErrPostureNotLocal          = errors.New("readiness: posture is not a local run")
+	ErrPostureItemCountMismatch = errors.New("readiness: posture item count does not equal the number of selected items")
+	ErrPostureConcurrencyUnset  = errors.New("readiness: posture states no concurrency")
 	ErrExclusionWithoutBead     = errors.New("readiness: excluded entry names no bead")
 	ErrExclusionWithoutReason   = errors.New("readiness: excluded candidate has no exclusion reason")
 	ErrDuplicateCandidate       = errors.New("readiness: candidate appears twice in the candidate set")
@@ -84,32 +97,35 @@ func candidateFrom(rec core.BeadRecord) Candidate {
 	}
 }
 
-// Posture is the run shape the selected item was judged against.
+// Posture is the shape of the run the selected items were judged against: how
+// many items it carries, how many run at the same time, and whether it stays on
+// this machine.
 //
-// BI-013e requires the selected item to be "suitable for one local stream run",
-// which is the three fields below. The wider rejection matrix — Pi, remote
-// worker, cross-repository target, wave queue, feedback use — belongs to the
-// validator that reads this record, not to the record itself.
+// It is a field of the snapshot and not of one selected item, because it
+// describes the run and not an item. A per-item copy would let two items in one
+// record disagree about how many items there are.
+//
+// The record holds the operator to one thing here and measures the rest.
+// BI-013e originally read the "one local stream run" clause as one item at
+// concurrency one, and the operator withdrew that reading: a queue that can only
+// carry one item at a time proves nothing worth proving. What survives is
+// LOCAL — a remote run is still out of scope for the first pass — plus the
+// arithmetic that keeps this record honest. ItemCount must equal the number of
+// selected items, so a record cannot claim three items and name one.
 type Posture struct {
 	Local       bool `json:"local"`
 	ItemCount   int  `json:"item_count"`
 	Concurrency int  `json:"concurrency"`
 }
 
-// oneLocalStreamRun reports whether p is the single local run BI-013e allows.
-func (p Posture) oneLocalStreamRun() bool {
-	return p.Local && p.ItemCount == 1 && p.Concurrency == 1
-}
-
-// Selection is the one candidate chosen for the canary, with the reason it is
-// safe to run more than once and the posture it was judged against.
+// SelectedItem is one candidate chosen for the run, with the reason it is safe
+// to run more than once.
 //
-// There is exactly one selection per snapshot because it is a field and not a
-// list. A record that selected two items, or none, cannot be built.
-type Selection struct {
+// The reason is per item and not per run. Two items are two separate judgements
+// and one sentence covering both is one of them being taken on trust.
+type SelectedItem struct {
 	Candidate        Candidate `json:"candidate"`
 	RepeatSafeReason string    `json:"repeat_safe_reason"`
-	Posture          Posture   `json:"posture"`
 }
 
 // Exclusion is a candidate that was considered and set aside, with the reason.
@@ -195,7 +211,8 @@ type CurrentFinding struct {
 type Snapshot struct {
 	SchemaVersion   int              `json:"schema_version"`
 	CapturedAt      time.Time        `json:"captured_at"`
-	Selection       Selection        `json:"selection"`
+	Posture         Posture          `json:"posture"`
+	Selected        []SelectedItem   `json:"selected"`
 	Excluded        []Exclusion      `json:"excluded"`
 	Commands        []Command        `json:"commands"`
 	Events          EventEvidence    `json:"events"`
@@ -204,15 +221,31 @@ type Snapshot struct {
 	CurrentFindings []CurrentFinding `json:"current_findings"`
 }
 
-// CandidateSet returns every bead this capture considered: the selected one
-// first, then each excluded one in the order the request gave them.
+// CandidateSet returns every bead this capture considered: the selected ones
+// first in selection order, then each excluded one in the order the request gave
+// them.
 func (s Snapshot) CandidateSet() []Candidate {
-	set := make([]Candidate, 0, len(s.Excluded)+1)
-	set = append(set, s.Selection.Candidate)
+	set := make([]Candidate, 0, len(s.Selected)+len(s.Excluded))
+	for _, sel := range s.Selected {
+		set = append(set, sel.Candidate)
+	}
 	for _, e := range s.Excluded {
 		set = append(set, e.Candidate)
 	}
 	return set
+}
+
+// SelectedBeadIDs returns the chosen beads in selection order.
+//
+// It exists so a reader that only wants the names does not have to reach through
+// two struct layers, and so the validation record can name every selected item
+// rather than the first one.
+func (s Snapshot) SelectedBeadIDs() []string {
+	ids := make([]string, 0, len(s.Selected))
+	for _, sel := range s.Selected {
+		ids = append(ids, string(sel.Candidate.BeadID))
+	}
+	return ids
 }
 
 // OutputPaths returns the retained output file of every recorded command, in
@@ -241,7 +274,8 @@ func (s Snapshot) OutputPaths() []string {
 // outside this package is [Capture], which reads every status itself.
 type request struct {
 	CapturedAt      time.Time
-	Selection       Selection
+	Posture         Posture
+	Selected        []SelectedItem
 	Excluded        []Exclusion
 	Commands        []Command
 	EventLogPaths   []string
@@ -252,9 +286,9 @@ type request struct {
 
 // newSnapshot checks req against BI-013e and returns the retained record.
 //
-// It refuses rather than repairing: a request that does not say why the
-// selected item is safe to re-run is not a request with a missing field, it is
-// a selection nobody justified.
+// It refuses rather than repairing: a request that does not say why a selected
+// item is safe to re-run is not a request with a missing field, it is a
+// selection nobody justified.
 //
 // The returned snapshot's event note is always [EventEvidenceNote].
 func newSnapshot(req request) (Snapshot, error) {
@@ -264,10 +298,13 @@ func newSnapshot(req request) (Snapshot, error) {
 	if len(req.Commands) == 0 {
 		return Snapshot{}, ErrNoCommands
 	}
-	if err := checkSelection(req.Selection); err != nil {
+	if err := checkSelected(req.Selected); err != nil {
 		return Snapshot{}, err
 	}
-	if err := checkCandidateSet(req.Selection.Candidate, req.Excluded); err != nil {
+	if err := checkPosture(req.Posture, len(req.Selected)); err != nil {
+		return Snapshot{}, err
+	}
+	if err := checkCandidateSet(req.Selected, req.Excluded); err != nil {
 		return Snapshot{}, err
 	}
 	if len(req.EventLogPaths) == 0 {
@@ -283,7 +320,8 @@ func newSnapshot(req request) (Snapshot, error) {
 	return Snapshot{
 		SchemaVersion: SchemaVersion,
 		CapturedAt:    req.CapturedAt.UTC(),
-		Selection:     req.Selection,
+		Posture:       req.Posture,
+		Selected:      req.Selected,
 		Excluded:      req.Excluded,
 		Commands:      req.Commands,
 		Events: EventEvidence{
@@ -296,31 +334,64 @@ func newSnapshot(req request) (Snapshot, error) {
 	}, nil
 }
 
-// checkSelection enforces the three things BI-013e says of the selected item:
-// it is open, it is repeat-safe with a stated reason, and it is suitable for
-// one local stream run.
-func checkSelection(sel Selection) error {
-	if sel.Candidate.BeadID == "" {
+// checkSelected enforces what BI-013e says of every selected item: it is named,
+// it is open, and it carries its own stated reason for being safe to re-run.
+//
+// The loop runs over all of them rather than stopping at the first, because a
+// record that proved its first item and took the rest on trust is the failure
+// this list shape exists to make impossible.
+func checkSelected(selected []SelectedItem) error {
+	if len(selected) == 0 {
 		return ErrNoSelectedItem
 	}
-	if sel.Candidate.Status != core.CoarseStatusOpen {
-		return fmt.Errorf("%w: %s is %s", ErrSelectedItemNotOpen, sel.Candidate.BeadID, sel.Candidate.Status)
+	for _, sel := range selected {
+		if sel.Candidate.BeadID == "" {
+			return ErrNoSelectedItem
+		}
+		if sel.Candidate.Status != core.CoarseStatusOpen {
+			return fmt.Errorf("%w: %s is %s", ErrSelectedItemNotOpen, sel.Candidate.BeadID, sel.Candidate.Status)
+		}
+		if sel.RepeatSafeReason == "" {
+			return fmt.Errorf("%w: %s", ErrNoRepeatSafeReason, sel.Candidate.BeadID)
+		}
 	}
-	if sel.RepeatSafeReason == "" {
-		return fmt.Errorf("%w: %s", ErrNoRepeatSafeReason, sel.Candidate.BeadID)
+	return nil
+}
+
+// checkPosture holds the run shape to the two things that are still refusals
+// after the operator withdrew the one-item rule, plus the arithmetic that keeps
+// the record honest.
+//
+// The item-count equality is the load-bearing one. Without it a snapshot can
+// state that the run carries three items and then name one of them, and the
+// assessor reading the file six weeks later has no way to tell which number is
+// the true one.
+func checkPosture(p Posture, selectedCount int) error {
+	if !p.Local {
+		return ErrPostureNotLocal
 	}
-	if !sel.Posture.oneLocalStreamRun() {
-		return fmt.Errorf("%w: local=%t items=%d concurrency=%d",
-			ErrPostureNotOneLocalRun, sel.Posture.Local, sel.Posture.ItemCount, sel.Posture.Concurrency)
+	if p.Concurrency < 1 {
+		return fmt.Errorf("%w: concurrency=%d", ErrPostureConcurrencyUnset, p.Concurrency)
+	}
+	if p.ItemCount != selectedCount {
+		return fmt.Errorf("%w: posture says %d items, %d are named",
+			ErrPostureItemCountMismatch, p.ItemCount, selectedCount)
 	}
 	return nil
 }
 
 // checkCandidateSet enforces that every excluded entry names a bead and a
 // reason, and that no bead appears twice across the whole set. A bead listed as
-// both selected and excluded is a capture that contradicts itself.
-func checkCandidateSet(selected Candidate, excluded []Exclusion) error {
-	seen := map[core.BeadID]struct{}{selected.BeadID: {}}
+// both selected and excluded, or selected twice, is a capture that contradicts
+// itself.
+func checkCandidateSet(selected []SelectedItem, excluded []Exclusion) error {
+	seen := make(map[core.BeadID]struct{}, len(selected)+len(excluded))
+	for _, sel := range selected {
+		if _, dup := seen[sel.Candidate.BeadID]; dup {
+			return fmt.Errorf("%w: %s", ErrDuplicateCandidate, sel.Candidate.BeadID)
+		}
+		seen[sel.Candidate.BeadID] = struct{}{}
+	}
 	for _, e := range excluded {
 		if e.Candidate.BeadID == "" {
 			return fmt.Errorf("%w: reason %q", ErrExclusionWithoutBead, e.Reason)

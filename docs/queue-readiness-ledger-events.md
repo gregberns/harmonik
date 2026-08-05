@@ -14,26 +14,52 @@ more. It does not change fleet state.
 
 ## 2. The readiness snapshot
 
-Capture one snapshot before you select the canary item. Today the capture is a
-helper package with no command in front of it, so a gate owner reaches it from
-Go and not from a shell. The `harmonik queue readiness` verb and the
-`make queue-dogfood-readiness` target that drive it are task T9 of the kerf work
-`queue-dogfood-readiness`.
+Capture one snapshot before you select the canary items. Two commands drive it:
+
+    harmonik queue readiness capture   # reads the live ledger, writes the record
+    harmonik queue readiness validate  # judges the record, the plan and the host
+
+`make queue-dogfood-readiness` runs both in order and measures the host between
+them. It requires four inputs and guesses none of them: the scratch clone, the
+evidence directory, the canary items with a reason each, and the concurrency.
 
 The snapshot records:
 
 - the capture time;
+- the run shape — how many items, how many at the same time, and whether the run
+  stays on this machine;
 - every command that produced part of the evidence, and the file that holds its
   retained output;
-- the candidate set — the selected item first, then every candidate you set
+- the candidate set — the selected items first, then every candidate you set
   aside;
 - the reason you set each other candidate aside;
 - the live ledger data for every candidate;
 - every event-log file the evidence came from;
 - the terminal-intent inspection.
 
-The selected item must be open. It must be repeat-safe, and you must say why. It
-must suit one local stream run: one item, concurrency one, no remote worker.
+Every selected item must be open, and each must carry its own reason for being
+safe to run more than once. One sentence covering three items is two of them
+taken on trust.
+
+## 2a. The run shape
+
+The record holds a run to one rule and measures the rest. A remote run is out of
+scope for the first pass, so the run must be LOCAL. Everything else about the
+shape is recorded rather than refused.
+
+**The one-item rule is withdrawn.** An earlier reading of BI-013e required one
+item at concurrency one. The operator overruled it: a queue that can carry only
+one item at a time proves nothing worth proving, and the assessor's job is to
+sign off on several items running at once.
+
+What replaced it is arithmetic. The stated item count must equal the number of
+items the record names. Without that check, widening the run shape gives a
+record that claims three items and names one, and the assessor reading it six
+weeks later cannot tell which number is true. The concurrency must be stated;
+no particular value is required.
+
+The run shape is one field of the record and not a copy inside each selected
+item, so two items in one record cannot disagree about how many items there are.
 
 Selection is planning. It closes no bead, creates no bead, and changes no fleet
 ledger state.
@@ -53,7 +79,8 @@ capture widens the port it was given and writes through it — the fake ledger i
 runs against accepts writes, so the test can see one.
 
 Every candidate status in the snapshot comes from a live `br show` at capture
-time. A caller supplies bead identifiers and reasons. It cannot supply a status.
+time, one read per candidate. A caller supplies bead identifiers and reasons. It
+cannot supply a status.
 
 ## 4. Event evidence
 
@@ -92,7 +119,21 @@ it, and the source path where it was seen.
 Only the operator authorizes a ledger change that closes a stale finding. The
 snapshot records the evidence for one. It does not make one.
 
-## 7. References
+## 7. Schema versions
+
+The snapshot is at version 2 and the validation record is at version 2. Version
+2 of the snapshot replaced the single selection object with a list and lifted
+the run shape to the top of the record. Both are renames, so a reader of the
+older version cannot read the newer one, and the decoder refuses a version it
+cannot read rather than reporting an empty selection.
+
+These numbers are not the assessor handoff schema version.
+`.kerf/works/queue-dogfood-readiness/05-changelog.md` records a disagreement
+between version 2 and version 3, and that disagreement is about
+`specs/assessor-handoff-schema.md`, a separate artifact with its own number. Do
+not reconcile the two.
+
+## 8. References
 
 - `specs/beads-integration.md` §4.5b BI-013e, §4.5a BI-013b, §4.7 BI-021 to
   BI-023.

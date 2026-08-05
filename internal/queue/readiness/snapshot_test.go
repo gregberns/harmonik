@@ -27,7 +27,8 @@ var capturedAt = time.Date(2026, 8, 4, 17, 30, 0, 0, time.UTC)
 func wholeRequest() request {
 	return request{
 		CapturedAt: capturedAt,
-		Selection: Selection{
+		Posture:    Posture{Local: true, ItemCount: 1, Concurrency: 1},
+		Selected: []SelectedItem{{
 			Candidate: Candidate{
 				BeadID: "hk-canary",
 				Title:  "correct one comment in the scratch clone",
@@ -35,8 +36,7 @@ func wholeRequest() request {
 				Labels: []string{"codename:queue-dogfood-readiness"},
 			},
 			RepeatSafeReason: "single-file comment edit; re-running it reaches the same tree",
-			Posture:          Posture{Local: true, ItemCount: 1, Concurrency: 1},
-		},
+		}},
 		Excluded: []Exclusion{
 			{
 				Candidate: Candidate{BeadID: "hk-remote", Title: "remote worker probe", Status: core.CoarseStatusOpen},
@@ -64,6 +64,38 @@ func wholeRequest() request {
 	}
 }
 
+// manyItemRequest is the run the operator asked for: several items at once,
+// each with its own reason for being safe to re-run.
+func manyItemRequest() request {
+	req := wholeRequest()
+	req.Posture = Posture{Local: true, ItemCount: 3, Concurrency: 3}
+	req.Selected = []SelectedItem{
+		{
+			Candidate:        Candidate{BeadID: "hk-canary", Title: "correct one comment", Status: core.CoarseStatusOpen},
+			RepeatSafeReason: "single-file comment edit; re-running it reaches the same tree",
+		},
+		{
+			Candidate:        Candidate{BeadID: "hk-second", Title: "correct a second comment", Status: core.CoarseStatusOpen},
+			RepeatSafeReason: "touches one other file that nothing tests",
+		},
+		{
+			Candidate:        Candidate{BeadID: "hk-third", Title: "correct a third comment", Status: core.CoarseStatusOpen},
+			RepeatSafeReason: "adds a doc line; the tree is the same whether it runs once or twice",
+		},
+	}
+	return req
+}
+
+// multiItemSnapshot is the many-item record the validator tests judge against.
+func multiItemSnapshot(t *testing.T) Snapshot {
+	t.Helper()
+	snap, err := newSnapshot(manyItemRequest())
+	if err != nil {
+		t.Fatalf("newSnapshot on a many-item request: %v", err)
+	}
+	return snap
+}
+
 func TestNewSnapshot_RecordsEveryFieldTheReadinessRequirementNames(t *testing.T) {
 	got, err := newSnapshot(wholeRequest())
 	if err != nil {
@@ -76,11 +108,14 @@ func TestNewSnapshot_RecordsEveryFieldTheReadinessRequirementNames(t *testing.T)
 	if !got.CapturedAt.Equal(capturedAt) {
 		t.Errorf("capture time = %s, want %s", got.CapturedAt, capturedAt)
 	}
-	if got.Selection.Candidate.BeadID != "hk-canary" {
-		t.Errorf("selected item = %q, want hk-canary", got.Selection.Candidate.BeadID)
+	if len(got.Selected) != 1 || got.Selected[0].Candidate.BeadID != "hk-canary" {
+		t.Errorf("selected items = %+v, want hk-canary", got.Selected)
 	}
-	if got.Selection.RepeatSafeReason == "" {
+	if got.Selected[0].RepeatSafeReason == "" {
 		t.Error("selected item kept no repeat-safe reason")
+	}
+	if got.Posture != (Posture{Local: true, ItemCount: 1, Concurrency: 1}) {
+		t.Errorf("posture = %+v, want the one the request stated", got.Posture)
 	}
 	if len(got.Excluded) != 1 || got.Excluded[0].Reason == "" {
 		t.Errorf("exclusions = %+v, want one with a reason", got.Excluded)
@@ -99,6 +134,30 @@ func TestNewSnapshot_RecordsEveryFieldTheReadinessRequirementNames(t *testing.T)
 	}
 	if len(got.CurrentFindings) != 1 {
 		t.Errorf("current findings = %d, want 1", len(got.CurrentFindings))
+	}
+}
+
+// The record the operator asked for: several items, each named, each with its
+// own reason. The old shape held one selection in a field and could not express
+// this at all.
+func TestNewSnapshot_RecordsSeveralSelectedItemsEachWithItsOwnReason(t *testing.T) {
+	got := multiItemSnapshot(t)
+
+	if len(got.Selected) != 3 {
+		t.Fatalf("selected items = %d, want 3", len(got.Selected))
+	}
+	if got.Posture.ItemCount != 3 || got.Posture.Concurrency != 3 {
+		t.Errorf("posture = %+v, want three items at concurrency three", got.Posture)
+	}
+	reasons := map[string]bool{}
+	for _, sel := range got.Selected {
+		if sel.RepeatSafeReason == "" {
+			t.Errorf("%s carries no repeat-safe reason", sel.Candidate.BeadID)
+		}
+		reasons[sel.RepeatSafeReason] = true
+	}
+	if len(reasons) != 3 {
+		t.Errorf("three items share %d reasons; each item is its own judgement", len(reasons))
 	}
 }
 
@@ -125,32 +184,104 @@ func TestNewSnapshot_RefusesASelectedItemThatIsNotOpen(t *testing.T) {
 		core.CoarseStatusTombstone,
 	} {
 		req := wholeRequest()
-		req.Selection.Candidate.Status = status
+		req.Selected[0].Candidate.Status = status
 		if _, err := newSnapshot(req); !errors.Is(err, ErrSelectedItemNotOpen) {
 			t.Errorf("status %s: err = %v, want ErrSelectedItemNotOpen", status, err)
 		}
 	}
 }
 
+// A record that proved its first item and took the rest on trust is the failure
+// the list shape exists to make impossible, so the check runs to the end.
+func TestNewSnapshot_RefusesANotOpenItemAnywhereInTheSelection(t *testing.T) {
+	for _, at := range []int{0, 1, 2} {
+		req := manyItemRequest()
+		req.Selected[at].Candidate.Status = core.CoarseStatusClosed
+		if _, err := newSnapshot(req); !errors.Is(err, ErrSelectedItemNotOpen) {
+			t.Errorf("closed item at position %d: err = %v, want ErrSelectedItemNotOpen", at, err)
+		}
+	}
+}
+
 func TestNewSnapshot_RefusesASelectionWithNoStatedRepeatSafeReason(t *testing.T) {
 	req := wholeRequest()
-	req.Selection.RepeatSafeReason = ""
+	req.Selected[0].RepeatSafeReason = ""
 	if _, err := newSnapshot(req); !errors.Is(err, ErrNoRepeatSafeReason) {
 		t.Errorf("err = %v, want ErrNoRepeatSafeReason", err)
 	}
 }
 
-func TestNewSnapshot_RefusesAPostureThatIsNotOneLocalStreamRun(t *testing.T) {
-	for name, posture := range map[string]Posture{
-		"not local":       {Local: false, ItemCount: 1, Concurrency: 1},
-		"two items":       {Local: true, ItemCount: 2, Concurrency: 1},
-		"no items":        {Local: true, ItemCount: 0, Concurrency: 1},
-		"concurrency two": {Local: true, ItemCount: 1, Concurrency: 2},
+// Every item needs its own reason. One sentence covering three items is two of
+// them taken on trust.
+func TestNewSnapshot_RefusesAnyOneItemWithNoStatedRepeatSafeReason(t *testing.T) {
+	for _, at := range []int{0, 1, 2} {
+		req := manyItemRequest()
+		req.Selected[at].RepeatSafeReason = ""
+		if _, err := newSnapshot(req); !errors.Is(err, ErrNoRepeatSafeReason) {
+			t.Errorf("no reason at position %d: err = %v, want ErrNoRepeatSafeReason", at, err)
+		}
+	}
+}
+
+// The load-bearing one. Widening the posture without this check gives a record
+// that claims three items and can name only one, and the assessor reading the
+// file six weeks later cannot tell which number is true.
+func TestNewSnapshot_RefusesAPostureWhoseItemCountDoesNotMatchTheItemsNamed(t *testing.T) {
+	for name, tc := range map[string]struct {
+		itemCount int
+		selected  int
+	}{
+		"claims three, names one":  {itemCount: 3, selected: 1},
+		"claims one, names three":  {itemCount: 1, selected: 3},
+		"claims none, names one":   {itemCount: 0, selected: 1},
+		"claims four, names three": {itemCount: 4, selected: 3},
 	} {
+		req := manyItemRequest()
+		req.Selected = req.Selected[:tc.selected]
+		req.Posture.ItemCount = tc.itemCount
+
+		if _, err := newSnapshot(req); !errors.Is(err, ErrPostureItemCountMismatch) {
+			t.Errorf("%s: err = %v, want ErrPostureItemCountMismatch", name, err)
+		}
+	}
+}
+
+// A remote run is still out of scope for the first pass. Only the one-item and
+// concurrency-one rules were withdrawn.
+func TestNewSnapshot_RefusesARunThatIsNotLocal(t *testing.T) {
+	req := wholeRequest()
+	req.Posture.Local = false
+	if _, err := newSnapshot(req); !errors.Is(err, ErrPostureNotLocal) {
+		t.Errorf("err = %v, want ErrPostureNotLocal", err)
+	}
+}
+
+// The record must state how many items run at the same time. A zero states
+// nothing, and a record that accepted one would be evidence about a run shape
+// nobody wrote down.
+func TestNewSnapshot_RefusesAPostureThatStatesNoConcurrency(t *testing.T) {
+	for _, concurrency := range []int{0, -1} {
 		req := wholeRequest()
-		req.Selection.Posture = posture
-		if _, err := newSnapshot(req); !errors.Is(err, ErrPostureNotOneLocalRun) {
-			t.Errorf("%s: err = %v, want ErrPostureNotOneLocalRun", name, err)
+		req.Posture.Concurrency = concurrency
+		if _, err := newSnapshot(req); !errors.Is(err, ErrPostureConcurrencyUnset) {
+			t.Errorf("concurrency %d: err = %v, want ErrPostureConcurrencyUnset", concurrency, err)
+		}
+	}
+}
+
+// The rule the operator withdrew. This test is the guard against it coming
+// back: more than one item at more than concurrency one is a record the package
+// must be able to build.
+func TestNewSnapshot_AcceptsSeveralItemsAtConcurrencyAboveOne(t *testing.T) {
+	for name, posture := range map[string]Posture{
+		"three items, three at once": {Local: true, ItemCount: 3, Concurrency: 3},
+		"three items, two at once":   {Local: true, ItemCount: 3, Concurrency: 2},
+		"three items, ten at once":   {Local: true, ItemCount: 3, Concurrency: 10},
+	} {
+		req := manyItemRequest()
+		req.Posture = posture
+		if _, err := newSnapshot(req); err != nil {
+			t.Errorf("%s: newSnapshot refused a many-item run: %v", name, err)
 		}
 	}
 }
@@ -173,11 +304,22 @@ func TestNewSnapshot_RefusesAnExclusionMissingEitherHalf(t *testing.T) {
 	}
 }
 
-// A bead that is both the canary and a rejected candidate is a capture that
+// A bead that is both a canary and a rejected candidate is a capture that
 // contradicts itself, and the contradiction is invisible in the rendered file.
 func TestNewSnapshot_RefusesABeadThatIsBothSelectedAndExcluded(t *testing.T) {
 	req := wholeRequest()
-	req.Excluded[0].Candidate.BeadID = req.Selection.Candidate.BeadID
+	req.Excluded[0].Candidate.BeadID = req.Selected[0].Candidate.BeadID
+	if _, err := newSnapshot(req); !errors.Is(err, ErrDuplicateCandidate) {
+		t.Errorf("err = %v, want ErrDuplicateCandidate", err)
+	}
+}
+
+// One bead selected twice inflates the item count against a run that would
+// dispatch it once. The old one-selection shape could not express this; the
+// list can, so the check has to.
+func TestNewSnapshot_RefusesTheSameBeadSelectedTwice(t *testing.T) {
+	req := manyItemRequest()
+	req.Selected[2].Candidate.BeadID = req.Selected[0].Candidate.BeadID
 	if _, err := newSnapshot(req); !errors.Is(err, ErrDuplicateCandidate) {
 		t.Errorf("err = %v, want ErrDuplicateCandidate", err)
 	}
@@ -224,7 +366,8 @@ func TestNewSnapshot_RefusesACaptureMissingItsRequiredEvidencePaths(t *testing.T
 	}{
 		"no capture time":            {func(r *request) { r.CapturedAt = time.Time{} }, ErrNoCaptureTime},
 		"no commands":                {func(r *request) { r.Commands = nil }, ErrNoCommands},
-		"no selected item":           {func(r *request) { r.Selection.Candidate.BeadID = "" }, ErrNoSelectedItem},
+		"no selected item at all":    {func(r *request) { r.Selected = nil }, ErrNoSelectedItem},
+		"a selected item with no ID": {func(r *request) { r.Selected[0].Candidate.BeadID = "" }, ErrNoSelectedItem},
 		"no event log path":          {func(r *request) { r.EventLogPaths = nil }, ErrNoEventLogPath},
 		"no terminal-intent inspect": {func(r *request) { r.TerminalIntent.Dir = "" }, ErrNoTerminalIntentDir},
 	} {
@@ -275,17 +418,47 @@ func TestSnapshot_KeepsStaleFindingsOutOfTheCurrentFindingListThroughJSON(t *tes
 	}
 }
 
-func TestSnapshot_CandidateSetIsTheSelectedItemPlusEveryExcludedOne(t *testing.T) {
-	snap, err := newSnapshot(wholeRequest())
+// The posture is one key at the top of the file and not a copy inside each
+// selected item. Two copies could disagree about how many items there are.
+func TestSnapshot_WritesThePostureOnceAtTheTopOfTheFile(t *testing.T) {
+	body, err := json.Marshal(multiItemSnapshot(t))
 	if err != nil {
-		t.Fatalf("newSnapshot: %v", err)
+		t.Fatalf("marshal: %v", err)
 	}
-	set := snap.CandidateSet()
-	if len(set) != 2 {
-		t.Fatalf("candidate set = %d beads, want 2", len(set))
+	if got := strings.Count(string(body), `"posture"`); got != 1 {
+		t.Errorf("encoded snapshot names the posture %d times, want once", got)
 	}
-	if set[0].BeadID != "hk-canary" || set[1].BeadID != "hk-remote" {
-		t.Errorf("candidate set = %s, %s; want the selected item first", set[0].BeadID, set[1].BeadID)
+	if !strings.Contains(string(body), `"item_count":3`) {
+		t.Errorf("encoded snapshot does not record the item count: %s", body)
+	}
+	if !strings.Contains(string(body), `"concurrency":3`) {
+		t.Errorf("encoded snapshot does not record the concurrency: %s", body)
+	}
+}
+
+func TestSnapshot_CandidateSetIsEverySelectedItemPlusEveryExcludedOne(t *testing.T) {
+	set := multiItemSnapshot(t).CandidateSet()
+	if len(set) != 4 {
+		t.Fatalf("candidate set = %d beads, want 4", len(set))
+	}
+	want := []core.BeadID{"hk-canary", "hk-second", "hk-third", "hk-remote"}
+	for i, id := range want {
+		if set[i].BeadID != id {
+			t.Errorf("candidate %d = %s, want %s; selected items come first, in order", i, set[i].BeadID, id)
+		}
+	}
+}
+
+func TestSnapshot_SelectedBeadIDsNamesEveryChosenItemInOrder(t *testing.T) {
+	ids := multiItemSnapshot(t).SelectedBeadIDs()
+	want := []string{"hk-canary", "hk-second", "hk-third"}
+	if len(ids) != len(want) {
+		t.Fatalf("selected bead IDs = %q, want %q", ids, want)
+	}
+	for i := range want {
+		if ids[i] != want[i] {
+			t.Errorf("selected bead %d = %q, want %q", i, ids[i], want[i])
+		}
 	}
 }
 

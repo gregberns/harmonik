@@ -1,5 +1,28 @@
 # Event Model
 
+> **HOLD 2026-08-05 — read before any re-finalize of this draft.** This file
+> carries two recovery-observation designs, and neither may be copied into
+> `specs/` as it stands.
+>
+> **EV-051, at the end of this file, is RETIRED and must not land.** It comes
+> from the second, superseded changelog table, it names no event type, and it
+> adds no §8 row. `specs/event-model.md` retires the identifier and the number
+> is not reusable.
+>
+> **The Class-O `queue_recovered` design is authorized but is HELD.** It is the
+> plan of record's event and it is the right shape. Nothing emits it. There is
+> no Go type, constructor or registry entry, and the live emitter contract
+> `queue-model.md` §8.3b QM-052b requires a dispatch wake and no emission.
+> §4.6 EV-027 also needs the emitter-spec edit and one consumer cited in another
+> spec, and neither exists. Land it with the code that emits it — card T3 in
+> this work's `07-tasks.md`.
+>
+> Every site a whole-file copy would land: the §8.10.9 table row, the §6.3
+> `queue_paused` note (which would overwrite the correct live sentence saying
+> the operation emits no event today), the §6.3 `queue_recovered` payload
+> block, the §6.5 co-ownership list that counts nine queue entries, the §10
+> conformance text, and the EV-051 amendment. Bead: hk-6lt60.
+
 ```yaml
 ---
 title: Event Model
@@ -1489,6 +1512,16 @@ reason: <String>                         # enum: group_failure | operator_drain 
 
 #### `queue_recovered`
 
+> **HOLD 2026-08-05. DO NOT COPY `queue_recovered` INTO `specs/` YET.** This
+> section is authorized. It is the plan of record's Class-O event and it is the
+> right shape. It is held back because nothing emits it. There is no Go type,
+> constructor or registry entry, and the live emitter contract
+> `queue-model.md` §8.3b QM-052b requires a dispatch wake and no emission at
+> all. §4.6 EV-027 also requires the emitter-spec edit and one consumer cited in
+> another spec, and neither exists. Land this section in the same commit as the
+> code that emits the event — that is card T3 in this work's `07-tasks.md`.
+> Bead: hk-6lt60.
+
 ```yaml
 queue_id: <String>
 normalized_name: <String>
@@ -2008,6 +2041,15 @@ Default-if-unresolved: Implement `recover_and_log`; `quarantine_consumer` and `f
 **Hidden assumptions explicitly acknowledged.** (1) The bus is in-process; cross-process consumers (investigator agents in separate Claude Code sessions) read JSONL subject to EV-021/EV-022. (2) One JSONL file per project; cross-project correlation is out of scope. (3) Redaction-before-observe destroys evidence that a payload contained a secret; this is a deliberate safety-over-forensics tradeoff. (4) `trace_context.parent_event_id` is populated SHOULD, not MUST; payload-specific causal fields (`triggering_event_id`) coexist deliberately for cases where the causal link is type-specific. (5) The registry and cohort tests define the taxonomy total. It has no hard budget. Later subsystems expand it via EV-027. A soft target of ≤120 is advisory, not normative. (6) `fsync(2)` durability is contingent on the filesystem honoring write barriers and the storage device flushing its write cache; consumer-grade SSDs without power-loss-protection may silently weaken EV-016 to "best-effort durability at the kernel boundary." Operators on such hardware accept this floor.
 
 ## Amendment — failed recovery observation
+
+> **RETIRED 2026-08-05. DO NOT COPY EV-051 INTO `specs/`.** It comes from the
+> second, superseded changelog table. The plan of record for this spec reads
+> "Adds class-O `queue_recovered`" and its change design says "The event is
+> class O", so the Class-F choice below loses the tiebreak both files state. It
+> also names no event type and adds no §8 row, which §4.6 EV-027 requires of
+> every addition amendment. The identifier is retired in `specs/event-model.md`
+> and is not reusable. The Class-O `queue_recovered` section earlier in this
+> draft carries a HOLD banner of its own. Bead: hk-6lt60.
 
 ### EV-051 — Failed recovery events
 

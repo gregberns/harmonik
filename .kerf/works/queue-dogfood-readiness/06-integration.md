@@ -129,8 +129,11 @@ referenced specification.
 > reusable. `PL-033` is retired in `specs/process-lifecycle.md`. `WM-041` is
 > retired in `specs/workspace-model.md`, so the consistency-check sentence
 > below that says "WM-041 applies only to the retained terminal ladder" no
-> longer describes a live rule. Read this section as a record of what the losing
-> lane drafted, not as a list of live requirements. Bead: hk-6lt60.
+> longer describes a live rule. `EV-051` is retired in `specs/event-model.md`,
+> and no recovery event is registered in its place, so the sentence below that
+> says "`queue_recovered` is the only recovery observation" describes no live
+> event. Read this section as a record of what the losing lane drafted, not as a
+> list of live requirements. Bead: hk-6lt60.
 
 #### Consistency checks
 

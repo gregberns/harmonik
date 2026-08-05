@@ -8,10 +8,10 @@ requirement-prefix: EV
 status: draft
 spec-category: foundation-cross-cutting
 spec-shape: taxonomy-first
-version: 0.7.7
+version: 0.7.8
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-08-02
+last-updated: 2026-08-05
 depends-on:
   - architecture
   - execution-model
@@ -1918,6 +1918,8 @@ Default-if-unresolved: Implement `recover_and_log`; `quarantine_consumer` and `f
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-08-05 | 0.7.8 | agent (spec repair, hk-6lt60) | **EV-051 retired. The number is not reusable. No event type is added and §8.10 keeps its eight rows.** EV-051 arrived at 0.7.7 from a kerf work whose changelog holds two target tables and states that the first wins a disagreement. The first table reads "Adds class-O `queue_recovered` with payload, ordering, and replay rules" and its change design says "The event is class O". EV-051 says Class F, which under §4.4 EV-016 puts a synchronous `fsync(2)` on the emit path that the design kept off it. EV-051 also named no event type and added no §8 row, so it satisfied none of the three parts §4.6 EV-027 requires of an addition amendment. The §6.3 `queue_paused` payload note, written on 2026-08-03 one day after EV-051 landed, already said the recovery operation "emits no event today", and the live emitter contract [queue-model.md §8.3b QM-052b] requires a dispatch wake and no emission. The Class-O `queue_recovered` event is NOT landed in its place: it has no Go definition, constructor or registry entry, and adding it needs the full EV-027 amendment plus an emission requirement in the emitter spec. That work is card T3 of the kerf work and belongs with the code that emits the event. Refs: hk-6lt60, hk-7bfqe. |
+| 2026-08-02 | 0.7.7 | agent (kerf finalize, queue-dogfood-readiness) | **EV-051 added, and it should not have been.** The finalize appended an "Amendment — failed recovery observation" block carrying EV-051 and bumped the version with no row in this table. The row is written here at 0.7.8 so the table is complete. The finalize took every target from the second, superseded changelog table. Refs: hk-6lt60. |
 | 2026-08-02 | 0.7.6 | agent (codename:event-payload-ownership) | **Step 13 no-review binding.** Adds `queue_item_single_mode` as a distinct `workflow_selection_source`. A tier-0 queue item with `workflow_mode=single` maps to the same named no-review graph as a legacy label. `review_policy` is resolver output. Only the registered embedded `no-review-bead` version `1.0` descriptor, selected through one of the two legacy sources, may emit `no_review`. The event producer rejects every other no-review tuple before `run_started`. |
 | 2026-08-02 | 0.7.5 | agent (codename:event-payload-ownership) | **Step 13 event payload ownership.** `run_started` moves to payload version 2. It now records a logical DOT `WorkflowDescriptor` (`workflow_id`, `workflow_version`), `workflow_mode = dot`, the resolved `review_policy`, and `workflow_selection_source`. A `workflow:single` label resolves to the named no-review DOT graph before the event is emitted. The former daemon-private v1 lifecycle record remains readable only through a tolerant replay and reconciliation path. The normal v2 reader is strict. §4.6 now requires every cross-bus emitter to convert local or wire data to one registered core payload. `handler_capabilities` gains a concrete schema and wire-to-core conversion rule. `liveness_halt` and `stale_open_bead_detected` gain missing §6.3 schemas. `stale_open_bead_detected` is added as §8.22 eager-refill provenance. No existing §8 rows are renumbered. |
 | 2026-08-01 | 0.7.4 | agent (hk-3ywqv) | **§8.1.12 `implementer_no_work_suspected` states its emitter as every process-exit harness, not codex alone.** The clause read "a process-exit implementer (codex)", and a reader who took the parenthetical as the scope built the detector inside the codex leg of the commit fallback's harness branch. A `single`-mode Pi run — same clean worktree, same seconds-long phase, same commit-fallback outcome — therefore produced no record at all. The `dot` path was covered only by accident, because it routes every process-exit harness through the codex wrapper. The clause now names the property that decides the emission: the trigger is the harness commit fallback's outcome, and the codex and Pi fallbacks reach the same primitives in `internal/harness/shared/refstrailer.go` and return the same `shared.RefsOutcome`, so one detector reads either. Evidence bullet (g) follows, from "codex-path consumers" to "process-exit-path consumers". No obligation is weakened: both conditions (no commit, a clean worktree, and a phase under the floor) are unchanged, the durability class is unchanged, and the event stays a detector rather than a gate. No requirement IDs added, renumbered, or retired. |
@@ -1978,10 +1980,50 @@ Default-if-unresolved: Implement `recover_and_log`; `quarantine_consumer` and `f
 
 ## Amendment — failed recovery observation
 
-### EV-051 — Failed recovery events
-
-The daemon MUST emit Class-F recovery-result events after QM-058 commits. The
-payload MUST include queue, affected groups, item count, prior and current
-state, recovery receipt, retired run IDs, and result reason. The event stream
-MUST distinguish accepted, no-op, and rejected recovery. Existing `run_*`
-events remain the only item terminal events.
+> **EV-051 — Failed recovery events — RETIRED 2026-08-05, and the number is not
+> reusable.** It required the daemon to emit Class-F recovery-result events
+> after QM-058 commits, named the payload fields, required the stream to
+> separate accepted, no-op and rejected recovery, and kept `run_*` as the only
+> item terminal events.
+>
+> **It named no event type and added no §8 row.** §4.6 EV-027 requires an
+> addition amendment to provide the type name, the emitter, the typical
+> consumers, the payload fields, the four-axis tags, the durability class and
+> evidence for every §8.9 criterion, and to include the §8 row, the
+> emitter-spec edit and at least one consumer cited in another spec. EV-051
+> provided none of the three required parts. §8.10 still holds eight rows and
+> none of them is a recovery event.
+>
+> **It landed from the losing half of a two-lane design, and the class is the
+> disagreement.** The plan of record for this spec reads "Adds class-O
+> `queue_recovered` with payload, ordering, and replay rules", and its change
+> design says "The event is class O. ... Class O preserves queue persistence as
+> the authority." EV-051 says Class F. That is not a wording choice: §4.4
+> EV-016 makes the JSONL writer call `fsync(2)` before `Append` returns for
+> every `fsync-boundary` event and not for an `ordinary` one, so the withdrawn
+> rule puts a synchronous disk sync on the recovery path the design kept off it.
+>
+> **This file already contradicted it.** The `queue_paused` payload note in
+> §6.3 says the failed-queue recovery operation is `queue-recover` per
+> [queue-model.md §8.3b QM-052b], that "it emits no event today", and that
+> `queue_resumed` stays reserved. That sentence was written on 2026-08-03, one
+> day AFTER EV-051 landed, and it is the correct one: QM-052b requires the
+> daemon to wake dispatch after a committed transaction and requires no emission
+> at all. The two statements sit about 500 lines apart in one file, which is why
+> neither author saw the other.
+>
+> **Nothing emits either candidate.** `queue_recovered` has no Go definition,
+> constructor, registry entry or §8 row. Its only occurrences are this work's
+> own drafts and records. The work's task file states the position plainly:
+> bravo routed the observation through EV-051 as Class F, card T3 routes it
+> through `queue_recovered` as Class O, "Neither is in code today. T3 owns the
+> choice between them."
+>
+> **The Class-O event is deliberately NOT landed here.** Adding it would need
+> the full EV-027 amendment — a §8 row, a payload type, a compatibility entry,
+> an emission requirement in the emitter spec, and a consumer. The live emitter
+> contract QM-052b requires no emission, so this repair would have to change
+> that spec too and would advertise an event no code produces. Card T3 owns
+> that choice, and it belongs with the code that emits the event.
+>
+> Bead: hk-6lt60 (the finalize that took the losing table).

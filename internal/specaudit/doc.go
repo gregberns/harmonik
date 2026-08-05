@@ -6,9 +6,15 @@
 // code — were removed on 2026-07-27. They could not fail when the code broke and
 // could not pass when it was fixed. See plans/2026-07-27-delete-and-rewrite/.
 //
-// What remains are the three tests that exercise real product behaviour against
+// What remains are three tests that exercise real product behaviour against
 // the spec text: the agent-type regex (AR-025), the event-bus interface
 // (HQWN-57), and declarative scenario loadability (SH-INV-005). Each imports the
 // package it constrains, so a failure here means code and spec have genuinely
 // diverged.
+//
+// One test here is not a spec binding. The durable-state writer parity sensor
+// reads the tree as source text and asserts that every function which persists
+// state is reached by production code. It constrains no single package, so it
+// belongs to no package, and it lives here because this is where the tree-wide
+// self-audits live. Its own file states what it checks and what it cannot see.
 package specaudit

@@ -785,7 +785,7 @@ gate-static:  ## Shared static half of fast and full: format, build, vet, freeze
 	scripts/with-lane-gocache.sh go vet ./...
 	scripts/with-lane-gocache.sh $(MAKE) vet-tagged
 	$(MAKE) freeze-gates
-	scripts/lint-changed.sh $(TOOLS_DIR)/golangci-lint
+	scripts/lint-changed.sh $(TOOLS_DIR)/golangci-lint run --allow-parallel-runners --new-from-rev=HEAD~1
 
 # gate-test-compile — compiles every _test.go file in the repo and runs none of
 # them. `go build ./...` does NOT compile test files, so a test that references

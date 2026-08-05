@@ -77,7 +77,8 @@ STUB
     chmod +x "$WRAP_DIR/bin/golangci-lint"
     WRAP_OUT="$WRAP_DIR/out"
     env HARMONIK_LANE_GOCACHE_ROOT="$WRAP_DIR/gocache" \
-        scripts/lint-changed.sh "$WRAP_DIR/bin/golangci-lint" >"$WRAP_OUT" 2>&1
+        scripts/lint-changed.sh "$WRAP_DIR/bin/golangci-lint" \
+        run --allow-parallel-runners --new-from-rev=HEAD~1 >"$WRAP_OUT" 2>&1
     WRAP_STATUS=$?
     WRAP_CALLS=$(wc -l <"$WRAP_DIR/marker" | tr -d ' ')
 }

@@ -25,6 +25,15 @@
 # is the part that lasts; the cap can still be tuned in .golangci.yml on top of
 # it, and neither change depends on the other.
 #
+# WHY THE FLAGS STAY IN THE MAKEFILE. This wrapper runs whatever argv it is
+# given and translates ONE exit code. It does not own the lint invocation. Two
+# reasons. The step stays readable in `make -n fast`, which is where
+# scripts/lint-allow-test.sh looks to prove that `make fast` still lints changed
+# lines — moving --new-from-rev in here made that assertion go red, correctly,
+# because the property it guards became invisible. And a translator that runs
+# argv can wrap any lint step, while one that builds its own command line has
+# to grow a flag for every caller.
+#
 # The cap in .golangci.yml is deliberately not repeated here. One name for one
 # thing: read it there.
 #
@@ -35,16 +44,9 @@
 set -uo pipefail
 
 if [ $# -lt 1 ]; then
-    echo "usage: scripts/lint-changed.sh path/to/golangci-lint [extra args ...]" >&2
+    echo "usage: scripts/lint-changed.sh path/to/golangci-lint run [args ...]" >&2
     exit 2
 fi
-
-lint_bin="$1"
-shift
-
-# The rev this step reports against. HEAD~1 is the gate's contract: a commit is
-# judged on the lines it changed.
-rev="${LINT_CHANGED_REV:-HEAD~1}"
 
 out=$(mktemp "${TMPDIR:-/tmp}/lint-changed-XXXXXX") || {
     echo "lint-changed: could not create a temp file, so no run can be judged" >&2
@@ -53,10 +55,7 @@ out=$(mktemp "${TMPDIR:-/tmp}/lint-changed-XXXXXX") || {
 trap 'rm -f "$out"' EXIT
 
 status=0
-scripts/with-lane-gocache.sh "$lint_bin" run \
-    --allow-parallel-runners \
-    --new-from-rev="$rev" \
-    "$@" >"$out" 2>&1 || status=$?
+scripts/with-lane-gocache.sh "$@" >"$out" 2>&1 || status=$?
 
 cat "$out"
 

@@ -132,8 +132,10 @@ referenced specification.
 > longer describes a live rule. `EV-051` is retired in `specs/event-model.md`,
 > and no recovery event is registered in its place, so the sentence below that
 > says "`queue_recovered` is the only recovery observation" describes no live
-> event. Read this section as a record of what the losing lane drafted, not as a
-> list of live requirements. Bead: hk-6lt60.
+> event. The appended run-state-machine Amendment A2 is retired too, and the
+> RSM-021 replacement the plan of record authorized is landed in its place.
+> Read this section as a record of what the losing lane drafted, not as a list
+> of live requirements. Bead: hk-6lt60.
 
 #### Consistency checks
 

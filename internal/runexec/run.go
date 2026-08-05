@@ -224,7 +224,9 @@ func stepRunDispatching(cfg RunConfig, s RunState, ev Event) (RunState, []Action
 		return s, []Action{{Kind: ActCheckEscape}}
 	case EvShutdownDrain:
 		// RSM-021: the shutdown-drain terminal edge — background context, no gate,
-		// no pre-merge-sync, direct submit. An empty WorktreeAheadSHA means no
+		// direct submit. The submit effector (runloop.drainMergeHook) synchronizes
+		// the run branch before it merges, which RSM-021 requires, and reports a
+		// sync failure as a fatal merge result. An empty WorktreeAheadSHA means no
 		// commit landed (or the HEAD probe failed): reopen for re-dispatch with
 		// the requeue-recovery reason and NO run terminal (QM-002a reverts the
 		// item to pending at next startup; hk-ly0hg Fix-1).

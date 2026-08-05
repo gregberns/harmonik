@@ -8,10 +8,10 @@ requirement-prefix: RSM
 status: draft
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.4.0
+version: 0.5.0
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-08-04
+last-updated: 2026-08-05
 depends-on:
   - replay-substrate
   - event-model
@@ -334,9 +334,35 @@ reason templates). All observable summary and reason strings MUST be preserved.
 
 **RSM-021.** The exit-0 auto-close path MUST remain a distinct terminal entry (it is the
 terminal path for completion-by-process-exit harnesses that emit no stop-hook outcome), sharing
-the spine tail. The shutdown-drain path MUST remain a distinct terminal edge (background context,
-no gate, no pre-merge-sync, no outcome emission, direct run-completed emission, and its
-requeue-recovery reopen reason).
+the spine tail. The shutdown-drain path MUST remain a distinct terminal edge. It uses a
+cancellation-free context, skips the normal gate and the normal outcome emission, and
+synchronizes the run branch before every merge decision. Its close result is `CloseBead`, then
+`bead_closed`, then the direct `run_completed` emission, and that includes the path that resolves
+as no change. A missing tip, a synchronize failure, a merge failure or a close failure MUST select
+the reopen result, which carries the requeue-recovery reopen reason. Drain completion requires
+exactly one result. This edge MUST NOT emit `outcome_emitted`.
+
+> **Amended 2026-08-05.** This rule used to describe the shutdown-drain edge as having "no
+> pre-merge-sync", and the shipped release path broke that MUST. `internal/runloop`
+> `drainMergeHook` calls `PreMergeSync` before it merges and routes a synchronize failure to the
+> drain reopen edge. Synchronizing is what makes "no change" meaningful, because an absent local
+> branch otherwise looks like no work. The clause is replaced, not relaxed: the edge keeps every
+> other property the old parenthesis listed. This is the change that the kerf work
+> `queue-dogfood-readiness` authorized and never landed — its changelog of record reads "Replaces
+> the conflicting no-sync shutdown clause with synchronized close-or-reopen behavior" — and the
+> work's own task card T5b recorded the consequence: "The tree carries a normative MUST that the
+> shipped release path breaks."
+>
+> **OPEN — one clause is deliberately NOT carried over.** The approved draft also says the reopen
+> result is `ReopenBead` then `run_failed` on every failure path. The shipped drain does that on
+> ONE of the four. A close failure reopens and then emits `run_failed`, and
+> `internal/daemon/dot_shutdown_drain_test.go` `TestDotShutdownDrain_CloseFailureReopensThenFails`
+> pins the order `close_failed`, `reopen`, `run_failed`. A missing tip, a synchronize failure and
+> a merge failure reach `internal/runexec` `drainReopen`, which reopens and emits no run terminal
+> at all. Extending the `run_failed` to those three changes observable behavior, so it belongs
+> with the code and not with a document repair. Card T5b in the work's `07-tasks.md` owns the
+> choice, and its reading of the code — the ladder runs "on close failure only" — is correct.
+> Bead: hk-6lt60.
 
 **RSM-022.** The `runSucceeded` out-parameter MUST be eliminated: run success MUST be a terminal
 state of the Run machine, read by the shell after the reactor returns (for group advancement,
@@ -547,16 +573,42 @@ subsumed path, which passes no flag).
 
 | Date | Version | Author | Change |
 |------|---------|--------|--------|
+| 2026-08-05 | 0.5.0 | agent (spec repair, hk-6lt60) | **The shutdown-drain edge now requires the pre-merge synchronize it used to forbid, and the appended Amendment A2 is retired.** §7 RSM-021 described the edge as having "no pre-merge-sync". The shipped release path breaks that MUST: `internal/runloop` `drainMergeHook` calls `PreMergeSync` before it merges and routes a synchronize failure to the drain reopen edge. This is the change the kerf work `queue-dogfood-readiness` authorized and never landed — its changelog of record reads "Replaces the conflicting no-sync shutdown clause with synchronized close-or-reopen behavior". The replacement is the approved draft's wording, minus one clause. **One clause is deliberately NOT carried over:** the draft also makes the reopen result `ReopenBead` then `run_failed` on every failure path, and the shipped drain does that on one of the four. A close failure reopens and emits `run_failed`, pinned by `internal/daemon/dot_shutdown_drain_test.go` `TestDotShutdownDrain_CloseFailureReopensThenFails`. A missing tip, a synchronize failure and a merge failure reach `internal/runexec` `drainReopen`, which emits no run terminal. Extending the terminal to those three changes observable behavior and belongs with the code — card T5b owns it, and an OPEN note in RSM-021 records it. **Amendment A2 is retired and the label is not reusable.** It came from the second, superseded changelog table, it replaced nothing, it gated the only shutdown terminal spine on the EM-053a record that names no storage medium and has no production writer, it cited a selection matrix no document defines, and it sat after §14 outside every numbered section. An obligation is removed and another is added, so this is a minor bump by the rule this table stated at 0.4.0. Refs: hk-6lt60, hk-7bfqe. |
 | 2026-08-04 | 0.4.0 | agent (spec lane a-spec) | **The escaped-worktree guard is withdrawn from the spec, because the code was deleted. An obligation is removed, so this is a minor bump and not a pointer repair.** The guard failed a run when the main checkout held uncommitted files. Commits `8ba6bfb57` and `d6c12a669` deleted it, its event type, its emitter, its state-machine case, its vocabulary constant, the two `runmerge` helpers behind it, and the two tests that read as coverage. The measured reason is stronger than the one the record carried: the guard did not run only in a legacy mode, it ran NOWHERE. At the base commit the emitter had zero call sites, the dirty-tree helper had zero production call sites, and the escape-detected event had a consumer case and no producer. The tests asserted that the escape event fired zero times, which nothing could make false. **RSM-008** loses its escaped-worktree clause and its merge-critical-section exclusion, keeps the no-commit guard clause, and gains a DECISION note plus a new negative MUST: no run is failed for a dirty main checkout, and the check is not restored without a new decision recorded in the rule. The OPEN note raised on 2026-07-30 is closed — the decision taken is a third option that the note's two options did not contain. **RSM-018** loses its first sentence, the read-only tree-quiescent slot the deleted check needed. The remote base-sync + worktree-add exclusion is unchanged. **RSM-032** drops the escape-detected event from its applies-to list. **RSM-033** drops the escaped-worktree guard from the list of event-classified failure reasons. **RSM-034** drops the escaped-worktree reopen and the escaped-worktree prefix. The deleted Go identifiers are named nowhere normative after this pass. **What this costs is stated in RSM-008 rather than hidden:** the failure the guard was built for (`hk-6zylj`) has no detector now, and the guard's own false-failure mode (`hk-yru`) is what any rebuild must answer first. **Recorded and deliberately NOT settled here:** nothing outside tests produces the single-shot dispatch terminals, so the surviving `Guarding` state is unreached as well. That needs its own measurement. Companion: [execution-model.md] v0.10.7 and [process-lifecycle.md] v0.7.6. No requirement IDs added, renumbered, or retired. |
+| 2026-08-02 | 0.3.2 | agent (kerf finalize, queue-dogfood-readiness) | **Amendment A2 added, and it should not have been.** The finalize appended "Amendment A2 — durable shutdown handoff" after the revision-history table and bumped the version with no row here. The row is written at 0.5.0 so the table is complete. The finalize took every target from the second, superseded changelog table, and the authorized replacement of the RSM-021 no-sync clause was lost rather than landed. Refs: hk-6lt60. |
 | 2026-07-31 | 0.3.1 | agent (delete-and-rewrite step 6) | **§4a's survival note corrected. No obligation changed.** Pinning the survive-shutdown gate family found a FIFTH site that the measured map missed, and it fires before the four the map names. The completion wait kills the agent session whenever it finds the run context already cancelled, on the path a tmux-hosted independent session takes, and it names no gate. So survival fails twice, and the first failure is inside the daemon's own process rather than at the next boot: the session is dead before the daemon exits, which means the boot orphan sweep never gets to matter. The blockquote under RSM-037 now records both failures and says that making survival real needs both fixed. Filed as `hk-jyh5t`, alongside the boot-sweep defect `hk-lssmw`. RSM-036, RSM-037 and RSM-038 are unchanged. |
 | 2026-07-31 | 0.3.0 | agent (delete-and-rewrite step 6) | **New §4a, run resource discipline: RSM-036, RSM-037, RSM-038.** The spec had no rule about how a run holds a resource or gives it back, and the daemon therefore open-coded the answer at each release site. One condition — an agent in its own session plus a stopping daemon — reached four sites, spelled three different ways, and missed the hook session and the tunnel. RSM-036 requires a lease, whose give-back call runs at most once and is never retried. RSM-037 requires ONE disposition value for the whole run, decided by a total pure function of the run's exit facts, and forbids a skip flag per resource; it names the three dispositions and what each keeps. RSM-038 requires a scope closed in reverse order, requires the per-launch resources to sit in a nested scope, and names the three ordering edges that are load-bearing. §4a also records that survival is what a run asks for and NOT something the system delivers today, because the boot orphan sweep kills such sessions before anything looks for them. `internal/runlease` is named as the owner and is fenced to the standard library. No existing rule is renumbered and no production behaviour changes: the types land unwired, and the migration of each release site onto them is separate work. |
 | 2026-07-30 | 0.2.2 | agent (spec citation cleanup) | **Rotted pointers repaired. No obligation changed.** The workflow mode `review-loop` was retired and its driver deleted, so `core.WorkflowMode.Valid()` now accepts only `single` and `dot`. The retired mode is removed from the mode lists in RSM-007, RSM-008, RSM-031 and RSM-032. What each of those rules requires is unchanged. Three approximate line-number citations into `workloop.go` are replaced by symbol names (`beadRunOne`, the `d2APIKeyRefusal` constant, the `abortReason` constant), per the repo convention to cite symbols and never line numbers. RSM-008 also gains an OPEN note that records a question the sweep found but must not settle: the rule confines both post-exit guards to the single-shot path, almost all runs take the graph path, and the choice between extending the guards and dropping the protection claim belongs to the operator. References to the event `review_loop_cycle_complete` and to the review-loop-failure budget are left alone, because `core.EventTypeReviewLoopCycleComplete`, `ChargeReviewLoopFailure` and `MaxReviewLoopFailures` all still exist. |
 | 2026-07-27 | 0.2.1 | agent (codename: input-ack-contract) | **Input-ack consumption reconciled with the owner contracts (coordinated drift correction; co-landed with [agent-input.md] 0.1.1 and [handler-contract.md] 0.8.1).** RSM-027 carried a three-valued acceptance class (`Accepted` / `Rejected` / `Degraded`) that never existed in the owner specs: the `Ack` outcome landed BINARY (`Delivered` / `Rejected`) in AIS-003 / HC-070 the day after this spec, with positive acceptance decoupled onto the async `agent_input_acked` event. RSM-027 is amended in place (NOT renumbered) to consume that contract: `Ack{Delivered}` is a driver handoff that leaves positive acceptance pending; `Ack{Rejected}` fail-closes to RSM-025; the correlated `agent_input_acked` is the positive-acceptance event; the correlated `agent_input_stale` fail-closes to RSM-025. The four routes are stated as total. The `input_seq` consumption rule is made explicit — consume the first synchronous outcome once, then the first correlated asynchronous terminal wins; drop only repeated or late observations, never the first `agent_input_acked`; add no second timer. RSM-024's resume-seed bullet is reconciled so a `Delivered` return alone no longer satisfies the sub-bound, citing AIS-003 + AIS-004 + AIS-INV-001 as the composite authority. RSM-027 also names the run-level backstop for a `Delivered` whose async terminal never arrives: the already-composed RSM-024 timer stack (ready sub-bound, `post_ready_hang`, absolute commit-watchdog ceiling) routing to RSM-025 — NOT a new input timer. The correlation bullet also attributes the sequence id to AIS-003b and its serialized `input_seq` payload field name to [event-model.md §6.3], keeping this spec clear of the event payload. `Accepted`, `Degraded`, and the "three-valued acceptance class" are removed. No requirement renumbered; no port, `Ack` record, event schema, timer semantics, or production behaviour changed. |
 
-## Amendment A2 — durable shutdown handoff
-
-RSM-021 remains the only in-process shutdown terminal spine. The coordinator
-MUST invoke it only after EM-053a records the terminal-recovery state. For no
-commit, unmerged commit, merge in progress, merged but unclosed, and merge
-failure, one row MUST select exactly one of redispatch, merge, close, or queue
-release.
+> **Amendment A2 — durable shutdown handoff — RETIRED 2026-08-05, and the label
+> A2 is not reusable.** It said RSM-021 remains the only in-process shutdown
+> terminal spine, required the coordinator to invoke it only after EM-053a
+> records the terminal-recovery state, and required one row to select exactly
+> one of redispatch, merge, close or queue release for five named conditions.
+>
+> **It is not the change this spec was scheduled to receive.** The kerf work's
+> changelog of record says the change to this file "Replaces the conflicting
+> no-sync shutdown clause with synchronized close-or-reopen behavior". A2
+> replaced nothing. It was appended after the §14 revision-history table, and
+> the conflicting clause stayed in §7 RSM-021 until 2026-08-05. A2 comes from
+> the second, superseded changelog table, whose row for this file reads "One
+> shutdown terminal spine". Both the changelog and the change design state that
+> the plan of record wins a disagreement. The authorized replacement is now in
+> RSM-021 above.
+>
+> **It would have made the terminal spine unreachable.** A2 let the coordinator
+> invoke RSM-021 only after EM-053a records the recovery state. EM-053a names no
+> storage medium and has no production writer. A conforming daemon could
+> therefore never enter its own shutdown terminal edge.
+>
+> **Its matrix does not exist.** "One row MUST select exactly one of ..." points
+> at a table that A2 does not publish and that no document in the tree defines.
+> This is the same missing cross-spec recovery matrix that the withdrawn
+> WM-041 gated on.
+>
+> **It sat outside every numbered section.** §12 is "Amendment A1" and is a
+> numbered section inside the reading path. A2 landed after §14, so it was in no
+> conformance statement and in no cross-reference list.
+>
+> Bead: hk-6lt60 (the finalize that took the losing table).

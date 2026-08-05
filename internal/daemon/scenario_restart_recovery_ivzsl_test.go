@@ -28,17 +28,22 @@ package daemon_test
 //   - Both items are now terminal (completed + failed).
 //   - daemon.Start emits reconciliation_mismatch_observed with
 //     mismatch_class=bead_closed_queue_dispatched.
-//   - On context cancel the work loop calls drainCancelledQueue, which
-//     renames .harmonik/queues/main.json to *.cancelled-<ts> so the NEXT
-//     daemon start does NOT see a blocking active queue.
+//   - The same startup reconcile then advances the all-terminal group to
+//     complete-with-failures and demotes the queue to paused-by-failure
+//     (reconcileQueueTerminalState, the F5 pass).
+//   - QM-027 treats paused-by-failure like a completed queue, so the queue
+//     name accepts a fresh submit while the failure record stays on disk.
 //
 // # Assertions
 //
 //  1. reconciliation_mismatch_observed with mismatch_class=bead_closed_queue_dispatched fires.
 //  2. On disk, item A's status is "completed" (Class A' persisted the correction).
-//  3. After daemon exits, .harmonik/queues/main.json is absent (drainCancelledQueue renamed it).
-//  4. queue.Load returns nil (no active queue → QM-027 would not block).
-//  5. A NEW queue can be written and loaded without error (proving the wedge is gone).
+//  3. After daemon exits, the queue is still on disk at paused-by-failure with
+//     its group at complete-with-failures.
+//  4. queue dry-run for a fresh bead against that queue is ACCEPTED (QM-027
+//     does not block) — the wedge is gone.
+//  5. Control: the same dry-run against an ACTIVE queue is rejected with
+//     queue_already_active, which proves the guard is reachable.
 //
 // # Helper prefix
 //
@@ -49,7 +54,9 @@ package daemon_test
 //
 //   - specs/queue-model.md §3.2b QM-002b Class A' — dispatched+closed advance.
 //   - specs/queue-model.md §5 QM-034 — failed items must not interrupt siblings.
-//   - specs/queue-model.md §6 QM-027 — single-active-queue guard.
+//   - specs/queue-model.md §6.8 QM-027 — single-active-queue guard.
+//   - specs/queue-model.md §8.3 QM-052 — a failure-paused queue recovers by a
+//     fresh submit to the same name, which is why QM-027 exempts it.
 //   - specs/process-lifecycle.md §4.2 PL-005 step 8a.
 //
 // Bead: hk-ivzsl.
@@ -65,10 +72,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/daemon/scenariotest"
 	"github.com/gregberns/harmonik/internal/queue"
+	"github.com/gregberns/harmonik/internal/queuewiring"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -244,6 +253,53 @@ func rrRecovWriteStuckQueueJSON(t *testing.T, projectDir, beadAID, beadBID strin
 	}
 }
 
+// rrRecovCreateOpenBead creates one open bead through the br wrapper and
+// returns its ID.
+func rrRecovCreateOpenBead(t *testing.T, brWrapper, title string) string {
+	t.Helper()
+	//nolint:gosec // G204: br args are test-internal literals; not user input
+	cmd := exec.CommandContext(t.Context(), brWrapper, "create", title, "--status", "open", "--silent")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("rrRecovCreateOpenBead: br create: %v\n%s", err, out)
+	}
+	beadID := strings.TrimSpace(string(out))
+	if beadID == "" {
+		t.Fatal("rrRecovCreateOpenBead: br create returned empty ID")
+	}
+	return beadID
+}
+
+// rrRecovForceQueueStatus rewrites the status field of the on-disk main queue
+// in place. It is the control lever for the QM-027 check: it puts the queue
+// back into the one state the guard MUST reject, so an accepted dry-run is
+// evidence about paused-by-failure and not about a guard that never ran.
+func rrRecovForceQueueStatus(t *testing.T, projectDir, status string) {
+	t.Helper()
+
+	queuePath := filepath.Join(projectDir, ".harmonik", "queues", "main.json")
+	data, err := os.ReadFile(queuePath) //nolint:gosec // G304: path is t.TempDir()-based; not user input
+	if err != nil {
+		t.Fatalf("rrRecovForceQueueStatus: ReadFile: %v", err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("rrRecovForceQueueStatus: unmarshal: %v", err)
+	}
+	encoded, err := json.Marshal(status)
+	if err != nil {
+		t.Fatalf("rrRecovForceQueueStatus: marshal status: %v", err)
+	}
+	raw["status"] = encoded
+	out, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatalf("rrRecovForceQueueStatus: marshal queue: %v", err)
+	}
+	if err := os.WriteFile(queuePath, out, 0o600); err != nil {
+		t.Fatalf("rrRecovForceQueueStatus: WriteFile: %v", err)
+	}
+}
+
 // rrRecovMismatchPayload is the decoded payload of a
 // reconciliation_mismatch_observed JSONL event.
 type rrRecovMismatchPayload struct {
@@ -364,17 +420,17 @@ func rrRecovReadGroupItemStatuses(t *testing.T, projectDir string) []string {
 //     is dispatched + closed → advances item to completed, persists queue.
 //     Emits reconciliation_mismatch_observed{mismatch_class=bead_closed_queue_dispatched}.
 //
-//  2. Both items are now terminal (completed + failed); the group is
-//     all-terminal.  The work loop does NOT auto-advance the group to
-//     complete-with-failures (evaluateGroupAdvanceWithOutcome only fires on
-//     run completion, not on startup).
+//  2. Both items are now terminal (completed + failed), so the same startup
+//     reconcile advances the group to complete-with-failures and demotes the
+//     queue to paused-by-failure (reconcileQueueTerminalState, the F5 pass).
 //
-//  3. On daemon context cancel, drainCancelledQueue transitions the
-//     still-active queue to cancelled and renames main.json →
-//     main.json.cancelled-<ts>.
+//  3. The queue is no longer active at context-cancel time, so
+//     drainCancelledQueue is a no-op and main.json survives with its failure
+//     record.  Do not expect an unlink here — an unlink is the
+//     all-complete-success path, and this queue has a failed item.
 //
-//  4. The renamed file means queue.Load returns nil on the next startup.
-//     QM-027 sees ActiveQueue == nil → accepts the new submit.
+//  4. QM-027 exempts paused-by-failure, so the next submit to the same name is
+//     accepted and overwrites the queue with a fresh queue_id.
 //
 // Run: go test -race -tags=scenario ./internal/daemon/... -run TestScenario_RestartRecovery_QM002bDeadlock
 //
@@ -515,62 +571,79 @@ func TestScenario_RestartRecovery_QM002bDeadlock(t *testing.T) {
 		}
 	})
 
-	// ── Phase 5: assert queue file absent (QM-027 wedge is gone) ─────────────
+	// ── Phase 5: assert the queue is parked at paused-by-failure ─────────────
 	//
-	// After drainCancelledQueue, .harmonik/queues/main.json must not exist.
-	// queue.Load (which reads that exact path) must return nil, meaning a
-	// subsequent queue.Validate would see ActiveQueue==nil and QM-027 would
-	// NOT fire.
+	// The startup reconcile does more than fix item A.  Once both items are
+	// terminal it advances the group to complete-with-failures and demotes the
+	// queue to paused-by-failure (reconcileQueueTerminalState, the F5 pass).
+	// The queue is therefore NOT active by the time the context is cancelled,
+	// and drainCancelledQueue archives only an ACTIVE queue — see
+	// TestQueueCancel_AlreadyTerminal_NoOp, which defends that no-op directly.
+	// So main.json stays on disk and keeps the failure record.  The name is
+	// unblocked by the demotion, not by an unlink.
 	queueMainPath := filepath.Join(projectDir, ".harmonik", "queues", "main.json")
-	if _, statErr := os.Stat(queueMainPath); !os.IsNotExist(statErr) {
-		t.Errorf("rrRecov: .harmonik/queues/main.json must be absent after daemon exit (drainCancelledQueue renames it); statErr=%v", statErr)
+	if _, statErr := os.Stat(queueMainPath); statErr != nil {
+		t.Errorf("rrRecov: .harmonik/queues/main.json must remain after daemon exit (the failure record is kept); statErr=%v", statErr)
 	}
 
-	// Confirm via queue.Load — the canonical path used by daemon.Start on the
-	// next startup.  A nil result means QM-027 would not block a new submit.
 	loadedQ, loadErr := queue.Load(context.Background(), projectDir, queue.QueueNameMain)
 	if loadErr != nil {
-		t.Errorf("rrRecov: queue.Load after daemon exit: %v", loadErr)
+		t.Fatalf("rrRecov: queue.Load after daemon exit: %v", loadErr)
 	}
-	if loadedQ != nil {
-		t.Errorf("rrRecov: queue.Load after daemon exit = non-nil (queueID=%s); want nil (no active queue)", loadedQ.QueueID)
+	if loadedQ == nil {
+		t.Fatal("rrRecov: queue.Load after daemon exit = nil; want the paused-by-failure queue")
+	}
+	if loadedQ.Status != queue.QueueStatusPausedByFailure {
+		t.Errorf("rrRecov: queue status after daemon exit = %q, want %q (F5 demotes an all-terminal-with-failures queue)",
+			loadedQ.Status, queue.QueueStatusPausedByFailure)
+	}
+	if len(loadedQ.Groups) != 1 {
+		t.Fatalf("rrRecov: expected 1 group after daemon exit, got %d", len(loadedQ.Groups))
+	}
+	if loadedQ.Groups[0].Status != queue.GroupStatusCompleteWithFailures {
+		t.Errorf("rrRecov: group status after daemon exit = %q, want %q",
+			loadedQ.Groups[0].Status, queue.GroupStatusCompleteWithFailures)
 	}
 
-	// ── Phase 6: prove subsequent submit is accepted ──────────────────────────
+	// ── Phase 6: prove a subsequent submit is accepted ────────────────────────
 	//
-	// Write a fresh queue to disk and load it.  The old *.cancelled-<ts> file
-	// does NOT conflict because queue.EnumerateQueueNames only collects *.json
-	// files without a dot-suffix, so the cancelled archive is invisible to
-	// the next startup.  A new main.json written here would be picked up by
-	// daemon.Start without hitting QM-027.
-	freshQueue := &queue.Queue{
+	// This is the property the wedge broke, so assert it through the real
+	// validation pipeline.  HandleQueueDryRun is the production entry point
+	// behind `harmonik queue dry-run`: it loads the on-disk queue itself and
+	// runs QM-020..QM-027 without persisting or emitting.  QM-027 treats
+	// paused-by-failure like a completed queue, so the fresh bead is accepted.
+	brAdapter, adapterErr := brcli.NewForProject(brWrapper, projectDir)
+	if adapterErr != nil {
+		t.Fatalf("rrRecov: brcli.NewForProject: %v", adapterErr)
+	}
+	ledger := queuewiring.NewBRQueueLedger(brAdapter)
+
+	beadCID := rrRecovCreateOpenBead(t, brWrapper, "restart-recovery test bead C (post-recovery submit)")
+	dryRunReq := queue.QueueDryRunRequest{
 		SchemaVersion: 1,
-		QueueID:       newTestQueueID(),
-		SubmittedAt:   time.Now().UTC(),
-		Status:        queue.QueueStatusActive,
+		Name:          queue.QueueNameMain,
 		Groups: []queue.Group{
 			{
 				GroupIndex: 0,
 				Kind:       queue.GroupKindWave,
-				Status:     queue.GroupStatusPending,
-				CreatedAt:  time.Now().UTC(),
-				Items: []queue.Item{
-					{BeadID: "rrr-fresh-bead-01", Status: queue.ItemStatusPending},
-				},
+				Items:      []queue.Item{{BeadID: core.BeadID(beadCID)}},
 			},
 		},
 	}
-	if err := queue.Persist(context.Background(), projectDir, freshQueue); err != nil {
-		t.Fatalf("rrRecov: queue.Persist fresh queue: %v (proves QM-027 not wedged)", err)
+	if _, rpcErr := queue.HandleQueueDryRun(context.Background(), dryRunReq, ledger, projectDir); rpcErr != nil {
+		t.Errorf("rrRecov: queue dry-run against the paused-by-failure queue was rejected (code=%d message=%q); want accepted — QM-027 is still wedged",
+			rpcErr.Code, rpcErr.Message)
 	}
-	loadedFresh, freshLoadErr := queue.Load(context.Background(), projectDir, queue.QueueNameMain)
-	if freshLoadErr != nil {
-		t.Errorf("rrRecov: queue.Load fresh queue: %v", freshLoadErr)
-	}
-	if loadedFresh == nil {
-		t.Error("rrRecov: queue.Load fresh queue = nil; want non-nil")
-	} else if loadedFresh.QueueID != freshQueue.QueueID {
-		t.Errorf("rrRecov: loaded fresh queue ID = %q, want %q", loadedFresh.QueueID, freshQueue.QueueID)
+
+	// Control: the same call MUST be rejected when the queue reads active.
+	// Without it, an "accepted" result above could mean the guard never ran.
+	rrRecovForceQueueStatus(t, projectDir, string(queue.QueueStatusActive))
+	_, blockedErr := queue.HandleQueueDryRun(context.Background(), dryRunReq, ledger, projectDir)
+	if blockedErr == nil {
+		t.Error("rrRecov: control: queue dry-run against an ACTIVE queue was accepted; QM-027 never ran")
+	} else if blockedErr.Code != queue.ErrorCodeQueueAlreadyActive {
+		t.Errorf("rrRecov: control: queue dry-run against an ACTIVE queue = code %d (%q), want %d (queue_already_active)",
+			blockedErr.Code, blockedErr.Message, queue.ErrorCodeQueueAlreadyActive)
 	}
 
 	// ── Causality invariants (hk-xegej) ──────────────────────────────────────
@@ -588,6 +661,10 @@ func TestScenario_RestartRecovery_QM002bDeadlock(t *testing.T) {
 		30*time.Second,
 	)
 
-	t.Logf("rrRecov: PASS beadA=%s Class-A'-advanced=completed beadB=%s sibling-unchanged=failed queue-unlinked=true subsequent-submit-accepted=true",
-		beadAID, beadBID)
+	// Log the summary only when every claim above held. A PASS line printed
+	// next to a failure teaches the next reader the wrong thing.
+	if !t.Failed() {
+		t.Logf("rrRecov: PASS beadA=%s Class-A'-advanced=completed beadB=%s sibling-unchanged=failed queue-paused-by-failure=true subsequent-submit-accepted=true beadC=%s",
+			beadAID, beadBID, beadCID)
+	}
 }

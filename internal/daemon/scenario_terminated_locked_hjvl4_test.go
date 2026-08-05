@@ -252,13 +252,11 @@ func tlLockWaitForSocket(t *testing.T, projectDir string, budget time.Duration) 
 	t.Fatalf("tlLock: daemon socket %s not ready within %s", sockPath, budget)
 }
 
-// tlLockRunStartedPayload mirrors the historic version-one wire shape. Only
-// the JSON tags matter here, since this file lives in package daemon_test.
-type tlLockRunStartedPayload struct {
-	RunID         string `json:"run_id"`
-	BeadID        string `json:"bead_id"`
-	WorkspacePath string `json:"workspace_path"`
-	StartedAt     string `json:"started_at"`
+// tlLockRunStartedBead decodes only the bead_id out of a run_started payload.
+// The reader side needs nothing else, and a mirror of the full payload would
+// drift away from core.RunStartedPayload the moment the payload changes shape.
+type tlLockRunStartedBead struct {
+	BeadID string `json:"bead_id"`
 }
 
 // tlLockRunCompletedPayload mirrors the wire shape of the (unexported)
@@ -279,6 +277,14 @@ type tlLockRunCompletedPayload struct {
 // the queue-item / bead-status update never landed" crash window (hk-hjvl4)
 // as an independently-verifiable durable fact, not something the live daemon
 // process itself needs to have produced. Returns the synthetic run's ID.
+//
+// The run_started payload is built from core.RunStartedPayload itself, not a
+// local mirror struct. The bus stamps the envelope with the registered current
+// schema version for run_started (version 2), so the payload MUST be a complete
+// version-2 record. A version-1 payload under a version-2 envelope is a shape
+// that no producer can write, and the boot reconcile drops it on decode — the
+// run then never enters the started map and the terminated-but-locked pass
+// never sees this bead. Using the real payload type keeps the two in step.
 func tlLockAppendTerminatedRun(t *testing.T, jsonlPath, beadID string) string {
 	t.Helper()
 
@@ -294,14 +300,32 @@ func tlLockAppendTerminatedRun(t *testing.T, jsonlPath, beadID string) string {
 	}
 	bus := eventbus.NewBusImplWithWriter(core.NewRedactionRegistry(), writer)
 
-	startedPl, err := json.Marshal(tlLockRunStartedPayload{
-		RunID:         runID.String(),
-		BeadID:        beadID,
-		WorkspacePath: "/tmp/tlLock-historical-run",
-		StartedAt:     "2026-07-05T00:00:00Z",
+	histBeadID := core.BeadID(beadID)
+	histWorker := "tlLock-historical-worker"
+	histWorkerOS := "linux"
+	startedPl, err := json.Marshal(core.RunStartedPayload{
+		RunID:                   runID,
+		WorkflowID:              core.WorkflowID("standard-bead"),
+		WorkflowVersion:         core.WorkflowVersion("1.0"),
+		WorkflowMode:            core.WorkflowModeDot,
+		ReviewPolicy:            core.ReviewPolicyReviewed,
+		WorkflowSelectionSource: core.WorkflowSelectionEmbeddedDefault,
+		BeadID:                  &histBeadID,
+		WorkspacePath:           "/tmp/tlLock-historical-run",
+		InputRef:                "bead:" + beadID,
+		StartedAt:               time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC),
+		WorkerName:              &histWorker,
+		WorkerOS:                &histWorkerOS,
 	})
 	if err != nil {
 		t.Fatalf("tlLockAppendTerminatedRun: marshal run_started: %v", err)
+	}
+	// Positive evidence that the fixture is readable by the production decoder.
+	// Without this the fixture can go stale silently: the boot reconcile drops
+	// an undecodable run_started and the test then measures nothing.
+	var startedRoundTrip core.RunStartedPayload
+	if rtErr := json.Unmarshal(startedPl, &startedRoundTrip); rtErr != nil {
+		t.Fatalf("tlLockAppendTerminatedRun: fixture run_started payload is not a valid version-2 record: %v", rtErr)
 	}
 	if emitErr := bus.EmitWithRunID(context.Background(), runID, core.EventTypeRunStarted, startedPl); emitErr != nil {
 		t.Fatalf("tlLockAppendTerminatedRun: emit run_started: %v", emitErr)
@@ -420,7 +444,7 @@ func tlLockWaitForFreshRunStarted(t *testing.T, jsonlPath, beadID, excludeRunID 
 				if env.Type != string(core.EventTypeRunStarted) || env.RunID == excludeRunID {
 					continue
 				}
-				var pl tlLockRunStartedPayload
+				var pl tlLockRunStartedBead
 				if json.Unmarshal(env.Payload, &pl) == nil && pl.BeadID == beadID {
 					return env.RunID
 				}
@@ -588,7 +612,11 @@ func TestScenario_TerminatedButLocked_BootReconcileReleasesDispatchLock(t *testi
 	// present) — or is still stuck in_progress (if it is not).
 
 	scenariotest.AssertBeadStatus(t, brWrapper, beadID, "open")
-	t.Logf("tlLock: boot-2 reconcile released the bead — status is now open")
+	// AssertBeadStatus reports with Errorf, so the run continues. Log the claim
+	// only when it held — a success line next to a failure misleads the reader.
+	if !t.Failed() {
+		t.Logf("tlLock: boot-2 reconcile released the bead — status is now open")
+	}
 
 	// ── Step 5: the bead re-dispatches cleanly — submit succeeds, run_started
 	// fires, no -32015. ──
@@ -613,6 +641,8 @@ func TestScenario_TerminatedButLocked_BootReconcileReleasesDispatchLock(t *testi
 		}
 	})
 
-	t.Logf("tlLock: PASS bead=%s historical_run=%s fresh_run=%s — boot-reconcile released the terminated-but-locked -32015 dispatch-lock",
-		beadID, historicalRunID, freshRunID)
+	if !t.Failed() {
+		t.Logf("tlLock: PASS bead=%s historical_run=%s fresh_run=%s — boot-reconcile released the terminated-but-locked -32015 dispatch-lock",
+			beadID, historicalRunID, freshRunID)
+	}
 }

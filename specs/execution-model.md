@@ -8,10 +8,10 @@ requirement-prefix: EM
 status: draft
 spec-category: foundation-cross-cutting
 spec-shape: requirements-first
-version: 0.10.7
+version: 0.10.8
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-08-04
+last-updated: 2026-08-05
 depends-on:
   - architecture
 ---
@@ -2113,8 +2113,10 @@ Default-if-unresolved: (resolved)
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-08-05 | 0.10.8 | agent (spec repair, hk-6lt60) | **EM-053a retired. The number is not reusable. No requirement text changes.** EM-053a arrived at 0.10.5 from the second, superseded table of a kerf work whose changelog states that the plan of record wins a disagreement. The plan of record for this file reads "Defines shutdown drain and the immutable Git-backed release claim used to reconstruct unfinished DOT release", and that change landed on 2026-08-04 at 0.10.6 as §4.7 EM-031b. The two rules describe the same restart decision, arrived two days apart, cite neither each other, and share no field: EM-053a names bead, queue item and ladder stage, and EM-031b names dispatch-head SHA, merge-target ref and SHA, and remote endpoint. EM-053a also named no storage medium, so "persist a terminal-recovery record" and "use that record with Git and Beads" posit a third store beside the two authorities of §5 EM-INV-001, which EM-031b explicitly bars. **The number is burned, not freed:** the approved draft uses EM-053a for a DIFFERENT rule, "Shutdown drain of a committed DOT run", which has not landed and MUST take a fresh number when it does. **One clause is recorded as an open gap rather than folded in:** nothing else in `specs/` bars a second queue advance on the restart path, and adding that MUST to EM-031b would put an unimplemented obligation on a requirement that already carries a declared implementation gap. Refs: hk-6lt60, hk-7bfqe. |
 | 2026-08-04 | 0.10.7 | agent (spec lane a-spec) | **EM-054's rationale stops citing a deleted check. No EM obligation changes.** The §4.12 prose behind EM-054 explained, in the present tense, why the old tree-wide refresh destroyed state invisibly: a pre-merge escape check failed a run on a dirty main root but exempted `.harmonik/` and `.claude/` as expected churn. That check was deleted on 2026-08-04 (commits `8ba6bfb57` and `d6c12a669`), together with the Go symbol this spec named. Three passages are re-aimed. (1) The invisibility rationale moves to the past tense and adds that the deleted check cannot bring the interaction back. (2) The churn allowlist keeps its MUST NOT-narrow rule with a live reason: the allowlist outlived the check as `IsHarmonikChurn` in `internal/runmerge`, and the worktree-state restore path still reads it. The old reason, that a narrower list "would fail nearly every run", died with the check. (3) The refresh-skip passage stops saying the stale state is invisible only inside the exempt region. Nothing reports it on any path now, so the hole is wider than the allowlist and the text says so instead of understating it. The refresh scope, the uncommitted-changes policy, the pre-merge-tip detection rule, the refresh-failure routing, and every §10.2 obligation are UNCHANGED. No requirement IDs added, renumbered, or retired. Companion: [run-state-machine.md] v0.4.0, which carries the decision, and [process-lifecycle.md] v0.7.6. |
 | 2026-08-04 | 0.10.6 | agent (`queue-dogfood-readiness` T5a) | **Release-claim checkpoint for an unfinished DOT release (new EM-031b).** A committed DOT run must write a final pre-release checkpoint carrying an immutable `ReleaseClaim` before it synchronizes, merges, closes, or reopens. The typed record stores the dispatch-head SHA, the resolved merge-target ref and SHA, and an optional remote endpoint naming the worker, host, and repository path. Restart reads the claim from git and reads the current bead state, and uses only those two. JSONL, a daemon-local registry, and reconstructed process memory cannot supply a claim field. A missing, corrupt, or inconsistent claim retains the branch and routes to reconciliation with no merge, close, reopen, or redispatch. Immutability is structural (one record path per `transition_id` per EM-018) and additionally enforced: a write at a path that already carries a record is refused. `Transition` gains the additive optional field `release_claim`; the wire form omits the key when the field is absent, so an ordinary transition record is byte-unchanged and the EM-022 N-1 contract holds. `merge_target_ref` is fully qualified and an implementation must reject a bare branch name, because git ref-search can resolve a bare name to a tag or a remote tracking ref. §2.1 core-type list, §6.1 `RECORD ReleaseClaim` and `RECORD RemoteEndpoint`, and a §10.2 obligation row are added. **A dated DECLARED IMPLEMENTATION GAP under EM-031b records that the daemon does not call the writer yet**, so the MUSTs are targets and not conformance claims. Implemented in `internal/core`: `ReleaseClaim`, `RemoteEndpoint`, `ReleaseClaimStore`, `WriteReleaseClaimCheckpoint`, `ReleaseAfterClaim`, `ReadReleaseClaim`, `UnmarshalTransitionRecord`. No requirement IDs renumbered or retired; amendatory over v0.10.5. Refs: `.kerf/works/queue-dogfood-readiness/07-tasks.md` T5a. |
+| 2026-08-02 | 0.10.5 | agent (kerf finalize, queue-dogfood-readiness) | **EM-053a added, and it should not have been.** The finalize appended an "Amendment — terminal recovery record" block carrying EM-053a and bumped the version with no row here. The row is written at 0.10.8 so the table is complete. The finalize took every target from the second, superseded changelog table. Refs: hk-6lt60. |
 | 2026-08-02 | 0.10.4 | agent (codename:event-payload-ownership) | **Step 13 descriptor and no-review binding.** Adds the typed workflow descriptor, pre-start resolution, tier-0 queue-item compatibility mapping, canonical no-review graph binding, and resolver-owned review policy. EM-055 now uses WG-046 post-parse typed-attribute substitution. The main-loop pseudocode passes the complete queue item to resolution and carries the resolved result through validation and run creation. EM-057 test obligations cover all nine checks. |
 | 2026-08-01 | 0.10.2 | agent (hk-v4wer) | **EM-058 gains a terminal-classification precondition for `dot`-mode `agentic` nodes.** The component-C sub-note derived a node Outcome "after a clean agent exit" without saying who decides that the exit was clean. The `dot` implementation decided it on worktree HEAD advance alone: it never read the Stop-hook outcome and never ran the [claude-hook-bridge.md §4.7 CHB-020] branch mapping, so a node that committed and then reported `FAILURE_SIGNAL` was recorded as `SUCCESS` and its work was merged, and a progress-stream watcher failure left the node with no signal at all. The new sub-note states the three CHB-020 cases in order and forbids deriving `SUCCESS` from a HEAD advance after a failing exit. It adds no obligation the `single` path did not already carry — `single` has applied the same rule at its terminal switch since CHB-020 landed — so this is a `dot`-side parity clause, not a new requirement. The clean-exit case for a harness that reports nothing and exits 0 is stated explicitly, because dropping it would fail every `CompletionProcessExit` harness. No requirement IDs added, renumbered, or retired. |
 | 2026-07-30 | 0.10.1 | agent (spec citation cleanup) | **Rotted pointers repaired across `specs/`. No obligation changed by this pass.** Deleted files that were cited as implementation evidence now name the symbol that carries the behavior today. Line-number citations became symbol names, per the repo rule to cite symbols and never line numbers. The retired `review-loop` workflow mode was dropped from every list that presented it as a live selectable mode, because `core.WorkflowMode.Valid()` accepts only `single` and `dot`. Rules that name `review-loop` as a RETIRED value to reject are unchanged, and so are the event `review_loop_cycle_complete` and the review-loop-failure budget, whose symbols still exist. Where a spec named a test as its conformance sensor and that test no longer exists, the text now says so instead of claiming cover it does not have. |
@@ -2178,11 +2180,51 @@ v0.3 chose (c) — path-scoping under `<run_id>/` — because it is a structural
 
 ## Amendment — terminal recovery record
 
-### EM-053a — Durable committed-run recovery
-
-Before shutdown may release a run with a committed branch and incomplete
-terminal ladder, the daemon MUST persist a terminal-recovery record. The record
-MUST identify the run, bead, queue item, branch tip, and ladder stage. Startup
-MUST use that record with Git and Beads to select exactly one action: continue
-the existing ladder or retain reviewable recovery. It MUST NOT dispatch, merge,
-close, or advance the queue a second time.
+> **EM-053a — Durable committed-run recovery — RETIRED 2026-08-05, and the
+> number is not reusable.** It required the daemon to persist a
+> terminal-recovery record before shutdown releases a run with a committed
+> branch and an incomplete terminal ladder, required that record to identify the
+> run, bead, queue item, branch tip and ladder stage, required startup to use it
+> with Git and Beads to pick exactly one action, and barred a second dispatch,
+> merge, close or queue advance.
+>
+> **The same decision already has a record, and that one is the plan of
+> record's.** §4.7 EM-031b landed at 0.10.6 on 2026-08-04 as card T5a of the
+> same kerf work. It is the immutable `Transition.release_claim` in the git
+> transition record, and the work's changelog of record names it: "Defines
+> shutdown drain and the immutable Git-backed release claim used to reconstruct
+> unfinished DOT release." The withdrawn text comes only from the second,
+> superseded table, whose row reads "Terminal-recovery record". Both the
+> changelog and the change design state that the plan of record wins a
+> disagreement.
+>
+> **Two different rules were drafted under this one number, so the number is
+> burned.** The approved draft also holds an EM-053a, and it is a different
+> rule: "Shutdown drain of a committed DOT run", the sibling of
+> [run-state-machine.md RSM-021]. That rule has not landed. When it does it MUST
+> take a fresh number. Reusing EM-053a would leave the work's own task cards
+> T5, T6 and T11 citing an identifier that meant two things.
+>
+> **Two records for one decision is worse than either alone.** EM-053a arrived
+> two days before EM-031b. Neither cites the other. They share no field:
+> EM-053a names bead, queue item and ladder stage, and EM-031b names dispatch
+> head SHA, merge-target ref and SHA, and remote endpoint. A daemon obeying both
+> would write two records and reconstruct from whichever it read first.
+>
+> **It named no storage medium, and the medium is the whole point.** "The daemon
+> MUST persist a terminal-recovery record" permits a daemon-local file. §5
+> EM-INV-001 makes git the state-reconstruction source, and EM-031b says the
+> daemon "MUST NOT read JSONL, a daemon-local registry, or reconstructed process
+> memory to supply, replace, or infer any claim field". EM-053a's "use that
+> record with Git and Beads" therefore posits a third store beside the two
+> authorities.
+>
+> **One clause has no other home, and it is tracked rather than folded in.**
+> Nothing else in `specs/` bars a second queue advance on the restart path.
+> EM-031b forbids a second release and a redispatch, and it does not name the
+> queue. Folding a queue-advance MUST into EM-031b would add an obligation
+> nothing implements to a requirement that already carries a declared
+> implementation gap.
+>
+> Bead: hk-6lt60 (the finalize that took the losing table, and the open
+> queue-advance gap above).

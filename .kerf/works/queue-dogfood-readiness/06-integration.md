@@ -134,8 +134,10 @@ referenced specification.
 > says "`queue_recovered` is the only recovery observation" describes no live
 > event. The appended run-state-machine Amendment A2 is retired too, and the
 > RSM-021 replacement the plan of record authorized is landed in its place.
-> Read this section as a record of what the losing lane drafted, not as a list
-> of live requirements. Bead: hk-6lt60.
+> `EM-053a` is retired in `specs/execution-model.md`, and the number is burned
+> because the approved draft uses it for a second, different rule that has not
+> landed. Read this section as a record of what the losing lane drafted, not as
+> a list of live requirements. Bead: hk-6lt60.
 
 #### Consistency checks
 

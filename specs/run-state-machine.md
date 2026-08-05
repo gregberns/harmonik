@@ -598,9 +598,10 @@ subsumed path, which passes no flag).
 > RSM-021 above.
 >
 > **It would have made the terminal spine unreachable.** A2 let the coordinator
-> invoke RSM-021 only after EM-053a records the recovery state. EM-053a names no
-> storage medium and has no production writer. A conforming daemon could
-> therefore never enter its own shutdown terminal edge.
+> invoke RSM-021 only after EM-053a records the recovery state. EM-053a named no
+> storage medium and had no production writer. A conforming daemon could
+> therefore never enter its own shutdown terminal edge. EM-053a is itself
+> retired on 2026-08-05, so this gate now points at nothing at all.
 >
 > **Its matrix does not exist.** "One row MUST select exactly one of ..." points
 > at a table that A2 does not publish and that no document in the tree defines.

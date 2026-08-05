@@ -339,6 +339,37 @@ On an invalid handoff the assessor MUST:
 
 ## Amendment — readiness gate
 
+> **RETIRED 2026-08-05. DO NOT COPY THIS BLOCK INTO `specs/`.** This amendment
+> was written by lane bravo's parallel pass. It is kept here as a record of what
+> the pass produced. It is NOT part of the plan of record and it must not land.
+>
+> This draft is the source a `kerf finalize` copies into `specs/`. The amendment
+> below reached `specs/assessor-handoff-schema.md` once, on 2026-08-02, and was
+> reverted on 2026-08-05. Leaving the block unmarked would let the next finalize
+> put it back.
+>
+> Three reasons it does not land:
+>
+> 1. `05-changelog.md` row 1 of the plan of record says this target is
+>    `reviewed, unchanged` — "Canary facts stay in mission prose".
+>    `04-design/assessor-handoff-schema-design.md` says "Do not amend the schema
+>    unless field-gap review finds an unrepresentable fact." Both files state the
+>    tiebreak: where the two passes disagree, the plan of record wins.
+> 2. It was invalid on arrival under the spec's own section 9. A breaking change
+>    MUST bump the version AND update the admiral author, C2 and the assessor in
+>    the same commit. No consumer was updated. All live assessor missions remain
+>    at `schema_version: 2` with `gate: deploy`.
+> 3. Its `canary` rule sets concurrency to one. `internal/queue/readiness`
+>    records that the operator withdrew that rule, and the live readiness mission
+>    runs at concurrency 3.
+>
+> One clause here names a real gap nothing else covers: `commit` MUST be
+> reachable from `branch`. It is tracked separately. Do not fold it back in from
+> this block — section 9 classes a new constraint on a required field as a
+> breaking change, so it needs its own decision.
+>
+> Bead: `hk-7bfqe`.
+
 ### Readiness frontmatter
 
 `gate: readiness` is valid only with `schema_version: 3`. It MUST include

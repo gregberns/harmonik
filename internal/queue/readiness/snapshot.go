@@ -31,10 +31,10 @@ import (
 // empty selection rather than fail. [DecodeSnapshot] refuses a version it cannot
 // read for that reason.
 //
-// This number is not the assessor handoff schema version. 05-changelog.md
-// records a version-2-against-version-3 disagreement and that disagreement is
-// about specs/assessor-handoff-schema.md, a different artifact with its own
-// number. Do not reconcile the two.
+// This number is not the assessor handoff schema version.
+// specs/assessor-handoff-schema.md is a different artifact with its own number.
+// Do not reconcile the two. That spec briefly carried a second, conflicting
+// version number, which was retired on 2026-08-05. It now states one version.
 const SchemaVersion = 2
 
 // EventEvidenceNote is written into every snapshot by [Capture]. A caller

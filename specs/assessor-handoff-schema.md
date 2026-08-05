@@ -7,7 +7,7 @@ spec-id: assessor-handoff-schema
 status: draft
 spec-shape: contract
 spec-category: foundation-cross-cutting
-version: 3.0.0
+version: 2.0.0
 spec-template-version: 1.1
 owner: admiral-plan-author
 last-updated: 2026-07-16
@@ -313,7 +313,7 @@ On an invalid handoff the assessor MUST:
 
 ## 9. Schema evolution
 
-`schema_version: 3` is the current version.
+`schema_version: 2` is the current version.
 
 - **v1 → v2** (2026-07-16, M6 WS5-1/WS5-2, D1): a **breaking semantic change**.
   The verdict model moved from a deterministic `found-by` block-query ("any open
@@ -336,19 +336,3 @@ On an invalid handoff the assessor MUST:
 - **Version negotiation** is not supported in v1 — the components are updated
   together.
 ```
-
-## Amendment — readiness gate
-
-### Readiness frontmatter
-
-`gate: readiness` is valid only with `schema_version: 3`. It MUST include
-`commit`, `branch`, `spawned_by`, `decision_owner`, `canary`, and
-`proof_artifacts`. `commit` MUST be reachable from `branch`. `spawned_by` is
-the assessor reply target. `decision_owner` is the only actor who may authorize
-the defined batch after PASS.
-
-`canary` MUST identify one local stream item, prohibit append, set concurrency
-to one, prohibit remote, Pi, cross-repository, and wave work, and state its
-repeat-safety limit. `proof_artifacts` MUST name durable candidate,
-controlled-load, Step 9, core-loop, event, daemon-log, batch, and report paths.
-Unknown or incomplete version-3 readiness handoffs are invalid.

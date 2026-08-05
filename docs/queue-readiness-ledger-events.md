@@ -128,10 +128,9 @@ older version cannot read the newer one, and the decoder refuses a version it
 cannot read rather than reporting an empty selection.
 
 These numbers are not the assessor handoff schema version.
-`.kerf/works/queue-dogfood-readiness/05-changelog.md` records a disagreement
-between version 2 and version 3, and that disagreement is about
-`specs/assessor-handoff-schema.md`, a separate artifact with its own number. Do
-not reconcile the two.
+`specs/assessor-handoff-schema.md` is a separate artifact with its own number.
+Do not reconcile the two. That spec briefly carried a second, conflicting
+version number, which was retired on 2026-08-05. It now states one version.
 
 ## 8. References
 

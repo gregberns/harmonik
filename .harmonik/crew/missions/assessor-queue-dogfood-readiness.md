@@ -74,12 +74,11 @@ preconditions the mission names (`.harmonik/agents/assessor/operating.md`
 §Deploy-gate steps 1 and 2). Section 4 below is those preconditions. The
 `commit` field is what pins the candidate. The branch is context.
 
-`specs/assessor-handoff-schema.md` carries a late amendment that adds a
-`readiness` gate at `schema_version: 3`. Do not use it and do not act on it. The
-kerf change design for that same file states the opposite resolution — do not
-amend the schema, and carry the canary facts in mission prose — and its own
-conflict rule says that reading wins. Raise the disagreement with the admiral as
-a documentation finding. Do not let it hold this gate.
+`specs/assessor-handoff-schema.md` used to carry a late amendment that added a
+`readiness` gate at `schema_version: 3`. That amendment was retired on
+2026-08-05 and the spec is back to one version. There is no longer a
+disagreement to raise, and there is no `readiness` gate. Use `deploy` at
+`schema_version: 2`, which is what this mission declares.
 
 ### 2. The launch, and which daemon you may kill
 

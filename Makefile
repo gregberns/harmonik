@@ -739,6 +739,7 @@ script-tests:  ## Self-tests for the shell the gate depends on
 	scripts/loadgen-test.sh
 	scripts/gate-fails-closed-test.sh
 	scripts/lint-allow-test.sh
+	scripts/changed-func-coverage-test.sh
 
 # freeze-gates — the per-subsystem "do not move this back" greps. Cheap
 # (sub-second each) and they only ever answer a structural question, so they
@@ -1005,6 +1006,25 @@ test-integration:  ## The integration-tagged tier (needs tmux + a live environme
 coverage-gates:  ## Coverage ratchets, internal/** and cmd/** (trend measure; not part of `make full`)
 	scripts/coverage-gate.sh
 	scripts/with-isolated-gocache.sh scripts/cmd-coverage-gate.sh
+
+# coverage-changed — the question the ratchets above cannot ask.
+#
+# Both gates measure a PACKAGE, and a package number hides the thing worth
+# seeing. internal/keeper reads 79.2% while the function written to fix a
+# data-loss bug reads 0.0%. One new untested function moves the package figure
+# by a fraction of a point, so no threshold fires and nobody looks.
+#
+# This asks the narrow question instead: of the functions in THIS diff, which
+# are at 0.0%? It is a REPORT and it always exits 0. Deliberately not a gate
+# and deliberately not in `make fast` — see the header of the script for the
+# -coverpkg trade-off it makes and the false alarms that remain.
+#
+#   make coverage-changed              # against HEAD~1, same as the lint step
+#   make coverage-changed BASE=<ref>   # against a merge-base, for a whole lane
+BASE ?= HEAD~1
+.PHONY: coverage-changed
+coverage-changed:  ## Report (never gate): functions this diff touched that no test exercises
+	scripts/changed-func-coverage.sh $(BASE)
 
 # ---------------------------------------------------------------------------
 # Keeper acceptance corpus — keeper conformance set (hk-urxa3)

@@ -288,6 +288,17 @@ type RunEnv struct {
 	RunID      core.RunID
 	BeadRecord core.BeadRecord
 
+	// RunSessionID is set when this run owns a tmux session of its own, and is
+	// the run id that session is named after. Empty means the run shares the
+	// daemon's session and dies with the daemon.
+	//
+	// The run decides this ONCE, before it launches anything, and every launch
+	// this run makes reads it from here. A graph run launches an agent per node,
+	// so a per-site copy of the decision is a per-site chance to disagree with
+	// it: one node in the run's own session, the next in the daemon's, and a
+	// registry record naming a session the agent is not in.
+	RunSessionID string
+
 	QueueName       string
 	QueueID         *string
 	QueueGroupIndex *int

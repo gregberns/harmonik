@@ -17,6 +17,7 @@ import (
 	"github.com/gregberns/harmonik/internal/crew"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	runpkg "github.com/gregberns/harmonik/internal/run"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
@@ -615,6 +616,110 @@ func pidIsLive(pid int) bool {
 	return err == nil || err == syscall.EPERM
 }
 
+// probeRunRegistrySessions exempts the tmux session of every bead run that
+// survived the last daemon from the session sweep, and returns those runs' ids.
+//
+// The ids are returned because the session is not the only thing a surviving run
+// owns. Its worktree carries a lease naming the DEAD daemon that wrote it, so
+// the lease sweep classifies that worktree stale and the step after it would
+// force-remove the directory the live agent is working in.
+//
+// The sweep at (a1) kills EVERY session carrying this project's hash that is not
+// in the exclusion set. It does not ask whether anything is alive inside. That is
+// right for the sessions it was written for and wrong for a bead run: a run in a
+// session of its own is exactly a run that was built to outlive the daemon, and
+// the boot that is supposed to adopt it killed it first. The adoption pass then
+// found a dead session and reset a bead whose agent this daemon had just killed —
+// so the protection ran, and reported success, on work it had already destroyed.
+//
+// Exemption is driven by the registry record and by a live pane, both. A record
+// naming a session whose pane is dead is a genuine orphan: the sweep reaps it and
+// adoptDeadRunSessions resets the bead, which is the recovery working.
+//
+// There is deliberately NO by-prefix fallback of the kind the crew probe carries.
+// A run writes its record BEFORE its session exists, so a live run session with no
+// record is not a cold-registry case — it is a session nothing can ever adopt or
+// attribute to a bead. Killing it costs a re-dispatch; keeping it leaks a tmux
+// session and an agent for ever.
+func probeRunRegistrySessions(
+	ctx context.Context,
+	projectDir string,
+	adapter ltmux.Adapter,
+	logger *log.Logger,
+	sessionSnapshot map[string]struct{},
+	excludeSessions map[string]struct{},
+) map[string]struct{} {
+	liveRunIDs := map[string]struct{}{}
+	if adapter == nil {
+		return liveRunIDs
+	}
+	records, err := runpkg.List(projectDir)
+	if err != nil {
+		if logger != nil {
+			logger.Printf("daemon: probeRunRegistrySessions: run registry list error (%v); no run session is exempt this boot", err)
+		}
+		return liveRunIDs
+	}
+
+	for _, rec := range records {
+		if rec.SessionName == "" {
+			continue
+		}
+		if _, alreadyExcluded := excludeSessions[rec.SessionName]; alreadyExcluded {
+			continue
+		}
+		if _, present := sessionSnapshot[rec.SessionName]; !present {
+			// The session is gone. adoptDeadRunSessions reads the same record a few
+			// steps later, sees the same absence, and resets the bead.
+			continue
+		}
+		pid, pidErr := adapter.WindowPanePID(ctx, ltmux.WindowHandle(rec.SessionName+":"))
+		if pidErr != nil || pid <= 0 {
+			continue
+		}
+		if !pidIsLive(pid) {
+			continue
+		}
+		excludeSessions[rec.SessionName] = struct{}{}
+		liveRunIDs[rec.RunID] = struct{}{}
+		if logger != nil {
+			logger.Printf("daemon: probeRunRegistrySessions: bead %s is still being worked in session %q (PID %d); not sweeping it",
+				rec.BeadID, rec.SessionName, pid)
+		}
+	}
+	return liveRunIDs
+}
+
+// worktreesNotHeldByALiveRun drops from paths every worktree that belongs to a
+// run in liveRunIDs, and returns the rest.
+//
+// The lease sweep hands over the worktrees whose lease names a process that is
+// no longer running, and the caller force-removes them. For a run that ended
+// with the daemon that started it, that is the reclaim working. For a run that
+// OUTLIVED the daemon it is destruction: the lease names the dead daemon because
+// the daemon is what wrote it, while the agent that is still working in that
+// directory is a different process entirely. Every uncommitted change it has
+// made goes with the directory.
+//
+// A worktree directory is named after its run, which is how a path is matched to
+// a run without reading anything else.
+func worktreesNotHeldByALiveRun(paths []string, liveRunIDs map[string]struct{}, logger *log.Logger) []string {
+	if len(liveRunIDs) == 0 {
+		return paths
+	}
+	kept := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if _, live := liveRunIDs[filepath.Base(p)]; live {
+			if logger != nil {
+				logger.Printf("daemon: RunOrphanSweep: worktree %q belongs to a run whose agent is still working; not removing it", p)
+			}
+			continue
+		}
+		kept = append(kept, p)
+	}
+	return kept
+}
+
 // probeCrewRegistrySessions lists crew registry records, checks each crew's
 // tmux session against the live session snapshot, and adds live crew sessions
 // (session present AND first-pane PID alive) to excludeSessions.
@@ -752,6 +857,11 @@ func RunOrphanSweep(
 	var result OrphanSweepResult
 	var errs []string
 
+	// The runs whose agents outlived the last daemon. Two steps below read it: the
+	// session kill pass, which must not kill their tmux sessions, and the worktree
+	// force-removal, which must not delete the directories they are working in.
+	liveRunIDs := map[string]struct{}{}
+
 	// (PL-006d) Probe the coordinator (flywheel) sentinel before the tmux sweep.
 	// If the sentinel is present and the supervisor PID is live, exclude the
 	// flywheel session from the sweep. If the sentinel is stale (dead PID), kill
@@ -842,6 +952,15 @@ func RunOrphanSweep(
 			ctx, projectDir, projectHash, cfg.TmuxAdapter, cfg.Logger,
 			sessionSnapshot, excludedTmuxSessions,
 		)
+
+		// Run registry probe: exclude the session of every bead run whose agent is
+		// still working. It runs HERE, before the kill pass below, because the
+		// adoption pass that looks for these runs comes after the sweep — a session
+		// killed here is already gone by the time anything asks whether to adopt it.
+		liveRunIDs = probeRunRegistrySessions(
+			ctx, projectDir, cfg.TmuxAdapter, cfg.Logger,
+			sessionSnapshot, excludedTmuxSessions,
+		)
 	}
 
 	// (a) Tmux sessions — two passes:
@@ -884,11 +1003,16 @@ func RunOrphanSweep(
 	// an explicit `git worktree remove --force --force` (hk-ldzp). Only paths
 	// whose lease-lock recorded a dead PID (sweepResult.Removed) are targeted —
 	// directories with live PIDs or absent lease-locks are not touched here.
-	if len(sweepResult.Removed) > 0 {
-		gcResult := workspace.RemoveStaleWorktrees(ctx, projectDir, sweepResult.Removed, cfg.Logger)
+	//
+	// A run that outlived the daemon is the one case where a dead lease holder
+	// does NOT mean a dead run: the lease names the daemon that wrote it, and that
+	// daemon is gone while the agent is not. Its worktree is held out of this
+	// removal, or the force-remove takes the live agent's uncommitted work.
+	if removable := worktreesNotHeldByALiveRun(sweepResult.Removed, liveRunIDs, cfg.Logger); len(removable) > 0 {
+		gcResult := workspace.RemoveStaleWorktrees(ctx, projectDir, removable, cfg.Logger)
 		result.WorktreeDirsRemoved = len(gcResult.Removed)
 		if len(gcResult.Failed) > 0 {
-			errs = append(errs, fmt.Sprintf("worktree-dirs-gc: %d of %d removals failed", len(gcResult.Failed), len(sweepResult.Removed)))
+			errs = append(errs, fmt.Sprintf("worktree-dirs-gc: %d of %d removals failed", len(gcResult.Failed), len(removable)))
 		}
 	}
 

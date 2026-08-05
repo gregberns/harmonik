@@ -862,14 +862,14 @@ unchanged by decision.
 
 | Row | Capability | Status at `51bd8aa84` |
 |---|---|---|
-| P1 | Independent tmux session and restart adoption | **MISSING** — items 1 and 7 below |
+| P1 | Independent tmux session and restart adoption | PARTLY RESTORED 2026-08-05 — see items 1 and 7 below. The session, the record and the boot-time protections are back. The agent is still killed at shutdown |
 | P2 | Escaped-worktree guard | DROPPED by decision in `8ba6bfb57` and `d6c12a669` |
 | P3 | `noCommitGuardShouldReopen` and its cross-repo target | COVERED — the graph runs the equivalent guard and `activeRepo` now reaches `dispatchDotAgenticNode` |
 | P4 | Implementer comms presence join and leave | **MISSING** — item 4 below |
 | P5 | Pi provider profile on the launch context | COVERED — `dispatchDotAgenticNode` sets all five fields |
 | N1 | `bridge.Drain` on the shutdown branch | COVERED — `bridge.Drain` has a production caller in `beadRunOne` |
 | N2 | `RunHandle.Aborted()` | COVERED — still read in `beadRunOne`. It was attribution only against the graph |
-| N3 | `RunHandle.SetAgentType` | **MISSING** — item 2 below |
+| N3 | `RunHandle.SetAgentType` | COVERED 2026-08-05 — set in `runAgentLaunch`, so every launch site records the harness. See item 2 below |
 | N4 | `RunHandle.SetMachine` | COVERED — set in the graph node's `OnLaunchedExtra` |
 | N5 | Cold-start spawn token | COVERED — `runlease.ColdStartToken` is held in `internal/daemon/agentlaunch.go` |
 | N6 | `transitionToTerminated` | COVERED — called from `runAgentPostExit` |
@@ -877,7 +877,7 @@ unchanged by decision.
 | N8 | Stderr tail in the failure reason | **MISSING** — item 9 below |
 | N9 | The post-mode scenario gate | UNCHANGED BY DECISION. The graph sets `SkipGate` and relies on the `commit_gate` node in `internal/daemon/standard-bead.dot`. The exposure is an operator-authored graph with no gate node |
 | N10 | Cross-repo `activeRepo` on post-exit reads | COVERED for the subsumption probe. The `WorktreeRootPath` half stays inert — see the last section |
-| N11 | Abort-kill and teardown skips, and the shutdown early return | **MISSING** — the other half of P1, item 7 below |
+| N11 | Abort-kill and teardown skips, and the shutdown early return | **MISSING** — the other half of P1, item 7 below. It is now the ONLY thing between a run and real survival |
 | N12 | Pi post-mortem stderr write | **MISSING** — item 6 below |
 | N13 | `sdHarness` | **MISSING** — item 5 below |
 
@@ -889,7 +889,14 @@ never assigned, so there is no ineffectual assignment to report.
 ### Actively unsafe — a protection that now points the wrong way
 
 **1. The run registry has no writer, and five readers take their empty branch for ever.**
-`internal/run/registry.go` `Write` is unreachable — confirmed by whole-program reachability, not by
+FIXED 2026-08-05. `internal/daemon/run_session_adoption.go` `setUpRunSession` writes the record
+before the run reaches any launch, and the durable-state parity sensor in `internal/specaudit` no
+longer carries `internal/run.Write` on its allowlist. Repairing the write alone was not enough:
+the boot sweep killed the surviving session before the adoption pass looked for it, and the
+PRIMARY resume-reconcile loop reset the bead whatever the registry held. Both are repaired too.
+The record left the following consequences behind while it was missing.
+
+`internal/run/registry.go` `Write` was unreachable — confirmed by whole-program reachability, not by
 grep alone. `hk-sat32` names one consequence. There are four, and the other three are unfiled.
 
 - `internal/daemon/bootreconcile.go` `reconcileInFlightRuns` builds its live-run exclusion set from
@@ -907,7 +914,12 @@ grep alone. `hk-sat32` names one consequence. There are four, and the other thre
 - `internal/daemon/run_session_adoption.go` `adoptDeadRunSessions` and `internal/daemon/scheduler.go`
   `adoptLiveRunSession` both iterate an empty list. Cross-restart run adoption does not happen.
 
-**2. Every Pi rate limit now throttles the whole fleet.** `RunHandle.SetAgentType` has no production
+**2. Every Pi rate limit now throttles the whole fleet.** FIXED 2026-08-05 (`hk-3ajf2`).
+`runAgentLaunch` records the resolved harness on the run's handle, which puts the call in the ONE
+launch path instead of at a site that can be deleted with the code around it.
+`internal/daemon/pi_ratelimit_carveout_test.go` drives a real launch and then delivers a real
+rate-limit event, so it fails when the recording stops — which the two tests that set the field by
+hand could not. `RunHandle.SetAgentType` had no production
 caller. The only one was in the deleted tail. `internal/daemon/bandwidthtuner.go`
 `bandwidthTunerBackstop.handle` reads `GetAgentType()` to keep a Pi 429 off the global token tuner —
 its own comment states the rule: "a free-tier Pi 429 must never throttle the paid Claude fleet"
@@ -940,7 +952,12 @@ graph runs. It is now every run.
 `PiCaptureDir` on the launch result and no production symbol reads it. Nothing writes
 `pi-stderr.log` any more.
 
-**7. The whole independent-session substrate is unreachable.**
+**7. The whole independent-session substrate is unreachable.** MOSTLY FIXED 2026-08-05. A local run
+takes a tmux session of its own again, `SessionRunsIndependently` carries the real fact, and the
+run's scope keeps its record and its worktree when the daemon stops. ONE HALF IS STILL OPEN: the two
+graph launch sites pass no exit facts to `runAgentLaunch`, so the launch still kills the agent
+session at shutdown. The run's RECORD survives and the next boot adopts it in order; the AGENT does
+not. That is row N11 and it is the last step to real survival.
 `internal/daemon/tmuxsubstrate.go` `perRunSubstrate.runSessionID` has no production assignment, so
 `tmuxSubstrate.SpawnRunSession` and `runSessionName` cannot be reached. `runlease.Exit`
 `SessionRunsIndependently` is a literal `false` at its single production construction site in

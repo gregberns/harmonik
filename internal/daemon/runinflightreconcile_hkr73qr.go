@@ -121,6 +121,24 @@ func reconcileOrphanedRunsOnResume(
 		if _, done := terminated[runID]; done {
 			continue
 		}
+		// A run whose registry record is still on disk after the boot's
+		// dead-session pass has an agent working it in a session that outlived the
+		// daemon. It has no terminal event BECAUSE IT HAS NOT ENDED, which is the
+		// exact shape this loop reads as "orphaned by the restart".
+		//
+		// So the live set has to be consulted HERE, and not only by the two passes
+		// below. A surviving run always emits run_started and, by construction,
+		// never a terminal event before the crash, so this loop is the one that
+		// reaches it first. Reporting it failed and resetting its bead puts a
+		// second agent on work already in hand — two agents, one bead, one branch.
+		//
+		// adoptLiveRunSession is what settles this run: it watches the session and
+		// resets the bead when the agent finally exits.
+		if meta.beadID != "" {
+			if _, live := liveRunBeadIDs[core.BeadID(meta.beadID)]; live {
+				continue
+			}
+		}
 		// hk-mdus1: thread queue routing into the terminal event.
 		emitRunCompleted(ctx, bus, runID, meta.beadID, "", "", false,
 			"run orphaned by daemon restart: no terminal event before shutdown",

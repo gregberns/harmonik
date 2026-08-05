@@ -4,27 +4,21 @@ package daemon
 // to outlive the daemon, and how its bead gets back.
 //
 // A bead run launched in a tmux session of its own writes a run registry record
-// so a later daemon boot can find the session by name. The intent is that the
-// agent keeps working across a daemon restart and the next boot adopts it. The
-// system does not deliver that, and these tests say so plainly rather than
-// asserting the intent:
+// so a later daemon boot can find the session by name. Two things then have to
+// hold, and these tests pin one each:
 //
-//   - The boot orphan sweep kills every tmux session carrying the project
-//     prefix that is not in its exclusion set. It applies no liveness test, run
-//     sessions are not excluded, and it runs before the pass that looks for a
-//     surviving run. So the session is already dead by the time anything asks.
-//   - The bead still gets back, because the adoption pass then classifies the
-//     run as dead, resets the bead and drops the record. That recovery is real
-//     and worth defending. Survival is not.
+//   - The boot sweep must leave that session alone while an agent is working in
+//     it. The session-level sweep kills every session carrying the project
+//     prefix that is not excluded, and it applies no liveness test of its own,
+//     so the boot builds the exclusion from the run registry BEFORE the kill
+//     pass. It has to be before: the sweep runs ahead of the adoption pass, so a
+//     session killed there is already gone by the time anything asks about it.
+//   - When the session really is gone the adoption pass resets the bead and
+//     drops the record, so the work is dispatched again.
 //
-// Tests here are therefore named after what the code does. There is no test
-// called "the session survives a daemon restart", and there must not be: it
-// would assert a promise the system does not keep, and would either fail or
-// pass for the wrong reason.
-//
-// The defeat itself is recorded in
-// plans/2026-07-27-delete-and-rewrite/STEP-6-RESOURCE-LEASES.md §4 and in
-// specs/run-state-machine.md §4a under RSM-037. Fixing it is separate work.
+// This file used to say the sweep killed the run session and that survival was
+// fiction. It was, and the test that pinned it invited its own replacement once
+// the sweep learned to tell a live run from an orphan. That is what happened.
 //
 // Helper prefix: surviveRecovery.
 
@@ -33,8 +27,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
@@ -119,65 +116,163 @@ func (s *surviveRecoverySessions) wasKilled(name string) bool {
 	return s.wasKilledLocked(name)
 }
 
-// TestBootSweep_KillsTheRunSessionTheAdoptionPassIsAboutToLookFor pins the
-// defeat, as behaviour, at the site that causes it.
+// surviveRecoveryPanePIDs is a tmux adapter that answers the two questions the
+// boot sweep asks about a session: does it exist, and what PID is in its first
+// pane. Everything else comes from the package's shared no-op adapter.
 //
-// The sweep is presented with the four session kinds a real boot sees: the
-// daemon's own spawn target, the flywheel, the captain and a live crew — all of
-// which the daemon excludes — plus one bead-run session in the shape a run that
-// asked to outlive the daemon leaves behind. The run session is killed.
-//
-// This is why the survive path buys nothing today. The disposition in
-// specs/run-state-machine.md §4a is what a run ASKS for; this test is what it
-// GETS. Anyone who later teaches the sweep to tell a live surviving run from a
-// genuine orphan should expect this test to fail, and should replace it with
-// the new promise rather than deleting it quietly.
-func TestBootSweep_KillsTheRunSessionTheAdoptionPassIsAboutToLookFor(t *testing.T) {
-	t.Parallel()
+// A pane PID of 0 is how this fixture spells "nothing is running in there". The
+// sweep reads a non-positive PID as dead without touching the process table, so
+// the dead case is decided by the fixture rather than by whatever the host
+// happens to be running.
+type surviveRecoveryPanePIDs struct {
+	noopTmuxAdapter
+	live map[string]int
+	mu   sync.Mutex
+	// killed records the sessions killed through the ADAPTER path, which is the
+	// second of the sweep's two kill passes.
+	killed []string
+}
 
-	runSession := surviveRecoveryRunSessionName(t)
-	daemonSession := lifecycle.TmuxSessionName(surviveRecoveryHash, "default")
-	flywheel := lifecycle.TmuxSessionName(surviveRecoveryHash, "flywheel")
-	captain := lifecycle.TmuxSessionName(surviveRecoveryHash, "captain")
-	crew := lifecycle.TmuxSessionName(surviveRecoveryHash, "crew-paul")
-	// A crew whose registry record is gone: a genuine orphan, and the thing the
-	// sweep exists to reap. It keeps the sweep demonstrably live in this
-	// fixture, so the run-session assertion below stands on its own rather than
-	// on "the sweep did something".
-	staleCrew := lifecycle.TmuxSessionName(surviveRecoveryHash, "crew-departed")
-	unrelated := "someone-elses-tmux-session"
+var _ ltmux.Adapter = (*surviveRecoveryPanePIDs)(nil)
 
-	server := &surviveRecoverySessions{
-		names: []string{daemonSession, flywheel, captain, crew, staleCrew, runSession, unrelated},
+func (a *surviveRecoveryPanePIDs) ListSessions(context.Context) ([]string, error) {
+	out := make([]string, 0, len(a.live))
+	for name := range a.live {
+		out = append(out, name)
 	}
+	sort.Strings(out)
+	return out, nil
+}
 
-	// The exclusion set the daemon builds at boot: its own spawn target, the
-	// coordinator, the captain and every live crew. A bead-run session is not
-	// in it, and nothing adds it.
-	excluded := map[string]struct{}{
-		daemonSession: {},
-		flywheel:      {},
-		captain:       {},
-		crew:          {},
-	}
+func (a *surviveRecoveryPanePIDs) ListWindows(_ context.Context, _ string) ([]string, error) {
+	// One window, not an idle shell, so the generic classifier has to fall
+	// through to the pane-PID question rather than calling every session orphaned
+	// on window names alone.
+	return []string{ltmux.WindowAgent}, nil
+}
 
-	killed, err := lifecycle.SweepOrphanTmuxSessions(t.Context(), surviveRecoveryHash,
-		server, server, nil, excluded)
-	if err != nil {
-		t.Fatalf("SweepOrphanTmuxSessions: %v", err)
-	}
-	if !server.wasKilled(staleCrew) {
-		t.Fatalf("the sweep left the orphan crew session %q standing, so it is not doing its job in this fixture and nothing below is meaningful (killed=%d)", staleCrew, killed)
-	}
+func (a *surviveRecoveryPanePIDs) WindowPanePID(_ context.Context, handle ltmux.WindowHandle) (int, error) {
+	name := strings.TrimSuffix(string(handle), ":")
+	return a.live[name], nil
+}
 
-	for _, name := range []string{daemonSession, flywheel, captain, crew, unrelated} {
-		if server.wasKilled(name) {
-			t.Errorf("the sweep killed %q, which is excluded or not this project's", name)
+func (a *surviveRecoveryPanePIDs) KillSession(_ context.Context, name string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.killed = append(a.killed, name)
+	return nil
+}
+
+func (a *surviveRecoveryPanePIDs) wasKilled(name string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, k := range a.killed {
+		if k == name {
+			return true
 		}
 	}
-	if !server.wasKilled(runSession) {
-		t.Errorf("the sweep left the bead-run session %q standing.\n"+
-			"CURRENT BEHAVIOUR IS THAT IT KILLS IT. The sweep matches on the project prefix alone, applies no liveness test, and holds no exclusion for a run session — which is why a run that asks to outlive the daemon does not. If this now fails because the sweep learned to tell a live surviving run from an orphan, that is the fix: replace this test with the promise the sweep now keeps.", runSession)
+	return false
+}
+
+// surviveRecoveryNoProcesses answers the sweep's process-level passes with an
+// empty list, so the test never shells out to ps or pgrep and never depends on
+// what else is running on the host.
+type surviveRecoveryNoProcesses struct{}
+
+var (
+	_ lifecycle.HandlerProcessLister = surviveRecoveryNoProcesses{}
+	_ lifecycle.ProcessLister        = surviveRecoveryNoProcesses{}
+)
+
+func (surviveRecoveryNoProcesses) ListOrphanHandlerPIDs(context.Context, core.ProjectHash) ([]int, error) {
+	return nil, nil
+}
+
+func (surviveRecoveryNoProcesses) ListOrphanBrPIDs(context.Context) ([]int, error) {
+	return nil, nil
+}
+
+// TestBootSweep_LeavesALiveRunSessionAloneAndStillReapsADeadOne is the promise
+// the sweep now keeps, and it replaces the test that pinned the opposite.
+//
+// The session-level sweep kills every session carrying this project's hash that
+// is not excluded, and it asks nothing about what is inside. That is right for
+// the sessions it was written for and wrong for a bead run: a run in a session
+// of its own is precisely a run built to outlive the daemon, and the boot that
+// is supposed to adopt it used to kill it first. The adoption pass then found a
+// dead session and reset a bead whose agent this same boot had just destroyed —
+// so the recovery reported success over work it had thrown away.
+//
+// The boot now builds its exclusion from the run registry, before the kill pass.
+//
+// The dead run is not decoration. "The live session was left alone" is a claim
+// that something did NOT happen, and it is free in a sweep that killed nothing.
+// The dead run's session goes through the same call with the same registry and
+// the same adapter, and it IS killed — so the live one surviving is the
+// exclusion working rather than the sweep being inert.
+func TestBootSweep_LeavesALiveRunSessionAloneAndStillReapsADeadOne(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+
+	liveSession := surviveRecoveryRunSessionName(t)
+	if err := runpkg.Write(projectDir, runpkg.Record{
+		SchemaVersion: 1,
+		RunID:         surviveRecoveryRunID,
+		BeadID:        "hk-still-being-worked",
+		SessionName:   liveSession,
+	}); err != nil {
+		t.Fatalf("surviveRecovery: write the live run's record: %v", err)
+	}
+
+	const deadRunID = "0f0e0d0c-0b0a-0908-0706-050403020199"
+	deadSession := lifecycle.TmuxSessionName(surviveRecoveryHash, "run-deadbeef0000")
+	if err := runpkg.Write(projectDir, runpkg.Record{
+		SchemaVersion: 1,
+		RunID:         deadRunID,
+		BeadID:        "hk-agent-already-exited",
+		SessionName:   deadSession,
+	}); err != nil {
+		t.Fatalf("surviveRecovery: write the dead run's record: %v", err)
+	}
+
+	adapter := &surviveRecoveryPanePIDs{live: map[string]int{
+		// This process. The sweep asks the operating system whether the pane's PID
+		// is alive, and this is the one PID a test can name that certainly is.
+		liveSession: os.Getpid(),
+		// Nothing is running in there any more.
+		deadSession: 0,
+	}}
+	server := &surviveRecoverySessions{names: []string{liveSession, deadSession}}
+
+	_, err := RunOrphanSweep(t.Context(), projectDir, surviveRecoveryHash, time.Now(),
+		OrphanSweepConfig{
+			TmuxAdapter:   adapter,
+			TmuxLister:    server,
+			TmuxKiller:    server,
+			HandlerLister: surviveRecoveryNoProcesses{},
+			BrLister:      surviveRecoveryNoProcesses{},
+		})
+	if err != nil {
+		// The sweep reports its non-fatal step failures through this error and the
+		// daemon proceeds anyway (PL-006). Report it and keep going, because the
+		// kills below are what this test is about.
+		t.Logf("RunOrphanSweep reported non-fatal step errors: %v", err)
+	}
+
+	if !server.wasKilled(deadSession) && !adapter.wasKilled(deadSession) {
+		t.Fatalf("the sweep left %q standing, and nothing is running in it.\n"+
+			"The sweep is inert in this fixture, so the check below would report a protected "+
+			"live session when the truth is that nothing was swept at all.", deadSession)
+	}
+
+	if server.wasKilled(liveSession) || adapter.wasKilled(liveSession) {
+		t.Errorf("the boot sweep killed %q, the tmux session of a run whose agent is still working.\n"+
+			"The run wrote that session's name to the registry before it spawned, precisely so "+
+			"this boot could find it. The sweep runs BEFORE the adoption pass, so the agent is "+
+			"already dead by the time anything asks whether to adopt it — and the adoption pass "+
+			"then resets the bead and reports a clean recovery over work this boot destroyed.",
+			liveSession)
 	}
 }
 

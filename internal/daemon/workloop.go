@@ -45,6 +45,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/gitprobe"
@@ -747,15 +749,31 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 			fmt.Sprintf("worktree_create_failed: %v", wtErr))
 		return
 	}
-	// The graph driver does not create an independent session. The scope still
-	// decides whether to keep failure evidence at close.
+	// ── The run's own tmux session, and the record that names it ────────────
+	//
+	// This is where a run stops being a thing only this daemon process knows
+	// about. It takes a tmux session of its own, writes a record naming that
+	// session under .harmonik/runs/, and from then on a daemon that is SIGKILLed
+	// leaves an agent that is still working and a record the next boot can find
+	// it by. Without the record the surviving session is untracked: nothing can
+	// adopt it, nothing can say which bead it holds, and the bead is re-dispatched
+	// under the agent still working it.
+	//
+	// The write is HERE, before the cascade, because the record has to exist
+	// before the session does. A record written after the spawn does not exist at
+	// all for a daemon killed in between, which is the one crash the durable
+	// registry is for.
+	useIndepSession := setUpRunSession(&env, rp, handles, runScope, rbc != nil, runID, beadID)
+
+	// The scope decides whether to keep the run's resources at close, and it asks
+	// once for the whole run.
 	//
 	// The evidence fact comes off the run's handle. The graph launch marks it.
 	// A run with no handle reports no evidence — it also captured none, because
 	// the mark and the capture are made by the same call.
 	runExit = func() runlease.Exit {
 		return runlease.Exit{
-			SessionRunsIndependently: false,
+			SessionRunsIndependently: useIndepSession,
 			DaemonStopping:           daemonStopping(),
 			EvidenceWorthKeeping:     runHandle != nil && runHandle.CapturedAgentOutput() && !bridge.Success(),
 		}
@@ -1051,6 +1069,19 @@ func productionWorktreeFactory(ctx context.Context, projectDir, runID, headSHA s
 	}
 	wtPath := workspace.WorktreePath(projectDir, runID, workspace.NoWorktreeRootOverride())
 
+	// The lease is what says this directory belongs to a live run. It names the
+	// run and the process holding it, and the boot sweep reads it to tell a
+	// worktree somebody is working in from one a crash left behind.
+	//
+	// Without it every worktree classifies as unleased, and the only thing then
+	// standing between a run's checkout and `git worktree remove --force --force`
+	// is the age proxy — which was written as a second line and is not one.
+	//
+	// A failure to take the lease does not fail the run. The worktree exists and
+	// the agent can work in it; what is lost is the sweep's ability to see that,
+	// which is the state every worktree was in before this write existed.
+	writeWorktreeLease(wtPath, runID)
+
 	// Symlink .tools from the project root into the worktree so Makefile
 	// fmt/lint targets resolve their pinned binaries (hk-gb3ln).
 	toolsSrc := filepath.Join(projectDir, ".tools")
@@ -1067,6 +1098,15 @@ func productionWorktreeFactory(ctx context.Context, projectDir, runID, headSHA s
 	// cancellation). This mirrors the intent of the original `defer removeWorktree`
 	// call — git worktree prune is best-effort.
 	cleanup := func() {
+		// The lease dies with the workspace. Releasing it BEFORE the removal is
+		// what keeps the two in step when the removal fails: a directory that is
+		// still on disk with no lease reads as unleased, which is what it now is,
+		// and the sweep can reclaim it. A lease left behind on a directory nobody
+		// holds would instead read as live for as long as this daemon runs.
+		if err := workspace.ReleaseLeaseLock(workspace.LeaseLockPath(wtPath)); err != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: release the worktree lease for run %s at %s: %v\n",
+				runID, wtPath, err)
+		}
 		if cleanupErr := runmerge.RemoveWorktree(context.Background(), projectDir, wtPath); cleanupErr != nil {
 			fmt.Fprintf(os.Stderr, "daemon: workloop: worktree reclaim failed for run %s at %s; "+
 				"the worktree remains because cleanup failed, not because evidence was retained: %v\n",
@@ -1074,6 +1114,42 @@ func productionWorktreeFactory(ctx context.Context, projectDir, runID, headSHA s
 		}
 	}
 	return wtPath, cleanup, nil
+}
+
+// worktreeLeaseTTLSec is the advisory lifetime stamped on a worktree lease.
+//
+// It is advisory and nothing expires on it: the sweep decides staleness from
+// whether the holding process is alive, never from a clock. It is a number an
+// operator reading a lease file can use to judge whether one looks ancient, so
+// it is set well beyond any run anybody expects to see finish.
+const worktreeLeaseTTLSec = 24 * 60 * 60
+
+// writeWorktreeLease records that runID holds the worktree at wtPath.
+//
+// Failures are reported and not returned. The lease is a statement ABOUT the
+// worktree, not part of making one, and a run whose lease could not be written
+// still has a usable checkout. Failing the run instead would turn a reporting
+// problem into a dispatch outage.
+func writeWorktreeLease(wtPath, runID string) {
+	runUUID, parseErr := uuid.Parse(runID)
+	if parseErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: workloop: lease for worktree %s: run id %q is not a uuid: %v\n",
+			wtPath, runID, parseErr)
+		return
+	}
+	lock := &core.LeaseLockFile{
+		RunID: core.RunID(runUUID),
+		// The daemon, because the daemon is what holds the worktree. A run that
+		// outlives this process leaves a lease whose holder is dead, which is why
+		// the boot sweep asks the run registry before it acts on that.
+		PID:       os.Getpid(),
+		CreatedAt: time.Now().UTC(),
+		TTLSec:    worktreeLeaseTTLSec,
+	}
+	if err := workspace.WriteLeaseLockAtomic(workspace.LeaseLockPath(wtPath), lock); err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: workloop: take the lease on worktree %s for run %s: %v\n",
+			wtPath, runID, err)
+	}
 }
 
 // resolveHEAD resolves the current HEAD commit SHA of the git repository at

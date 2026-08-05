@@ -8,10 +8,10 @@ requirement-prefix: WM
 status: reviewed
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.4.10
+version: 0.4.11
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-07-30
+last-updated: 2026-08-05
 depends-on:
   - architecture
   - execution-model
@@ -26,7 +26,7 @@ depends-on:
 
 > NOTE (v0.4.0): `event-model` is intentionally NOT in `depends-on` despite heavy citation; the WM ↔ EV relationship is a consume-produce pair resolved directionally per the EM/EV precedent. WM emits events whose payload shapes EV owns (per EV-025); `event-model` appears in §9.3 co-references. Adding it to `depends-on` would create a cycle since EV's own `depends-on` lists `workspace-model`.
 >
-> NOTE (v0.4.0 ID FREEZE): As of v0.4.0 status transition to `reviewed`, all WM-NNN requirement IDs, WM-INV-NNN invariant IDs, and OQ-WM-NNN open-question IDs are FROZEN at this revision. Retired IDs (WM-017, WM-INV-004) remain retired and MUST NOT be reused. Future revisions MUST NOT renumber; additions take the next free ID. This freeze applies corpus-wide to peer cites.
+> NOTE (v0.4.0 ID FREEZE): As of v0.4.0 status transition to `reviewed`, all WM-NNN requirement IDs, WM-INV-NNN invariant IDs, and OQ-WM-NNN open-question IDs are FROZEN at this revision. Retired IDs (WM-017, WM-INV-004, WM-041) remain retired and MUST NOT be reused. Future revisions MUST NOT renumber; additions take the next free ID. This freeze applies corpus-wide to peer cites.
 
 ## 1. Purpose
 
@@ -1209,7 +1209,7 @@ Detection of each class is the daemon's responsibility; class identity flows to 
 
 ### 10.1 Conformance profiles
 
-**Core.** An implementation conforming to Core MUST pass every requirement in WM-001 through WM-040 (including `WM-003a`, `WM-005a`, `WM-006a`, `WM-013a`, `WM-013b`, `WM-013c`, `WM-013d`, `WM-013e`, `WM-018a`, `WM-019a`, `WM-022a`, `WM-037a`, `WM-038a`) AND the subsystem envelope WM-ENV-001 AND WM-ENV-002 AND every invariant WM-INV-001 through WM-INV-005 (excluding the retired WM-INV-004 and excluding the retired WM-017). Retired IDs (WM-017, WM-INV-004) MUST NOT be implemented — retired means "no-op, do not reintroduce." IDs are FROZEN at v0.4.0 per the front-matter ID freeze NOTE; future revisions MUST NOT renumber. No other requirement is deferred.
+**Core.** An implementation conforming to Core MUST pass every requirement in WM-001 through WM-040 (including `WM-003a`, `WM-005a`, `WM-006a`, `WM-013a`, `WM-013b`, `WM-013c`, `WM-013d`, `WM-013e`, `WM-018a`, `WM-019a`, `WM-022a`, `WM-037a`, `WM-038a`) AND the subsystem envelope WM-ENV-001 AND WM-ENV-002 AND every invariant WM-INV-001 through WM-INV-005 (excluding the retired WM-INV-004 and excluding the retired WM-017). Retired IDs (WM-017, WM-INV-004, WM-041) MUST NOT be implemented — retired means "no-op, do not reintroduce." IDs are FROZEN at v0.4.0 per the front-matter ID freeze NOTE; future revisions MUST NOT renumber. No other requirement is deferred.
 
 **Deferred extensions.** Adze environment provisioning (currently out of scope per §2.2), operator-configured post-merge archive paths (currently the non-default branch of §4.7.WM-030), failed-run retention-window defaults (OQ-WM-008), and automated dedicated-merge-agent dispatch (currently forbidden per §4.6.WM-022 / WM-024) are additive extensions.
 
@@ -1371,6 +1371,8 @@ Default-if-unresolved: Out of scope for now. Later support is an additive extens
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-08-05 | 0.4.11 | agent (spec repair, hk-6lt60) | **WM-041 retired. The identifier is not reusable and is added to the retired list in the ID FREEZE note and in §10.1.** WM-041 arrived at 0.4.10 from a kerf work whose changelog holds two target tables and states that the first wins a disagreement. This spec appears in no row of the first table, and the work's own task file records bravo task 4, `WM-041`, as having "no card of record". It also contradicted four rules in this file: §4.8 WM-032 and the §7.1 `leased → discarded` row require the discard it forbade, §4.9 WM-034 and [run-state-machine.md RSM-021] require the reopen it forbade, "a nonterminal recovery disposition" is not a §7.1 state, not a §4.10 WM-037 `interrupt_state` value and not a verdict in the §4.9 WM-036 table, and its startup-adoption step is absent from the closed §4.3 WM-013c discovery path and from [process-lifecycle.md §4.2 PL-005]. Its gate cited "the terminal-recovery matrix", which no document defines. No requirement text is changed and no obligation is added. Refs: hk-6lt60, hk-7bfqe. |
+| 2026-08-02 | 0.4.10 | agent (kerf finalize, queue-dogfood-readiness) | **WM-041 added, and it should not have been.** The finalize appended an "Amendment — terminal recovery workspace" block carrying WM-041 and bumped the version with no row in this table and no change to `last-updated`. The row is written here at 0.4.11 so the table is complete. This spec was named in no row of the work's plan of record. Refs: hk-6lt60. |
 | 2026-07-30 | 0.4.9 | agent (spec citation cleanup) | **Rotted pointers repaired across `specs/`. No obligation changed by this pass.** Deleted files that were cited as implementation evidence now name the symbol that carries the behavior today. Line-number citations became symbol names, per the repo rule to cite symbols and never line numbers. The retired `review-loop` workflow mode was dropped from every list that presented it as a live selectable mode, because `core.WorkflowMode.Valid()` accepts only `single` and `dot`. Rules that name `review-loop` as a RETIRED value to reject are unchanged, and so are the event `review_loop_cycle_complete` and the review-loop-failure budget, whose symbols still exist. Where a spec named a test as its conformance sensor and that test no longer exists, the text now says so instead of claiming cover it does not have. |
 | 2026-07-28 | 0.4.8 | agent (tmux-optional-boot / hk-0cjb8) | **WM-002a corrected: `owns_session` is decoupled from `$TMUX`, and its sentinel's consumer is retired.** Companion to [process-lifecycle.md] v0.6.2, which withdrew the daemon's hard `$TMUX` fail-fast (operator direction 2026-07-28 narrowing locked decision #4). Two corrections, both of stale premises rather than of the rule itself; the window-name function, its inputs, the replay-determinism rule and the truncation rule are UNCHANGED. (1) The `hk-<hash6>-` prefix clause called `owns_session=false` "the PL-021b `$TMUX`-reuse mode", equating ownership with the environment. PL-021b item 3 now resolves a daemon started WITH `$TMUX` set — but pointing at a supervisor or flywheel session — to the daemon-owned `harmonik-<project_hash>-default` session, i.e. `owns_session=true`. The clause is reworded to key on ownership alone, and states explicitly that deriving `owns_session` from the environment is the inherited assumption being removed. (2) The clause cited "the sweep-sentinel invariant required by PL-021c"; PL-021c was RETIRED at process-lifecycle v0.6.0 because no production spawn path produces a name carrying that sentinel, so the cross-reference was dangling. The prefix rule is retained (deterministic, harmless, and needed if window-level cleanup is ever restored) but is now declared to guarantee nothing and MUST NOT be cited as coverage; the live sweep is PL-021b §7. **Front-matter version corrected:** it read 0.4.5 while this table already carried a 0.4.7 row, so it is set to 0.4.8 rather than 0.4.6. No WM IDs added or renumbered. Refs: `1f8781730`, `hk-0cjb8`. |
 | 2026-06-13 | 0.4.7 | agent (hk-2j90) | **§6.2 adds `.harmonik/auto_status.json` canonical-path row; WM-013e gitignore set adds the same; §4.7 adds informative auto_status.json lifecycle clause mirroring review.json. Refs: hk-2j90.** |
@@ -1432,10 +1434,50 @@ Known inbound citation counts requiring migration (per round-1 cross-spec-archit
 
 ## Amendment — terminal recovery workspace
 
-### WM-041 — Recovery disposition
-
-A committed-but-unmerged run MUST retain its task branch, worktree, merge
-evidence, and a nonterminal recovery disposition. Startup MUST adopt its lease
-or transfer recovery authority before stale-lock sweep. The run MUST NOT use
-discard or reopen until the terminal-recovery matrix reaches one terminal
-outcome.
+> **WM-041 — Recovery disposition — RETIRED 2026-08-05, and the number is not
+> reusable.** It required a committed-but-unmerged run to keep its task branch,
+> worktree, merge evidence and "a nonterminal recovery disposition", required
+> startup to adopt the run's lease or hand over recovery authority before the
+> stale-lock sweep, and barred discard and reopen "until the terminal-recovery
+> matrix reaches one terminal outcome".
+>
+> **No plan authorized it.** The work that wrote it kept two changelog tables
+> and stated that the first one wins a disagreement. This spec appears in no row
+> of the first table. It appears only in the second, superseded table. The
+> work's own task file says the same thing in its own words: bravo task 4,
+> `WM-041`, "has no card of record".
+>
+> **It broke four rules in this file.**
+>
+> 1. "MUST NOT use discard" contradicts §4.8 WM-032, which requires a workspace
+>    to reach `discarded` on terminal failure, and the §7.1 row
+>    `leased → discarded`.
+> 2. "MUST NOT use reopen" contradicts §4.9 WM-034, which gives a `reopen-bead`
+>    verdict a fresh worktree, a fresh branch and a fresh run identity. It also
+>    contradicts [run-state-machine.md RSM-021], which puts a requeue-recovery
+>    reopen reason on the shutdown-drain terminal edge itself, and RSM-022,
+>    which requires every terminal reopen to run on a background context.
+> 3. "A nonterminal recovery disposition" names a value that does not exist.
+>    §7.1 closes the lifecycle at seven states, §4.10 WM-037 closes
+>    `interrupt_state` at five values, and §4.9 WM-036 requires the workspace
+>    disposition to be deterministic on the reconciliation verdict enum and
+>    calls any value outside its table malformed.
+> 4. "Adopt its lease ... before stale-lock sweep" adds a step to a closed
+>    startup path. §4.3 WM-013c states the four discovery steps and routes a
+>    foreign live lock to the §4.8 WM-033 sweep, and
+>    [process-lifecycle.md §4.2 PL-005] fixes the boot order.
+>
+> **Its gate points at nothing.** "The terminal-recovery matrix" is written with
+> a definite article, and no document defines one. The work's own component
+> notes say an integration pass "will publish one cross-spec recovery matrix".
+> It never did.
+>
+> **It fit no conformance profile.** §10.1 states Core as WM-001 through WM-040
+> and closes with "No other requirement is deferred", and the v0.4.0 ID FREEZE
+> note above froze the identifier set when this spec became `reviewed`. WM-041
+> The number was also not free by right. The round-2 git-expert review proposed
+> WM-041 for a minimum git version of 2.34. This spec adopted that rule at
+> v0.4.0 as the envelope entry §4.a WM-ENV-002 and left the WM-041 number
+> unused, so the number is a hole in a reviewed spec and not an opening.
+>
+> Bead: hk-6lt60 (the finalize that took the losing table).

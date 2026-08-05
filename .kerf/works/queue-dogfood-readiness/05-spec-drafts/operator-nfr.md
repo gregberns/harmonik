@@ -580,6 +580,18 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### ON-027b — Committed DOT release during drain
 
+> **HOLD 2026-08-05. DO NOT COPY ON-027b INTO `specs/` YET.** This clause is
+> authorized. The plan of record names committed-DOT drain completion, and this
+> is the approved wording for it. It is held back because nothing in the tree
+> implements it. `internal/runexec` `drainReopen` runs the reopen ladder on
+> close failure only, the drain fires on any context cancellation rather than
+> on a real shutdown, and the work's own `07-tasks.md` card T5b records that
+> "the tree carries a normative MUST that the shipped release path breaks".
+> Copying this text in now would advertise a protection the daemon does not
+> give. Land it in the same commit as the code that satisfies it, or record the
+> divergence in the spec instead. Its sibling ON-032a WAS landed on 2026-08-05,
+> because that one is implemented. Bead: hk-6lt60.
+
 ON-027 step 2 is complete for a committed DOT run only when the daemon has
 resolved its tip, synchronized its remote run branch, and reached merge-and-
 close or reopen. This is the release condition that PL-011 checks before its
@@ -1620,16 +1632,22 @@ Downstream specs inbound-citing ON events (`operator_pause_status`, `operator_st
 > design state the tiebreak: where the two passes disagree, the plan of record
 > wins. This text landed from the losing pass.
 >
-> Retiring it does NOT discharge the authorized change, and that change never
-> landed. `04-design/operator-nfr-design.md` amends four existing requirements
-> in place and creates no new number: `ON-027` step 2 and its completion
-> condition, `ON-030`, `ON-032` (host load, allowed daemon-suite concurrency,
-> one suite at a time, and a broken load rule treated as machine-contention
-> evidence until a controlled rerun classifies it), and the normal signal
-> watchdog. None of the four is in `specs/operator-nfr.md`. So this target took
-> the same loss as `scratch-daemon-runbook.md`: the authorized content was lost
-> rather than landed, while unauthorized content shipped in its place. That is
-> outstanding work, not a cleanup.
+> Retiring it does NOT discharge the authorized change, and that change did not
+> land with it. `04-design/operator-nfr-design.md` amends four existing
+> requirements in place and creates no new number: `ON-027` step 2 and its
+> completion condition, `ON-030`, `ON-032` (host load, allowed daemon-suite
+> concurrency, one suite at a time, and a broken load rule treated as
+> machine-contention evidence until a controlled rerun classifies it), and the
+> normal signal watchdog. So this target took the same loss as
+> `scratch-daemon-runbook.md`: the authorized content was lost rather than
+> landed, while unauthorized content shipped in its place.
+>
+> Part of that debt is now paid in `specs/`. `ON-032a` carries the controlled-
+> load evidence rule, which two production files already cited as their spec
+> authority while the identifier did not exist. `ON-027b` is deliberately held
+> back under its own banner, because nothing implements it and landing an
+> unimplemented MUST is the failure this repair exists to undo. `ON-030` and the
+> watchdog amendment remain outstanding work, not a cleanup.
 >
 > Bead: `hk-6lt60`.
 

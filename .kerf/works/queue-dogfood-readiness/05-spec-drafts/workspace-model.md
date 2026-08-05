@@ -1432,6 +1432,19 @@ Known inbound citation counts requiring migration (per round-1 cross-spec-archit
 
 ## Amendment — terminal recovery workspace
 
+> **RETIRED 2026-08-05. DO NOT COPY WM-041 INTO `specs/`.** This spec is named
+> in no row of the work's plan of record, and the work's own `07-tasks.md` says
+> bravo task 4, `WM-041`, has no card of record. The text below also breaks four
+> rules in the target file: WM-032 and the §7.1 `leased → discarded` row require
+> the discard it forbids, WM-034 and RSM-021's requeue-recovery reopen reason
+> on the shutdown-drain edge contradict the reopen it forbids, "a
+> nonterminal recovery disposition" is not a §7.1 state, not a WM-037
+> `interrupt_state` value and not a WM-036 verdict, and its startup-adoption
+> step is absent from the closed WM-013c discovery path and from PL-005. Its
+> gate cites "the terminal-recovery matrix", which no document defines. The
+> identifier is retired in `specs/workspace-model.md` and is not reusable.
+> Bead: hk-6lt60.
+
 ### WM-041 — Recovery disposition
 
 A committed-but-unmerged run MUST retain its task branch, worktree, merge

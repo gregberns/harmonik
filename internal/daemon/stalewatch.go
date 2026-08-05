@@ -25,6 +25,11 @@ package daemon
 //     agent_ready latency (~20 min) is far past the 3-min default and would
 //     otherwise trip a spurious agent_ready_stall_detected on every healthy
 //     run (hk-4ir08).
+//   - the Layer A stall thresholds (RunSilenceStall 22 min, ReviewFinalizeStall
+//     10 min, RunMaxAge 4 h): the per-run stall detector in stallfeed.go, which
+//     emits stall_detected and kills a frozen agent. Per-bead override of the
+//     age ceiling via the "run_max_age=<seconds>" label (beadRunMaxAge). Use it
+//     on a bead whose work legitimately outlives the ceiling.
 //
 // The watcher must be constructed and Subscribed BEFORE bus.Seal (EV-009).
 // StartWatcher is called after Seal to launch the background goroutine.
@@ -51,6 +56,8 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	hclifecycle "github.com/gregberns/harmonik/internal/handlercontract/lifecycle"
+	"github.com/gregberns/harmonik/internal/runloop"
+	"github.com/gregberns/harmonik/internal/sentinel"
 )
 
 const (
@@ -272,6 +279,36 @@ type runStaleState struct {
 	// deadProcessCancelled is true once the fast dead-process reap (hk-mdus1)
 	// has cancelled this run. Prevents repeated Cancel calls on subsequent ticks.
 	deadProcessCancelled bool
+
+	// lastLivenessAt is the wall-clock time of the most recent event that is
+	// evidence this run is ALIVE. It is lastEventAt minus the watcher's own
+	// alarms: a watchdog that treats its own alarm as a sign of life resets its
+	// clock every time it fires and can never fire twice, and — because the
+	// alarms are dispatched asynchronously — whether it fires at all becomes a
+	// race. Zero until the first such event. Bead ref: hk-hsp9e.
+	lastLivenessAt time.Time
+
+	// phase is the run phase derived from the event stream, in the vocabulary
+	// the Layer A stall detector reads. It moves forward on every event except a
+	// launch, which moves it BACK — see advanceStallPhase for why a graph run
+	// makes that necessary. Bead ref: hk-hsp9e.
+	phase sentinel.RunPhase
+
+	// verdictAt is the wall-clock time of the reviewer_verdict for the run's
+	// CURRENT launch. It is the reference the review-stall signature measures
+	// from, and it returns to zero when the run launches again, because a
+	// verdict that sent the run back to the implementer is not a verdict the run
+	// failed to act on. Bead ref: hk-hsp9e.
+	verdictAt time.Time
+
+	// stallEmitted records the stall signatures already reported for the run's
+	// CURRENT launch. stall_detected is emitted at most once per signature per
+	// launch: the detector re-derives the same hit on every scan, and without
+	// this the event log floods at the scan cadence and one wedged run buries
+	// every other run on the dashboard panel. The set is cleared on each launch
+	// so that killing one node of a graph run does not silence every later node.
+	// Bead ref: hk-hsp9e.
+	stallEmitted map[core.StallSignature]bool
 }
 
 // forceReapCB and runDeadCB wrap the two optional daemon-wired seams so they can
@@ -361,6 +398,31 @@ type StaleWatcherConfig struct {
 	// Nil → the fast reap is inert and detection falls back to the stale
 	// thresholds. May also be set post-construction via SetRunProcessDead.
 	RunProcessDead func(runID core.RunID, handle *RunHandle) bool
+
+	// ── Layer A stall detection (hk-hsp9e) ──────────────────────────────────
+	// The three thresholds below feed sentinel.DetectLayerA once per scan per
+	// run. The library refuses a zero threshold on purpose, so the daemon gives
+	// each one a compiled default here: a detector that goes quiet because a
+	// config key is missing is the failure this whole feeder exists to remove.
+
+	// RunSilenceStall is the quiet window that fires the heartbeat-gap
+	// signature. Zero → stallRunSilenceDefault.
+	RunSilenceStall time.Duration
+
+	// ReviewFinalizeStall is the window allowed between reviewer_verdict and the
+	// run's terminal event. Zero → stallReviewFinalizeDefault.
+	ReviewFinalizeStall time.Duration
+
+	// RunMaxAge is the absolute ceiling on how long a run may stay non-terminal.
+	// Zero → stallRunMaxAgeDefault. Per-bead override via the
+	// "run_max_age=<seconds>" label.
+	RunMaxAge time.Duration
+
+	// StallFeed routes the detector's findings to the stalled run's dispatch
+	// machine, which turns them into the agent kill. Nil detects and reports but
+	// never kills — which is the posture to use when only the reporting half is
+	// wanted.
+	StallFeed *runloop.StallFeed
 }
 
 // StaleWatcher subscribes to the event bus to track the most recent event time
@@ -519,6 +581,15 @@ func NewStaleWatcher(cfg StaleWatcherConfig) *StaleWatcher {
 	if cfg.DeadProcessStaleAfter <= 0 {
 		cfg.DeadProcessStaleAfter = deadProcessStaleAfterDefault
 	}
+	if cfg.RunSilenceStall <= 0 {
+		cfg.RunSilenceStall = stallRunSilenceDefault
+	}
+	if cfg.ReviewFinalizeStall <= 0 {
+		cfg.ReviewFinalizeStall = stallReviewFinalizeDefault
+	}
+	if cfg.RunMaxAge <= 0 {
+		cfg.RunMaxAge = stallRunMaxAgeDefault
+	}
 	w := &StaleWatcher{
 		cfg:    cfg,
 		gate:   cfg.Gate,
@@ -601,8 +672,82 @@ func (w *StaleWatcher) observe(_ context.Context, evt core.Event) error {
 		st.agentReadySeenSinceLastLaunch = true
 	}
 
+	// hk-hsp9e: fold this event into the Layer A phase and the liveness clock
+	// the stall detector reads. This is the only place the daemon sees every run
+	// event, so it is the only place either can be kept.
+	advanceStallPhase(st, core.EventType(typeStr), now)
+	if !watcherOwnAlarm(core.EventType(typeStr)) {
+		st.lastLivenessAt = now
+	}
+
 	w.mu.Unlock()
 	return nil
+}
+
+// watcherOwnAlarm reports whether evType is an alarm this watcher emits ABOUT a
+// run rather than a sign the run is alive.
+//
+// The wildcard observer sees the watcher's own emissions, so without this every
+// alarm refreshes the run's liveness clock and suppresses the next detection —
+// the detector silences itself the moment it works. That is worth naming rather
+// than filtering by hand at each read site, because a future alarm added to
+// this file inherits the same trap.
+func watcherOwnAlarm(evType core.EventType) bool {
+	switch evType {
+	case core.EventTypeRunStale,
+		core.EventTypeStallDetected,
+		core.EventTypeLaunchStallDetected,
+		core.EventTypeAgentReadyStallDetected:
+		return true
+	default:
+		return false
+	}
+}
+
+// advanceStallPhase folds one event into the Layer A phase the stall detector
+// reads. Caller holds w.mu.
+//
+// The phase moves forward on every event but one. A launch is a BACKWARD edge,
+// and getting that wrong reaps working agents.
+//
+// A graph run dispatches several nodes under ONE run id, and the
+// request-changes back-edge re-launches the implementer after a verdict has
+// already fired. Treated as a watermark, that run stays at verdict-fired for
+// ever, so the review-stall signature — "the verdict landed and the run never
+// finished" — reports every reworking run ten minutes after its FIRST
+// request-changes, and kills an implementer that is doing exactly what the
+// reviewer asked. A launch says the verdict it was measuring from is spent.
+func advanceStallPhase(st *runStaleState, evType core.EventType, at time.Time) {
+	switch evType {
+	case core.EventTypeLaunchInitiated:
+		// The backward edge. The run is dispatching again, so any verdict it was
+		// being measured against is spent, and a new node deserves its own
+		// chance to be reported and its own kill — a set carried over from an
+		// earlier node would silence every later one.
+		//
+		// The upper bound is not decoration. The bus dispatches each observer on
+		// its own goroutine, so a launch folded after a terminal event is
+		// possible in principle, and without the bound it would demote a
+		// finished run back into the detector's population.
+		if st.phase >= sentinel.RunPhaseVerdictFired && st.phase < sentinel.RunPhaseTerminal {
+			st.phase = sentinel.RunPhaseInImplementation
+			st.verdictAt = time.Time{}
+		}
+		st.stallEmitted = nil
+
+	case core.EventTypeImplementerPhaseComplete:
+		if st.phase < sentinel.RunPhaseInImplementation {
+			st.phase = sentinel.RunPhaseInImplementation
+		}
+	case core.EventTypeReviewerVerdict:
+		if st.phase < sentinel.RunPhaseVerdictFired {
+			st.phase = sentinel.RunPhaseVerdictFired
+			st.verdictAt = at
+		}
+	case core.EventTypeRunCompleted, core.EventTypeRunFailed:
+		st.phase = sentinel.RunPhaseTerminal
+	default:
+	}
 }
 
 // StartWatcher launches the background scan goroutine. Returns immediately;
@@ -639,6 +784,10 @@ func (w *StaleWatcher) scan(ctx context.Context) {
 	for runID, handle := range handles {
 		w.checkRun(ctx, runID, handle, now, goroutineCount, activeRunCount)
 	}
+
+	// The Layer A stall pass reads the same registry snapshot the loop above
+	// walked, so both halves of one tick judge the same set of runs.
+	w.stallPass(ctx, now, handles)
 
 	// Prune state entries for runs that are no longer in the registry.
 	w.mu.Lock()

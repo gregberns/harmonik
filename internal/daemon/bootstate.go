@@ -19,6 +19,7 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
 	"github.com/gregberns/harmonik/internal/runlaunch"
+	"github.com/gregberns/harmonik/internal/runloop"
 )
 
 // bootState threads the shared singletons constructed across the daemon
@@ -44,6 +45,10 @@ type bootState struct {
 	pollGate                *PollGate
 
 	// P5 (wireWatchersAndObservers) outputs consumed by later phases.
+	// stallFeed is the one route from the stall detector to a run's dispatch
+	// machine. It is built here because the detector (StaleWatcher) is built
+	// here, and it is read by P13, which hands it to every launch.
+	stallFeed      *runloop.StallFeed
 	staleWatcher   *StaleWatcher
 	tunerBackstop  *bandwidthTunerBackstop
 	quiesceArbiter *QuiesceArbiter
@@ -246,11 +251,16 @@ func (bs *bootState) wireWatchersAndObservers(ctx context.Context) error {
 	bus := bs.bus
 
 	// StaleWatcher (hk-wkzlc): emits run_stale. StartWatcher runs post-Seal.
+	// It also runs the Layer A stall pass (hk-hsp9e), which emits stall_detected
+	// for the dashboard's active-stall panel and posts the frozen-agent kill to
+	// the stalled run's dispatch machine through the stall feed.
+	bs.stallFeed = runloop.NewStallFeed()
 	bs.staleWatcher = NewStaleWatcher(StaleWatcherConfig{
 		SubscribeBus: bus,
 		Emitter:      bus,
 		Registry:     bs.sharedRunRegistry,
 		Gate:         bs.pollGate,
+		StallFeed:    bs.stallFeed,
 	})
 	if subscribeErr := bs.staleWatcher.Subscribe(); subscribeErr != nil {
 		return fmt.Errorf("daemon.Start: StaleWatcher.Subscribe: %w", subscribeErr)

@@ -357,6 +357,12 @@ type SharedHandles struct {
 	// beadRunOne-only shared handles (RT18.10): the beads adapter, the default
 	// CommandRunner factory, the worktree factory func and its creation mutex —
 	// each a by-reference copy of the same-named deps field.
+	// StallFeed routes the daemon stall detector's findings to the dispatch
+	// machine of the run they name, which is what turns a detected freeze into a
+	// killed agent. nil leaves every run of this daemon without freeze
+	// protection.
+	StallFeed *StallFeed
+
 	BrAdapter        BeadLedger
 	Runner           tmuxpkg.CommandRunner
 	WorktreeFactory  func(ctx context.Context, projectDir, runID, headSHA string) (wtPath string, cleanup func(), err error)

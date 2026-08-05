@@ -214,13 +214,9 @@ var orphanConsumers = []finding{
 			"internal/keeper stopped persisting this event, so the suppression never activates " +
 			"and the daemon keeps posting digests over an attached operator.",
 	},
-	{
-		Type: "stall_detected",
-		At:   "internal/daemon/dashboardgather.go readActiveStalls",
-		Note: "The dashboard's active-stall panel. internal/sentinel DetectLayerA can build the " +
-			"payload but has no production caller, so the panel is permanently empty and a " +
-			"hung run shows as healthy.",
-	},
+	// stall_detected was here. internal/daemon/stallfeed.go now calls
+	// sentinel.DetectLayerA from the stale-watch scan and emits the event, so
+	// the panel has a producer. Removed 2026-08-05.
 }
 
 // zeroCountAssertions: a test asserts an event fired zero times and nothing can
@@ -1322,9 +1318,9 @@ func dedupe(in []string) []string {
 //     fall outside the population in limit 9.
 //
 //  11. Reachability is not checked. An emit call in a production function that
-//     nothing calls still counts as a producer. That matters here: the
-//     stall_detected row below rests on internal/sentinel DetectLayerA having no
-//     caller, and this audit cannot make that argument for itself — a human made
-//     it. If someone adds a dead emitter for one of the recorded types, the row
-//     goes stale and TestEventParity_NoRecordOutlivesItsDefect will say so, but
-//     it will say the defect was fixed when it was only papered over.
+//     nothing calls still counts as a producer. If someone adds a dead emitter
+//     for one of the recorded types, the row goes stale and
+//     TestEventParity_NoRecordOutlivesItsDefect will say so, but it will say the
+//     defect was fixed when it was only papered over. The stall_detected row
+//     used to sit here and rested on exactly that argument, made by a human
+//     rather than by the audit.

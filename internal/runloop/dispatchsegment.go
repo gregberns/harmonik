@@ -26,8 +26,9 @@ package runloop
 //   ActDeliverInput → deliver (hang-detector arm + paste-inject) + a synthetic
 //                     EvInputAck — the M3-D11 transitional tmux ack; the M2
 //                     agent-input driver replaces it at this seam
-//   ActKillAgent    → killReady (ready-timeout kill+reap, phase ReadyTimeout)
-//                     or killAbort (the EvAborted edge)
+//   ActKillAgent    → killReady (ready-timeout kill+reap, phase ReadyTimeout),
+//                     killStalled (the frozen-agent edge, phase Stalled), or
+//                     killAbort (the EvAborted edge)
 //   ActEmit(agent_ready_timeout) → emitReadyTimeout (site-verbatim emission;
 //                     nil suppresses it — the reviewer phase never emitted one)
 //
@@ -39,6 +40,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -108,14 +110,46 @@ type DispatchSegment struct {
 	KillAbort        func(ctx context.Context)
 	EmitReadyTimeout func(ctx context.Context)
 
+	// Stalls is the run's stall feed (StallFeed.Register). It carries the
+	// shell-fed frozen-agent signals — EvNoChangeTimeout and EvHeartbeatStale —
+	// that the machine turns into ActKillAgent during the Working phase. nil
+	// leaves the run with no freeze protection, which is what every launch had
+	// before this field existed.
+	Stalls <-chan runexec.Event
+
+	// KillStalled is the site's kill for a frozen agent. reason is the stall
+	// signature the machine recorded, so the site's diagnostic can say WHICH
+	// watchdog fired. nil falls back to KillAbort.
+	KillStalled func(ctx context.Context, reason string)
+
+	// stopWorkingWatch ends the Working-phase stall watch and waits for its
+	// goroutine. Set by Run when the watch starts; nil otherwise.
+	stopWorkingWatch func()
+
 	SpawnCapTimeout      error
 	TmuxNewWindowTimeout error
 }
 
-// run drives the segment to Working-or-terminal and returns the machine state.
+// Run drives the segment to Working-or-terminal and returns the machine state.
+//
+// When the machine settles into Working AND the run has a stall feed, the
+// segment keeps the machine alive on a watch goroutine instead of releasing it.
+// That is what makes the machine's stall edge reachable: the Working-phase
+// completion wait belongs to the sub-driver, so before this the segment tore
+// its shell down at exactly the moment the freeze protection would have been
+// needed, and stepDispatchWorking's kill arm could never be stepped by anyone.
+//
+// The caller MUST call StopWorkingWatch when the run is over. That call ends the
+// watch AND releases the two launch-phase helper goroutines, which are held to
+// the same segment context for the same extended span.
 func (g *DispatchSegment) Run(ctx context.Context) runexec.DispatchState {
 	segCtx, segCancel := context.WithCancel(context.Background())
-	defer segCancel()
+	watching := false
+	defer func() {
+		if !watching {
+			segCancel()
+		}
+	}()
 
 	r := &dispatchSegmentRun{
 		g:      g,
@@ -131,7 +165,69 @@ func (g *DispatchSegment) Run(ctx context.Context) runexec.DispatchState {
 		KillAgent:    r.killAgent,
 		Emit:         r.emit,
 	}, r.events)
-	return r.sh.RunDispatch(ctx, r.m, runexec.SessionRef(g.RunID.String()), "")
+	final := r.sh.RunDispatch(ctx, r.m, runexec.SessionRef(g.RunID.String()), "")
+
+	if final.Phase == runexec.DispatchWorking && g.Stalls != nil {
+		watching = true
+		g.startWorkingWatch(r, segCancel) //nolint:contextcheck // the watch outlives this call by design: it runs across the sub-driver's completion wait on a segment-scoped context, and a ctx-derived one would end the freeze protection at the wrong moment
+	}
+	return final
+}
+
+// startWorkingWatch keeps stepping the machine on the run's stall feed for as
+// long as the agent is Working. It is the ONLY writer of that machine once Run
+// has returned, so the machine stays single-goroutine-owned.
+//
+// The watch ends on the first stall (the machine leaves Working and there is
+// nothing further it can decide), on the feed closing, or on StopWorkingWatch.
+//
+// Holding the segment context open also holds the two helper goroutines the
+// launch/ready phase started. Both park on a channel with no reader once the
+// shell's drive loop is gone, so they cost one parked goroutine per live run
+// instead of being released at Working. They are released by the same
+// StopWorkingWatch that ends the watch, so the cost is bounded by the run and
+// not by the daemon's lifetime.
+func (g *DispatchSegment) startWorkingWatch(r *dispatchSegmentRun, segCancel context.CancelFunc) {
+	stopped := make(chan struct{})
+	g.stopWorkingWatch = sync.OnceFunc(func() {
+		segCancel()
+		<-stopped
+	})
+
+	go func() {
+		defer close(stopped)
+		defer segCancel()
+		for {
+			select {
+			case <-r.done:
+				return
+			case ev, ok := <-g.Stalls:
+				if !ok {
+					return
+				}
+				if ev.At.IsZero() {
+					ev.At = g.Clock.Now()
+				}
+				// Background is deliberate: the stall kill must survive a per-run
+				// ctx the stale watcher's reaper may already have cancelled, or
+				// the frozen agent outlives the thing sent to kill it.
+				r.sh.feed(context.Background(), r.m, ev)
+				if r.m.State().Phase != runexec.DispatchWorking {
+					return
+				}
+			}
+		}
+	}()
+}
+
+// StopWorkingWatch ends the Working-phase stall watch and waits for its
+// goroutine to finish, so no kill hook runs after the caller has torn the
+// session down. It is idempotent and safe to call on a segment that never
+// started a watch.
+func (g *DispatchSegment) StopWorkingWatch() {
+	if g.stopWorkingWatch != nil {
+		g.stopWorkingWatch()
+	}
 }
 
 // dispatchSegmentRun is the per-run() wiring of one segment: the machine, the
@@ -228,11 +324,18 @@ func (r *dispatchSegmentRun) deliverInput(actx context.Context, _ runexec.Sessio
 // ReadyTimeout → Failed without waiting out the reap timer. Any other phase
 // (the EvAborted edge) takes the plain kill.
 func (r *dispatchSegmentRun) killAgent(actx context.Context, _ runexec.SessionRef) {
-	if r.m.State().Phase == runexec.DispatchReadyTimeout {
+	st := r.m.State()
+	if st.Phase == runexec.DispatchReadyTimeout {
 		if r.g.KillReady != nil {
 			r.g.KillReady(actx)
 		}
 		r.sh.pending = append(r.sh.pending, runexec.Event{Kind: runexec.EvAgentExited})
+		return
+	}
+	// The stall edge: the machine recorded WHICH watchdog fired in Reason, and
+	// the site's diagnostic is the only place an operator ever reads it.
+	if st.Phase == runexec.DispatchStalled && r.g.KillStalled != nil {
+		r.g.KillStalled(actx, st.Reason)
 		return
 	}
 	if r.g.KillAbort != nil {

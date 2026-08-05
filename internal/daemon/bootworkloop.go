@@ -95,6 +95,10 @@ func (bs *bootState) launchWorkLoop(ctx context.Context, daemonStartTime time.Ti
 	baseEnv := runloop.RunEnv{ProjectDir: cfg.ProjectDir, TargetBranch: targetBranch, BrPath: cfg.BrPath, ProtectBranches: cfg.ProtectBranches, AllowedRepos: cfg.ProjectCfg.Daemon.AllowedRepos, WorkflowModeDefault: workflowModeDefault, DefaultHarness: cfg.DefaultHarness, ProjectCfg: cfg.ProjectCfg, HandlerBinary: handlerBinary, HandlerArgs: cfg.HandlerArgs, HandlerEnv: handlerEnv, DaemonBinaryPath: daemonBinaryPath, IntentLogDir: intentLogDir, AgentReadyTimeout: cfg.AgentReadyTimeout, RemoteAgentReadyTimeout: cfg.RemoteAgentReadyTimeout, SandboxCfg: cfg.ProjectCfg.Sandbox, BrTimeoutCfg: brcli.TimeoutConfig{}}
 	basePorts := newStaticRunPorts(ledger, bs.bus, intentLogDir, baseEnv.BrTimeoutCfg, cfg.ProjectDir, cfg.SkipBrHistoryRotation, mergeQueue, cfg.CPRegistry, substrate.SystemClock{})
 	handles := newSharedHandles(runRegistry, localInFlight, agentSpawnSem, workerRegistry, bs.qs, cfg.ProjectDir, harnessRegistry, bs.adapterReg, bs.hookStore, cfg.Substrate, cfg.ReviewerSubstrate, core.NewTransitionIDGenerator(), emittedEpics, emittedEpicsMu, ledger, cfg.Runner, injectedWorktreeFactory, worktreeCreateMu)
+	// The stall feed is set here rather than threaded through newSharedHandles:
+	// the bundle's builder already carries eighteen positional parameters, and
+	// this one is a single pointer set once per boot (hk-hsp9e).
+	handles.StallFeed = bs.stallFeed
 	lifecyclePort := newLoopLifecyclePort(bs.cfg)
 	ledgerRepair := newLedgerRepairPort(ledger, cfg.ProjectDir)
 	governor, governorEnabled, governorErr := newGovernorPort(bs.cfg, daemonStartTime)

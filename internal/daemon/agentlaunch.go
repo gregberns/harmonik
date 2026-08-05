@@ -780,6 +780,22 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 
 	res.LaunchedAt = ports.Clock.Now()
 
+	// ── The frozen-agent watchdog (hk-hsp9e) ────────────────────────────────
+	// The dispatch machine kills a frozen agent on EvNoChangeTimeout or
+	// EvHeartbeatStale. This is where the run says where to send those: the
+	// daemon's stall detector posts to this feed, and the segment steps the
+	// machine on it for as long as the agent is Working — which is the whole
+	// span of the completion wait below.
+	//
+	// A launch with no feed keeps the posture every launch had before: no freeze
+	// protection at all.
+	var stallCh <-chan runexec.Event
+	releaseStalls := func() {}
+	if handles.StallFeed != nil {
+		stallCh, releaseStalls = handles.StallFeed.Register(runID.String())
+	}
+	defer releaseStalls()
+
 	seg := &runloop.DispatchSegment{
 		Clock: ports.Clock,
 		RunID: runID,
@@ -946,11 +962,54 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 				_ = sess.Kill(context.Background()) //nolint:errcheck,contextcheck // idempotent abort kill off the cancelled ctx; teardown follows
 			}
 		},
+		Stalls: stallCh,
+		KillStalled: func(_ context.Context, reason string) {
+			logf("stall watchdog: %s — killing the agent", reason)
+			if sess == nil {
+				return
+			}
+			// The same disposition read every other kill site makes. A run whose
+			// agent has a session of its own and whose daemon is stopping keeps
+			// that session: the next boot adopts it. That is the answer even for
+			// a stalled agent — the stall is REPORTED either way, and the next
+			// boot's own stall pass reaps it on the same thresholds if it is
+			// still frozen. Deciding differently here would put back the kind of
+			// per-site predicate this file exists to remove (RSM-037: one value
+			// decided once and read everywhere). No caller supplies run-exit
+			// facts today, so this reads reclaim on every live launch and the
+			// branch below is not yet taken.
+			if !disposition().Releases(runlease.AgentSession) {
+				logf("stall watchdog: the run keeps its session across this shutdown; not killing")
+				return
+			}
+			// A BOUNDED context, not Background. Session.Kill sends SIGTERM and
+			// then waits on the ctx to decide whether to escalate to SIGKILL, so
+			// Background makes it wait for ever on an agent that ignores SIGTERM
+			// — which is exactly the agent this watchdog exists for. The launch
+			// joins this goroutine before it returns, so an unbounded kill would
+			// wedge the run the watchdog was sent to unwedge. This is KillReady's
+			// pattern. It is bounded off Background rather than off the run
+			// context because the reaper that detected the stall may already have
+			// cancelled that one.
+			killCtx, killCancel := context.WithTimeout(context.Background(), runlaunch.KillReapTimeout)
+			_ = sess.Kill(killCtx) //nolint:errcheck,contextcheck // bounded kill off the (possibly cancelled) run ctx; the error is not actionable
+			killCancel()
+			if watcher != nil {
+				select {
+				case <-watcher.Done():
+				case <-substrate.After(ports.Clock, runlaunch.KillReapTimeout): //nolint:contextcheck // ClockPort reap deadline, deliberately not ctx-scoped
+					logf("stall watchdog: watcher.Done() reap timed out after Kill — continuing")
+				}
+			}
+		},
 		SpawnCapTimeout:      ErrSpawnCapTimeout,
 		TmuxNewWindowTimeout: ErrTmuxNewWindowTimeout,
 	}
 
 	res.Dispatch = seg.Run(ctx)
+	// The watch runs across the completion wait below and ends here, so no kill
+	// hook can fire after the caller has begun tearing the session down.
+	defer seg.StopWorkingWatch()
 	res.Session = sess
 	res.Watcher = watcher
 

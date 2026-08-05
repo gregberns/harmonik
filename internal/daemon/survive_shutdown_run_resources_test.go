@@ -49,9 +49,15 @@ package daemon
 // and read everywhere — and "redundant at this one site" is no longer a
 // sentence anyone can say about it.
 //
-// The stall edge is still the reason the conjunct matters. When the
-// reactorization makes that edge reachable, a run whose agent stalls in its own
-// session must still be reaped, and the disposition is what says so.
+// The stall edge is still the reason the conjunct matters, and it is now FED:
+// internal/daemon/stallfeed.go emits those two events and the segment's
+// Working-phase watch steps the machine on them. The stall-kill hook in
+// agentlaunch.go asks the same runlease.Decide the abort kill and the session
+// give-back ask, so a run whose agent stalls in its own session is decided the
+// same way as this section predicted. The answer is still reclaim on every live
+// launch, because no caller supplies run-exit facts yet — the hook is wired to
+// the one decision rather than to a predicate of its own, which is what stops
+// the conjunct being re-derived at a third site.
 //
 // # Why there is no tunnel test here
 //

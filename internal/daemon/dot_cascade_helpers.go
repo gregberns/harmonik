@@ -140,7 +140,7 @@ func dotNodeTerminalFailure(
 	if term.Type == handlercontract.ProgressMsgTypeAgentCompleted {
 		return "", false
 	}
-	if socketOutcome == nil && exit.ExitCode == exitCodeClean && !watcherFailed {
+	if !outcomeIsAnAgentReport(socketOutcome) && exit.ExitCode == exitCodeClean && !watcherFailed {
 		return "", false
 	}
 
@@ -151,6 +151,39 @@ func dotNodeTerminalFailure(
 		return fmt.Sprintf("agent_failed class=%s sub_reason=%s exit=%d", term.Class, term.SubReason, exit.ExitCode), true
 	default:
 		return fmt.Sprintf("exit=%d", exit.ExitCode), true
+	}
+}
+
+// outcomeIsAnAgentReport reports whether an outcome_emitted payload actually
+// says what the agent decided. Only the three CHB-020 kinds do.
+//
+// The bridge also emits an outcome_emitted carrying just an `error` field and no
+// kind at all: hookrelay.go's Stop handler does this when the phase is reviewer
+// and .harmonik/review.json is absent or malformed. That payload is the BRIDGE
+// reporting that it could not find the file it was told to read. It is not the
+// agent reporting anything, and reading it as one turns a clean exit into a
+// failure.
+//
+// A cognition gate is the case that made this matter. It launches with
+// ReviewLoopPhaseReviewer (dot_gate.go) but writes gate-verdict.json, so the
+// bridge looks for review.json, never finds it, and emits missing_review_file on
+// EVERY gate — including one that produced a perfectly good verdict. Treating a
+// kindless payload as "nothing reported" leaves the exit code to decide, which
+// is the same answer this function gives a harness that reports nothing by
+// design.
+//
+// It does not soften the reviewer check. A reviewer that leaves no readable
+// verdict is refused earlier, by the verdict == nil branch in
+// dispatchDotAgenticNode, before this classifier is consulted.
+func outcomeIsAnAgentReport(outcome *handler.ExportedOutcomeEmittedPayload) bool {
+	if outcome == nil {
+		return false
+	}
+	switch outcome.Kind {
+	case "WORK_COMPLETE", "REVIEWER_VERDICT", "FAILURE_SIGNAL":
+		return true
+	default:
+		return false
 	}
 }
 

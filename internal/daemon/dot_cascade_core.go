@@ -1190,6 +1190,21 @@ func dispatchDotAgenticNode(
 				"daemon: dot cascade: remove stale review verdict in %q: %v (a stalled reviewer may read the prior verdict)\n",
 				wtPath, rmErr)
 		}
+		// The budget marker is scrubbed with the verdict, for the same reason and
+		// on the same schedule (hk-sb8jy).
+		//
+		// A stale marker is worse than a stale verdict now that the marker EXEMPTS
+		// a reviewer from the terminal classification below. Nothing removed it, so
+		// one legitimate budget kill at iteration N left the file in the worktree
+		// for good, and every later reviewer in that worktree was excused from the
+		// check — including one that wrote APPROVE and then declared failure. The
+		// hk-bqf1q retry reaches iteration N+1 in exactly that state without
+		// anything going wrong, so this needs no bad actor.
+		if rmErr := workspace.RemoveFileVia(ctx, runner, reviewerBudgetSentinelPath(wtPath)); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+			fmt.Fprintf(os.Stderr,
+				"daemon: dot cascade: remove stale reviewer budget marker in %q: %v (this reviewer may be excused from the terminal check)\n",
+				wtPath, rmErr)
+		}
 		rtErr := workspace.WriteReviewTargetVia(ctx, runner, workspace.ReviewTargetPayload{
 			WorkspacePath: wtPath,
 			BeadID:        string(beadID),
@@ -1618,24 +1633,77 @@ func dispatchDotAgenticNode(
 		if verdictErr != nil {
 			return core.Outcome{}, fmt.Errorf("read reviewer verdict for node %q: %w", node.ID, verdictErr)
 		}
-		if verdict == nil {
-			// hk-da3rr: distinguish a BUDGET kill from a true no-verdict, mirroring
-			// the builtin review-loop path (reviewloop.go). The marker file is written
-			// into the reviewer's worktree by writeReviewerBudgetSentinel.
-			sentinel, sentinelErr := readDotReviewerBudgetSentinel(ctx, runner, wtPath, node.ID)
-			if sentinelErr != nil {
+		// hk-da3rr: distinguish a BUDGET kill from a true no-verdict, mirroring
+		// the builtin review-loop path (reviewloop.go). The marker file is written
+		// into the reviewer's worktree by writeReviewerBudgetSentinel.
+		//
+		// hk-sb8jy: this read used to sit INSIDE the verdict == nil branch below,
+		// which is why the terminal classification could not be added there. It ran
+		// after the only point the check could fire, so the check would have read
+		// every budget-killed reviewer as a crashed one. Reading the marker FIRST
+		// is what makes the classification below safe to add.
+		sentinel, sentinelErr := readDotReviewerBudgetSentinel(ctx, runner, wtPath, node.ID)
+		if sentinelErr != nil {
+			// The marker read now runs on the HAPPY path too, which it never did
+			// before the hoist. So its error has to stop meaning what it meant.
+			//
+			// When there is no verdict the error still fails the node: the read is
+			// the only thing that can tell a budget kill from a true no-verdict, and
+			// an unreachable worker must not be recorded as marker-absent (hk-f3u6o).
+			//
+			// When a good verdict IS in hand, failing here would throw away a
+			// complete review over an unreadable marker — a transport blip on a
+			// remote run, say. Fall through as if no marker existed and let the
+			// classification below judge the reviewer on its exit, which is the
+			// stricter of the two answers rather than the more forgiving one.
+			if verdict == nil {
 				return core.Outcome{}, sentinelErr
 			}
-			if sentinel != nil {
-				fmt.Fprintf(os.Stderr,
-					"daemon: dot: reviewer node %q budget exceeded (reason=%s budget_ms=%d elapsed_ms=%d changed_lines=%d)\n",
-					node.ID, sentinel.Reason, sentinel.BudgetMS, sentinel.ElapsedMS, sentinel.ChangedLines)
-				emitReviewerBudgetExceeded(ctx, emit, runID, sentinel.BudgetMS, sentinel.ElapsedMS, sentinel.ChangedLines, sentinel.Reason)
-			}
+			fmt.Fprintf(os.Stderr,
+				"daemon: dot: reviewer node %q: read budget marker: %v (a verdict is present; judging the reviewer on its exit)\n",
+				node.ID, sentinelErr)
+			sentinel = nil
+		}
+		if sentinel != nil {
+			fmt.Fprintf(os.Stderr,
+				"daemon: dot: reviewer node %q budget exceeded (reason=%s budget_ms=%d elapsed_ms=%d changed_lines=%d)\n",
+				node.ID, sentinel.Reason, sentinel.BudgetMS, sentinel.ElapsedMS, sentinel.ChangedLines)
+			emitReviewerBudgetExceeded(ctx, emit, runID, sentinel.BudgetMS, sentinel.ElapsedMS, sentinel.ChangedLines, sentinel.Reason)
+		}
+		if verdict == nil {
 			// hk-bqf1q: return the typed sentinel so driveDotWorkflow can detect
 			// a reviewer stall and retry when committed work exists, rather than
 			// hard-failing and stranding the valid impl commit.
 			return core.Outcome{}, fmt.Errorf("%w (node %q)", errDotReviewerNoVerdict, node.ID)
+		}
+		// What the reviewer REPORTED decides the node, not only whether a verdict
+		// file appeared (hk-sb8jy). This is the reviewer-side twin of the
+		// implementer check below (hk-v4wer), which was deliberately left covering
+		// implementers only.
+		//
+		// A reviewer that writes APPROVE and then signals FAILURE_SIGNAL, exits
+		// non-zero with nothing reported, or leaves its progress-stream watcher in
+		// error has not produced an approval the run may merge on. The node used to
+		// return SUCCESS with preferred_label=APPROVE for all three, the graph
+		// routed the APPROVE edge to the success terminal, and workloop.go merged
+		// the work. The hk-8ps7q approved-and-done exemption reads the same
+		// unclassified prior verdict, so it was a second door to the same merge.
+		//
+		// A budget kill is exempt, and the exemption is the point of the ordering
+		// above. On a budget kill the DAEMON sends /quit and then kills the pane
+		// (pasteInjectQuitOnReviewFile); the non-zero exit describes what the daemon
+		// did, not a reviewer that crashed. The verdict it left behind is complete —
+		// the watchdog only quits on a fully parsed verdict — so it stands. Without
+		// this branch every long review that still delivered a verdict would read as
+		// a crash and a good merge would be blocked.
+		if sentinel == nil {
+			var reviewerWatcherErr error
+			if launch.Watcher != nil {
+				reviewerWatcherErr = launch.Watcher.Err()
+			}
+			if reason, failed := dotNodeTerminalFailure(artifacts.HandlerSessionID, launch.Exit, launch.SocketOutcome, reviewerWatcherErr); failed {
+				return core.Outcome{}, fmt.Errorf("node %q (reviewer) %s", node.ID, reason)
+			}
 		}
 		// Emit reviewer_verdict matching the builtin review-loop path (reviewloop.go:932).
 		// WorkflowMode is DOT; session_id reuses the reviewerSessionID minted before

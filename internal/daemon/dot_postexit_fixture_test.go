@@ -149,6 +149,11 @@ type dotFixtureOpts struct {
 	// installs dotFixtureCommittingHandler — an agent that commits real work.
 	HandlerScript string
 
+	// Graph replaces dotFixtureGraph as the run's workflow.dot. A test that needs
+	// a node class the default three-node graph omits — a reviewer, say —
+	// supplies its own. Empty installs dotFixtureGraph.
+	Graph string
+
 	// Runner is the CommandRunner the DOT path routes its git probes and its
 	// workspace writes through (the Config.Runner seam). Nil keeps every probe
 	// bare-local.
@@ -299,8 +304,12 @@ func runDotFixtureBead(t *testing.T, beadID core.BeadID, opts dotFixtureOpts) do
 	projectDir, _ := workloopFixtureProjectDir(t)
 	workloopFixtureGitRepo(t, projectDir)
 
+	graph := opts.Graph
+	if graph == "" {
+		graph = dotFixtureGraph
+	}
 	//nolint:gosec // G306: test fixture file.
-	if err := os.WriteFile(filepath.Join(projectDir, "workflow.dot"), []byte(dotFixtureGraph), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(projectDir, "workflow.dot"), []byte(graph), 0o644); err != nil {
 		t.Fatalf("runDotFixtureBead: write workflow.dot: %v", err)
 	}
 	var hookStore runloop.HookStore = dotFixtureHookStore{Outcome: json.RawMessage(opts.HookOutcome)}

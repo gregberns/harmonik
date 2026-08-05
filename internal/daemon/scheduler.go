@@ -326,14 +326,20 @@ func effectiveQueueWorkers(q *queue.Queue, globalCap int) int {
 // stale dashboard.json. A gated queue contributes nothing to dispatch this
 // tick but — like a paused-by-failure queue — MUST NOT block sibling queues.
 // nil disables the gate (pre-hk-xg6rw behaviour).
-func selectNextQueue(lq *queuewiring.LockedQueueStore, reg *RunRegistry, globalCap, rrCursor int, blockedQueues map[string]bool) (queueSelection, bool) {
+//
+// skipBeads names the beads the loop already knows it will refuse on this tick
+// for a reason that belongs to the ITEM and not to its queue — the bead is
+// claimed by a sibling queue, or it waits for a captain to greenlight it. The
+// selector steps over those and offers the next eligible item instead of
+// spending the tick on one it cannot dispatch (hk-nown4). nil refuses nothing.
+func selectNextQueue(lq *queuewiring.LockedQueueStore, reg *RunRegistry, globalCap, rrCursor int, blockedQueues, skipBeads map[string]bool) (queueSelection, bool) {
 	// M5 slice 3A: the pure NQ-B1 decision moved to internal/orchestrator. This
 	// shell projects the live QueueStore/RunRegistry into a narrow FleetSnapshot
 	// under the (already-held) write lock, calls the pure selector, and maps the
 	// Selection back onto queueSelection so callers are unchanged. The Phase-3
 	// claim-time re-validation downstream (see the dispatch stamp block) remains
 	// the load-bearing race guardrail.
-	sel, ok := orchestrator.SelectNextQueue(snapshotFleet(lq, reg, globalCap, rrCursor, blockedQueues))
+	sel, ok := orchestrator.SelectNextQueue(snapshotFleet(lq, reg, globalCap, rrCursor, blockedQueues, skipBeads))
 	if !ok {
 		return queueSelection{anyPausedOrEmpty: sel.SawNonContributing}, false
 	}
@@ -362,7 +368,7 @@ func selectNextQueue(lq *queuewiring.LockedQueueStore, reg *RunRegistry, globalC
 // QueueStore write lock (mirrors drainSnapshot in draindetect.go). WorkerCap is
 // precomputed here via effectiveQueueWorkers so orchestrator never imports
 // internal/queue; enum-typed status/kind fields are projected as booleans.
-func snapshotFleet(lq *queuewiring.LockedQueueStore, reg *RunRegistry, globalCap, rrCursor int, blockedQueues map[string]bool) orchestrator.FleetSnapshot {
+func snapshotFleet(lq *queuewiring.LockedQueueStore, reg *RunRegistry, globalCap, rrCursor int, blockedQueues, skipBeads map[string]bool) orchestrator.FleetSnapshot {
 	names := lq.LockedAllQueueNames()
 	queues := make([]orchestrator.QueueSnapshot, 0, len(names))
 	for _, name := range names {
@@ -383,7 +389,40 @@ func snapshotFleet(lq *queuewiring.LockedQueueStore, reg *RunRegistry, globalCap
 			ActiveGroup:    projectActiveGroup(q),
 		})
 	}
-	return orchestrator.FleetSnapshot{Queues: queues, RRCursor: rrCursor}
+	return orchestrator.FleetSnapshot{Queues: queues, RRCursor: rrCursor, SkipBeads: skipBeads}
+}
+
+// offerableSkipSet merges the loop's two refusal sets into the plain set the
+// pure selector reads, and purges every clock-based entry that has expired. The
+// daemon owns the clock so the selector does not have to (orchestrator has no
+// clock port by design). Purging here rather than at arm time bounds the map on
+// every tick instead of only when a new refusal happens.
+//
+// The two sets are separate for a reason the types do not show. refusedUntil is
+// clock-based and survives across ticks: it holds a bead a sibling queue is
+// running, and it must outlive this tick. tickRefusals has no clock and covers
+// only the current tick's walk: a clock there would let the earliest refusal
+// lapse mid-walk and the walk would never end. Do not merge the two into one
+// map with one window. Bead ref: hk-nown4, hk-403fw.
+func offerableSkipSet(refusedUntil map[core.BeadID]time.Time, tickRefusals map[core.BeadID]bool, now time.Time) map[string]bool {
+	if len(refusedUntil) == 0 && len(tickRefusals) == 0 {
+		return nil
+	}
+	skip := make(map[string]bool, len(refusedUntil)+len(tickRefusals))
+	for id, expiry := range refusedUntil {
+		if now.Before(expiry) {
+			skip[string(id)] = true
+			continue
+		}
+		delete(refusedUntil, id)
+	}
+	for id := range tickRefusals {
+		skip[string(id)] = true
+	}
+	if len(skip) == 0 {
+		return nil
+	}
+	return skip
 }
 
 // projectActiveGroup projects q's FIRST active group into a GroupSnapshot (nil
@@ -509,13 +548,44 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 	reapPort := newReapSeamPort(basePorts.Emitter, baseEnv.ProjectDir, baseEnv.TargetBranch, queueStore, runRegistry, loopLifecycle, capacity, queueSurface, eagerRefill)
 	completionPort := newRunCompletionPort(baseEnv.BrPath, reapPort)
 
-	// claimSkipInProgressUntil tracks beads whose pre-claim check observed
-	// in_progress with an active run. Entries suppress the item from the
-	// ShowBead + bead_claim_skipped path until the TTL expires, preventing the
-	// ~2.5s spin-loop that emits hundreds of bead_claim_skipped events while a
-	// run is in flight. Arms in the non-stranded BI-013c path; expires naturally.
-	// Bead ref: hk-403fw.
-	claimSkipInProgressUntil := make(map[core.BeadID]time.Time)
+	// itemRefusedUntil holds the beads this loop will refuse, and until when. A
+	// refusal here belongs to the ITEM, never to its queue, so it must not cost
+	// the queue its turn: the set feeds selectNextQueue, which steps over a
+	// refused item and offers the next eligible one (hk-nown4).
+	//
+	// It is armed when the pre-claim check sees the bead in_progress with an
+	// active run, and it lasts claimSkipInProgressCooldown (5 min). That window
+	// is what suppresses the ~2.5s spin-loop of ShowBead + bead_claim_skipped
+	// while the sibling's run is in flight (hk-403fw). Entries expire on the
+	// clock; offerableSkipSet purges them each tick.
+	itemRefusedUntil := make(map[core.BeadID]time.Time)
+
+	// tickRefusals holds the beads an after-lookup gate — today greenlight —
+	// held during THIS tick's walk. It is deliberately a SEPARATE set from
+	// itemRefusedUntil, and deliberately has NO clock.
+	//
+	// That difference is what makes the walk terminate. The greenlight path
+	// re-selects at once rather than sleeping, so the queue moves past a held
+	// bead on the same tick instead of spending the tick on it. A walk is only
+	// bounded if the set it consults grows monotonically while the walk runs.
+	// A time-based window does NOT give that: the earliest refusal can lapse
+	// while the loop is still walking the later ones — each pass costs a
+	// `br show` subprocess, so a group of held beads can easily take longer to
+	// walk than any sane window — and the loop then re-offers a bead it already
+	// refused and never reaches its sleep. Measured on a build where the arming
+	// was removed: 186,176 passes in 600 ms.
+	//
+	// So this set is cleared exactly once per tick, by walkingThisTick below,
+	// and never on a timer. Within one walk it only grows, each pass adds one
+	// bead, and the eligible set is finite, so the walk ends. Clearing it per
+	// tick also keeps the old greenlight cadence: a captain clearing the label
+	// is picked up on the next tick, as before.
+	tickRefusals := make(map[core.BeadID]bool)
+
+	// walkingThisTick says the previous pass ended in a same-tick re-selection
+	// rather than a sleep, so tickRefusals must survive into this pass. Any
+	// other way into the loop top starts a new tick and clears it.
+	walkingThisTick := false
 
 	// readyPathAttempts tracks dispatch attempts for each bead on the br-ready
 	// fallback path (no queue). Bounded by maxItemAttempts. Resets on daemon
@@ -637,6 +707,16 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 	}
 
 	for {
+		// Step 0: the tick boundary for the same-tick walk (hk-nown4). Reaching
+		// here without walkingThisTick set means the previous pass slept, idled or
+		// dispatched, so this is a NEW tick and the after-lookup refusals from the
+		// last one are forgotten. During a walk the flag is set and the set
+		// survives, which is what bounds the walk.
+		if !walkingThisTick {
+			clear(tickRefusals)
+		}
+		walkingThisTick = false
+
 		// Step 1: check for dispatch-halt before pulling new work.
 		// Uses dispatchCtx (not ctx) so that CancelOnQueueDrain/CancelOnQueueExit
 		// stop dispatch without cancelling in-flight goroutines (hk-2o2i9).
@@ -847,7 +927,12 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 				// reflects the queue-owner's permanent concurrency intent, not the current tuner
 				// state; scaling it with the tuner would under-count eligible queues in the
 				// round-robin even when the global gate is the binding constraint.
-				sel, ok := selectNextQueue(lq, runRegistry, effectiveMax, rrCursor, selObs.blockedQueues)
+				// Held in a local so the idle branch below can ask whether ANY item was
+				// refused this tick. Building it also purges the expired clock-based
+				// entries, so an item whose cooldown has just run out is offered on this
+				// tick rather than counted as still refused.
+				skipBeads := offerableSkipSet(itemRefusedUntil, tickRefusals, time.Now())
+				sel, ok := selectNextQueue(lq, runRegistry, effectiveMax, rrCursor, selObs.blockedQueues, skipBeads)
 				// Capture queue count while the lock is still held so we can
 				// distinguish "zero queues loaded" from "queues exist but all
 				// paused/at-cap" after lq.Done() releases the lock (hk-mgoo7).
@@ -871,7 +956,31 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 						// Without this, workloopIdleWait blocks indefinitely and deferred
 						// chains must be re-submitted to wake the loop — the re-submit churn
 						// logged in iter20 (4 full re-submits over 7.5h for a 7-bead chain).
-						if hasDeferredItems {
+						//
+						// hk-nown4: a REFUSED item needs the same bounded poll, for the same
+						// reason and a sharper one. Once the tick refuses every eligible item
+						// the queue stops being a candidate, so selection lands HERE rather
+						// than on the per-item hold it used to take. The wait below has no
+						// timer — it blocks on the wake channel — so a queue that reaches it
+						// runs again only when something else fires that channel.
+						//
+						// The condition covers EVERY refusal, which is what
+						// specs/queue-model.md §9.8 requires. An earlier draft named only the
+						// greenlight set, reasoning that the five-minute in-progress cooldown
+						// always has a real wake signal because the sibling run completes. That
+						// reasoning is wrong, and the arming site shows why: it fires on the
+						// ledger's coarse status alone and never asks the run registry whether
+						// THIS daemon owns a run for the bead. So it also arms for a stale
+						// on-disk run left by a dead daemon, which is what a plain restart
+						// produces. No completion event will ever come, and the park is
+						// permanent rather than five minutes.
+						//
+						// Widening costs nothing, which was the other half of the wrong
+						// reasoning. The skip set stops the item inside selectNextQueue, ABOVE
+						// the pre-claim ShowBead, so a refused tick is one bare loop pass per
+						// poll interval and spawns no subprocess. Measured: ShowBead stays at
+						// exactly 1 across the window, so hk-403fw's spin suppression is intact.
+						if hasDeferredItems || len(skipBeads) > 0 {
 							if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 								return exitClean()
 							}
@@ -907,12 +1016,17 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 			}
 
 			if snapItemIdx >= 0 {
-				// hk-403fw: cooldown guard — skip items whose bead is known to be
-				// in_progress with an active run, suppressing repeated ShowBead calls
-				// and bead_claim_skipped emissions at poll cadence. The cooldown is
-				// armed in the BI-013c non-stranded path below; it expires after
-				// claimSkipInProgressCooldown (5 min) and re-evaluates naturally.
-				if expiry, ok := claimSkipInProgressUntil[snapItemBeadID]; ok && time.Now().Before(expiry) {
+				// hk-403fw: the refusal guard — never dispatch a bead the loop has
+				// already refused, which is what suppresses repeated ShowBead calls
+				// and bead_claim_skipped emissions at poll cadence.
+				//
+				// This is a BACKSTOP, not the working gate. selectNextQueue is now
+				// given the same refusal set and never offers a refused item, so on
+				// the queue path this branch is unreachable. Keep it: it is cheap,
+				// and it is the last line if a future dispatch source reaches here
+				// without consulting the set. Do NOT restore it as the primary
+				// gate — refusing here spends the whole tick, and that was hk-nown4.
+				if expiry, ok := itemRefusedUntil[snapItemBeadID]; ok && time.Now().Before(expiry) {
 					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 						return exitClean()
 					}
@@ -1108,15 +1222,27 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 							// immediately un-deferred by ReevaluateDeferred when the item has
 							// no in-group blockers, causing repeated ShowBead + claim_skipped
 							// at ~2.5s. The cooldown suppresses re-selection for 5 min.
+							//
+							// Read the condition literally: it is the LEDGER STATUS and
+							// nothing else. This site does not ask runRegistry whether this
+							// daemon owns a run for the bead, so it also arms for a stale
+							// on-disk run left by a dead daemon — which is what a plain
+							// restart produces — and after a failed stranded-bead reset. In
+							// those cases no completion event will ever arrive to end the
+							// refusal early. Do not read this as "in_progress with an active
+							// run"; that is what the code aims at, not what it checks
+							// (hk-n2o11). The idle branch above is written for the literal
+							// behaviour, which is why it polls on ANY refusal.
+							//
 							// Purge stale entries while arming to bound map growth.
 							if preClaimRecord.Status == core.CoarseStatusInProgress {
 								now := time.Now()
-								for id, exp := range claimSkipInProgressUntil {
+								for id, exp := range itemRefusedUntil {
 									if now.After(exp) {
-										delete(claimSkipInProgressUntil, id)
+										delete(itemRefusedUntil, id)
 									}
 								}
-								claimSkipInProgressUntil[snapItemBeadID] = now.Add(claimSkipInProgressCooldown)
+								itemRefusedUntil[snapItemBeadID] = now.Add(claimSkipInProgressCooldown)
 							}
 							// Set the queue item to deferred-for-ledger-dep under the write lock.
 							if queueStore != nil {
@@ -1171,9 +1297,20 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 					if afterLookupVerdict.Message != "" {
 						fmt.Fprint(os.Stderr, afterLookupVerdict.Message)
 					}
-					if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
-						return exitClean()
-					}
+					// hk-nown4: every gate at this stage holds ONE bead, not its
+					// queue — greenlight is a label on the bead. Refusing the tick
+					// here left the queue's ready items behind an item it would go
+					// on refusing, the same head-of-line stall the claim cooldown
+					// caused. Refuse the ITEM and re-select at once, so a sibling
+					// item dispatches on this tick.
+					//
+					// The refusal goes in tickRefusals, which has no clock. That is
+					// load-bearing, not a detail: a time-based refusal can lapse
+					// while this walk is still running and the loop then re-offers a
+					// bead it already refused, forever. See the tickRefusals comment
+					// at the top of this function for the measurement.
+					tickRefusals[snapItemBeadID] = true
+					walkingThisTick = true
 					continue
 				}
 

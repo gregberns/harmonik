@@ -1253,14 +1253,25 @@ This is mechanism, not policy: `workers` is a static per-queue dispatch width, n
 When more than one queue is active and a global slot is free (the QM-062 global ceiling has room), the daemon MUST choose which queue is offered the slot by **name-ordered round-robin** among the *candidate* queues. A queue is a candidate on a given dispatch tick iff:
 
 1. its status is `active` (paused-by-failure / paused-by-drain / completed queues contribute nothing but MUST NOT block siblings),
-2. it has an `active` group with at least one eligible item (§5.7), AND
+2. it has an `active` group with at least one eligible item (§5.7) that the dispatcher has not refused on this tick (see "Refused items" below), AND
 3. its per-queue tally is below its `workers` ceiling (`LenForQueue(name) < workers`, QM-066).
 
 The arbitration is:
 
 - Candidate queue names are sorted lexicographically (the stable total order over the `[a-z0-9-]` name charset, QM-002).
-- A **round-robin cursor** — daemon state that persists across dispatch ticks — selects the starting offset into the sorted candidate list (`candidates[cursor mod len(candidates)]`). The chosen queue dispatches its head-eligible item.
+- A **round-robin cursor** — daemon state that persists across dispatch ticks — selects the starting offset into the sorted candidate list (`candidates[cursor mod len(candidates)]`). The chosen queue dispatches its first eligible item that has not been refused.
+
 - The cursor MUST advance by one on **every** queue selection and MUST NOT be reset to zero each tick. Resetting it would make the lexicographically-first candidate (e.g. `investigate`) win every tick and **starve** a later one (e.g. `main`); advancing it rotates the offset so dispatch is shared fairly. Over a long run no candidate queue starves.
+
+**Refused items.** A dispatcher gate can refuse a single ITEM for a reason that belongs to that item and not to its queue. Two do: the item's bead is already claimed by a sibling queue, and the item's bead carries the `needs-greenlight` label. The dispatcher MUST offer the next eligible item behind a refused one on the SAME tick. It MUST NOT spend the tick on an item it has already refused, and it MUST NOT let a refused item make its queue skip its turn while ready items sit behind it.
+
+A queue whose every eligible item is refused is therefore not a candidate on that tick. It contributes nothing and — like a paused queue under criterion 1 — MUST NOT block its siblings. Because a fully-refused queue is not a candidate, it is never selected, so it never advances the cursor and cannot rob a sibling of a rotation. Note the narrower reading is the correct one: the cursor advances on every SELECTION, not once per dispatch. A gate that refuses an item after it was selected has already advanced the cursor, so a walk over three held items advances it three times for one dispatch. That is intended and harmless under plain round-robin, but do not read this paragraph as a promise that the cursor tracks dispatches.
+
+A queue that can offer nothing because every eligible item is refused MUST still be re-examined on a bounded poll. It MUST NOT be left waiting only on an external wake signal. A refusal can lapse for a reason the daemon never observes — clearing `needs-greenlight` is a ledger edit made outside the daemon — so a queue parked on a wake channel alone would never run again.
+
+Refusing an item MUST NOT be implemented by narrowing the eligibility rule in §5.7: eligibility is a property of the queue item, and a refusal is a property of this tick. An implementation that conflates them makes a transient refusal durable.
+
+Without this rule a queue blocks on the first item it refuses until the refusal lapses, while every ready item behind it waits. That is head-of-line blocking, it self-heals, and it therefore presents to an operator as a slow queue rather than as a stall.
 
 This is plain round-robin — every candidate queue is treated equally. **Weighted fairness** (dispatch shares proportional to `workers`, or priority tiers across queues) is explicitly OUT OF SCOPE for v0.1 and deferred to a later version. The `workers` count gates a queue's *concurrency width* (QM-066); it does NOT weight its *dispatch frequency* under this policy.
 

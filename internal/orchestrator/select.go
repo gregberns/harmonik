@@ -70,6 +70,17 @@ type QueueSnapshot struct {
 type FleetSnapshot struct {
 	Queues   []QueueSnapshot
 	RRCursor int
+	// SkipBeads holds the bead IDs the CALLER already knows it will refuse this
+	// tick, keyed by string bead ID. A refusal here is specific to the ITEM, not
+	// to the queue: the bead is claimed by a sibling queue, or it waits for a
+	// captain to greenlight it. The selector steps over such an item and offers
+	// the next eligible one, which is what stops one refused item from holding
+	// up every ready item behind it (hk-nown4).
+	//
+	// The daemon owns the clock: it expires its own cooldowns and passes a plain
+	// set, so the selector stays a pure function of its input. nil means nothing
+	// is refused.
+	SkipBeads map[string]bool
 }
 
 // Selection is the pure selector result. It maps 1:1 onto the daemon's
@@ -97,11 +108,16 @@ type Selection struct {
 //
 // Policy (NQ-B1), preserved EXACTLY from the daemon's selectNextQueue:
 //   - A queue is a candidate iff it is Active, not Blocked, its LocalInFlight is
-//     below its WorkerCap, and its first active group has ≥1 eligible item.
+//     below its WorkerCap, and its first active group has ≥1 eligible item the
+//     caller has not already refused (see FleetSnapshot.SkipBeads).
 //   - Candidate names are sorted lexicographically, then the round-robin cursor
 //     (advanced by the CALLER every tick, never reset to 0) selects the start
 //     offset — this is what prevents a lexicographically-earlier queue from
 //     perpetually starving a later one.
+//   - Within the chosen queue the selector offers the FIRST eligible item the
+//     caller has not refused. It does not stop at the head. A queue whose every
+//     eligible item is refused contributes nothing this tick and hands its slot
+//     to a sibling instead of consuming it (hk-nown4).
 //
 // The per-queue cap counts LOCAL runs only (hk-4tjt6): an all-remote queue
 // admits up to its worker-slot capacity rather than being capped at
@@ -133,8 +149,11 @@ func SelectNextQueue(f FleetSnapshot) (Selection, bool) {
 			sawNonContributing = true
 			continue
 		}
-		// Must have a first active group with at least one eligible item.
-		if q.ActiveGroup == nil || len(q.ActiveGroup.Eligible) == 0 {
+		// Must have a first active group holding at least one eligible item the
+		// caller has not refused. A group whose every eligible item is refused
+		// makes this queue a non-contributor rather than a blocker, so the
+		// round-robin gives the slot to a sibling (hk-nown4).
+		if q.ActiveGroup == nil || firstOfferable(q.ActiveGroup.Eligible, f.SkipBeads) < 0 {
 			sawNonContributing = true
 			continue
 		}
@@ -153,12 +172,18 @@ func SelectNextQueue(f FleetSnapshot) (Selection, bool) {
 	chosen := byName[candidates[start]]
 
 	g := chosen.ActiveGroup
-	if g == nil || len(g.Eligible) == 0 {
-		// Defensive: a candidate always has an eligible head, so this is
+	var pick int
+	if g == nil {
+		pick = -1
+	} else {
+		pick = firstOfferable(g.Eligible, f.SkipBeads)
+	}
+	if pick < 0 {
+		// Defensive: a candidate always has an offerable item, so this is
 		// unreachable, but mirror the daemon's non-selection fall-through.
 		return Selection{SawNonContributing: sawNonContributing}, false
 	}
-	head := g.Eligible[0]
+	head := g.Eligible[pick]
 	return Selection{
 		QueueName:      chosen.Name,
 		QueueID:        chosen.QueueID,
@@ -168,4 +193,17 @@ func SelectNextQueue(f FleetSnapshot) (Selection, bool) {
 		WorkerTarget:   chosen.WorkerTarget,
 		DefaultHarness: chosen.DefaultHarness,
 	}, true
+}
+
+// firstOfferable returns the index of the first eligible item the caller has not
+// refused, or -1 when every eligible item is refused (an empty list included).
+// It is the whole of the fallback: without it the selector offers index 0 and
+// nothing else, so one refused item holds up every ready item behind it.
+func firstOfferable(eligible []ItemSnapshot, skip map[string]bool) int {
+	for i := range eligible {
+		if !skip[string(eligible[i].BeadID)] {
+			return i
+		}
+	}
+	return -1
 }

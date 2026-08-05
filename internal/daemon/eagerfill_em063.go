@@ -106,10 +106,11 @@ func eagerRefillEval(ctx context.Context, port reapSeamPort) {
 	// EM-062 deficit decision (M5 slice 3B): project the fleet under the lock,
 	// then let the pure orchestrator.EagerFillTarget pick the first active stream
 	// group short of pending work. snapshotFleet's globalCap/rrCursor/blockedQueues
-	// are selector-only inputs eager-fill never reads — pass maxConcurrent/0/nil.
+	// and skipBeads are selector-only inputs eager-fill never reads — pass
+	// maxConcurrent/0/nil/nil.
 	lq := port.queueStore.LockForMutation()
 	target, ok := orchestrator.EagerFillTarget(
-		snapshotFleet(lq, port.runRegistry, maxConcurrent, 0, nil),
+		snapshotFleet(lq, port.runRegistry, maxConcurrent, 0, nil, nil),
 		maxConcurrent, inFlight,
 	)
 	lq.Done()

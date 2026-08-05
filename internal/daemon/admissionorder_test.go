@@ -175,6 +175,12 @@ type admissionLedger struct {
 	// which the needs-greenlight label reaches the loop.
 	showLabels []string
 
+	// showLabelsByBead overrides showLabels for the named beads. A fixture that
+	// needs ONE labeled bead beside an unlabeled sibling cannot express that
+	// through showLabels, which every reply shares. A bead absent from this map
+	// falls back to showLabels. Bead ref: hk-nown4.
+	showLabelsByBead map[core.BeadID][]string
+
 	// showErr, when set, makes every ShowBead fail.
 	showErr error
 
@@ -214,7 +220,11 @@ func (l *admissionLedger) ShowBead(_ context.Context, id core.BeadID) (core.Bead
 	l.showCalls[id]++
 	total := l.showTotal
 	status := l.showStatus
+	perBead, hasPerBead := l.showLabelsByBead[id]
 	labels := append([]string(nil), l.showLabels...)
+	if hasPerBead {
+		labels = append([]string(nil), perBead...)
+	}
 	showErr := l.showErr
 	hook := l.onShowBead
 	l.mu.Unlock()

@@ -26,10 +26,12 @@ package main
 // Exit codes:
 //
 //	0   Stream closed cleanly (EOF from daemon, signal)
-//	1   Argument error or write to stdout failed
+//	1   Argument error, write to stdout failed, or the daemon refused the
+//	    subscription (it is up and declined — see subscriberefusal.go)
 //	17  Daemon socket missing or ECONNREFUSED
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -234,8 +236,40 @@ func runSubscribeSubcommand(subArgs []string) int {
 		closeSubscribeConn(conn)
 	}()
 
-	// Copy the NDJSON stream to stdout until EOF.
-	if _, err := io.Copy(os.Stdout, conn); err != nil {
+	// Inspect the FIRST line before forwarding anything. A refused subscription
+	// is a single SocketResponse object with no "type", so a plain copy would
+	// put it on stdout as though it were an event and exit 0 — every consumer
+	// folding this stream then reads a refusal as "no events" (hk-1dwk2).
+	// Everything after that first line is forwarded verbatim, as before.
+	//
+	// Checking ONLY the first line is sufficient because the daemon writes a
+	// refusal in place of the stream, never in the middle of one — a refused
+	// subscribe is answered and closed before any event is sent. If a
+	// mid-stream error line is ever added, this check must move into the copy.
+	buffered := bufio.NewReader(conn)
+	first, readErr := buffered.ReadBytes('\n')
+	if reason, refused := subscribeRefusalReason(first); refused {
+		fmt.Fprintf(os.Stderr, "harmonik subscribe: daemon refused the subscription: %s\n", reason)
+		return 1
+	}
+	if len(first) > 0 {
+		if _, err := os.Stdout.Write(first); err != nil {
+			fmt.Fprintf(os.Stderr, "harmonik subscribe: write to stdout: %v\n", err)
+			return 1
+		}
+	}
+	if readErr != nil {
+		// A stream that ends on its first line is a clean, empty finish; the
+		// error conditions below are the same set the copy applies.
+		if !errors.Is(readErr, io.EOF) && !strings.Contains(readErr.Error(), "use of closed") {
+			fmt.Fprintf(os.Stderr, "harmonik subscribe: stream read: %v\n", readErr)
+			return 1
+		}
+		return 0
+	}
+
+	// Copy the rest of the NDJSON stream to stdout until EOF.
+	if _, err := io.Copy(os.Stdout, buffered); err != nil {
 		// EOF and "use of closed connection" are clean-exit conditions.
 		if !errors.Is(err, io.EOF) && !strings.Contains(err.Error(), "use of closed") {
 			fmt.Fprintf(os.Stderr, "harmonik subscribe: stream copy: %v\n", err)
@@ -400,7 +434,7 @@ func runSubscribeFollowIO(ctx context.Context, reqBodyBase map[string]any, sockP
 			// hk-62r8w: SocketResponse error — server rejected the subscribe request
 			// permanently. Exit with error instead of forwarding the rejection to the
 			// writer and reconnecting in an ~1s loop.
-			if env.Ok != nil && !*env.Ok {
+			if subscribeRefused(env.Ok) {
 				close(connCloseOnce)
 				closeSubscribeConn(conn)
 				fmt.Fprintf(os.Stderr, "harmonik subscribe --follow: server error: %s\n", env.Error)

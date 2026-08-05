@@ -1874,7 +1874,7 @@ func runCommsRecvFollowIO(ctx context.Context, sockPath, agent, fromFilter, topi
 			// These are not transient drops: the daemon is up but refused this session.
 			// Exit with error instead of reconnecting; reconnecting would loop at ~1s
 			// because backoff resets on every successful TCP dial.
-			if env.Ok != nil && !*env.Ok {
+			if subscribeRefused(env.Ok) {
 				close(connCloseOnce)
 				if closeErr := conn.Close(); closeErr != nil {
 					log.Printf("harmonik comms recv --follow: close connection after server error: %v", closeErr)
@@ -2124,7 +2124,7 @@ func runCommsRecvWait(sockPath, agent, fromFilter, topicFilter, sinceEventID str
 		}
 
 		// hk-62r8w: SocketResponse error — server rejected the subscribe request.
-		if env.Ok != nil && !*env.Ok {
+		if subscribeRefused(env.Ok) {
 			fmt.Fprintf(os.Stderr, "harmonik comms recv --wait: server error: %s\n", env.Error)
 			return 1
 		}

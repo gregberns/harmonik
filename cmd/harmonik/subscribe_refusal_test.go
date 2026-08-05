@@ -146,6 +146,91 @@ func TestSmokeWatchSignals_DaemonRefusalIsReported(t *testing.T) {
 	}
 }
 
+// The three clients below already guarded the envelope before this change
+// (landed as hk-62r8w) but had NO test — the mutation that proved the four
+// tests above are load-bearing turned nothing else red. They now share the same
+// predicate as everything else, so a change to it must fail here too, otherwise
+// consolidating the guard would have removed the only reason to keep it right.
+
+// TestSubscribeFollow_DaemonRefusalStopsInsteadOfReconnecting pins that a
+// refusal ends `subscribe --follow` rather than sending it round the reconnect
+// loop. A refusal is permanent for this connection: the daemon is up and has
+// declined, so retrying spins at the backoff floor for ever.
+func TestSubscribeFollow_DaemonRefusalStopsInsteadOfReconnecting(t *testing.T) {
+	d := startFakeDaemon(t, replyOnce(refusalReply()))
+
+	// The context bounds a regression: without the guard this reconnects for
+	// ever, and the test must fail rather than hang.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	var out bytes.Buffer
+	var code int
+	_, stderr := captureStd(t, func() {
+		code = runSubscribeFollowIO(ctx, map[string]any{"op": "subscribe"}, d.SockPath, "", &out, "")
+	})
+
+	if ctx.Err() != nil {
+		t.Fatalf("subscribe --follow never returned on a refused subscription — it is reconnect-looping")
+	}
+	if code == 0 {
+		t.Errorf("subscribe --follow returned exit 0 on a refused subscription; want non-zero")
+	}
+	if strings.Contains(out.String(), "SubscribeHandler not registered") {
+		t.Errorf("subscribe --follow forwarded the refusal to its writer as an event line:\n%s", out.String())
+	}
+	if !strings.Contains(stderr, "SubscribeHandler not registered") {
+		t.Errorf("subscribe --follow did not report the refusal on stderr; got: %q", stderr)
+	}
+}
+
+// TestCommsRecvWait_DaemonRefusalIsNotATimeout pins that `comms recv --wait`
+// separates "refused" from "nothing arrived in time". They have different exit
+// codes and different fixes.
+func TestCommsRecvWait_DaemonRefusalIsNotATimeout(t *testing.T) {
+	d := startFakeDaemon(t, replyOnce(refusalReply()))
+
+	var code int
+	_, stderr := captureStd(t, func() {
+		code = runCommsRecvWait(d.SockPath, "bravo", "", "", "", false, 3*time.Second)
+	})
+
+	if code == 0 {
+		t.Errorf("comms recv --wait returned exit 0 on a refused subscription; want non-zero")
+	}
+	if code == commsRecvWaitTimeoutExit {
+		t.Errorf("comms recv --wait reported its timeout code on a refused subscription; the cause is the refusal, not a quiet bus")
+	}
+	if !strings.Contains(stderr, "SubscribeHandler not registered") {
+		t.Errorf("comms recv --wait did not report the refusal on stderr; got: %q", stderr)
+	}
+}
+
+// TestCommsRecvFollow_DaemonRefusalStopsInsteadOfReconnecting is the follow-mode
+// counterpart: a refusal must end the stream, not restart it.
+func TestCommsRecvFollow_DaemonRefusalStopsInsteadOfReconnecting(t *testing.T) {
+	d := startFakeDaemon(t, replyOnce(refusalReply()))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	var out bytes.Buffer
+	var code int
+	_, stderr := captureStd(t, func() {
+		code = runCommsRecvFollowIO(ctx, d.SockPath, "bravo", "", "", "", false, &out)
+	})
+
+	if ctx.Err() != nil {
+		t.Fatalf("comms recv --follow never returned on a refused subscription — it is reconnect-looping")
+	}
+	if code == 0 {
+		t.Errorf("comms recv --follow returned exit 0 on a refused subscription; want non-zero")
+	}
+	if !strings.Contains(stderr, "SubscribeHandler not registered") {
+		t.Errorf("comms recv --follow did not report the refusal on stderr; got: %q", stderr)
+	}
+}
+
 // TestRunViaDaemon_DaemonRefusalIsNamed pins that `harmonik run` names the
 // refusal. It already exits 1, so the exit code is not the defect here — the
 // silent, causeless failure is.

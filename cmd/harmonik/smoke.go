@@ -449,6 +449,17 @@ func smokeWatchSignals(
 			continue
 		}
 
+		// A refused subscription carries no "type", so the decode below would
+		// skip it, the scan would end at EOF, and smoke would report its
+		// timeout code — blaming a slow daemon for signals it was never
+		// subscribed to (hk-1dwk2).
+		if reason, refused := subscribeRefusalReason(line); refused {
+			if _, writeErr := fmt.Fprintf(stderr, "harmonik smoke: daemon refused the subscription: %s\n", reason); writeErr != nil {
+				return result, 1
+			}
+			return result, 1
+		}
+
 		// Parse the event envelope: {"event_id":"...","type":"...","payload":{...},...}
 		var env struct {
 			Type    string          `json:"type"`

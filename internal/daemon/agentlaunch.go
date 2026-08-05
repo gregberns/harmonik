@@ -244,11 +244,23 @@ type agentLaunchInput struct {
 	// facts exist.
 	//
 	// nil reports the zero exit, which decides reclaim: give everything back.
-	// The two DOT sites pass nil, and that is their correct answer rather than a
-	// stub. A graph run cannot satisfy the survive condition — the
-	// independent-session fact is set only inside single mode's per-run
-	// substrate wiring, and only the work loop passes that — so reclaim is what
-	// those launches did before this field existed and what they do now.
+	// The two DOT sites pass nil, and that is now a KNOWN GAP rather than the
+	// right answer.
+	//
+	// It used to be the right answer, and the reason is worth keeping because it
+	// is what changed: a graph run could not satisfy the survive condition at all,
+	// since nothing set the independent-session fact for it. A graph run now takes
+	// a tmux session of its own, so the condition IS reachable, and these two
+	// launches still read the zero exit and kill the agent session when the daemon
+	// stops.
+	//
+	// What that costs today is the difference between a run whose AGENT keeps
+	// working across a restart and one whose RECORD does. The run's own scope
+	// reads the real facts, so the record and the worktree survive and the next
+	// boot adopts the run, resets the bead and reclaims the directory in order.
+	// The agent itself is still killed. Closing this means reaching the run's exit
+	// facts from a graph node, which is the same threading problem the RunScope
+	// field above describes.
 	RunExit func() runlease.Exit
 }
 
@@ -372,12 +384,39 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 		if in.Runner != nil && in.WorkerSessionName != "" {
 			prs.workerSessionName = in.WorkerSessionName
 			prs.workerSessionCwd = in.WorkerSessionCwd
+		} else if in.Runner == nil && env.RunSessionID != "" {
+			// The run owns a tmux session, so this agent goes in it rather than in
+			// the daemon's, and outlives a daemon that stops. The run decided this
+			// once and wrote a registry record naming the session before it reached
+			// any launch; reading the decision here rather than taking it as a
+			// per-site option is what keeps every launch of the run in the session
+			// that record names.
+			//
+			// The nil runner is what makes this local, and it is tested rather than
+			// inferred from the branch above. That branch also needs a worker session
+			// NAME, so a remote run that arrived without one would otherwise fall
+			// through to here and be given a session on the wrong host.
+			prs.runSessionID = env.RunSessionID
 		}
 		if in.ConfigurePerRunSubstrate != nil {
 			in.ConfigurePerRunSubstrate(prs)
 		}
 		runSubstrate = prs
 		pasteTarget = prs
+	}
+
+	// PI-073: record the resolved agent type on the run's handle so the bandwidth
+	// tuner's backstop can tell a free-tier Pi rate limit from a paid one and keep
+	// the Pi 429 off the global tuner. The type is known only after the launch
+	// spec resolves the harness, which the caller has just done.
+	//
+	// It is set HERE, in the one launch path, rather than at each call site. The
+	// previous call sat at one site, that site was deleted, and the carve-out then
+	// matched nothing for three days while still reading as live code.
+	if handles.RunRegistry != nil {
+		if rh, ok := handles.RunRegistry.Get(runID); ok && rh != nil {
+			rh.SetAgentType(agentType)
+		}
 	}
 
 	// ── Sandbox gate ────────────────────────────────────────────────────────

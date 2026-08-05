@@ -125,13 +125,11 @@ var knownUnwiredWriters = map[string]string{
 	// KEEP THE LESSON: excluding a path by basename is not excluding a file. Verify a
 	// negative reachability claim by naming the caller you expect and failing to find
 	// it, not by filtering the search until it comes back empty.
-	"internal/workspace.WriteLeaseLockAtomic":       "no worktree ever takes a lease, so every worktree classifies NoLock and the boot orphan sweep age-prunes it with git worktree remove --force --force after 7 days; the code's own comment calls age 'a conservative proxy for liveness' because a worktree with no lease-lock is almost certainly not an active run, and that reasoning held only while leases were written; newestMTimeInTree still skips a worktree with recent file activity, so the exposure is a live run idle longer than the threshold",
 	"internal/lifecycle.AcquireReconciliationLock":  "no reconciliation takes a lock, so SweepStaleReconciliationLocks reports zero stale locks forever and nothing serializes two reconciliations of the same run",
 	"internal/daemon.ExecuteVerdict":                "no reconciliation verdict is ever applied or committed, so the WIP capture under .harmonik/reconciliation/ never happens and an absent capture reads as 'there was no work to preserve'",
 	"internal/lifecycle.WriteVerdictAttemptAtomic":  "no verdict retry is ever counted, so the Cat-3b re-execution cap reads zero attempts forever and cannot stop a loop",
 	"internal/lifecycle.CheckBranchTipMonotonicity": "the branch-tip rewind sensor never runs and never persists a tip, so a force-push or reset under an in-flight run is not detected",
 	"internal/dashboard.Write":                      "nothing can refresh .harmonik/context/dashboard.json, and an operator who adds a dashboard block to config.yaml arms a gate that reads ErrNotFound as maximally stale, which blocks every captain-curated queue with no way to satisfy it",
-	"internal/run.Write":                            "no in-flight bead-run is recorded, so after a daemon restart every reader of .harmonik/runs/ finds an empty set and adopts nothing — indistinguishable from an idle fleet (hk-sat32)",
 	"internal/workspace.EnsureGitignoreHygiene":     "the worktree .gitignore entries that keep .harmonik/review.json out of a commit are never installed, though init_cmd.go's blanket .harmonik/.gitignore currently covers for it",
 	"internal/workspace.CreateReviewerWorktree":     "no reviewer ever gets an isolated worktree, so reviewer and implementer share one checkout",
 	"internal/lifecycle.WritePersistedTip":          "no run's branch tip is ever persisted, so ReadPersistedTip returns the empty string forever and reads it as 'first observation, not a violation'",

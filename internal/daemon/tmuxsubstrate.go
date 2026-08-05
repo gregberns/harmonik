@@ -1971,6 +1971,22 @@ func (s *tmuxSubstrate) SpawnRunSession(ctx context.Context, runID string, spawn
 		return nil, boundErr
 	}
 	if outcome.Err != nil {
+		if errors.Is(outcome.Err, tmux.ErrWindowCollision) {
+			// The session is already there, and it is THIS run's — the name is
+			// derived from this run's id and nothing else can hold it. A graph run
+			// launches an agent per node, so the second node arrives while tmux may
+			// still be tearing down the first node's session, and refusing here
+			// would fail the node over a race with a teardown that is already under
+			// way.
+			//
+			// A window in the session that exists is the same thing the run wanted:
+			// an agent outside the daemon's session, in the session the run's
+			// registry record names.
+			fmt.Fprintf(os.Stderr,
+				"daemon: SpawnRunSession: session %q already exists for run %s; opening a window in it\n",
+				sessName, runID)
+			return s.spawnWindowVia(ctx, spawn, s.adapter, sessName, false /* local */, nil /* local Kill uses syscall.Kill */)
+		}
 		return nil, fmt.Errorf("daemon: SpawnRunSession %q: %w", runID, outcome.Err)
 	}
 

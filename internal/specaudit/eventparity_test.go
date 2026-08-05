@@ -1222,6 +1222,14 @@ func goFilesUnder(t *testing.T, root string) []string {
 			switch d.Name() {
 			case ".git", "vendor", "node_modules", ".kerf", "runs", "refs":
 				return filepath.SkipDir
+			// Nested agent worktrees and scratch checkouts live UNDER the repo root
+			// here. They hold their own copy of the tree, so walking them both
+			// double-counts every producer and parses whatever placeholder content a
+			// tool left behind. A stray unparseable file under .claire/worktrees/
+			// turned all three tests red on a clean tree, which is a false red in the
+			// merge decision — the exact failure this file argues against.
+			case ".claire", ".claude", "worktrees":
+				return filepath.SkipDir
 			}
 			return nil
 		}

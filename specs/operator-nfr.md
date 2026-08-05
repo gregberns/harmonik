@@ -8,10 +8,10 @@ requirement-prefix: ON
 spec-category: foundation-cross-cutting
 status: reviewed
 spec-shape: requirements-first
-version: 0.5.9
+version: 0.5.10
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-08-01
+last-updated: 2026-08-05
 depends-on:
   - architecture
   - event-model
@@ -610,6 +610,22 @@ The RTO target of §4.8.ON-031 MUST be set against the following criteria:
 - **Criterion 3 — hard ceiling.** **300 seconds.** Beyond this the operator MUST be notified (the daemon MUST enter `degraded` reporting `reconciling` with progress markers; operator intervention is permitted). Criterion 3 is non-negotiable. Criterion 1 MAY be relaxed with reason (documented in OQ-ON-005) if measurements show 30 seconds is unachievable at this scale.
 
 Reconciliation-workflow dispatch time is part of the RTO; reconciliation-workflow execution time (investigator-agent LLM calls per [reconciliation/spec.md §4.4]) is NOT — it is bounded by that workflow's own policy per [reconciliation/spec.md §4.4].
+
+Tags: mechanism
+
+#### ON-032a — Controlled daemon-suite evidence
+
+Readiness evidence for daemon tests MUST record host load and the allowed
+daemon-suite concurrency. The allowed concurrency is one daemon suite. A test
+result that violates this load rule is machine-contention evidence until a
+controlled rerun classifies it as a product failure.
+
+The count above is the number of daemon test suites that run at the same time
+on the host. It is NOT the number of queue items a run dispatches at the same
+time. This requirement puts no bound on that number, and the operator withdrew
+the rule that once held it to one — see `internal/queue/readiness`
+`RejectConcurrencyUnset`, which refuses evidence that does not state the item
+concurrency and accepts any stated value.
 
 Tags: mechanism
 
@@ -1521,6 +1537,8 @@ Default-if-unresolved: Structured logs are N-1 governed; ON-018 enumeration is u
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-08-05 | 0.5.10 | agent (spec repair, hk-6lt60) | **ON-052 retired; ON-032a landed in its place.** ON-052 arrived at 0.5.9 from the losing half of a two-lane design and could not be obeyed: its "that selected owner" had no antecedent anywhere in the repository, and its resource-retention rule contradicted §4.7 ON-027 step 6 and the §7.2 drain pseudocode, which release the leased workspaces on a bound and then exit. The number is marked not reusable rather than freed. The plan of record for this spec authorizes ON-027b and ON-032a, and neither had ever been written into the file. **ON-032a — Controlled daemon-suite evidence** is now in §4.8, in the approved draft's own words: readiness evidence for daemon tests records host load and the allowed daemon-suite concurrency, the allowed concurrency is one daemon suite, and a result that breaks the load rule is machine-contention evidence until a controlled rerun classifies it. `cmd/harmonik/queue_readiness.go` and `internal/queue/readiness/validate.go` already named ON-032a as their authority, and `internal/queue/readiness` `DefaultHostLimits` already enforces one daemon and a load ceiling per CPU. **ON-027b is deliberately still absent** — nothing implements a committed-DOT release clause on drain, and the work's own task file records that the shipped release path breaks the rule that clause would amend. **New IDs (net):** ON-032a. ON-052 retired, never reusable. §10.1 and §10.2 need no edit: ON-032a falls inside the "ON-001 through ON-058" profile range and the "ON-030 — ON-033 (restart RTO)" sensor group. Refs: hk-6lt60, hk-7bfqe. |
+| 2026-08-02 | 0.5.9 | agent (kerf finalize, queue-dogfood-readiness) | **ON-052 added, and it should not have been.** The finalize appended an "Amendment — post-commit drain" block carrying ON-052 and bumped the version with no row in this table and no change to `last-updated`. The row is written here at 0.5.10 so the table is complete. The finalize took every target from the second, superseded changelog table, against the tiebreak both the changelog and the change design state. Refs: hk-6lt60. |
 | 2026-08-01 | 0.5.8 | agent (hk-specs-crossrepo-stale-i1bcg) | **§2.2 multi-repo bullet AMENDED: cross-repo dispatch is implemented and the operator turns it on with the `allowed_repos` safelist.** The old text said a bead declaring `target_repo` is explicitly refused with `CrossRepoUnsupportedError` and that cross-repo fixes are applied out-of-band. That stopped being true at `67581586a` (`daemon: implement full cross-repo dispatch`, bead hk-xfuc). Because `specs/` is normative here, a reader following the old text would delete working cross-repo dispatch and restore the refusal. The bullet now states the operator-facing rule. `allowed_repos` in `.harmonik/config.yaml` under the `daemon:` block decides it. A listed path clears the cross-repo gate. An unlisted path reopens the bead with `CrossRepoUnsafeError`. An absent or empty list refuses everything, so the capability stays off until the operator turns it on. The detailed contract is delegated to [process-lifecycle.md §2.2], which owns it. The superseded text is quoted in the bullet so a reader of an older copy can tell a deliberate reversal from an omission. No requirement IDs added, renumbered, or retired. Companion: [process-lifecycle.md] v0.7.2. |
 | 2026-07-30 | 0.5.7 | agent (spec citation cleanup) | **Rotted pointers repaired across `specs/`. No obligation changed by this pass.** Deleted files that were cited as implementation evidence now name the symbol that carries the behavior today. Line-number citations became symbol names, per the repo rule to cite symbols and never line numbers. The retired `review-loop` workflow mode was dropped from every list that presented it as a live selectable mode, because `core.WorkflowMode.Valid()` accepts only `single` and `dot`. Rules that name `review-loop` as a RETIRED value to reject are unchanged, and so are the event `review_loop_cycle_complete` and the review-loop-failure budget, whose symbols still exist. Where a spec named a test as its conformance sensor and that test no longer exists, the text now says so instead of claiming cover it does not have. |
 | 2026-06-13 | 0.5.6 | agent (hk-wjzf) | **ON-059 — Captain-initiated keeper restart-now (new §4.13).** Added **ON-059** (`§4.13 Captain-initiated keeper restart-now`): normative contract for the captain-initiated on-demand clear→resume cycle. Key clauses: `.restart-now` marker JSON `{nonce, requested_at, session_id}` written atomically via temp+fsync+rename; `harmonik keeper restart-now <agent>` CLI reads existing HANDOFF nonce and writes the marker; watcher checks the marker after HasPrecompactTrigger on each tick; `RunOnDemand` gate order (managed, session_id, HoldingDispatch, CrispIdle, anti-loop, operatorAttached, freshness gate: nonce match + mtime≥requested_at + session_id match + settle-stable); `onDemandSettle`=3s; consume-once; `session_keeper_restart_now_blocked{reason}` emitted on any gate/freshness failure; on pass: execute /clear→/session-resume tail from runCycle, skipping handoff-truncate and /session-handoff-inject. **New IDs (net):** ON-059. No invariants added or retired. No §8 exit-code changes. Refs: hk-wjzf, hk-xjlq. |
@@ -1583,10 +1601,47 @@ Downstream specs inbound-citing ON events (`operator_pause_status`, `operator_st
 
 ## Amendment — post-commit drain
 
-### ON-052 — Terminal recovery drain outcome
-
-Ordered drain MUST treat committed-but-unmerged work as a special outcome. Its
-per-step timeout MUST either complete the terminal ladder or leave the
-EM-053a record. The daemon MUST retain required resources until that selected
-owner permits release. Controlled-load proof MUST record load, timeout, stop
-point, and retained artifacts.
+> **ON-052 — Terminal recovery drain outcome — RETIRED 2026-08-05, and the
+> number is not reusable.** It required ordered drain to treat
+> committed-but-unmerged work as a special outcome, required the per-step
+> timeout to either complete the terminal ladder or leave the EM-053a record,
+> required the daemon to hold its resources until "that selected owner" permits
+> release, and required a controlled-load proof to record load, timeout, stop
+> point and retained artifacts.
+>
+> It landed from the losing half of a two-lane design. The plan of record for
+> this spec authorizes "committed DOT drain completion, safe normal-watchdog
+> behavior, and controlled-load evidence", which the approved draft writes as
+> ON-027b and ON-032a. The text above appears only in the second, superseded
+> table, and the work's changelog states that the plan of record wins a
+> disagreement.
+>
+> No daemon could obey it. "That selected owner" has no antecedent. The phrase
+> appears twice in the whole repository, in this withdrawn rule and in the same
+> losing lane's change design, which says only "Resource release follows the
+> selected owner". Neither says who the owner is, so a reader cannot find one.
+> The retention rule also cannot hold
+> beside §4.7 ON-027 and the §7.2 drain pseudocode. Step 6 unlocks the leased
+> workspaces on its own bound, step 7 then exits or enters `paused`, and each
+> timed step aborts when its bound expires. A daemon that holds resources past
+> step 6 breaks ON-027. A daemon that releases them breaks the withdrawn rule.
+>
+> The number was unused, and that is not the same as available. The round-2
+> operator-persona review proposed ON-052 for a per-command exit-code contract
+> table and this spec never adopted it, which is why §10.1 lists ON-050/ON-051
+> and ON-053/ON-054 and skips 052. The withdrawn text took the unused number
+> for an unrelated rule.
+>
+> **The controlled-load half is not lost with it.** ON-032a in §4.8 now carries
+> that rule, in the plan of record's own words. Two shipped files already cite
+> ON-032a as their authority — `cmd/harmonik/queue_readiness.go` and
+> `internal/queue/readiness/validate.go` — and until this revision the
+> identifier they name did not exist.
+>
+> **ON-027b is still absent and is separate work.** The plan of record also
+> authorizes a committed-DOT release clause on drain. Nothing in the tree
+> implements it, the work's own task file records that the shipped release path
+> already breaks the rule it would amend, and landing an unimplemented MUST is
+> the failure this repair exists to undo.
+>
+> Bead: hk-6lt60 (the finalize that took the losing table).

@@ -580,6 +580,18 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### ON-027b — Committed DOT release during drain
 
+> **HOLD 2026-08-05. DO NOT COPY ON-027b INTO `specs/` YET.** This clause is
+> authorized. The plan of record names committed-DOT drain completion, and this
+> is the approved wording for it. It is held back because nothing in the tree
+> implements it. `internal/runexec` `drainReopen` runs the reopen ladder on
+> close failure only, the drain fires on any context cancellation rather than
+> on a real shutdown, and the work's own `07-tasks.md` card T5b records that
+> "the tree carries a normative MUST that the shipped release path breaks".
+> Copying this text in now would advertise a protection the daemon does not
+> give. Land it in the same commit as the code that satisfies it, or record the
+> divergence in the spec instead. Its sibling ON-032a WAS landed on 2026-08-05,
+> because that one is implemented. Bead: hk-6lt60.
+
 ON-027 step 2 is complete for a committed DOT run only when the daemon has
 resolved its tip, synchronized its remote run branch, and reached merge-and-
 close or reopen. This is the release condition that PL-011 checks before its

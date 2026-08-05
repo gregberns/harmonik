@@ -122,6 +122,14 @@ each complete draft are preserved from its source document. The affected-spec
 names occur across the current corpus, so the amendment set does not orphan a
 referenced specification.
 
+> **Correction 2026-08-05.** Every identifier in the list above came from the
+> second, superseded changelog table, and the finalize landed all of them
+> against the tiebreak this work states. They are being withdrawn one file at a
+> time. `ON-052` is retired in `specs/operator-nfr.md` and its number is not
+> reusable. `PL-033` is retired in `specs/process-lifecycle.md`. Read this
+> section as a record of what the losing lane drafted, not as a list of live
+> requirements. Bead: hk-6lt60.
+
 #### Consistency checks
 
 - Queue-model owns failed recovery and its receipt.

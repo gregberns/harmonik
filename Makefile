@@ -727,8 +727,15 @@ GATE_CAP := $(if $(TIMEOUT_BIN),$(TIMEOUT_BIN) --kill-after=30s $(GATE_STEP_SECS
 
 # script-tests — the self-tests for the shell the gate itself depends on.
 # 80 shell scripts in this repo decide things and 14 of them have a test. These
-# are those 14 as they apply to the gate path. They cost a few seconds and they
-# guard the parts that fail silently.
+# are those 14 as they apply to the gate path. They guard the parts that fail
+# silently.
+#
+# Most cost a few seconds. reachability-gate-test.sh costs about 20 on a warm
+# cache, because the only honest way to prove that gate can fail is to write an
+# unreachable function into internal/lifecycle and run the real whole-program
+# analysis against it. That is the price of the claim, and the claim is the one
+# every other gate here got wrong at least once. Move it to `make full` if the
+# inner loop starts to hurt, but do not weaken it in place.
 .PHONY: script-tests
 script-tests:  ## Self-tests for the shell the gate depends on
 	scripts/go-format-test.sh
@@ -738,6 +745,7 @@ script-tests:  ## Self-tests for the shell the gate depends on
 	scripts/loadgen-test.sh
 	scripts/gate-fails-closed-test.sh
 	scripts/lint-allow-test.sh
+	scripts/reachability-gate-test.sh
 
 # freeze-gates — the per-subsystem "do not move this back" greps. Cheap
 # (sub-second each) and they only ever answer a structural question, so they
@@ -782,6 +790,7 @@ gate-static:  ## Shared static half of fast and full: format, build, vet, freeze
 	scripts/with-lane-gocache.sh go vet ./...
 	scripts/with-lane-gocache.sh $(MAKE) vet-tagged
 	$(MAKE) freeze-gates
+	scripts/with-lane-gocache.sh scripts/reachability-gate.sh
 	scripts/with-lane-gocache.sh $(TOOLS_DIR)/golangci-lint run --allow-parallel-runners --new-from-rev=HEAD~1
 
 # gate-test-compile — compiles every _test.go file in the repo and runs none of
@@ -1152,12 +1161,13 @@ review-verdict:  ## Cross-check diff-keyed verdict: APPROVE → pass; absent/REQ
 # and scripts/secret-scan.sh remain callable directly by that command.
 # ---------------------------------------------------------------------------
 .PHONY: tools
-tools:  ## Install pinned dev tools into ./.tools/ (gofumpt, gci, golangci-lint, govulncheck)
+tools:  ## Install pinned dev tools into ./.tools/ (gofumpt, gci, golangci-lint, govulncheck, deadcode)
 	@mkdir -p $(TOOLS_DIR)
 	$(GOBIN_TOOLS) go install mvdan.cc/gofumpt@v0.7.0
 	$(GOBIN_TOOLS) go install github.com/daixiang0/gci@v0.13.5
 	$(GOBIN_TOOLS) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.3.0
 	$(GOBIN_TOOLS) go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+	$(GOBIN_TOOLS) go install golang.org/x/tools/cmd/deadcode@v0.48.0
 
 # bootstrap: one-stop fresh-clone setup — installs pinned tools.
 .PHONY: bootstrap

@@ -163,3 +163,9 @@ testdata/codex-app-server/gen/
 # Nested .harmonik/ dirs are agent runtime scratch written from a wrong CWD.
 # Never source. The root /.harmonik/ has its own rules above.
 **/*/.harmonik/
+
+# scripts/reachability-gate-test.sh writes these into internal/lifecycle for a
+# few seconds to prove the gate can fail, then deletes them. A killed run leaks
+# them. They must never be committed.
+zz_reachability_gate_canary.go
+zz_reachability_gate_canary_test.go

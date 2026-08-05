@@ -93,6 +93,15 @@ func durableCallSites(t *testing.T, importPath string, includeTests bool) (count
 			switch d.Name() {
 			case ".git", "vendor", "node_modules", "testdata":
 				return filepath.SkipDir
+			// Nested agent worktrees and scratch checkouts live UNDER the repo
+			// root on this machine, so the walk reached their copies of the tree
+			// as well as the real one. Those copies hold whatever a partial write
+			// or a crashed tool left behind, and an unparseable placeholder file
+			// in one of them failed this sensor against a clean tree. The same
+			// skip was added to the event-parity sensor at 35c9b9e6 for the same
+			// reason.
+			case ".claire", ".claude", "worktrees":
+				return filepath.SkipDir
 			}
 			return nil
 		}

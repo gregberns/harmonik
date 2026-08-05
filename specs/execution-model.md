@@ -8,7 +8,7 @@ requirement-prefix: EM
 status: draft
 spec-category: foundation-cross-cutting
 spec-shape: requirements-first
-version: 0.10.6
+version: 0.10.7
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-08-04
@@ -1083,15 +1083,19 @@ state on paths the merge never touched.
 **Why the scope matters (hk-7qmpp).** On 2026-07-22 the tree-wide form silently
 destroyed uncommitted fleet state in the main project root, once per completed
 merge. The reason it was invisible rather than merely destructive is an
-interaction with the pre-merge escape check (`checkMainWorkingTreeDirty`),
-which FAILS a run when the main root is dirty — but whose churn allowlist
-deliberately exempts `.harmonik/` and `.claude/`, where agent and fleet state
-live. The one region waved through as expected churn was the one region the
-refresh then deleted. Scoping the refresh removes the interaction: paths the
-merge did not write are never touched, so the allowlist's exemption becomes
-harmless. The allowlist itself MUST NOT be narrowed to compensate — those paths
-churn constantly during normal daemon operation, and treating them as escapes
-would fail nearly every run.
+interaction with the pre-merge escape check, which failed a run when the main
+root was dirty — but whose churn allowlist deliberately exempts `.harmonik/` and
+`.claude/`, where agent and fleet state live. The one region waved through as
+expected churn was the one region the refresh then deleted. Scoping the refresh
+removes the interaction: paths the merge did not write are never touched, so the
+allowlist's exemption becomes harmless.
+
+That escape check was deleted on 2026-08-04 (see [run-state-machine.md] RSM-008,
+which records why), so the interaction cannot come back through that door. The
+allowlist outlived the check. It is `IsHarmonikChurn` in `internal/runmerge`, and
+the worktree-state restore path still reads it. The allowlist MUST NOT be
+narrowed — those paths churn constantly during normal daemon operation, and a
+narrower list would leave that churn undiscarded.
 
 **Why `git update-ref` STAYS in Phase A (do not re-propose `git merge
 --ff-only`).** The obvious alternative is to replace the hand-rolled
@@ -1149,20 +1153,19 @@ merged paths then remain stale in the working tree.
 Be precise about what is loud here: the **event** is, the resulting **state** is
 not. The skip emits `working_tree_refresh_failed` and a stderr warning at the
 moment it happens, and that is the signal to act on. But the stale paths
-themselves are NOT reliably reported afterwards: `isHarmonikChurn` exempts
-`.harmonik/`, `.claude/`, `.beads/issues.jsonl`, and `AGENT_COMMS.md`, and
-`checkMainWorkingTreeDirty` drops exempt paths before reporting — so a merge
-touching only those (the exact region whose deletion motivated this requirement)
-leaves stale state the escape check never surfaces. This is the original
-interaction one layer up: the allowlist that made the destruction invisible also
-makes the fallback's stale state invisible.
+themselves are NOT reported afterwards. The pre-merge escape check used to report
+a dirty main root, but it dropped allowlisted paths before it reported. So a
+merge touching only those paths — the exact region whose deletion motivated this
+requirement — left stale state the check never surfaced. That check was deleted
+on 2026-08-04 ([run-state-machine.md] RSM-008), so nothing reports the stale
+state on any path now. The hole is wider than the allowlist, not narrower.
 
 A further consequence, recorded so it is not rediscovered the hard way: the skip
 leaves the INDEX stale as well (index at the pre-merge tip, HEAD at the merged
 tip). Anything that subsequently commits those paths from the main root would
-commit the PRE-MERGE content — a silent revert of the merged change, inside the
-exempt region, undetected by the escape check. The trigger is rare (it requires
-`git diff --name-only` between two known-good commits to fail), which is why the
+commit the PRE-MERGE content — a silent revert of the merged change. No check
+detects it. The trigger is rare (it requires `git diff --name-only` between two
+known-good commits to fail), which is why the
 skip remains the right choice over a tree-wide reset that fires on every merge —
 but it is a real hole, not a clean fallback.
 
@@ -2110,6 +2113,7 @@ Default-if-unresolved: (resolved)
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-08-04 | 0.10.7 | agent (spec lane a-spec) | **EM-054's rationale stops citing a deleted check. No EM obligation changes.** The §4.12 prose behind EM-054 explained, in the present tense, why the old tree-wide refresh destroyed state invisibly: a pre-merge escape check failed a run on a dirty main root but exempted `.harmonik/` and `.claude/` as expected churn. That check was deleted on 2026-08-04 (commits `8ba6bfb57` and `d6c12a669`), together with the Go symbol this spec named. Three passages are re-aimed. (1) The invisibility rationale moves to the past tense and adds that the deleted check cannot bring the interaction back. (2) The churn allowlist keeps its MUST NOT-narrow rule with a live reason: the allowlist outlived the check as `IsHarmonikChurn` in `internal/runmerge`, and the worktree-state restore path still reads it. The old reason, that a narrower list "would fail nearly every run", died with the check. (3) The refresh-skip passage stops saying the stale state is invisible only inside the exempt region. Nothing reports it on any path now, so the hole is wider than the allowlist and the text says so instead of understating it. The refresh scope, the uncommitted-changes policy, the pre-merge-tip detection rule, the refresh-failure routing, and every §10.2 obligation are UNCHANGED. No requirement IDs added, renumbered, or retired. Companion: [run-state-machine.md] v0.4.0, which carries the decision, and [process-lifecycle.md] v0.7.6. |
 | 2026-08-04 | 0.10.6 | agent (`queue-dogfood-readiness` T5a) | **Release-claim checkpoint for an unfinished DOT release (new EM-031b).** A committed DOT run must write a final pre-release checkpoint carrying an immutable `ReleaseClaim` before it synchronizes, merges, closes, or reopens. The typed record stores the dispatch-head SHA, the resolved merge-target ref and SHA, and an optional remote endpoint naming the worker, host, and repository path. Restart reads the claim from git and reads the current bead state, and uses only those two. JSONL, a daemon-local registry, and reconstructed process memory cannot supply a claim field. A missing, corrupt, or inconsistent claim retains the branch and routes to reconciliation with no merge, close, reopen, or redispatch. Immutability is structural (one record path per `transition_id` per EM-018) and additionally enforced: a write at a path that already carries a record is refused. `Transition` gains the additive optional field `release_claim`; the wire form omits the key when the field is absent, so an ordinary transition record is byte-unchanged and the EM-022 N-1 contract holds. `merge_target_ref` is fully qualified and an implementation must reject a bare branch name, because git ref-search can resolve a bare name to a tag or a remote tracking ref. §2.1 core-type list, §6.1 `RECORD ReleaseClaim` and `RECORD RemoteEndpoint`, and a §10.2 obligation row are added. **A dated DECLARED IMPLEMENTATION GAP under EM-031b records that the daemon does not call the writer yet**, so the MUSTs are targets and not conformance claims. Implemented in `internal/core`: `ReleaseClaim`, `RemoteEndpoint`, `ReleaseClaimStore`, `WriteReleaseClaimCheckpoint`, `ReleaseAfterClaim`, `ReadReleaseClaim`, `UnmarshalTransitionRecord`. No requirement IDs renumbered or retired; amendatory over v0.10.5. Refs: `.kerf/works/queue-dogfood-readiness/07-tasks.md` T5a. |
 | 2026-08-02 | 0.10.4 | agent (codename:event-payload-ownership) | **Step 13 descriptor and no-review binding.** Adds the typed workflow descriptor, pre-start resolution, tier-0 queue-item compatibility mapping, canonical no-review graph binding, and resolver-owned review policy. EM-055 now uses WG-046 post-parse typed-attribute substitution. The main-loop pseudocode passes the complete queue item to resolution and carries the resolved result through validation and run creation. EM-057 test obligations cover all nine checks. |
 | 2026-08-01 | 0.10.2 | agent (hk-v4wer) | **EM-058 gains a terminal-classification precondition for `dot`-mode `agentic` nodes.** The component-C sub-note derived a node Outcome "after a clean agent exit" without saying who decides that the exit was clean. The `dot` implementation decided it on worktree HEAD advance alone: it never read the Stop-hook outcome and never ran the [claude-hook-bridge.md §4.7 CHB-020] branch mapping, so a node that committed and then reported `FAILURE_SIGNAL` was recorded as `SUCCESS` and its work was merged, and a progress-stream watcher failure left the node with no signal at all. The new sub-note states the three CHB-020 cases in order and forbids deriving `SUCCESS` from a HEAD advance after a failing exit. It adds no obligation the `single` path did not already carry — `single` has applied the same rule at its terminal switch since CHB-020 landed — so this is a `dot`-side parity clause, not a new requirement. The clean-exit case for a harness that reports nothing and exits 0 is stated explicitly, because dropping it would fail every `CompletionProcessExit` harness. No requirement IDs added, renumbered, or retired. |

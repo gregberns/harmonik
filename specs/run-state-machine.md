@@ -8,10 +8,10 @@ requirement-prefix: RSM
 status: draft
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.3.2
+version: 0.4.0
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-07-31
+last-updated: 2026-08-04
 depends-on:
   - replay-substrate
   - event-model
@@ -109,45 +109,53 @@ or sustain the working state.
 Done{closed | reopened}`, with the workflow-mode fork (DOT cascade, single-shot)
 driving one or more Dispatch instances from the `Dispatching` state.
 
-**RSM-008.** The single-shot path's post-exit guards — the escaped-worktree check and the
-no-commit-guard — MUST run in a `Guarding` state between `Dispatching` and `Gating`, and MUST
-execute mutually exclusively with the merge critical section (§6). The DOT path MUST NOT enter
-`Guarding` (it does not run those guards).
+**RSM-008.** The single-shot path's post-exit no-commit guard MUST run in a `Guarding` state
+between `Dispatching` and `Gating`. The DOT path MUST NOT enter `Guarding` (it does not run that
+guard). **A run MUST NOT be failed because the main checkout is dirty. An implementation MUST NOT
+add such a check back without a new decision recorded in this rule.**
 
-> **OPEN — RSM-008 guard coverage. This needs an operator decision (raised 2026-07-30).**
+> **DECISION — the escaped-worktree guard is deleted (2026-08-04). This closes the OPEN note
+> raised on 2026-07-30.**
 >
-> The obligation above is unchanged and stays as written. The only edit was to the pointer: the
-> retired `review-loop` mode was removed from the list of paths, because that mode no longer
-> exists. The question the rule raises is still open, and a citation sweep must not settle it.
+> This rule used to name a second post-exit guard beside the no-commit guard. That guard failed a
+> run when the main checkout held uncommitted files, on the theory that an implementer had written
+> outside its own worktree. It is deleted. It is not deferred, and it is not narrowed to a legacy
+> path. The obligation above states the withdrawal as a rule, so a later reader cannot restore the
+> check as an omission.
 >
-> **What the rule means in production.** RSM-008 makes two safety checks — "did the agent write
-> files outside its workspace" and "did the agent commit anything" — run only on the single-shot
-> path. The graph path skips both. Almost every run takes the graph path. A count of the local
-> event log on 2026-07-30 found 866 runs that started on `dot` against 2 that started on
-> `single`. So both checks are close to dead code in practice, even though the spec presents them
-> as protection.
+> **Why neither open option was taken.** The note offered two: extend the guard to the graph path,
+> or keep it and stop calling it protection. Both assumed the guard ran somewhere. It did not. At
+> the parent of the deleting commit the emitter had zero call sites, the `runmerge` dirty-tree
+> helper had zero production call sites, and the machine's escape-detected event had a consumer
+> case and no producer. Both the graph path and the single-shot path were already unwired. The
+> real decision was therefore a third one the note did not contain: delete the dead code and say
+> in the spec that no such guard exists.
 >
-> **What the code does today.** `WireSpine` in `internal/runloop/runbridge.go` binds the
-> `CheckEscape` effect to a function that returns the `EvGuardsPassed` event and nothing else. The
-> `Guarding` state therefore records a pass without running a check. The action kind
-> `ActCheckEscape` still exists in `internal/runexec/vocab.go`. The real guards stay imperative in
-> `beadRunOne` in `internal/daemon/workloop.go` on the single path.
+> **Why the record said otherwise.** One test read as coverage. It asserted that the escape event
+> fired zero times. Nothing could emit that event, so the assertion was green from the day it was
+> written, and it could never be anything else. A second copy of the same shape sat in the
+> concurrent-multiqueue scenario. Both are deleted with the guard. A test that reports protection
+> which never existed is worse than no test (PRINCIPLES §7).
 >
-> **Option A — amend the rule so the guards run on the graph path.** This restores the protection
-> the spec claims. The cost is that runs which pass today would start to fail, and nobody can say
-> how many until it ships.
+> **What this costs, stated plainly.** The failure the guard was built for is real. An implementer
+> once wrote files into the main checkout instead of its own worktree (hk-6zylj). Nothing detects
+> that today, and this decision does not give it a detector. The guard also had a known
+> false-failure mode: a main checkout left dirty for an unrelated reason failed dispatched beads
+> that did nothing wrong (hk-yru). Any future proposal to rebuild the check MUST answer the
+> false-failure mode first.
 >
-> **Option B — leave the rule alone and stop describing these checks as protection.** This keeps
-> today's behavior. The cost is real. The escape guard was built for a real observed failure: an
-> implementer wrote files into the main working tree instead of its own worktree (hk-6zylj). That
-> failure mode is not prevented on the graph path today.
+> **What survives, and how to read it.** The `Guarding` state and the check-escape action kind
+> remain in `internal/runexec`. `WireSpine` in `internal/runloop/runbridge.go` binds the escape
+> effect to a function that returns the guards-passed event and nothing else. Read that pass as
+> "no guard exists", never as "a guard passed".
 >
-> **Evidence that argues against shipping option A unchanged.** The escaped-worktree check has a
-> known false-failure mode. A working tree that stays dirty for an unrelated reason trips the
-> `implementer_escaped_worktree` detector, and the detector then fails dispatched beads that did
-> nothing wrong (hk-yru). AGENTS.md repeats this as a standing trap. Extending that check as it
-> stands would put a guard with a known false-positive mode onto the path that carries nearly all
-> the traffic. If option A is chosen, the false-failure mode should be fixed first.
+> **Recorded here, not settled here (2026-08-04).** The no-commit clause above is carried forward
+> unchanged, and this amendment does not touch it. A reader should still know that it is also
+> unreached today. Nothing outside tests produces the single-shot dispatch terminals
+> `EvAgentCompleted` or `EvCleanExit` in `internal/runexec`, because a legacy single-mode queue
+> input now selects the registered no-review graph before `beadRunOne` runs. So no run enters
+> `Guarding` at all. That is a different drift from the one this amendment closes. It needs its
+> own measurement and its own decision, and this note must not be read as either.
 
 **RSM-009.** Every pre-launch failure (configuration, branching, remote setup, worktree
 creation) MUST route to `Finalizing(reopen)`; the terminal spine (§7), not scattered returns,
@@ -286,10 +294,15 @@ The local ref-advance (`git update-ref`), the working-tree reset, the push-failu
 CAS-rollback, and the post-merge `br sync` reconciliation DO run inside the exclusive section
 (Phases A/C/D); the push (Phase B) does not.
 
-**RSM-018 (preserved exclusions).** The escaped-worktree check MUST remain mutually exclusive
-with the ref-advance→working-tree-reset window (via the same queue, as a read-only
-tree-quiescent slot). The remote base-sync + worktree-add MUST retain an equivalent exclusion
+**RSM-018 (preserved exclusions).** The remote base-sync + worktree-add MUST retain an exclusion
 against concurrent creators and against the main-checkout working-tree reset.
+
+> **Amended 2026-08-04.** This rule opened with a second exclusion. It required the
+> escaped-worktree check to hold a read-only tree-quiescent slot in the merge queue, so that the
+> check never read the main checkout while the ref-advance→working-tree-reset window mutated it.
+> That check is deleted (RSM-008), so the exclusion that protected it is withdrawn with it. No
+> other exclusion is relaxed. The surviving sentence now stands alone, so it no longer says "an
+> equivalent exclusion" — there is nothing left for it to be equivalent to.
 
 **RSM-019.** Merge outcomes MUST preserve the current taxonomy and retry semantics: a retryable
 failure (rebase conflict, non-fast-forward, format failure) below its per-mode retry cap MUST
@@ -461,7 +474,7 @@ the `ReopenBead` reason string; `Detail` = the run-terminal summary string), NOT
 static `RunConfig`. The `RunConfig` templates (`ReopenReason`, `CloseSummary`,
 `BrUnavailableSummary`, `NoMergeCloseSummary`) remain the fallback when the event carries no
 string, preserving RT6 behavior for the DOT path until its own re-drive. This
-applies to: `EvModeOutcome{failure}`, `EvGateFailed`, `EvEscapeDetected`,
+applies to: `EvModeOutcome{failure}`, `EvGateFailed`,
 `EvNoCommitGuardReopen`, `EvMergeResult{fatal|exhausted}`, `EvCloseResult{error}`, and
 `EvProvisionFailed`. The last covers every pre-launch/provisioning failure that
 `stepRunResolving`/`stepRunProvisioning` route to the reopen spine — the launch-spec build error
@@ -472,6 +485,10 @@ prepareRun guard failures — all of which interpolate runtime strings that toda
 MUST therefore carry its `Reason`/`Detail` payload like the other failure events. The machine
 remains pure: the strings are event data, composed shell-side or latched from prior events
 (RSM-033); the machine mints none of them.
+
+> **Amended 2026-08-04.** The applies-to list also carried an escape-detected event. That event is
+> deleted with the escaped-worktree guard (RSM-008), so it is removed from the list. The rule for
+> every remaining event is unchanged.
 
 **RSM-033 (the single-mode path label).** The single-mode dispatch-terminal events
 `EvAgentCompleted` and `EvCleanExit` MUST latch a path label into Run state
@@ -484,7 +501,7 @@ failure carries a stage discriminator (`code_sync` vs `merge`) so the pre-merge 
 failure reproduces its distinct `code-sync failed (<label>): …` reopen reason and
 `code-sync-failed (<label>): …` terminal summary, byte-equal. Event-classified failure reasons
 on the P13/P18 spine are exactly: `agent_ready_timeout`, the code-sync failure, the merge
-failure, the gate failure, the escaped-worktree guard, the no-commit guard, `noChange-timeout`,
+failure, the gate failure, the no-commit guard, `noChange-timeout`,
 and the never-spawned-reaper abort (`never_spawned_reaper: launch_initiated but agent_ready not
 received within deadline`, the `abortReason` constant in `internal/daemon/workloop.go`
 `beadRunOne`) — the last surfaced mechanically via RSM-031's `Aborted` dispatch-terminal class
@@ -492,9 +509,10 @@ carrying its reason on payload, no distinct edge required.
 
 **RSM-034 (rejected-outcome pairing).** The gate-failure, code-sync-failure, and merge-failure
 reopens MUST be preceded by an `outcome_emitted=rejected` emission carrying the classified
-reason (the P18 golden pairing); the `agent_ready_timeout`, escaped-worktree, no-commit, and
-`noChange-timeout` reopens MUST NOT emit an outcome. The machine expresses this as the reopen
-prefix (the same mechanism as the existing escaped-worktree and merge-rejected prefixes).
+reason (the P18 golden pairing). The `agent_ready_timeout`, no-commit, and `noChange-timeout`
+reopens MUST NOT emit an outcome. The machine expresses this as the reopen prefix, the same
+mechanism as the merge-rejected prefix. This rule named an escaped-worktree reopen and an
+escaped-worktree prefix until 2026-08-04. Both are deleted with the guard (RSM-008).
 
 **RSM-035 (noChange-subsumed → approved close).** A single-mode run whose Dispatch stalls on
 the no-change timeout but whose bead is found already subsumed in the target branch MUST close
@@ -529,6 +547,7 @@ subsumed path, which passes no flag).
 
 | Date | Version | Author | Change |
 |------|---------|--------|--------|
+| 2026-08-04 | 0.4.0 | agent (spec lane a-spec) | **The escaped-worktree guard is withdrawn from the spec, because the code was deleted. An obligation is removed, so this is a minor bump and not a pointer repair.** The guard failed a run when the main checkout held uncommitted files. Commits `8ba6bfb57` and `d6c12a669` deleted it, its event type, its emitter, its state-machine case, its vocabulary constant, the two `runmerge` helpers behind it, and the two tests that read as coverage. The measured reason is stronger than the one the record carried: the guard did not run only in a legacy mode, it ran NOWHERE. At the base commit the emitter had zero call sites, the dirty-tree helper had zero production call sites, and the escape-detected event had a consumer case and no producer. The tests asserted that the escape event fired zero times, which nothing could make false. **RSM-008** loses its escaped-worktree clause and its merge-critical-section exclusion, keeps the no-commit guard clause, and gains a DECISION note plus a new negative MUST: no run is failed for a dirty main checkout, and the check is not restored without a new decision recorded in the rule. The OPEN note raised on 2026-07-30 is closed — the decision taken is a third option that the note's two options did not contain. **RSM-018** loses its first sentence, the read-only tree-quiescent slot the deleted check needed. The remote base-sync + worktree-add exclusion is unchanged. **RSM-032** drops the escape-detected event from its applies-to list. **RSM-033** drops the escaped-worktree guard from the list of event-classified failure reasons. **RSM-034** drops the escaped-worktree reopen and the escaped-worktree prefix. The deleted Go identifiers are named nowhere normative after this pass. **What this costs is stated in RSM-008 rather than hidden:** the failure the guard was built for (`hk-6zylj`) has no detector now, and the guard's own false-failure mode (`hk-yru`) is what any rebuild must answer first. **Recorded and deliberately NOT settled here:** nothing outside tests produces the single-shot dispatch terminals, so the surviving `Guarding` state is unreached as well. That needs its own measurement. Companion: [execution-model.md] v0.10.7 and [process-lifecycle.md] v0.7.6. No requirement IDs added, renumbered, or retired. |
 | 2026-07-31 | 0.3.1 | agent (delete-and-rewrite step 6) | **§4a's survival note corrected. No obligation changed.** Pinning the survive-shutdown gate family found a FIFTH site that the measured map missed, and it fires before the four the map names. The completion wait kills the agent session whenever it finds the run context already cancelled, on the path a tmux-hosted independent session takes, and it names no gate. So survival fails twice, and the first failure is inside the daemon's own process rather than at the next boot: the session is dead before the daemon exits, which means the boot orphan sweep never gets to matter. The blockquote under RSM-037 now records both failures and says that making survival real needs both fixed. Filed as `hk-jyh5t`, alongside the boot-sweep defect `hk-lssmw`. RSM-036, RSM-037 and RSM-038 are unchanged. |
 | 2026-07-31 | 0.3.0 | agent (delete-and-rewrite step 6) | **New §4a, run resource discipline: RSM-036, RSM-037, RSM-038.** The spec had no rule about how a run holds a resource or gives it back, and the daemon therefore open-coded the answer at each release site. One condition — an agent in its own session plus a stopping daemon — reached four sites, spelled three different ways, and missed the hook session and the tunnel. RSM-036 requires a lease, whose give-back call runs at most once and is never retried. RSM-037 requires ONE disposition value for the whole run, decided by a total pure function of the run's exit facts, and forbids a skip flag per resource; it names the three dispositions and what each keeps. RSM-038 requires a scope closed in reverse order, requires the per-launch resources to sit in a nested scope, and names the three ordering edges that are load-bearing. §4a also records that survival is what a run asks for and NOT something the system delivers today, because the boot orphan sweep kills such sessions before anything looks for them. `internal/runlease` is named as the owner and is fenced to the standard library. No existing rule is renumbered and no production behaviour changes: the types land unwired, and the migration of each release site onto them is separate work. |
 | 2026-07-30 | 0.2.2 | agent (spec citation cleanup) | **Rotted pointers repaired. No obligation changed.** The workflow mode `review-loop` was retired and its driver deleted, so `core.WorkflowMode.Valid()` now accepts only `single` and `dot`. The retired mode is removed from the mode lists in RSM-007, RSM-008, RSM-031 and RSM-032. What each of those rules requires is unchanged. Three approximate line-number citations into `workloop.go` are replaced by symbol names (`beadRunOne`, the `d2APIKeyRefusal` constant, the `abortReason` constant), per the repo convention to cite symbols and never line numbers. RSM-008 also gains an OPEN note that records a question the sweep found but must not settle: the rule confines both post-exit guards to the single-shot path, almost all runs take the graph path, and the choice between extending the guards and dropping the protection claim belongs to the operator. References to the event `review_loop_cycle_complete` and to the review-loop-failure budget are left alone, because `core.EventTypeReviewLoopCycleComplete`, `ChargeReviewLoopFailure` and `MaxReviewLoopFailures` all still exist. |

@@ -412,6 +412,12 @@ type surviveRunOpts struct {
 	// graphMode explicitly selects DOT instead of the historical default input.
 	// Both choices execute DOT. The explicit form keeps direct graph selection covered.
 	graphMode bool
+
+	// seedProject runs once the project directory exists and before the run
+	// starts. It is how a test puts something in the project directory that the
+	// run will meet — see run_terminal_writer_lifetime_test.go, which seeds a
+	// named pipe so the run's own background writer can be held still.
+	seedProject func(projectDir string)
 }
 
 // surviveRunOneAgenticNodeGraph is the smallest graph that reaches a real agent
@@ -453,6 +459,9 @@ func surviveRunDriveWith(t *testing.T, opts surviveRunOpts) *surviveRunOutcome {
 	t.Helper()
 
 	projectDir := surviveRunRepo(t)
+	if opts.seedProject != nil {
+		opts.seedProject(projectDir)
+	}
 	runID := core.RunID(uuid.New())
 	out := &surviveRunOutcome{
 		projectDir: projectDir,

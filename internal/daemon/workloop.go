@@ -43,6 +43,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/brcli"
@@ -138,6 +139,23 @@ func newLocalRunRegistry() *RunRegistry {
 //
 //nolint:funlen,gocognit,cyclop // pre-existing: beadRunOne is the run-path giant the RT ports stream (RT15-RT20) exists to decompose; the signature change re-anchors the grandfathered findings and splitting the body here would defeat the behaviour-preserving property of the slice
 func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, handles runloop.SharedHandles, extraContext string, preSelectedWorker *workers.Worker, localSlotHeld bool) (succeeded bool) {
+	// sessionDataWriter owns the lifetime of the background session-data
+	// collection that emitRunTerminalEff starts below. The collection stays off
+	// the hot path, but it belongs to THIS run: it creates
+	// <projectDir>/.harmonik/ and appends session-data.jsonl there, so a run
+	// that returns while the collection is still going leaves a writer loose in
+	// a directory the caller believes is finished with.
+	//
+	// The wait is registered before every other deferred give-back, so it runs
+	// LAST. That placement does two things, and BOTH depend on it. The
+	// collection overlaps the worktree and session teardown, which is the whole
+	// point of running it in a goroutine. And every Add below is reached before
+	// the Wait can begin, so Add-after-Wait cannot happen. Move this defer down
+	// and the second property is gone: the run panics on WaitGroup misuse
+	// instead of merely running slower.
+	var sessionDataWriter sync.WaitGroup
+	defer sessionDataWriter.Wait()
+
 	// RSM-010: alias the per-run values off env under the names the body already
 	// uses. Aliasing rather than rewriting ~140 reads is what keeps the
 	// signature change behaviour-obvious.
@@ -289,6 +307,11 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		// Fire sessiondata.Collect off the hot path (hk-eval-prog-sessiondata-hook-vmxrk).
 		// Best-effort: errors are silently discarded — a missed record is preferable
 		// to a panicking goroutine that could affect the daemon.
+		//
+		// The goroutine is counted into sessionDataWriter, which the run waits on
+		// before it returns. Off the hot path is not the same as ownerless: this
+		// writer makes files under the project directory, and the run is the only
+		// thing that knows when it is done with that directory (hk-59flr).
 		sdEndedAt := rp.Clock.Now()
 		sdQID := ""
 		if queueID != nil {
@@ -298,7 +321,9 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		if runTipSHA != nil {
 			sdCommitSHA = *runTipSHA
 		}
+		sessionDataWriter.Add(1)
 		go func() {
+			defer sessionDataWriter.Done()
 			if collectErr := sessiondata.Collect(sessiondata.CollectParams{
 				RunID:             runID.String(),
 				BeadID:            string(beadID),

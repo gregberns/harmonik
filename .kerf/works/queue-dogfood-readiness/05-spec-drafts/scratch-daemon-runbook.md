@@ -1,3 +1,20 @@
+> **RETIRED 2026-08-05. THIS DRAFT DECLARES NO TARGET PATH.** A `kerf finalize`
+> copied it into `specs/scratch-daemon-runbook.md` as a new 313-line normative
+> spec with no frontmatter. It was not a normative spec and the plan of record
+> never asked for one. That file has been removed.
+>
+> Do not let a finalize recreate it. A runbook belongs in `docs/`, and
+> `docs/scratch-daemon-runbook.md` already exists.
+>
+> STILL OUTSTANDING, and this is the part worth acting on: the plan of record
+> DID authorize a change here - "the local, non-Pi, one-item readiness procedure
+> and evidence retention". That change went only into the file that was then
+> deleted, so the authorized content was LOST rather than landed. It is not in
+> `docs/scratch-daemon-runbook.md` today. Restoring it to the docs copy is real
+> work that nobody has done.
+>
+> Bead: `hk-6lt60`.
+
 # Scratch-daemon harness — a standing on-demand isolated test loop
 
 **What it is:** `scripts/scratch-daemon.sh` runs a SECOND, fully-isolated harmonik

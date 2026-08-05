@@ -1612,6 +1612,16 @@ Downstream specs inbound-citing ON events (`operator_pause_status`, `operator_st
 
 ## Amendment — post-commit drain
 
+> **RETIRED 2026-08-05. DO NOT COPY ON-052 INTO `specs/`.** It requires the daemon to retain resources until a selected owner permits release, which cannot be satisfied alongside the bounded drain ladder that aborts on timeout. Its phrase 'that selected owner' also has no antecedent anywhere in the spec corpus.
+>
+> This draft is the source a `kerf finalize` copies from. Leaving it unmarked
+> lets the next finalize put the text back. The plan of record for this target
+> in `05-changelog.md` does NOT authorize it, and both that file and the change
+> design state the tiebreak: where the two passes disagree, the plan of record
+> wins. This text landed from the losing pass.
+>
+> Bead: `hk-6lt60`.
+
 ### ON-052 — Terminal recovery drain outcome
 
 Ordered drain MUST treat committed-but-unmerged work as a special outcome. Its

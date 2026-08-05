@@ -1829,6 +1829,16 @@ Cross-ref: PL-021b §4 (window-naming determinism), PL-021b §8 (window-name in 
 
 ## Amendment — failed recovery and readiness gate
 
+> **RETIRED 2026-08-05. DO NOT COPY PL-032 OR PL-033 INTO `specs/`.** PL-033 is the readiness gate, retired from `specs/` on 2026-08-05 together with its assessor half. PL-032 duplicates the `queue-recover` contract that landed separately as PL-003a and PL-028, and the two disagree on the response receipt and on which requirement owns the transaction.
+>
+> This draft is the source a `kerf finalize` copies from. Leaving it unmarked
+> lets the next finalize put the text back. The plan of record for this target
+> in `05-changelog.md` does NOT authorize it, and both that file and the change
+> design state the tiebreak: where the two passes disagree, the plan of record
+> wins. This text landed from the losing pass.
+>
+> Bead: `hk-6lt60`.
+
 ### PL-032 — Failed recovery command
 
 The daemon socket and CLI MUST expose a failed-recovery command distinct from

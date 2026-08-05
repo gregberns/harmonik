@@ -1826,8 +1826,23 @@ The daemon socket and CLI MUST expose a failed-recovery command distinct from
 drain resume. It MUST report accepted, no-op, and rejected results only after
 QM-058 commits. Its response MUST include the durable recovery receipt.
 
-### PL-033 — Controlled readiness gate
-
-A readiness gate MUST run in an isolated scratch daemon. An assessor MUST NOT
-consume normal queue work. A PASS permits only the machine-readable canary
-profile after its decision owner acts.
+> **PL-033 — Controlled readiness gate — RETIRED 2026-08-05, and the number is
+> not reusable.** It required a readiness gate to run in an isolated scratch
+> daemon, barred an assessor from normal queue work, and let a PASS permit only a
+> canary profile after its decision owner acted.
+>
+> It is withdrawn for the same reason as the assessor-side amendment it partners:
+> both landed from the losing half of a two-lane design. The plan of record for
+> this spec authorizes only "the direct `queue-recover` RPC and CLI contract".
+> A readiness gate appears only in the second, superseded table, and the work's
+> changelog states that the plan of record wins a disagreement.
+>
+> It was also left orphaned. The assessor half was retired on 2026-08-05, so
+> PL-033 became the only normative statement of a readiness gate in `specs/`,
+> citing an assessor contract that no longer defines the gate kind and is not in
+> this spec's `depends-on` list. `assessor`, `canary` and `scratch daemon` each
+> appeared exactly once in this whole file, inside PL-033. Nothing implements the
+> three obligations: `harmonik queue readiness` validates an evidence file and
+> nothing reads the result to permit or deny dispatch.
+>
+> Bead: `hk-7bfqe` (the assessor half), `hk-6lt60` (the mechanism).

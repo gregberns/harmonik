@@ -71,6 +71,15 @@ Chase the gap in this order, and stop when it closes:
    them until restart. `sysctl vm.swapusage`. Measured 8 GiB after 5 days of heavy agent load. This is
    why a reboot "frees a ton" and why the growth feels like a leak — it is one, and only a restart
    returns it.
+
+   **This is fast enough to invalidate a test run while the run is happening.** Measured 2026-08-05,
+   also 5 days up: swap had reached 21.5 GiB, and **one `go test ./internal/daemon/` alongside another
+   lane's coverage build minted five 1 GiB swapfiles in three minutes** — `ls -lt /System/Volumes/VM/`
+   dates them. Free space had just been reclaimed to 13 GiB and was back under the daemon's 10 GiB
+   dispatch floor before the suite finished, so the suite was measuring a starved box and its verdict
+   was worthless. When `softwareupdate --list` reports nothing pending, item 2 is not the answer and
+   this one is: **a box that has been up for days cannot give a trustworthy `make full`. Restart it
+   first.**
 4. **Local APFS snapshots.** `tmutil listlocalsnapshots /` and
    `diskutil apfs listSnapshots /dev/<data-volume>`. A snapshot named `MSUPrepareUpdate` is item 2
    again.
@@ -247,17 +256,35 @@ everything reads:
 1. **Per-checkout Go caches — nothing reaps these, and they are the ones that
    grow.** `/Users/gb/github/harmonik-wt-cache` held 8.3 GiB on 2026-07-30 and
    grows about 3.7 GiB/day while lanes run.
-   `~/Library/Caches/harmonik-lane-gocache/` holds one directory per checkout,
-   157 MiB and up each, and **outlives the checkout that made it** — agent
-   worktrees are made and dropped constantly here, so many of those directories
-   belong to a checkout that is already gone. `go clean -cache` reaches neither
-   path. See §2 for the full table of the seven places a Go cache lives.
+   `~/Library/Caches/harmonik-lane-gocache/` holds one directory per checkout and
+   **outlives the checkout that made it** — agent worktrees are made and dropped
+   constantly here, so many of those directories belong to a checkout that is
+   already gone. `go clean -cache` reaches neither path. See §2 for the full
+   table of the seven places a Go cache lives.
+
+   **On 2026-08-05 this directory held 13 GiB in 21 directories, fourteen of them
+   owned by a checkout that no longer existed; deleting only those returned
+   8.6 GiB.** They are about 500 MiB each now, not the 157 MiB this step used to
+   quote, and the stale figure is part of why sweeps kept walking past them.
+
+   The name is `<checkout-basename>-<8 hex>`, so a live worktree list sorts them:
 
    ```bash
    du -sh /Users/gb/github/harmonik-wt-cache ~/Library/Caches/harmonik-lane-gocache
+   git -C /Users/gb/github/harmonik worktree list --porcelain |
+     sed -n 's|^worktree ||p' | xargs -n1 basename | sort -u > /tmp/live-checkouts
+   for d in ~/Library/Caches/harmonik-lane-gocache/*/; do
+     base=$(basename "$d" | sed -E 's/-[0-9a-f]{8}$//')
+     grep -qx "$base" /tmp/live-checkouts || echo "GONE $(basename "$d")"
+   done
    ls -lt ~/Library/Caches/harmonik-lane-gocache   # newest first: the busy lanes sit at the top
    rm -rf ~/Library/Caches/harmonik-lane-gocache/<one-directory>
    ```
+
+   A basename can match a live worktree and still be stale, because two
+   checkouts at different paths take the same basename and a different hash.
+   Read `ls -lt` too: a directory nothing has written to for days is stale
+   whatever its name says.
 
    A directory whose checkout is gone, or that no build has written to for
    hours, is free to delete, and it costs that checkout one cold build. A

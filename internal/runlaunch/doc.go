@@ -32,8 +32,8 @@
 //
 // This package covers exactly the four families named above. internal/daemon
 // legitimately retains ~25 other emit* helpers (emitRunStarted, emitRunCompleted,
-// emitImplementerEscapedWorktree, emitReviewerVerdict,
-// emitWorkloopLifecycleTransition, …) which are inside beadRunOne or read
+// emitReviewerVerdict, emitWorkloopLifecycleTransition, …) which are inside
+// beadRunOne or read
 // workLoopDeps. They are the E5 lift's problem, not this package's. Do not let a
 // "while I'm here" impulse drag them in.
 //

@@ -1484,22 +1484,3 @@ func emitWorkloopLifecycleTransition(ctx context.Context, m *hclifecycle.Machine
 		fmt.Fprintf(os.Stderr, "daemon: workloop: emit lifecycle_transition: %v\n", emitErr)
 	}
 }
-
-// emitImplementerEscapedWorktree emits an implementer_escaped_worktree event
-// (hk-6zylj) when the daemon detects post-implementer-exit dirty state in the
-// main repo working tree outside the churn allowlist.
-func emitImplementerEscapedWorktree(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, beadID core.BeadID, mainPath string, dirtyFiles []string) {
-	pl := core.ImplementerEscapedWorktreePayload{
-		RunID:      runID,
-		BeadID:     string(beadID),
-		MainPath:   mainPath,
-		DirtyFiles: dirtyFiles,
-	}
-	b, err := json.Marshal(pl)
-	if err != nil {
-		return
-	}
-	if emitErr := bus.EmitWithRunID(ctx, runID, core.EventTypeImplementerEscapedWorktree, b); emitErr != nil {
-		fmt.Fprintf(os.Stderr, "daemon: workloop: emit implementer_escaped_worktree: %v\n", emitErr)
-	}
-}

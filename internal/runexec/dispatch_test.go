@@ -292,7 +292,7 @@ var allDeclaredEventKinds = []EventKind{
 	EvInputRejected, EvHeartbeat, EvCommitObserved, EvOutcomeReceived,
 	EvAgentExited, EvNoChangeTimeout, EvHeartbeatStale, EvAborted,
 	EvStartRun, EvProvisioned, EvProvisionFailed, EvModeOutcome, EvAgentCompleted,
-	EvCleanExit, EvEscapeDetected, EvNoCommitGuardReopen, EvGuardsPassed,
+	EvCleanExit, EvNoCommitGuardReopen, EvGuardsPassed,
 	EvGatePassed, EvGateFailed, EvMergeResult, EvCloseResult, EvShutdownDrain,
 	EvTimerFired,
 }
@@ -306,7 +306,7 @@ var dispatchNonTerminalPhases = []DispatchPhase{
 
 var runOwnedEventKinds = []EventKind{
 	EvStartRun, EvProvisioned, EvProvisionFailed, EvModeOutcome, EvAgentCompleted,
-	EvCleanExit, EvEscapeDetected, EvNoCommitGuardReopen, EvGuardsPassed,
+	EvCleanExit, EvNoCommitGuardReopen, EvGuardsPassed,
 	EvGatePassed, EvGateFailed, EvMergeResult, EvCloseResult, EvShutdownDrain,
 }
 

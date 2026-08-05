@@ -179,12 +179,11 @@ func TestRunA1_GateFailedEmptyReasonKeepsRT6(t *testing.T) {
 }
 
 func TestRunA1_GuardReasonsRideEvents(t *testing.T) {
-	// Rows 2–3: the guard strings ride the events; reason == summary.
+	// Row 3: the guard string rides the event; reason == summary.
 	for _, tc := range []struct {
 		kind   EventKind
 		reason string
 	}{
-		{EvEscapeDetected, "implementer_escaped_worktree: 2 file(s) dirty in main: a, b"},
 		{EvNoCommitGuardReopen, "no_commit_during_implementer: HEAD did not advance past parent abc at iteration 1 exit=0"},
 	} {
 		m := driveToDispatching(t, stdRunCfg())

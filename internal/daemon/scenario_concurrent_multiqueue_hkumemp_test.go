@@ -25,9 +25,6 @@ package daemon_test
 //      LastFailureReason containing "cross_queue_duplicate" (hk-a11re guard).
 //      No run starts for the loser copy — ClaimBead is never called for it.
 //
-//  (d) A sibling merge to main (when the first run completes and its worktree
-//      is merged) does NOT emit implementer_escaped_worktree for the other
-//      in-flight run (hk-77q8e sibling-exclusion fix).
 //
 // TestScenario_ConcurrentMultiQueue_N2_MidRunKill exercises the G1 cause-side:
 // it starts the same two-queue setup but cancels the daemon context while runs
@@ -480,7 +477,6 @@ func cmqPollRunStartedCount(t *testing.T, jsonlPath string, wantCount int, budge
 //	(b) Max concurrent runs observed ≤ MaxConcurrent=2 (QM-062).
 //	(c) Beta's dupBead item: status=failed, reason contains
 //	    "cross_queue_duplicate" (hk-a11re).
-//	(d) implementer_escaped_worktree event is absent (hk-77q8e).
 //
 // Not parallel: uses os.Setenv(HARMONIK_CLAUDE_CONFIG_PATH) to isolate
 // EnsureWorktreeTrust — same rationale as TestScenario_HappyPath_N1.
@@ -694,18 +690,6 @@ func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
 		}
 	}
 
-	// ── Assertion (d): no implementer_escaped_worktree events ────────────────
-	//
-	// A sibling-merge exclusion (hk-77q8e) ensures that files changed by one
-	// run's merge to main are excluded from the escape-detector check for
-	// other in-flight runs. The twin makes no real commits, so main HEAD does
-	// not advance; this assertion is a regression guard ensuring the detector
-	// never fires for a clean concurrent-twin run.
-	nEscape := cmqEventCount(t, jsonlPath, string(core.EventTypeImplementerEscapedWorktree))
-	if nEscape > 0 {
-		t.Errorf("cmq (d): implementer_escaped_worktree emitted %d time(s); want 0 (hk-77q8e sibling-exclusion fix)", nEscape)
-	}
-
 	// ── Causality invariants (hk-xegej) ──────────────────────────────────────
 	scenariotest.AssertEventCausality(t, jsonlPath,
 		"run_started",
@@ -718,8 +702,8 @@ func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
 		30*time.Second,
 	)
 
-	t.Logf("cmq HappyPath PASS: dupBead=%s (alpha) alphaA=%s betaB=%s maxConcurrent=%d noEscape=%v",
-		dupBeadID, alphaAID, betaBID, maxConcurrent, nEscape == 0)
+	t.Logf("cmq HappyPath PASS: dupBead=%s (alpha) alphaA=%s betaB=%s maxConcurrent=%d",
+		dupBeadID, alphaAID, betaBID, maxConcurrent)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

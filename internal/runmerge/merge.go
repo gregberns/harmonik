@@ -631,11 +631,13 @@ func commitFinalizeWorkingTree(ctx context.Context, projectDir string, runID cor
 	// This step used to be a tree-wide `git restore --staged .` + `git reset
 	// --hard HEAD`. That is strictly stronger than EM-054 needs, and on
 	// 2026-07-22 it silently destroyed uncommitted fleet state in the main root
-	// on every merge. The interaction that made it invisible: the pre-merge
-	// escape check (CheckMainWorkingTreeDirty) FAILS a run when main is dirty,
-	// but its churn allowlist deliberately exempts `.harmonik/` and `.claude/` —
-	// exactly where agent and fleet state live. So the one region waved through
-	// as expected churn was the one region the refresh then deleted.
+	// on every merge. The interaction that made it invisible: a pre-merge escape
+	// check was believed to FAIL a run when main was dirty, but its churn
+	// allowlist deliberately exempted `.harmonik/` and `.claude/` — exactly where
+	// agent and fleet state live. So the one region waved through as expected
+	// churn was the one region the refresh then deleted. (That check is now
+	// deleted outright: it never ran for a graph workload, which is every real
+	// run, so it never protected anything.)
 	//
 	// Scoping the refresh to the merge's own paths satisfies EM-054's obligation
 	// ("the merged commit's files match HEAD") and cannot touch anything the
@@ -646,10 +648,11 @@ func commitFinalizeWorkingTree(ctx context.Context, projectDir string, runID cor
 		// the destructive behaviour this change exists to remove. Skip it.
 		//
 		// Be precise about what is loud: the EVENT below is, the resulting STATE
-		// is not. CheckMainWorkingTreeDirty drops .harmonik/, .claude/,
-		// .beads/issues.jsonl and AGENT_COMMS.md as expected churn, so stale
-		// paths in exactly the region this bead exists to protect are never
-		// surfaced by the escape check. Worse, the skip leaves the INDEX stale
+		// is not. No escape check exists any more, so stale paths in exactly the
+		// region this bead exists to protect go unreported. (Even when the check
+		// existed it dropped .harmonik/, .claude/, .beads/issues.jsonl and
+		// AGENT_COMMS.md as expected churn, so it never saw them either.)
+		// Worse, the skip leaves the INDEX stale
 		// too (index at mainTip, HEAD at runTip), so a later commit of those
 		// paths from the main root would silently commit PRE-MERGE content.
 		// Still the right trade — the trigger needs a git diff between two

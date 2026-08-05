@@ -227,10 +227,13 @@ type SpineArgs struct {
 }
 
 // WireSpine binds the terminal-spine hooks (gate → code-sync → merge → close
-// ladder) onto the machine. The single-shot escape + no-commit guards stay
-// imperative in beadRunOne and run BEFORE the dispatch-terminal classification
-// for EVERY class (the pre-RT7 order); by the time the machine traverses
-// Guarding they are known-green, so checkEscape is a recorded pass.
+// ladder) onto the machine.
+//
+// CheckEscape runs NO check. It returns EvGuardsPassed unconditionally, so the
+// machine always leaves Guarding for Gating. There is no escaped-worktree guard
+// anywhere on the run path — the check that once filled this hook was deleted
+// because it never ran for a graph workload, and the project decided not to
+// rebuild it. Read the pass as "no guard exists", not as "a guard passed".
 func (b *RunBridge) WireSpine(a SpineArgs) {
 	b.sh.eff.CheckEscape = func(context.Context) []runexec.Event {
 		return []runexec.Event{{Kind: runexec.EvGuardsPassed}}

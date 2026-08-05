@@ -56,10 +56,15 @@ package main
 //
 // # Daemon-lull gate (LOAD-BEARING)
 //
-// Writing into the main working tree while the daemon is dispatching trips the
-// worktree-escape detector (implementer_escaped_worktree) and fails in-flight
-// beads. So before --apply: if the daemon is up AND a queue is actively
-// dispatching, REFUSE unless --force. Daemon down → proceed.
+// A merge writes the MAIN working tree. After it pushes, the daemon refreshes
+// every path the merged commit touched (EM-054), which overwrites an
+// uncommitted local edit on any of those paths and emits
+// working_tree_local_edits_overwritten. So an --apply that lands mid-dispatch
+// can be silently thrown away. Before --apply: if the daemon is up AND a queue
+// is actively dispatching, REFUSE unless --force. Daemon down → proceed.
+//
+// This gate used to cite the worktree-escape detector instead. That detector is
+// deleted — it never ran for a graph workload, which is every real run.
 //
 // Bead ref: hk-i7i3 (sync-assets command). Design: plans/2026-06-20-doc-instruction-audit/10-asset-sync.md.
 
@@ -314,7 +319,7 @@ func runSyncAssets(args []string, stdout, stderr io.Writer) int {
 			if syncAssetsWritef(stderr, "harmonik sync-assets: REFUSING to apply — the daemon is actively dispatching (%s).\n", reason) != nil {
 				return 1
 			}
-			if syncAssetsWritef(stderr, "  Editing the main working tree mid-dispatch trips implementer_escaped_worktree and fails in-flight beads.\n") != nil {
+			if syncAssetsWritef(stderr, "  A merge refreshes the main working tree and can overwrite what you write here.\n") != nil {
 				return 1
 			}
 			if syncAssetsWritef(stderr, "  Wait for a lull (no active queue items), or re-run with --force to override.\n") != nil {
@@ -909,9 +914,9 @@ func daemonSocketUp(projectDir string) bool {
 //
 // We deliberately do NOT gate on GroupStatusActive (the prior behavior): a group
 // already marked complete-with-failures or in a transitioning state can still
-// hold a Dispatched/pending item mid-flight, and writing into the main worktree
-// then would trip implementer_escaped_worktree and fail that in-flight bead. So
-// ANY in-flight item in an active queue blocks --apply (unless --force). Returns
+// hold a Dispatched/pending item mid-flight, and that item's merge can still
+// refresh the main working tree over what --apply just wrote. So ANY in-flight
+// item in an active queue blocks --apply (unless --force). Returns
 // (true, reason) on the first such item, else (false, "").
 func dispatchingQueue(queues []*queue.Queue) (dispatching bool, reason string) {
 	for _, q := range queues {

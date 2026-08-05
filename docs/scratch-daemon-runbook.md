@@ -265,6 +265,105 @@ FEEDBACK_SUMMARY batch=<name> fail_items=<n> created=<c> updated=<u> db=<fleet>/
 
 ---
 
+## Queue-readiness procedure
+
+Use this procedure only for the scratch readiness canary that comes before the
+fleet canary. It puts no limit on ordinary scratch-daemon work.
+
+`make queue-dogfood-readiness` performs steps 1, 6 and 7. Read that target as
+the executable form of this list. It needs four inputs:
+
+```
+make queue-dogfood-readiness \
+  SCRATCH=/tmp/hk-scratch \
+  EVIDENCE=/path/to/retained/evidence \
+  BEADS='hk-aaa=one-line path swap, no Go rebuild; hk-bbb=same' \
+  CONCURRENCY=3
+```
+
+1. **Capture a readiness record before anything runs.** `harmonik queue
+   readiness capture` writes it. The record names the project, every selected
+   bead with its own reason for being safe to run twice, the item count, the
+   concurrency, and whether the work is local. A record that names no selected
+   item is refused.
+
+2. **Say the item count and the concurrency. Do not assume either is one.**
+   The validator refuses a record that leaves either unstated, and it accepts
+   any stated value. It also refuses a plan that disagrees with the snapshot it
+   is judged against, so the stated item count must equal the number of items
+   named.
+
+   > **The one-item rule was withdrawn on 2026-08-04 and MUST NOT come back.**
+   > The operator overruled it: "If you can only run one work item at a time,
+   > there is no point in this tool. The assessor must test that several items
+   > run at once and sign off on that working." `internal/queue/readiness` has
+   > no rejection reason for "concurrency is not one", and it says in a comment
+   > that a constant left behind for a withdrawn rule is how the rule comes
+   > back.
+
+3. **Use a local harness, a stream queue and the scratch repository.** The
+   validator refuses a Pi harness, a remote worker, a target outside the
+   scratch clone, a wave queue, an unstated queue kind, and `feedback`.
+
+4. **Start the daemon at the concurrency you recorded, then run the batch.**
+   `SCRATCH_MAX_CONCURRENT` defaults to `1`, and the validator judges the
+   record against itself and never against the run. So a record that says
+   `CONCURRENCY=3` passes while a default daemon runs one item at a time, and
+   the evidence is then false in the one dimension the operator made
+   load-bearing. Set `SCRATCH_MAX_CONCURRENT` to the same number and bring the
+   daemon up with it:
+
+   ```
+   SCRATCH_MAX_CONCURRENT=3 ./scripts/scratch-daemon.sh cycle /tmp/hk-scratch
+   ```
+
+5. **Retain the batch artifacts before you delete the clone.** Copy the batch
+   JSON and the event capture out of `<scratch>/.harmonik/` into the evidence
+   directory. `down` and `cycle` leave both in place, but nothing prunes them
+   and the clone is throwaway, so an evidence path outside the scratch tree is
+   the only durable home.
+
+6. **Measure the host and record what you measured.** The target records the
+   load average, the CPU count, the free disk on the scratch path, and the
+   number of live daemons. The default bars are load at or below 1.0 per CPU,
+   free disk at or above 10 GB, and at most one daemon. A result from a host
+   whose LOAD broke its bar is machine-contention evidence until a controlled
+   rerun classifies it as a product failure — that rule is
+   [operator-nfr.md](../specs/operator-nfr.md) §4.8 ON-032a, and it covers the
+   load bar only. The disk and daemon bars are refusals with no
+   reclassification path.
+
+   > **"At most one daemon" is not a limit on queue items.** It counts daemon
+   > test suites running at the same time on the host. The `CONCURRENCY` above
+   > counts items running at the same time inside one run, and nothing bounds
+   > it. ON-032a states the same distinction.
+
+7. **Judge the evidence.** `harmonik queue readiness validate` writes one
+   `validation.json` beside the record. It reaches neither the fleet daemon nor
+   the bead ledger. Its refusals are a closed set: `pi_harness`,
+   `remote_worker`, `cross_repository`, `queue_kind_unset`, `wave_queue`,
+   `feedback_enabled`, `concurrency_not_stated`, `item_count_not_stated`,
+   `host_load_above_limit`, `host_free_disk_below_limit`,
+   `daemon_count_above_limit`, `plan_contradicts_snapshot_posture`,
+   `host_limits_not_set`, and `snapshot_names_no_selected_item`.
+
+8. **The assessor reads the verdict, not the run.** It accepts or rejects only
+   a passing validation record plus the retained artifacts. Scratch evidence
+   never changes fleet ledger state.
+
+> **Where this section came from.** The kerf work `queue-dogfood-readiness`
+> authorized "the local, non-Pi, one-item readiness procedure and evidence
+> retention" for this runbook. Its finalize wrote the text into a new
+> `specs/scratch-daemon-runbook.md` instead, that file was deleted as
+> non-normative, and the authorized content was lost rather than landed. This
+> section restores it here, where a runbook belongs, against the commands that
+> shipped. Two things in the original are deliberately not restored: the
+> one-item and concurrency-of-one rejections, which the operator withdrew, and
+> the target name `make queue-dogfood-readiness-validate`, which does not
+> exist. Bead: hk-6lt60.
+
+---
+
 ## Safety guarantee — it NEVER touches the fleet daemon
 
 Every subcommand except `feedback` operates ONLY on the scratch clone you name.

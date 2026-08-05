@@ -13,29 +13,34 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/lifecycle"
 )
 
-// socketFixtureTempSockPath creates a temporary .harmonik directory and
-// returns a socket path that fits within the 104-byte macOS sun_path limit.
+// socketFixtureSockPathUnder returns the daemon socket path for a project root.
+func socketFixtureSockPathUnder(root string) string {
+	return filepath.Join(root, ".harmonik", "daemon.sock")
+}
+
+// socketFixtureTempSockPath creates a temporary .harmonik directory and returns
+// a socket path the kernel can actually bind.
 //
-// macOS enforces a 104-character limit on Unix domain socket paths
-// (sun_path in sockaddr_un). This helper mirrors the strategy used in
-// lifecycle/testfixture_test.go (plFixtureTempProjectDir) to keep tests
-// portable.
+// sockaddr_un.sun_path is a fixed 104-byte array on darwin, and one of those
+// bytes holds the NUL terminator, so the longest bindable path is 103 bytes.
+// t.TempDir() puts the TEST'S OWN NAME in the directory it makes, then appends a
+// random suffix that is sometimes 9 digits and sometimes 10. A long test name
+// therefore lands over the line on some runs and under it on others, which reads
+// as a load artifact and is not one.
+//
+// So this helper measures rather than assumes, and it measures with
+// lifecycle.ValidateSocketPathLength — the same check the daemon runs before it
+// binds. Do not re-spell the limit here. A second copy of the number is what
+// admitted a 104-byte path and made three tests in this package fail about five
+// runs in six (hk-m3jai).
 func socketFixtureTempSockPath(t *testing.T) string {
 	t.Helper()
 
-	const sunPathMax = 104 // sockaddr_un.sun_path limit on macOS
-	const sockFile = "daemon.sock"
-
-	candidate := t.TempDir()
-	harmonikDir := filepath.Join(candidate, ".harmonik")
-	sockCandidate := filepath.Join(harmonikDir, sockFile)
-
-	var root string
-	if len(sockCandidate) <= sunPathMax {
-		root = candidate
-	} else {
+	root := t.TempDir()
+	if lifecycle.ValidateSocketPathLength(socketFixtureSockPathUnder(root)) != nil {
 		dir, err := os.MkdirTemp("/tmp", "sk-")
 		if err != nil {
 			t.Fatalf("socketFixtureTempSockPath: MkdirTemp /tmp: %v", err)
@@ -44,11 +49,19 @@ func socketFixtureTempSockPath(t *testing.T) string {
 		root = dir
 	}
 
+	sockPath := socketFixtureSockPathUnder(root)
+	// Say it here, in one line. Without this guard the same mistake surfaces
+	// seconds later as `connect: invalid argument` from a dial several layers
+	// away, which points at the code under test instead of at the path.
+	if lenErr := lifecycle.ValidateSocketPathLength(sockPath); lenErr != nil {
+		t.Fatalf("socketFixtureTempSockPath: no bindable socket path for this test: %v", lenErr)
+	}
+
 	//nolint:gosec // G301: 0755 matches existing .harmonik dir conventions
-	if err := os.MkdirAll(filepath.Join(root, ".harmonik"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(sockPath), 0o755); err != nil {
 		t.Fatalf("socketFixtureTempSockPath: MkdirAll .harmonik: %v", err)
 	}
-	return filepath.Join(root, ".harmonik", sockFile)
+	return sockPath
 }
 
 // stubHandler is a minimal RequestHandler that records calls for test
@@ -569,5 +582,27 @@ func TestSocketListener_HookRelayHandler(t *testing.T) {
 	}
 	if gotMap["summary"] != "wire test" {
 		t.Errorf("LatestOutcome summary = %q, want %q", gotMap["summary"], "wire test")
+	}
+}
+
+// The fixture must hand back a bindable socket path even when the calling
+// test's own name is long. t.TempDir() embeds that name, truncated to 64
+// characters, and then appends a random suffix that is sometimes 9 digits and
+// sometimes 10. Only one of those two draws used to cross the line, so a single
+// run proves nothing. Each subtest draws a fresh random, so the loop covers
+// both.
+//
+// This test's name is deliberately past the 64-character truncation point. That
+// is the case that broke (hk-m3jai).
+func TestSocketFixture_TempSockPath_HandsBackABindablePathForALongTestName(t *testing.T) {
+	for i := range 16 {
+		t.Run(fmt.Sprint(i), func(t *testing.T) {
+			sockPath := socketFixtureTempSockPath(t)
+			ln, err := (&net.ListenConfig{}).Listen(t.Context(), "unix", sockPath)
+			if err != nil {
+				t.Fatalf("the fixture returned a %d-byte socket path the kernel refuses: %v", len(sockPath), err)
+			}
+			_ = ln.Close()
+		})
 	}
 }

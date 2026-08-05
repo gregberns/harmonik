@@ -115,16 +115,17 @@ var testInfraDirs = map[string]bool{
 // is wired up or deleted. The sensor fails if a stale entry is left behind.
 var knownUnwiredWriters = map[string]string{
 	// ---- Protections that cannot protect. Absence reads as safe. ----
-	// CORRECTED 2026-08-04 by alpha, on merge. The first wording said this can
-	// force-remove a live run's worktree today. It cannot: RemoveAgedNoLockWorktrees
-	// has no production caller either, so nothing sweeps worktrees on this path now.
-	// The defect is a trap set for whoever wires the sweep up, because the lease that
-	// was meant to protect a live worktree is not written. The sweep also consults
-	// newestMTimeInTree as an activity proxy, which narrows but does not close the
-	// window: a run idle longer than the threshold still classifies as removable.
-	// This line is the third consequence in this file found to be overstated. Treat
-	// every entry below as a claim to re-confirm, exactly as doc.go says.
-	"internal/workspace.WriteLeaseLockAtomic":       "no worktree ever takes a lease, so every worktree is classified NoLock; the sweep that would act on that is itself unwired today, so this is a trap for whoever wires it up rather than a live data-loss path",
+	// The original wording here was RIGHT. Alpha "corrected" it on 2026-08-04 to say
+	// the sweep was unwired, and that correction was WRONG and is now reverted.
+	// The mistake: a grep excluded "orphansweep.go" by basename, and there are TWO
+	// files with that name. The production caller is workspace.RemoveAgedNoLockWorktrees
+	// invoked from internal/daemon/orphansweep.go inside RunOrphanSweep, which
+	// bootreconcile.go runs at every daemon boot. A second lane found the same thing
+	// independently and disagreed with alpha, which is what prompted the recheck.
+	// KEEP THE LESSON: excluding a path by basename is not excluding a file. Verify a
+	// negative reachability claim by naming the caller you expect and failing to find
+	// it, not by filtering the search until it comes back empty.
+	"internal/workspace.WriteLeaseLockAtomic":       "no worktree ever takes a lease, so every worktree classifies NoLock and the boot orphan sweep age-prunes it with git worktree remove --force --force after 7 days; the code's own comment calls age 'a conservative proxy for liveness' because a worktree with no lease-lock is almost certainly not an active run, and that reasoning held only while leases were written; newestMTimeInTree still skips a worktree with recent file activity, so the exposure is a live run idle longer than the threshold",
 	"internal/lifecycle.AcquireReconciliationLock":  "no reconciliation takes a lock, so SweepStaleReconciliationLocks reports zero stale locks forever and nothing serializes two reconciliations of the same run",
 	"internal/daemon.ExecuteVerdict":                "no reconciliation verdict is ever applied or committed, so the WIP capture under .harmonik/reconciliation/ never happens and an absent capture reads as 'there was no work to preserve'",
 	"internal/lifecycle.WriteVerdictAttemptAtomic":  "no verdict retry is ever counted, so the Cat-3b re-execution cap reads zero attempts forever and cannot stop a loop",

@@ -12,14 +12,15 @@ package daemon
 //
 // Refusing there would fail the node, and the run with it, over a teardown that
 // was already under way. The session that exists belongs to this run and nothing
-// else can hold that name, so a window in it is the same thing the node asked
-// for: an agent outside the daemon's session, in the session the run's registry
-// record names.
+// else can hold that name, and the previous node was already told to die, so
+// finishing that teardown and asking again takes nothing that was not going
+// anyway.
 //
 // Helper prefix: sessionCollide.
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 
@@ -32,34 +33,59 @@ import (
 // graph run carry the same one, which is why they collide.
 const sessionCollideRunID = "0f0e0d0c-0b0a-0908-0706-050403020100"
 
-// sessionCollideAdapter answers the first new-session request and reports a
-// duplicate for every one after it, which is what tmux does while the previous
+// sessionCollideAdapter is a tmux server that reports the run's session already
+// exists until something kills it, which is what tmux does while the previous
 // node's session is still being torn down.
+//
+// failWith replaces that behaviour with a different error, so the same fixture
+// can also drive a failure that is NOT a collision.
 type sessionCollideAdapter struct {
 	w4cFixtureAdapter
 	mu       sync.Mutex
-	sessions int
+	exists   bool
+	failWith error
+	killed   []string
 }
 
 func (a *sessionCollideAdapter) NewSessionIn(ctx context.Context, params tmux.NewWindowIn) tmux.Outcome {
 	a.mu.Lock()
-	a.sessions++
-	first := a.sessions == 1
-	a.mu.Unlock()
-	if !first {
+	if a.failWith != nil {
+		a.mu.Unlock()
+		return tmux.Outcome{Err: a.failWith}
+	}
+	if a.exists {
+		a.mu.Unlock()
 		return tmux.Outcome{Err: tmux.ErrWindowCollision}
 	}
+	a.exists = true
+	a.mu.Unlock()
 	return a.w4cFixtureAdapter.NewSessionIn(ctx, params)
 }
 
-// TestSpawnRunSession_ASecondNodeJoinsTheSessionTheFirstOneMade is the hazard a
-// run session per RUN creates for a graph of several nodes.
+func (a *sessionCollideAdapter) KillSession(_ context.Context, name string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.killed = append(a.killed, name)
+	a.exists = false
+	return nil
+}
+
+func (a *sessionCollideAdapter) killedSessions() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make([]string, len(a.killed))
+	copy(out, a.killed)
+	return out
+}
+
+// TestSpawnRunSession_ASecondNodeGetsTheSessionAfterTheFirstOnesTeardown is the
+// hazard a run session per RUN creates for a graph of several nodes.
 //
-// The first launch makes the session. The second finds it already there and must
-// still put its agent somewhere outside the daemon's own session. A failure here
-// is not a lost window — it fails the node, which fails the run, on graphs of
-// more than one agentic node, which is all of them.
-func TestSpawnRunSession_ASecondNodeJoinsTheSessionTheFirstOneMade(t *testing.T) {
+// The first launch makes the session. The second finds it still there and must
+// still put its agent outside the daemon's own session. A failure here is not a
+// lost window — it fails the node, which fails the run, on graphs of more than
+// one agentic node, which is all of them.
+func TestSpawnRunSession_ASecondNodeGetsTheSessionAfterTheFirstOnesTeardown(t *testing.T) {
 	t.Parallel()
 
 	adapter := &sessionCollideAdapter{}
@@ -92,15 +118,46 @@ func TestSpawnRunSession_ASecondNodeJoinsTheSessionTheFirstOneMade(t *testing.T)
 		t.Fatal("the second node got neither a session nor an error, so nothing was launched")
 	}
 
-	windows := adapter.newWindowCopy()
-	if len(windows) != 1 {
-		t.Fatalf("tmux was asked for %d window(s) after the collision, want exactly 1.\n"+
-			"The recovery is one window in the session that already exists.", len(windows))
+	if killed := adapter.killedSessions(); len(killed) != 1 || killed[0] != wantSession {
+		t.Errorf("the recovery killed %v, want exactly [%s].\n"+
+			"Finishing the previous node's teardown is what makes room for the retry. Killing "+
+			"anything else reaches a session this run does not own.", killed, wantSession)
 	}
-	if windows[0].Session != wantSession {
-		t.Errorf("the second node's window went to session %q, want %q.\n"+
-			"An agent in any other session is outside the one the run's registry record names, "+
-			"so the next boot cannot find it.", windows[0].Session, wantSession)
+
+	if windows := adapter.newWindowCopy(); len(windows) != 0 {
+		t.Errorf("the recovery opened %d ordinary tmux window(s): %v.\n"+
+			"An ordinary window is recorded for the daemon's exit-time window sweep, so the "+
+			"agent would be killed with the daemon — which is the one thing a session of the "+
+			"run's own exists to prevent. The retry must go back through new-session.",
+			len(windows), windows)
+	}
+}
+
+// TestSpawnRunSession_ATmuxFailureThatIsNotACollisionStillFails is the negative
+// control, and it was added because its absence was measured: widening the
+// recovery to accept ANY new-session error passed the whole package.
+//
+// The recovery is safe only because a duplicate-session error names a session
+// this run already owns. Any other failure — a tmux server that is gone, a
+// refused command — says nothing about who owns what, and killing a session on
+// that reasoning reaches for something the run cannot account for.
+func TestSpawnRunSession_ATmuxFailureThatIsNotACollisionStillFails(t *testing.T) {
+	t.Parallel()
+
+	adapter := &sessionCollideAdapter{failWith: errors.New("tmux: server not running")}
+	sub := w4cFixtureSubstrate(t, adapter)
+
+	sess, err := sub.SpawnRunSession(context.Background(), sessionCollideRunID,
+		handler.SubstrateSpawn{Argv: []string{"/usr/local/bin/claude"}})
+	if err == nil {
+		t.Fatalf("SpawnRunSession reported success (session %v) on a tmux failure that is not a "+
+			"duplicate session.\n"+
+			"The launch would then believe it has an agent that was never started.", sess)
+	}
+	if killed := adapter.killedSessions(); len(killed) != 0 {
+		t.Errorf("the failure path killed %v.\n"+
+			"Only a duplicate-session error identifies a session this run owns. Killing on any "+
+			"other error reaches for a session on reasoning that does not hold.", killed)
 	}
 }
 

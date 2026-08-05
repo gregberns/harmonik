@@ -1934,7 +1934,8 @@ func (s *tmuxSubstrate) SpawnCrewSession(ctx context.Context, crewName string, s
 // on behalf of two runs, live-session adoption fires twice on one session death,
 // and dead-session adoption credits whichever record it reaches first. It also
 // decides whether SpawnRunSession's ErrWindowCollision branch is safe, because
-// that branch puts the new agent in the session that already exists.
+// that branch KILLS the session that already exists on the reasoning that this
+// run owns it.
 func (s *tmuxSubstrate) runSessionName(runID string) (string, error) {
 	if s.projectHash == "" {
 		return "", fmt.Errorf("daemon: runSessionName: project hash unavailable"+
@@ -1987,30 +1988,47 @@ func (s *tmuxSubstrate) SpawnRunSession(ctx context.Context, runID string, spawn
 		return nil, boundErr
 	}
 	if outcome.Err != nil {
-		if errors.Is(outcome.Err, tmux.ErrWindowCollision) {
-			// The session is already there, and it is THIS run's — the name is
-			// derived from this run's id and nothing else can hold it. A graph run
-			// launches an agent per node, so the second node arrives while tmux may
-			// still be tearing down the first node's session, and refusing here
-			// would fail the node over a race with a teardown that is already under
-			// way.
-			//
-			// "Nothing else can hold it" is a claim about runSessionName, and it
-			// is only true because that name carries 16 hex characters of the run
-			// id rather than 12. At 12 the name is a millisecond timestamp, two
-			// concurrently dispatched runs collide, and this branch then puts a
-			// second run's agent into a live session belonging to a different run.
-			// Read the width note on runSessionName before narrowing it.
-			//
-			// A window in the session that exists is the same thing the run wanted:
-			// an agent outside the daemon's session, in the session the run's
-			// registry record names.
-			fmt.Fprintf(os.Stderr,
-				"daemon: SpawnRunSession: session %q already exists for run %s; opening a window in it\n",
-				sessName, runID)
-			return s.spawnWindowVia(ctx, spawn, s.adapter, sessName, false /* local */, nil /* local Kill uses syscall.Kill */)
+		if !errors.Is(outcome.Err, tmux.ErrWindowCollision) {
+			return nil, fmt.Errorf("daemon: SpawnRunSession %q: %w", runID, outcome.Err)
 		}
-		return nil, fmt.Errorf("daemon: SpawnRunSession %q: %w", runID, outcome.Err)
+		// The session is already there, and it is THIS run's: the name is derived
+		// from this run's id and nothing else can hold it. A graph run launches an
+		// agent per node into one session, and each node kills its agent as it
+		// ends, so the next node can arrive while tmux is still tearing the session
+		// down. Refusing here would fail the node, and the run with it, over a
+		// teardown already under way.
+		//
+		// Finishing that teardown is the recovery. The previous node has already
+		// been told to die — its cleanup ran before this call — so killing what is
+		// left takes nothing that was not already going.
+		//
+		// "Nothing else can hold it" is a claim about runSessionName, and it is
+		// only true because that name carries 16 hex characters of the run id
+		// rather than 12. At 12 the name is a millisecond timestamp and two
+		// concurrently dispatched runs take one name. Read the width note on
+		// runSessionName before narrowing it, and read it knowing that killing
+		// made the cost of being wrong worse than it used to be: the older
+		// recovery put this agent in the other run's session, where both survived,
+		// and this one destroys the other run's live agent.
+		//
+		// The retry deliberately goes back through new-session rather than opening
+		// a window in what is there. A window opened through the ordinary spawn
+		// path is recorded for the daemon's exit-time window sweep, which would
+		// kill this agent with the daemon — the one thing an independent session
+		// exists to prevent.
+		fmt.Fprintf(os.Stderr,
+			"daemon: SpawnRunSession: session %q still exists for run %s; finishing its teardown and retrying\n",
+			sessName, runID)
+		if killErr := s.adapter.KillSession(ctx, sessName); killErr != nil {
+			return nil, fmt.Errorf("daemon: SpawnRunSession %q: clear the previous session: %w", runID, killErr)
+		}
+		outcome, boundErr = s.callNewSessionBounded(ctx, "SpawnRunSession", sc, params)
+		if boundErr != nil {
+			return nil, boundErr
+		}
+		if outcome.Err != nil {
+			return nil, fmt.Errorf("daemon: SpawnRunSession %q after clearing the previous session: %w", runID, outcome.Err)
+		}
 	}
 
 	paneID := outcome.PaneID

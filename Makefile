@@ -733,6 +733,7 @@ GATE_CAP := $(if $(TIMEOUT_BIN),$(TIMEOUT_BIN) --kill-after=30s $(GATE_STEP_SECS
 script-tests:  ## Self-tests for the shell the gate depends on
 	scripts/go-format-test.sh
 	scripts/agent-reviewer-run-test.sh
+	scripts/agent-reviewer-prompt-parity-test.sh
 	scripts/with-lane-gocache-test.sh
 	scripts/go-test-must-match-test.sh
 	scripts/loadgen-test.sh

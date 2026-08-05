@@ -12,6 +12,16 @@ spawned_by: admiral
 
 # Gate: deploy — phase1-session-restart-substrate @ 3c937f5d
 
+> **RE-PIN THE CANDIDATE BEFORE YOU SPAWN THIS.** The `commit:` above and the
+> `readiness-3c937f5d` segment of `report_path` were correct when this mission was
+> written. The branch has moved since. Whoever spawns the assessor MUST set both to
+> the tip being judged, and MUST confirm no lane is still unmerged. An assessor that
+> judges a stale commit returns a verdict about code nobody is shipping.
+> **Two normative artifacts disagree about the gate kind and the operator has not
+> yet retired one — read `hk-7bfqe` before you change `gate:`.**
+> This mission uses `deploy` at `schema_version: 2`, which is the only combination
+> the schema's own validation rules accept today.
+
 You are the **assessor** for the queue-dogfood-readiness work on branch
 **phase1-session-restart-substrate** at commit **3c937f5d**. Run the **deploy**
 gate on an isolated scratch clone. Prove that a small queue run is safe to start

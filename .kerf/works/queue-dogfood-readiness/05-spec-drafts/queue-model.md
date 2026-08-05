@@ -69,7 +69,7 @@ RECORD Queue:
                                   -- on-disk file is .harmonik/queues/<name>.json (NQ-A2)
   workers           : Integer     -- per-queue concurrent-dispatch ceiling (QM-066, NQ-B1); omitted/0
                                   -- defaults to --max-concurrent; may oversubscribe (global cap still wins)
-  failed_recovery_receipt_id : UUID | None -- set only by the QM-058 failed-recovery transaction
+  failed_recovery_receipt_id : UUID | None -- set only by the §8.3b QM-052b failed-recovery transaction, per QM-058a
 ```
 
 > INFORMATIVE: **Named queues have no special semantics (N4).** The `name` field is a durable routing key — it determines which `.harmonik/queues/<name>.json` file the queue persists to and which per-queue worker pool dispatches it. The daemon assigns no special behavior to any particular name. For example, the flywheel bridge (per [/Users/gb/github/harmonik/specs/cognition-loop.md]) routes investigation beads to an 'investigate' named queue — that queue is mechanically identical to 'main'; the routing to a subscription-billed Claude worker is a property of which daemon process subscribes to it, not of the queue-model itself. There is no per-queue budget (N2): the queue-model is a mechanism-tagged subsystem with no gate/hook/budget points per §4.1(f). Any cost governance lives at the credential-isolation layer ([/Users/gb/github/harmonik/specs/credential-isolation.md]), not here.
@@ -1417,6 +1417,17 @@ v0.1.1 — 2026-05-15 — gap-closure pass (hk-089gr). Six additive amendments s
 v0.1.0 — initial publication for extqueue work; see kerf/extqueue 05-changelog.md.
 
 ## Amendment — durable failed-queue recovery
+
+> **RETIRED 2026-08-05. DO NOT COPY QM-058 INTO `specs/`.** It describes the
+> same operation as §8.3b QM-052b, which is the plan of record's number for it —
+> cards T1 through T4 of this work all cite "§8.3b QM-052b". Its "clear each
+> retired `run_id`" clause is also false: `internal/queue` `RearmFailedItems`
+> resets `attempts` and `last_failure_reason` and keeps the prior run identity,
+> and this work's own integration record says so. The identifier is retired in
+> `specs/queue-model.md` and is not reusable. **QM-058a and QM-059 below are NOT
+> retired.** They are the only written form of the receipt binding, the
+> transaction order, the restart classification, the transaction owner and the
+> quarantine rule, and shipped code cites both by number. Bead: hk-6lt60.
 
 ### QM-058 — Failed recovery transaction
 

@@ -8,10 +8,10 @@ requirement-prefix: PL
 status: draft
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.7.6
+version: 0.7.7
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-08-04
+last-updated: 2026-08-05
 depends-on:
   - architecture
   - execution-model
@@ -1790,7 +1790,9 @@ Cross-ref: PL-021b §4 (window-naming determinism), PL-021b §8 (window-name in 
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-08-05 | 0.7.7 | agent (spec repair, hk-6lt60) | **PL-032's pointer named a retired identifier. No PL obligation changes.** PL-032 said the failed-recovery command reports its result "only after QM-058 commits". QM-058 is retired in [queue-model.md] on 2026-08-05, because it named the same operation as §8.3b QM-052b under a second number, and its number is not reusable. The pointer now names QM-052b. A note records that PL-032 itself is still outstanding: it duplicates the `queue-recover` contract that landed separately as PL-003a and PL-028, and the two disagree on the response receipt and on which rule owns the transaction. Refs: hk-6lt60, hk-7bfqe. |
 | 2026-08-04 | 0.7.6 | agent (spec lane a-spec) | **The §2.2 multi-repo bullet stops naming the escape-detection check. No PL obligation changes.** The bullet listed what a cross-repo run performs against the active repo, and the list included an escape-detection check. That check was deleted on 2026-08-04 (commits `8ba6bfb57` and `d6c12a669`) because it ran nowhere. [run-state-machine.md] v0.4.0 RSM-008 carries the decision and the cost. The item is removed and replaced by one sentence that says the check is gone, so a reader cannot mistake the removal for an omission. The safelist rule, the exact-string-equality comparison, the refusal on an absent or empty `allowed_repos`, the protected-branch carve-out, and the `projectDir` state list are UNCHANGED. No requirement IDs added, renumbered, or retired. |
+| 2026-08-02 | 0.7.5 | agent (kerf finalize, queue-dogfood-readiness) | **PL-032 and PL-033 added, and they should not have been.** The finalize appended an "Amendment — failed recovery and readiness gate" block and bumped the version with no row here. A second commit on 2026-08-03 also edited this file at the same version. The row is written at 0.7.7 so the table is complete. The finalize took every target from the second, superseded changelog table. PL-033 was retired on 2026-08-05. Refs: hk-6lt60. |
 | 2026-08-02 | 0.7.4 | agent (codename:event-payload-ownership) | **Step 13 tier-0 single compatibility.** PL-004a now maps a persisted queue item with `workflow_mode=single` to the named embedded no-review graph before validation and start emission. It records the distinct `queue_item_single_mode` provenance and retains the raw queue value for audit. |
 | 2026-08-02 | 0.7.3 | agent (codename:event-payload-ownership) | **Step 13 graph-selection lifecycle.** PL-004a and PL-004b now treat `workflow:single` as a legacy per-bead request for the named no-review DOT graph. The resolved execution mode is `dot`; `run_started` records `workflow_selection_source = legacy_single_label`. The imperative single dispatcher is not a valid path. Daemon defaults and config accept only reviewed DOT selection. PL-005 no longer names a retired review-loop fallback. |
 | 2026-08-01 | 0.7.2 | agent (hk-specs-crossrepo-stale-i1bcg) | **§2.2 multi-repo bullet AMENDED: cross-repo dispatch works and is gated by the `allowed_repos` safelist. The refusal rule the bullet stated was retired when the safelist landed.** The old text said a bead declaring `target_repo` is always reopened with `CrossRepoUnsupportedError` and that cross-repo fixes must be applied out-of-band. That stopped being true at `67581586a` (`daemon: implement full cross-repo dispatch`, bead hk-xfuc), which threads an active repo through the whole run. Because `specs/` is normative here, a reader following the old text would delete working cross-repo dispatch and restore the refusal. The bullet now states the whole rule. `target_repo` is bead-body only. An empty value, or a value equal to `projectDir`, gives a local run. A different value must appear in `.harmonik/config.yaml` under `daemon.allowed_repos`, or the daemon reopens the bead with `CrossRepoUnsafeError`. Matching is exact string equality with no symlink resolution and no path normalization. An absent or empty safelist refuses every cross-repo bead. It also records what moves to the target repo (worktree, branching resolution, escape check, no-commit guard, merge, push), what stays under `projectDir` (bead ledger, socket, queue, event log), that the daemon's protected-branch list does not apply to a cross-repo run, and that the cross-repo plus remote-worker combination is unsettled. The superseded text is quoted in the bullet so a reader of an older copy can tell a deliberate reversal from an omission. `CrossRepoUnsupportedError` survives in `internal/daemon/branching.go` as a deprecated type that no live path returns. No requirement IDs added, renumbered, or retired. Companion: [operator-nfr.md] v0.5.8. |
@@ -1824,7 +1826,18 @@ Cross-ref: PL-021b §4 (window-naming determinism), PL-021b §8 (window-name in 
 
 The daemon socket and CLI MUST expose a failed-recovery command distinct from
 drain resume. It MUST report accepted, no-op, and rejected results only after
-QM-058 commits. Its response MUST include the durable recovery receipt.
+the [queue-model.md §8.3b QM-052b] transaction commits. Its response MUST
+include the durable recovery receipt.
+
+> **Citation repaired 2026-08-05, and PL-032 itself is still outstanding.** This
+> rule used to say "only after QM-058 commits". QM-058 is retired in
+> `specs/queue-model.md` and its number is not reusable, because it named the
+> same operation as QM-052b under a second number. The pointer now names the
+> live rule and no obligation changes. PL-032 still duplicates the
+> `queue-recover` contract that landed separately as PL-003a and PL-028, and the
+> two disagree on the response receipt and on which rule owns the transaction.
+> Choosing between them is a reconciliation judgement and is separate work.
+> Bead: hk-6lt60.
 
 > **PL-033 — Controlled readiness gate — RETIRED 2026-08-05, and the number is
 > not reusable.** It required a readiness gate to run in an isolated scratch

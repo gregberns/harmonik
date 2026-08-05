@@ -136,7 +136,10 @@ referenced specification.
 > RSM-021 replacement the plan of record authorized is landed in its place.
 > `EM-053a` is retired in `specs/execution-model.md`, and the number is burned
 > because the approved draft uses it for a second, different rule that has not
-> landed. Read this section as a record of what the losing lane drafted, not as
+> landed. `QM-058` is retired in `specs/queue-model.md`, because §8.3b QM-052b
+> already names the same operation. `QM-058a` and `QM-059` are the two
+> identifiers in this list that SURVIVE: both are implemented and both are cited
+> by number in shipped code. Read this section as a record of what the losing lane drafted, not as
 > a list of live requirements. Bead: hk-6lt60.
 
 #### Consistency checks

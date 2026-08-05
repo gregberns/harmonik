@@ -363,6 +363,11 @@ func surviveRunRepo(t *testing.T) string {
 	return dir
 }
 
+// surviveRunProbeBead is the bead every drive of this fixture works. It is a
+// const so that a test in another file can ask a reader about THIS run's bead
+// without re-spelling the literal.
+const surviveRunProbeBead = core.BeadID("hk-survive-run-probe")
+
 // surviveRunOpts selects which run this fixture drives.
 type surviveRunOpts struct {
 	// ownSession decides whether the daemon's substrate can create an
@@ -397,6 +402,12 @@ type surviveRunOpts struct {
 	// agent exits without committing, so the run fails, and a failed run's
 	// capture is the only record of why.
 	piRun bool
+
+	// realWorktree hands the run a real git worktree instead of a plain
+	// directory. Every graph run resolves HEAD in its worktree before it reaches
+	// an agentic node, and a plain directory cannot answer, so a run that must
+	// reach a real agent launch needs this. piRun implies it.
+	realWorktree bool
 
 	// graphMode explicitly selects DOT instead of the historical default input.
 	// Both choices execute DOT. The explicit form keeps direct graph selection covered.
@@ -481,11 +492,13 @@ func surviveRunDriveWith(t *testing.T, opts surviveRunOpts) *surviveRunOutcome {
 	// is real, so "kept" and "removed" are observable on disk rather than only
 	// in a counter.
 	wtPath := filepath.Join(t.TempDir(), "run-worktree")
-	if opts.piRun {
-		// A real git worktree, because this run has to FAIL and the failure has to
-		// be the ordinary one: the agent produced no commit. The no-commit guard
-		// asks git, and a plain directory cannot answer, so a bare temp dir ends
-		// the run as a success and the retention branch is never reached.
+	if opts.piRun || opts.realWorktree {
+		// A real git worktree, for either of two reasons. A Pi run has to FAIL in
+		// the ordinary way — the agent produced no commit — and the no-commit
+		// guard asks git, so a bare temp dir ends the run as a success and the
+		// retention branch is never reached. Any run that must reach a real agent
+		// launch needs one too, because a graph run resolves HEAD in its worktree
+		// on the way to an agentic node and a plain directory cannot answer.
 		surviveRunGitWorktree(t, projectDir, wtPath)
 	} else if err := os.MkdirAll(wtPath, 0o755); err != nil { //nolint:gosec // test fixture dir
 		t.Fatalf("surviveRun: create worktree fixture: %v", err)
@@ -574,7 +587,7 @@ func surviveRunDriveWith(t *testing.T, opts surviveRunOpts) *surviveRunOutcome {
 	deps := ExportedTestRuntime(params)
 
 	bead := core.BeadRecord{
-		BeadID:   core.BeadID("hk-survive-run-probe"),
+		BeadID:   surviveRunProbeBead,
 		Title:    "survive-shutdown probe",
 		BeadType: "task",
 		Status:   core.CoarseStatusOpen,

@@ -843,3 +843,172 @@ reported five, and filed that gap as a reporting hole in the merge gate. There i
 run had been piped through `tail -40`, which cut the earlier failure lines, and the truncated output
 was then read as the complete list. **Do not pipe a test run through `head` or `tail` and then reason
 about the failure count.** Redirect the whole run to a file and count from that.
+
+---
+
+## The tail deletion removed producers and kept their readers — audited 2026-08-04 at `51bd8aa84`
+
+`e65ec5657` (2026-08-02), "Remove the imperative single-workflow tail", deleted 1,412 lines and cut
+`internal/daemon/workloop.go` `beadRunOne` to its graph arm. An independent reviewer approved it and
+called the diff clean. Two priority-1 defects fell out of it by accident two days later, both found
+while looking for something else. This is the deliberate sweep.
+
+**The deletion was already inventoried before it happened.** `STEP-7-MODE-BOUNDARY.md` §3 lists
+eighteen capabilities that lived only in the tail. Five are its P-rows and thirteen are its N-rows,
+and it marks the thirteen "must be ported before the tail can be deleted". The tail was deleted. The
+table below re-measures all eighteen against the current tree, so nobody re-derives a row that is
+already closed. Seven are still missing, one was dropped by decision, nine are covered, and one is
+unchanged by decision.
+
+| Row | Capability | Status at `51bd8aa84` |
+|---|---|---|
+| P1 | Independent tmux session and restart adoption | **MISSING** — items 1 and 7 below |
+| P2 | Escaped-worktree guard | DROPPED by decision in `8ba6bfb57` and `d6c12a669` |
+| P3 | `noCommitGuardShouldReopen` and its cross-repo target | COVERED — the graph runs the equivalent guard and `activeRepo` now reaches `dispatchDotAgenticNode` |
+| P4 | Implementer comms presence join and leave | **MISSING** — item 4 below |
+| P5 | Pi provider profile on the launch context | COVERED — `dispatchDotAgenticNode` sets all five fields |
+| N1 | `bridge.Drain` on the shutdown branch | COVERED — `bridge.Drain` has a production caller in `beadRunOne` |
+| N2 | `RunHandle.Aborted()` | COVERED — still read in `beadRunOne`. It was attribution only against the graph |
+| N3 | `RunHandle.SetAgentType` | **MISSING** — item 2 below |
+| N4 | `RunHandle.SetMachine` | COVERED — set in the graph node's `OnLaunchedExtra` |
+| N5 | Cold-start spawn token | COVERED — `runlease.ColdStartToken` is held in `internal/daemon/agentlaunch.go` |
+| N6 | `transitionToTerminated` | COVERED — called from `runAgentPostExit` |
+| N7 | Stop-hook terminal classification | COVERED — `dotNodeTerminalFailure` |
+| N8 | Stderr tail in the failure reason | **MISSING** — item 9 below |
+| N9 | The post-mode scenario gate | UNCHANGED BY DECISION. The graph sets `SkipGate` and relies on the `commit_gate` node in `internal/daemon/standard-bead.dot`. The exposure is an operator-authored graph with no gate node |
+| N10 | Cross-repo `activeRepo` on post-exit reads | COVERED for the subsumption probe. The `WorktreeRootPath` half stays inert — see the last section |
+| N11 | Abort-kill and teardown skips, and the shutdown early return | **MISSING** — the other half of P1, item 7 below |
+| N12 | Pi post-mortem stderr write | **MISSING** — item 6 below |
+| N13 | `sdHarness` | **MISSING** — item 5 below |
+
+**The pattern, stated once.** A deletion that removes the only PRODUCER of a value leaves every
+CONSUMER compiling and silent, because "absent", "empty" and "zero" are legal answers. Neither the
+compiler, nor `unused`, nor `ineffassign` can see it. `sdHarness` is read, so it is not unused. It is
+never assigned, so there is no ineffectual assignment to report.
+
+### Actively unsafe — a protection that now points the wrong way
+
+**1. The run registry has no writer, and five readers take their empty branch for ever.**
+`internal/run/registry.go` `Write` is unreachable — confirmed by whole-program reachability, not by
+grep alone. `hk-sat32` names one consequence. There are four, and the other three are unfiled.
+
+- `internal/daemon/bootreconcile.go` `reconcileInFlightRuns` builds its live-run exclusion set from
+  the empty list, so a run whose agent is still working can be failed as an orphan at the next boot.
+  This is the filed one.
+- `internal/daemon/scheduler.go` `strandedBeadHasOnDiskRun` reports "no run exists" for every bead,
+  so the stranded-bead auto-reset never skips. Its doc comment says it is race-conservative, and it
+  is — but only on a LIST ERROR. An empty success is not conservative at all, and empty success is
+  now the only answer it gives.
+- `internal/daemon/bootworkloop.go` `probeRunProcessDead` resolves a run's tmux session from the
+  registry record. With no record it returns false always, so the fast dead-process reap wired
+  through `StaleWatcher.SetRunProcessDead` can never fire. It fails safe — it never reaps a live run
+  — but the mitigation is off, and a dead agent now waits out the 10-to-30-minute stale thresholds
+  it was written to short-circuit.
+- `internal/daemon/run_session_adoption.go` `adoptDeadRunSessions` and `internal/daemon/scheduler.go`
+  `adoptLiveRunSession` both iterate an empty list. Cross-restart run adoption does not happen.
+
+**2. Every Pi rate limit now throttles the whole fleet.** `RunHandle.SetAgentType` has no production
+caller. The only one was in the deleted tail. `internal/daemon/bandwidthtuner.go`
+`bandwidthTunerBackstop.handle` reads `GetAgentType()` to keep a Pi 429 off the global token tuner —
+its own comment states the rule: "a free-tier Pi 429 must never throttle the paid Claude fleet"
+(PI-073). The getter returns the empty agent type for every run, the carve-out never matches, and the
+tuner is notified. `STEP-7-MODE-BOUNDARY.md` predicted this as row N3 (`hk-a5hs1`) for graph runs
+only. It is now the behaviour of every run, because the one path that set the field is gone.
+
+**3. The no-commit guard cannot run, filed as `hk-1kv4l`.** Measured detail worth keeping:
+`internal/runexec/run.go` enters `RunGuarding` only from `EvAgentCompleted` or `EvCleanExit`, and
+neither has a production producer. `stepRunGuarding`'s `EvNoCommitGuardReopen` row has none either.
+`RunBridge.WireSpine` already carries an honest comment saying its `CheckEscape` hook runs no check.
+The guard phase itself is the part that is unreachable.
+
+### Merely inert — it quietly does nothing
+
+**4. No implementer joins or leaves the comms bus.** `internal/daemon/workloop.go`
+`emitImplPresence` is defined and referenced nowhere, in production or in tests. It emitted
+`agent_presence` under the identity `<beadID>-impl` so peers could attribute escalation messages
+(`hk-xnnd`). `STEP-7-MODE-BOUNDARY.md` row P4 marked it NEEDED before the deletion.
+
+**5. Every session-data record carries an empty harness.** `internal/daemon/workloop.go` declares
+`sdModel, sdHarness`, and the run-terminal effector passes both into `sessiondata.Collect`.
+`sdModel` is still assigned from the resolved model. `sdHarness` is assigned nowhere — its only
+assignment was `sdHarness = string(launch.Harness.AgentType())` in the deleted tail.
+`internal/daemon/dashboardgather.go` groups usage and cost by a key that includes `rec.Harness`, so
+every real run now collapses into one empty-harness bucket. Previously filed as `hk-bri7u` against
+graph runs. It is now every run.
+
+**6. A failing Pi node keeps stdout only.** `internal/daemon/agentlaunch.go` publishes
+`PiCaptureDir` on the launch result and no production symbol reads it. Nothing writes
+`pi-stderr.log` any more.
+
+**7. The whole independent-session substrate is unreachable.**
+`internal/daemon/tmuxsubstrate.go` `perRunSubstrate.runSessionID` has no production assignment, so
+`tmuxSubstrate.SpawnRunSession` and `runSessionName` cannot be reached. `runlease.Exit`
+`SessionRunsIndependently` is a literal `false` at its single production construction site in
+`beadRunOne`, so `runlease.Decide`'s survive-shutdown branch cannot be taken and the
+`runlease.RunRecord` token is never held. Read together with item 1: no run outlives the daemon, and
+nothing on disk would name it if one did.
+
+**8. Single mode is no longer an executed mode.** `resolvedWorkflow.Valid` requires
+`Mode == core.WorkflowModeDot`, so `beadRunOne` always sees dot. `runBridgeConfig`'s `default`
+branch — the single-attempt merge budget — is unreachable.
+
+**9. A crash with no NDJSON still leaves no readable diagnostic.**
+`internal/daemon/dot_cascade_helpers.go` `dotNodeTerminalFailure` reports `exit=%d` and does not
+append the stderr tail. The tail's version did. Same shape as `hk-08n9c`, now with no better half to
+compare against.
+
+### Coverage: the tests that would have caught item 1 were deleted by the same commit
+
+`internal/daemon/survive_shutdown_run_resources_test.go` lost seven tests. Every one of them asserted
+the behaviour item 1 describes.
+
+- `TestSurviveShutdown_TheRunRecordIsOnDiskBeforeTheAgentSessionIsCreated` — the record exists before
+  the spawn and its `SessionName` matches the session created.
+- `TestSurviveShutdown_AStoppingDaemonLeavesAnOwnSessionRunItsWorktreeRecordAndBead`
+- `TestSurviveShutdown_ARunThatEndsWhileTheDaemonRunsGivesBackItsWorktreeAndRecord`
+- `TestSurviveShutdown_AStoppingDaemonGivesBackTheWorktreeOfARunItHosts`
+- `TestSurviveShutdown_AWorkingRunThatEndsWhileTheDaemonRunsHasItsWindowKilled`
+- `TestSurviveShutdown_ADaemonStoppingDuringACompletionWaitNeverTouchesAnOwnSession`
+- `TestSurviveShutdown_ADaemonStoppingDuringACompletionWaitStillKillsAWindowItHosts`
+
+They went out with the production code they covered, so nothing went red.
+
+**The other test cuts are not coverage losses.** The `single_*_test.go` files were RENAMED to
+`TestLegacySingleInput_NoReviewDOT*` and re-pointed at the no-review DOT graph, which runs the
+equivalent guard. Those behaviours are still asserted.
+
+**What was added is one AST shape test.** `internal/daemon/workloop_dot_only_test.go`
+`TestBeadRunOneExecutesOnlyResolvedDOTGraphs` parses `workloop.go` and checks that `beadRunOne`
+mentions `driveDotWorkflow` and does not mention `runAgentLaunch` or `core.WorkflowModeSingle`. It
+asserts the shape of the source. It covers none of the behaviour the 1,412 deleted lines carried.
+
+### Checked and NOT a defect — do not re-derive these
+
+- Shutdown drain of committed work (`STEP-7` N1) — ported. `bridge.Drain` has a production caller in
+  `beadRunOne`.
+- Cold-start spawn token (N5) — ported. `runlease.ColdStartToken` is held in
+  `internal/daemon/agentlaunch.go`.
+- `SetMachine` (N4), `transitionToTerminated` (N6), stop-hook terminal classification (N7,
+  `dotNodeTerminalFailure`), the Pi provider profile on the launch context (P5) and the cross-repo
+  subsumption probe (P3, `activeRepo` now reaches `dispatchDotAgenticNode`) are all present on the
+  graph path.
+- `workspace.WorktreeRootPath` cross-repo argument (N10) — still inert, re-verified.
+  `internal/harness/claude/launchspec.go` `isHarmonikManagedWorktree` falls back to a substring match
+  on `/.harmonik/worktrees/`, which fires for a cross-repo worktree whichever repo root is passed. So
+  `--dangerously-skip-permissions` is still emitted.
+- The escaped-worktree guard (P2) — deleted by decision in `8ba6bfb57` and `d6c12a669`.
+- `EvNoChangeTimeout`, `EvHeartbeatStale`, `EvCommitObserved`, `EvOutcomeReceived` and
+  `EvInputRejected` have no production producer, and they had none before this commit either.
+- `RunConfig.CloseSummary`, `ReopenReason` and `ReAmendTrailer` are never set by
+  `runloop.runBridgeConfig`, so a successful merge closes a bead with an empty summary. Also
+  pre-existing. It is worth its own entry. It is not this commit's doing.
+- `internal/daemon/workloop.go` `resolveHEAD`, `internal/runloop/runshell.go` `RunShell.DriveRun`,
+  `internal/daemon/standardgraph.go` `loadNoReviewGraph`, `internal/daemon/moderesolve.go`
+  `resolveWorkflowMode` and `internal/daemon/tmuxsubstrate.go` `tmuxSubstrate.releaseSpawnSlot` are
+  unreachable, and each was already unreachable before this commit.
+
+### The question the review would have had to ask
+
+**For each symbol this diff deletes, name every reader that survives it and say what that reader now
+sees — an empty set, a zero or an absent value is a behaviour change, not a no-op, and a test deleted
+in the same commit cannot report it.**

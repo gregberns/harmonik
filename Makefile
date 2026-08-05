@@ -739,6 +739,7 @@ script-tests:  ## Self-tests for the shell the gate depends on
 	scripts/loadgen-test.sh
 	scripts/gate-fails-closed-test.sh
 	scripts/lint-allow-test.sh
+	scripts/lint-changed-test.sh
 	scripts/changed-func-coverage-test.sh
 
 # freeze-gates — the per-subsystem "do not move this back" greps. Cheap
@@ -784,7 +785,7 @@ gate-static:  ## Shared static half of fast and full: format, build, vet, freeze
 	scripts/with-lane-gocache.sh go vet ./...
 	scripts/with-lane-gocache.sh $(MAKE) vet-tagged
 	$(MAKE) freeze-gates
-	scripts/with-lane-gocache.sh $(TOOLS_DIR)/golangci-lint run --allow-parallel-runners --new-from-rev=HEAD~1
+	scripts/lint-changed.sh $(TOOLS_DIR)/golangci-lint
 
 # gate-test-compile — compiles every _test.go file in the repo and runs none of
 # them. `go build ./...` does NOT compile test files, so a test that references

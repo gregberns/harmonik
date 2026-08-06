@@ -4,26 +4,35 @@ assessor_name: assessor-queue-dogfood-readiness
 epic_id: "codename:queue-dogfood-readiness"
 branch: phase1-session-restart-substrate
 gate: deploy
-commit: 3c937f5d0cac39bb3a48c8ca333068f2bd6f20c3
+commit: 4480650eaa4b81e353e04760a631038ef382dc40
 found_by_sources: [assessor, admiral, fast-follow]
-report_path: plans/2026-07-17-assessor-daemon-campaign/runs/readiness-3c937f5d/ASSESSMENT.md
+report_path: plans/2026-07-17-assessor-daemon-campaign/runs/readiness-4480650e/ASSESSMENT.md
 spawned_by: admiral
 ---
 
-# Gate: deploy — phase1-session-restart-substrate @ 3c937f5d
+# Gate: deploy — phase1-session-restart-substrate @ 4480650e
 
-> **RE-PIN THE CANDIDATE BEFORE YOU SPAWN THIS.** The `commit:` above and the
-> `readiness-3c937f5d` segment of `report_path` were correct when this mission was
-> written. The branch has moved since. Whoever spawns the assessor MUST set both to
-> the tip being judged, and MUST confirm no lane is still unmerged. An assessor that
-> judges a stale commit returns a verdict about code nobody is shipping.
-> **Two normative artifacts disagree about the gate kind and the operator has not
-> yet retired one — read `hk-7bfqe` before you change `gate:`.**
-> This mission uses `deploy` at `schema_version: 2`, which is the only combination
-> the schema's own validation rules accept today.
+> **RE-PINNED 2026-08-06.** The `commit:` above and the `readiness-4480650e`
+> segment of `report_path` name the current branch tip. Both lane branches are
+> merged into it: lane bravo's test-honesty lane at `4480650ea` and lane alpha's
+> hang-detection fix at `0c0c56d68`. Four branches are still unmerged and each is
+> deliberate — `work/alpha-sat32` holds one unharvested refinement, and
+> `work/alpha-specrepair`, `work/alpha-step10-stage8` and `work/xray` are work in
+> progress. None of them belongs to this candidate.
+>
+> **RE-PIN AGAIN IF THE BRANCH MOVES BEFORE YOU SPAWN.** Whoever spawns the
+> assessor MUST set both fields to the tip being judged and MUST confirm no lane
+> that belongs to this candidate is still unmerged. An assessor that judges a
+> stale commit returns a verdict about code nobody is shipping.
+>
+> **The gate-kind disagreement is settled — do not re-litigate it.** The
+> readiness-gate amendment to `specs/assessor-handoff-schema.md` is retired at
+> `fa6fe25f`, so the spec no longer contradicts itself. `hk-7bfqe` stays open only
+> because the daemon owns bead closure and it was down. This mission uses `deploy`
+> at `schema_version: 2`, which the schema accepts.
 
 You are the **assessor** for the queue-dogfood-readiness work on branch
-**phase1-session-restart-substrate** at commit **3c937f5d**. Run the **deploy**
+**phase1-session-restart-substrate** at commit **4480650e**. Run the **deploy**
 gate on an isolated scratch clone. Prove that a small queue run is safe to start
 under the queue-only posture. File each confirmed defect as a scoped
 `found-by:assessor` bead with `--label codename:queue-dogfood-readiness`. Post a
@@ -292,12 +301,21 @@ actual commit, the diff and a test.
   watch the drain reach a terminal result with nothing respawning under it.
 - **T9** claims `harmonik queue readiness capture|validate` and
   `make queue-dogfood-readiness`. You exercise all three in section 0.
-- **T9a** claims a retained event capture. **Check this one hardest. It looks
-  unlanded.** `scratch-daemon.sh batch` still writes its event stream to a
-  `mktemp` file, removes it on exit, and still filters to only
-  `run_started,run_completed,run_failed`. If that is still true, the batch leaves
-  no event capture the validator can read, and the four test beads that need
-  ordering evidence cannot be satisfied. File it and say what it blocks.
+- **T9a** claims a retained event capture. **This bullet used to say it looked
+  unlanded. That was read on 2026-08-04 and it is now wrong** — the work landed
+  afterwards, and a re-read on 2026-08-06 found both halves in
+  `scripts/scratch-daemon.sh`. The capture is retained at
+  `<scratch>/.harmonik/batch-<name>.events.ndjson`, not a `mktemp` file removed
+  on exit, and `SCRATCH_BATCH_EVENT_TYPES` carries six types rather than three:
+  the three run terminals plus `bead_closed`, `outcome_emitted` and
+  `bead_ledger_recovered`. Confirm it against a real batch anyway, because a
+  variable holding the right names does not prove the file survives teardown.
+  Two recovery events are deliberately absent and the script says why beside the
+  list: `bead_terminal_transition_recovered` has no emitter at all, and
+  `queue_item_reconciled` fires before the socket binds, so a live-only
+  subscriber can never see it. Neither absence is a defect. If an ordering test
+  bead needs `queue_item_reconciled`, it needs a cursor-seeded read of
+  `events.jsonl` — say so rather than filing the filter.
 
 **MG — required in full, and budget for it.** Run **`make full`** on the pinned
 commit in the scratch clone. `make full` is the merge decision and it is what CI
@@ -306,6 +324,32 @@ approves on a timeout, an OOM, a compile failure or a passing retry. A PASS is
 impossible while any step of it is red on a branch-introduced issue.
 Pre-existing debt is a separate main-health finding for the admiral and is never
 charged against this branch.
+
+**`make full` is red at the pinned commit, on one test, and it is pre-existing.**
+Measured on the fleet checkout on 2026-08-06: 106 of 107 packages pass, 74577
+tests, and the single failure is
+`TestColdStartToken_ALocalRunTakesNoColdStartToken` in `internal/daemon`. Expect
+to meet it. It is filed as `hk-ziouf` with two independent measurements two days
+apart, and the earlier one measured it failing MORE at the base commit
+`e0c6d1304` than after the merges, so it is not branch-introduced. Under the rule
+above it is a main-health finding for the admiral, not a charge against this
+candidate.
+
+Two things about it will mislead you if nobody says them first.
+
+- **It passes when you re-run it, and that is not evidence.** The ratio is about
+  1 in 6. A single green re-run means nothing. To confirm the state yourself use
+  `-count=6` and expect roughly one failure per batch.
+- **Its own assertion message names the wrong cause.** It says a local run took a
+  cold-start token it must skip. What the test actually observes is only that no
+  agent appeared within 30 seconds. A passing run takes 3.5 seconds and a failing
+  one takes exactly the 30 second limit with nothing in between, which is a run
+  that never launched rather than a slow one. Read the bead before you spend time
+  on the cold-start gate.
+
+Report it as a confirmed pre-existing failure and do not let it alone decide the
+gate. If a SECOND package is red in the scratch clone, that is new information —
+the fleet checkout had exactly one — and it is worth stopping for.
 
 Do not run `make check-short`. That target is retired and the repo has two gate
 targets only: `make fast` while you work, `make full` before anyone accepts the
@@ -342,7 +386,7 @@ the candidate. Everything durable goes in the campaign's tracked run directory
 instead, which is why `report_path` points there.
 
 ```
-plans/2026-07-17-assessor-daemon-campaign/runs/readiness-3c937f5d/
+plans/2026-07-17-assessor-daemon-campaign/runs/readiness-4480650e/
   ASSESSMENT.md                  the verdict — this is report_path
   RUN-LOG.md                     append-only, one block per command
   CANDIDATE.md                   branch, pinned commit, and the clone's detached HEAD

@@ -66,15 +66,89 @@ part of the same unit for the same reason. The rule is unchanged.)*
 
 **Specs come after, not before** — with the standing caveat that `AGENTS.md` holds specs normative,
 so a conflict is adjudicated, never silently ignored.
-**Why they come after:** 25% of requirement IDs appear in no Go file, ~28% of those are stale,
+**Why they come after:** 27% of requirement IDs appear in no Go file, ~28% of those are stale,
 and seven would actively regress working code if obeyed. `specs/` is not a trustworthy oracle yet.
+*(The orphan figure is measured, not estimated — re-run
+`python3 plans/2026-07-27-delete-and-rewrite/spec_orphans.py`. See the settled block below.)*
 
 *⚠ Unverified as of 2026-07-30 — the orphan rate is disputed and the evidence for it is missing.*
+*(SUPERSEDED 2026-08-04 — the dispute is settled. The paragraph is kept for the record. Read the
+block below it.)*
 `SPEC-TRIAGE.md` reports 293 orphans of 1,164 IDs, which is 25.2%. A separate measurement on
 2026-07-30 got 325 of 1,180, which is 27.5%. Neither could be re-run here: the machine data that
 report cites — `traceability.csv`, `trace.json` and the `trace.py` generator — is not in the repo.
 The seven regression-risk requirements DO check out: `SPEC-TRIAGE.md` §4 walks ten candidates and
 confirms seven, refutes one and calls two partial.
+
+**✅ SETTLED 2026-08-06. The orphan rate is reproducible, and it is 27.4%.**
+
+**323 orphans of 1,178 requirement IDs (27.4%) at `2cf3f0254`.** The full split is 792
+cited in production (67.2%), 63 cited only in tests (5.3%), 323 cited by no Go file at all
+(27.4%).
+
+> **This block said 26.1% for two days and that figure was a method defect, not a
+> measurement.** The script compared the two sides differently: word-bounded against the
+> specs, but a bare substring test against Go. So `OQ-EM-006` in a Go file marked `EM-006`
+> implemented, and `PL-021a` marked `PL-021` — which also broke the script's own stated
+> promise to exclude open questions. 38 open-question and kerf-task IDs occur in Go files,
+> so the leak was not small. Matching the two sides moves the rate to 27.5%. A second, much
+> smaller fix — a single-letter suffix dropped `SS-002fold` and `SS-014slot`, two real cited
+> headings, from the universe entirely — brings it to 27.4%. Both fixes are in the script
+> and each is commented where it lives.
+
+**Re-run it yourself. The method is in the repo now:**
+
+```
+python3 plans/2026-07-27-delete-and-rewrite/spec_orphans.py
+```
+
+It takes no arguments, needs no third-party package, and prints its own definitions above its
+numbers so the figure always travels with its method. It counts base requirement IDs
+(`PREFIX-NNN` with an optional lowercase suffix) whose prefix is registered in
+`specs/_registry.yaml`, and it excludes open questions, invariants, environment-variable IDs and
+the other sub-forms — on BOTH sides, which is the fix described above. It classifies against
+`git ls-files '*.go'` — tracked files only, which is what keeps a nested agent worktree from
+reading the count ten times too high.
+
+**Read the script's own "WHAT THIS NUMBER IS NOT" before citing it.** Three limits matter and none
+of them is a defect to fix. A requirement ID contains a hyphen, so it can never be a Go
+identifier: every citation is in a comment or a string literal, and some sit inside a TODO. A
+RETIRED rule counts as an orphan, so retiring a rule RAISES this rate and two commits are only
+comparable if you name them. And some rules are implemented outside Go — in agent skills, in
+`.golangci.yml`, in prompt files — and read as orphans because this method cannot see them. The
+number is citation hygiene. It is not coverage.
+
+**The dispute resolves in favour of the 27.5% measurement.** That figure is the one this method
+reproduces, to within a tenth of a point. It was very nearly thrown away: an earlier version of
+this block instructed the reader to "retire the 27.5% figure — it is the outlier, it recorded no
+method, and nothing reproduces it", on the strength of a script that had a substring bug in the
+direction that lowers the count. A one-line fix reproduces it. **Cite the 2026-07-30 figure.**
+
+Be precise about what that last sentence rests on: this method reproduces the 27.5% RATE to within
+a tenth of a point (323 of 1,178 against its 325 of 1,180). It does not recover that measurement's
+method, which was never recorded, so "the rate agrees" is all that is proved and "the measurement
+was sound" is one step further than the evidence goes. That distinction is the same one applied
+against `SPEC-TRIAGE.md` two paragraphs down, and it has to cut both ways or it is not a standard.
+
+**`SPEC-TRIAGE.md`'s 25.2% is NOT the number this method lands on.** Its generator —
+`traceability.csv`, `trace.json` and `trace.py` — was never committed and is not recoverable, so
+the method here was rebuilt from that report's own §1 and §2 rather than restored. The earlier
+claim that the rebuild matched the report's per-spec table on 12 of 27 rows was computed with the
+defective comparison and has NOT been recomputed against the fix. Treat that agreement as
+withdrawn, not as evidence, until someone re-derives it. It should never have been the argument
+for a headline number in the first place: the rebuild agreeing with a report on some rows says
+much less than the rebuild disagreeing with itself under a one-line change.
+
+**Tree movement is real, and it is no longer doing the explaining.** 385 commits separate the two
+historical measurements, the production corpus grew from 900 to 916 Go files, and `ec66da798`
+deleted 681 signature-pinning test files, which is why test-only citations fell. Those counts are
+scoped to the two historical measurements; the settled figure sits at a third commit, where
+production is 918 files. That drift is genuine and it moves the number by tenths. It was
+previously offered as the whole explanation for a 1.4-point gap that was in fact a bug.
+
+**Cite 27.4%, with the script and the commit named.** The headline sentence above now reads "27% of
+requirement IDs appear in no Go file", and it is backed by evidence that anyone can re-run from a
+clean clone — including the reader who wants to check whether this block is wrong again.
 
 ## 3. The core set — DECIDED, not proposed
 

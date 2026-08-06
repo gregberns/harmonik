@@ -730,14 +730,29 @@ GATE_CAP := $(if $(TIMEOUT_BIN),$(TIMEOUT_BIN) --kill-after=30s $(GATE_STEP_SECS
 # are those 14 as they apply to the gate path. They guard the parts that fail
 # silently.
 #
-# Most cost a few seconds. reachability-gate-test.sh costs about 9 seconds of
-# wall clock on a warm cache and about 25 of CPU across cores, because the only
+# Most cost a few seconds. reachability-gate-test.sh costs about 13 seconds of
+# wall clock on a warm cache and about 46 of CPU across cores, because the only
 # honest way to prove that gate can fail is to write an unreachable function into
-# internal/lifecycle and run the real whole-program analysis against it. It calls
-# the gate nine times; five of those reach the analysis and four are fail-closed
+# a linked package and run the real whole-program analysis against it. It calls
+# the gate ten times; six of those reach the analysis and four are fail-closed
 # setup cases that stop before it. That is the price of the claim, and the claim
 # is the one every other gate here got wrong at least once. Move it to `make
 # full` if the inner loop starts to hurt, but do not weaken it in place.
+#
+# About 4 of those 13 seconds bought hermeticity, and they are not optional. The
+# earlier version wrote its canary into the live internal/lifecycle, so a second
+# run started while the first was mid-analysis deleted the first one's canary and
+# both runs went red with messages naming deadcode's roots and the build cache —
+# neither of which was at fault. It now mirrors the working tree into a throwaway
+# copy per run and measures its own baseline there. Refs hk-ky66d.
+#
+# The throwaway tree also costs about 46 MB of Go build cache per run that no
+# later run can reuse: the scratch path is new each time and nothing passes
+# -trimpath, so every first-party package compiles at an address seen once. Go's
+# own 5-day trim bounds it, and docs/disk-reclaim.md is the cure if it does not.
+# A scratch path that is stable per checkout would recover the disk and most of
+# the 4 seconds, but it needs a lock or a per-run suffix, and shared mutable
+# state between two runs is the defect this change removed. Refs hk-11fdr.
 #
 # It is wrapped because it compiles Go, and a lane sharing one GOCACHE with
 # another lane is the collision with-lane-gocache.sh exists for. Two other

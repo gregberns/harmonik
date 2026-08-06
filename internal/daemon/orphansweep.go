@@ -665,9 +665,6 @@ func probeRunRegistrySessions(
 		if rec.SessionName == "" {
 			continue
 		}
-		if _, alreadyExcluded := excludeSessions[rec.SessionName]; alreadyExcluded {
-			continue
-		}
 		if _, present := sessionSnapshot[rec.SessionName]; !present {
 			// The session is gone. adoptDeadRunSessions reads the same record a few
 			// steps later, sees the same absence, and resets the bead.
@@ -680,6 +677,13 @@ func probeRunRegistrySessions(
 		if !pidIsLive(pid) {
 			continue
 		}
+		// The two facts are recorded together, and neither is skipped because the
+		// other is already known. This loop used to give up on a record whose
+		// session an earlier probe had already excluded, on the reading that there
+		// was nothing left to do for it. There was: the exclusion set protects the
+		// SESSION, and the run id is what protects the WORKTREE. Leaving early
+		// kept the agent alive and handed the directory it works in to the
+		// force-remove below.
 		excludeSessions[rec.SessionName] = struct{}{}
 		liveRunIDs[rec.RunID] = struct{}{}
 		if logger != nil {
@@ -1022,11 +1026,20 @@ func RunOrphanSweep(
 	// or stale reviewer worktrees). Age is a conservative proxy for liveness:
 	// any worktree without a lease-lock that is older than the threshold is
 	// almost certainly not an active run. hk-qe736.
-	if len(sweepResult.NoLock) > 0 {
-		agedResult := workspace.RemoveAgedNoLockWorktrees(ctx, projectDir, sweepResult.NoLock, harmonikWorktreeMaxAge(), cfg.Logger)
+	//
+	// The live-run exemption applies here for the same reason it applies at (b2),
+	// and it is not the same case twice. The lease sweep RELEASES a lease it
+	// judged stale before it hands the path back, so a run that outlived the
+	// daemon arrives at the NEXT boot holding no lease at all and lands in this
+	// list rather than the one above. Age says nothing about that run: it is old
+	// because the checkout is old, not because the agent stopped. Guarding only
+	// the force-removal would spare a live agent for exactly one restart.
+	agedCandidates := worktreesNotHeldByALiveRun(sweepResult.NoLock, liveRunIDs, cfg.Logger)
+	if len(agedCandidates) > 0 {
+		agedResult := workspace.RemoveAgedNoLockWorktrees(ctx, projectDir, agedCandidates, harmonikWorktreeMaxAge(), cfg.Logger)
 		result.WorktreeDirsRemoved += len(agedResult.Removed)
 		if len(agedResult.Failed) > 0 {
-			errs = append(errs, fmt.Sprintf("worktree-aged-gc: %d of %d removals failed", len(agedResult.Failed), len(sweepResult.NoLock)))
+			errs = append(errs, fmt.Sprintf("worktree-aged-gc: %d of %d removals failed", len(agedResult.Failed), len(agedCandidates)))
 		}
 	}
 

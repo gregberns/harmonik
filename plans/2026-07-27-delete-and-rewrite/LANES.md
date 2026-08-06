@@ -842,12 +842,41 @@ Neither lane may decide these. Each one is stated with what it blocks and what e
    check instead admits the machine's guarding phase is decorative. A run-state-machine spec amendment
    travels with either answer. The map files this as D2 and schedules it one step late.
 
-2. **Three abandoned branches sit in the lane namespace. Reconcile them or delete them.**
-   `work/cq-mig-01` is 44 commits ahead and 256 behind, last touched 2026-07-26, with 93 files
-   including 8 in `internal/core` — among them `transition.go`, the seam bravo's largest item
-   rewrites. `work/arch-01-contract` and `work/cq-01` are one commit each and about 210 behind. All
-   three have dirty worktrees. **An agent must not delete 44 commits of someone else's work**, and
-   leaving them costs bravo a contested file. If they are dead, saying so takes one sentence.
+2. **Three abandoned branches sat in the lane namespace. Reconcile them or delete them. Still open
+   — and one of them was deleted, reported unrecoverable, and then recovered.**
+
+   `work/arch-01-contract` and `work/cq-01` are one commit each and about 210 behind. Both are
+   preserved by tag: `preserve/arch-01-contract-20260806` and `preserve/cq-01-wip-20260806`.
+
+   **`work/cq-mig-01` was deleted between 2026-08-01 and 2026-08-06.** No branch ref, no reflog
+   entry, no worktree, not on `origin`, and — unlike the other two this item names — no `preserve/*`
+   tag was made for it before the ref went away. It was reported to the operator on 2026-08-06 as
+   44 commits of work that were gone for good.
+
+   **That report was wrong. The work is recovered.** The commits were still in the object database
+   as dangling objects; `git fsck` lists 2025 of them, and the earlier check that reported zero does
+   not reproduce. No name survives, so the branch was identified by fingerprint: 42 commits ahead of
+   its merge base, 88 changed files, 15 in `internal/daemon`, 8 in `internal/core` including
+   `transition.go`, and exactly the eleven specs this item already listed, `specs/run-state-machine.md`
+   and `specs/execution-model.md` among them. Verified complete — zero missing objects.
+
+   It is tagged `preserve/cq-mig-01-20260806` at `6b7b78c31`, last commit 2026-07-26. A sibling tip
+   one commit apart is tagged `preserve/cq-mig-01-alt-20260806`; neither descends from the other and
+   nothing dangling descends from either, so both are kept until someone chooses.
+
+   Two figures from the 2026-08-01 measurement do not reproduce against the recovered tip: 44 commits
+   and 93 files, against 42 and 88 here. The eleven specs and both package counts match exactly, so
+   this is the branch; the likely cause is a different base for the count. **Treat both sets as
+   approximate.** Neither method was recorded, so 42 and 88 are not a correction.
+
+   **The operator decision is unchanged and still needed: reconcile this work or declare it dead.**
+   Recovery only means the choice still exists. Until it is made, `internal/core/transition.go` stays
+   contested and any commit touching it says so.
+
+   **What this cost, so it is not repeated.** An agent deleted a branch that this very item named as
+   one an agent must not delete, and the loss stayed invisible for days because a deleted ref leaves
+   nothing that any status command reads. The two branches that survived did so because somebody
+   tagged them first. Tag before delete.
 
 3. **Reconcile `main`.** Still the one move that fixes the stale lint base, the poisoned worktree
    source and the required check together. `origin/main` is divergent and its required check has been

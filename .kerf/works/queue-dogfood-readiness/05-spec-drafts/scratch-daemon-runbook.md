@@ -6,12 +6,22 @@
 > Do not let a finalize recreate it. A runbook belongs in `docs/`, and
 > `docs/scratch-daemon-runbook.md` already exists.
 >
-> STILL OUTSTANDING, and this is the part worth acting on: the plan of record
-> DID authorize a change here - "the local, non-Pi, one-item readiness procedure
-> and evidence retention". That change went only into the file that was then
-> deleted, so the authorized content was LOST rather than landed. It is not in
-> `docs/scratch-daemon-runbook.md` today. Restoring it to the docs copy is real
-> work that nobody has done.
+> RECOVERED 2026-08-05. The plan of record DID authorize a change here - "the
+> local, non-Pi, one-item readiness procedure and evidence retention". That
+> change went only into the file that was then deleted, so the authorized
+> content was lost rather than landed. It is now restored, as
+> "## Queue-readiness procedure" in `docs/scratch-daemon-runbook.md`, written
+> against the commands that shipped.
+>
+> Do NOT copy the "## Queue-readiness procedure" section BELOW over the docs
+> copy. Two of its rules are dead. The one-item and concurrency-of-one
+> rejections were withdrawn by the operator on 2026-08-04, and
+> `internal/queue/readiness` has no rejection reason for them. And
+> `make queue-dogfood-readiness-validate` does not exist - the shipped target is
+> `make queue-dogfood-readiness`, which calls `harmonik queue readiness capture`
+> and `harmonik queue readiness validate`. The rest of this draft is also behind
+> the docs copy, which gained the retained event capture after the draft was
+> cut.
 >
 > Bead: `hk-6lt60`.
 

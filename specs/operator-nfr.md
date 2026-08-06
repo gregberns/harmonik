@@ -1604,7 +1604,8 @@ Downstream specs inbound-citing ON events (`operator_pause_status`, `operator_st
 > **ON-052 — Terminal recovery drain outcome — RETIRED 2026-08-05, and the
 > number is not reusable.** It required ordered drain to treat
 > committed-but-unmerged work as a special outcome, required the per-step
-> timeout to either complete the terminal ladder or leave the EM-053a record,
+> timeout to either complete the terminal ladder or leave the EM-053a record
+> (itself retired on 2026-08-05),
 > required the daemon to hold its resources until "that selected owner" permits
 > release, and required a controlled-load proof to record load, timeout, stop
 > point and retained artifacts.

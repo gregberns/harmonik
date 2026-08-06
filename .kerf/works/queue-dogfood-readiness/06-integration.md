@@ -20,6 +20,14 @@ event cohort source before asserting a count.
    declares `attempts`, `last_failure_reason`, and `review_loop_failures`.
    Recovery resets only attempts and last failure. It retains the prior run ID
    and review-loop count, as the current queue model does.
+
+   > **CORRECTED 2026-08-06. "It retains the prior run ID" is false.**
+   > `RearmFailedItems` calls `ReactivateFailedItem`, which sets `RunID` to nil
+   > on every re-armed item, and `internal/queue/resume_test.go` pins it.
+   > Recovery retains the review-loop count only. This sentence was the record
+   > that a retirement banner in `05-spec-drafts/queue-model.md` leaned on to
+   > call QM-058's `run_id` clause false. The clause is true and it now lives in
+   > QM-052b. Bead: hk-6lt60.
 2. Recovery could re-arm a queue item whose Bead remained `in_progress`.
    QM-052b and BI-013f now require one read-only, all-items-open preflight.
    Failure leaves the queue unchanged and emits no recovery event or wake.
@@ -132,8 +140,15 @@ referenced specification.
 > longer describes a live rule. `EV-051` is retired in `specs/event-model.md`,
 > and no recovery event is registered in its place, so the sentence below that
 > says "`queue_recovered` is the only recovery observation" describes no live
-> event. Read this section as a record of what the losing lane drafted, not as a
-> list of live requirements. Bead: hk-6lt60.
+> event. The appended run-state-machine Amendment A2 is retired too, and the
+> RSM-021 replacement the plan of record authorized is landed in its place.
+> `EM-053a` is retired in `specs/execution-model.md`, and the number is burned
+> because the approved draft uses it for a second, different rule that has not
+> landed. `QM-058` is retired in `specs/queue-model.md`, because §8.3b QM-052b
+> already names the same operation. `QM-058a` and `QM-059` are the two
+> identifiers in this list that SURVIVE: both are implemented and both are cited
+> by number in shipped code. Read this section as a record of what the losing lane drafted, not as
+> a list of live requirements. Bead: hk-6lt60.
 
 #### Consistency checks
 

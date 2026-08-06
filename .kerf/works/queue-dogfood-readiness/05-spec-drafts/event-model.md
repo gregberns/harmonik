@@ -2049,7 +2049,9 @@ Default-if-unresolved: Implement `recover_and_log`; `quarantine_consumer` and `f
 > also names no event type and adds no §8 row, which §4.6 EV-027 requires of
 > every addition amendment. The identifier is retired in `specs/event-model.md`
 > and is not reusable. The Class-O `queue_recovered` section earlier in this
-> draft carries a HOLD banner of its own. Bead: hk-6lt60.
+> draft carries a HOLD banner of its own. The "QM-058" the text below names is
+> retired too, in `specs/queue-model.md`, because it named the same operation as
+> §8.3b QM-052b. Bead: hk-6lt60.
 
 ### EV-051 — Failed recovery events
 

@@ -538,6 +538,21 @@ subsumed path, which passes no flag).
 | 2026-07-30 | 0.2.2 | agent (spec citation cleanup) | **Rotted pointers repaired. No obligation changed.** The workflow mode `review-loop` was retired and its driver deleted, so `core.WorkflowMode.Valid()` now accepts only `single` and `dot`. The retired mode is removed from the mode lists in RSM-007, RSM-008, RSM-031 and RSM-032. What each of those rules requires is unchanged. Three approximate line-number citations into `workloop.go` are replaced by symbol names (`beadRunOne`, the `d2APIKeyRefusal` constant, the `abortReason` constant), per the repo convention to cite symbols and never line numbers. RSM-008 also gains an OPEN note that records a question the sweep found but must not settle: the rule confines both post-exit guards to the single-shot path, almost all runs take the graph path, and the choice between extending the guards and dropping the protection claim belongs to the operator. References to the event `review_loop_cycle_complete` and to the review-loop-failure budget are left alone, because `core.EventTypeReviewLoopCycleComplete`, `ChargeReviewLoopFailure` and `MaxReviewLoopFailures` all still exist. |
 | 2026-07-27 | 0.2.1 | agent (codename: input-ack-contract) | **Input-ack consumption reconciled with the owner contracts (coordinated drift correction; co-landed with [agent-input.md] 0.1.1 and [handler-contract.md] 0.8.1).** RSM-027 carried a three-valued acceptance class (`Accepted` / `Rejected` / `Degraded`) that never existed in the owner specs: the `Ack` outcome landed BINARY (`Delivered` / `Rejected`) in AIS-003 / HC-070 the day after this spec, with positive acceptance decoupled onto the async `agent_input_acked` event. RSM-027 is amended in place (NOT renumbered) to consume that contract: `Ack{Delivered}` is a driver handoff that leaves positive acceptance pending; `Ack{Rejected}` fail-closes to RSM-025; the correlated `agent_input_acked` is the positive-acceptance event; the correlated `agent_input_stale` fail-closes to RSM-025. The four routes are stated as total. The `input_seq` consumption rule is made explicit — consume the first synchronous outcome once, then the first correlated asynchronous terminal wins; drop only repeated or late observations, never the first `agent_input_acked`; add no second timer. RSM-024's resume-seed bullet is reconciled so a `Delivered` return alone no longer satisfies the sub-bound, citing AIS-003 + AIS-004 + AIS-INV-001 as the composite authority. RSM-027 also names the run-level backstop for a `Delivered` whose async terminal never arrives: the already-composed RSM-024 timer stack (ready sub-bound, `post_ready_hang`, absolute commit-watchdog ceiling) routing to RSM-025 — NOT a new input timer. The correlation bullet also attributes the sequence id to AIS-003b and its serialized `input_seq` payload field name to [event-model.md §6.3], keeping this spec clear of the event payload. `Accepted`, `Degraded`, and the "three-valued acceptance class" are removed. No requirement renumbered; no port, `Ack` record, event schema, timer semantics, or production behaviour changed. |
 
+> **RETIRED 2026-08-05. DO NOT COPY AMENDMENT A2 INTO `specs/`.** It comes from
+> the second, superseded changelog table. It replaced nothing, it gated the only
+> shutdown terminal spine on an EM-053a record that names no storage medium and
+> has no writer, and it cited a selection matrix no document defines. The label
+> A2 is retired in `specs/run-state-machine.md` and is not reusable.
+>
+> This draft's RSM-021 replacement in §7 IS authorized and IS now landed, with
+> one exception. The draft says the reopen result is `ReopenBead` then
+> `run_failed` on every failure path. The shipped drain does that on one of the
+> four: a close failure reopens and emits `run_failed`, and a missing tip, a
+> synchronize failure and a merge failure reopen and emit no run terminal.
+> Extending the terminal to those three changes behavior, so that clause is held
+> for card T5b, which owns the choice. Do not copy it in without the code.
+> Bead: hk-6lt60.
+
 ## Amendment A2 — durable shutdown handoff
 
 RSM-021 remains the only in-process shutdown terminal spine. The coordinator

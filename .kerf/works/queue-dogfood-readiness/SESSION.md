@@ -52,6 +52,13 @@ records are on disk.
   any record is missing, unreadable, or non-open.
 - Recovery retains the prior run ID and review-loop count. It resets attempts
   and the last failure reason only.
+  > **CORRECTED 2026-08-06. The run ID half is false and this line is where the
+  > error started.** Recovery clears `run_id` on every item it re-arms:
+  > `RearmFailedItems` calls `ReactivateFailedItem`, which sets `RunID` to nil,
+  > and `internal/queue/resume_test.go` pins it. Only the review-loop count is
+  > retained. This claim was copied into the spec draft twice and into
+  > `06-integration.md` once, and it was nearly the reason for deleting a true
+  > normative rule. All three copies are corrected. Bead: hk-6lt60.
 - The readiness target has named required inputs, retained artifact paths, and
   a validator that makes no Beads or fleet-daemon call.
 

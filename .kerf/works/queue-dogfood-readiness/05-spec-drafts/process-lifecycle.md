@@ -1841,6 +1841,12 @@ Cross-ref: PL-021b §4 (window-naming determinism), PL-021b §8 (window-name in 
 
 ### PL-032 — Failed recovery command
 
+> **CITATION STALE 2026-08-05.** "QM-058" below is retired in
+> `specs/queue-model.md` and its number is not reusable, because it named the
+> same operation as §8.3b QM-052b. Any landing of PL-032 must name QM-052b.
+> PL-032 itself is also still outstanding: it duplicates the `queue-recover`
+> contract that landed separately as PL-003a and PL-028. Bead: hk-6lt60.
+
 The daemon socket and CLI MUST expose a failed-recovery command distinct from
 drain resume. It MUST report accepted, no-op, and rejected results only after
 QM-058 commits. Its response MUST include the durable recovery receipt.

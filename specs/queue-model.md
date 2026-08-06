@@ -8,10 +8,10 @@ requirement-prefix: QM
 status: draft
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.1.7
+version: 0.1.8
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-07-27
+last-updated: 2026-08-05
 depends-on:
   - architecture
   - execution-model
@@ -69,7 +69,7 @@ RECORD Queue:
                                   -- on-disk file is .harmonik/queues/<name>.json (NQ-A2)
   workers           : Integer     -- per-queue concurrent-dispatch ceiling (QM-066, NQ-B1); omitted/0
                                   -- defaults to --max-concurrent; may oversubscribe (global cap still wins)
-  failed_recovery_receipt_id : UUID | None -- set only by the QM-058 failed-recovery transaction
+  failed_recovery_receipt_id : UUID | None -- set only by the §8.3b QM-052b failed-recovery transaction, per QM-058a
 ```
 
 > INFORMATIVE: **Named queues have no special semantics (N4).** The `name` field is a durable routing key — it determines which `.harmonik/queues/<name>.json` file the queue persists to and which per-queue worker pool dispatches it. The daemon assigns no special behavior to any particular name. For example, the flywheel bridge (per [/Users/gb/github/harmonik/specs/cognition-loop.md]) routes investigation beads to an 'investigate' named queue — that queue is mechanically identical to 'main'; the routing to a subscription-billed Claude worker is a property of which daemon process subscribes to it, not of the queue-model itself. There is no per-queue budget (N2): the queue-model is a mechanism-tagged subsystem with no gate/hook/budget points per §4.1(f). Any cost governance lives at the credential-isolation layer ([/Users/gb/github/harmonik/specs/credential-isolation.md]), not here.
@@ -1057,7 +1057,10 @@ write, and no dispatch wake. This stops a durable recovery that cannot claim its
 own work.
 
 Inside one QM-001 transaction the daemon MUST re-arm every failed item in that
-queue: `failed → pending`, `attempts → 0`, and `last_failure_reason → None`. It
+queue: `failed → pending`, `attempts → 0`, `last_failure_reason → None`, and
+`run_id → None`. Clearing `run_id` is what stops a re-armed item from still
+naming the run that failed it. The retired identity is not lost: QM-058a's
+receipt records it per item as `retired_run_id`. It
 MUST reopen each group that had reached `complete-with-failures` to `active`,
 and set the queue status to `active`. The transaction MUST install the candidate
 durably before it returns success. A write failure or a stale snapshot MUST
@@ -1068,10 +1071,21 @@ After a committed transaction the daemon MUST wake dispatch. Recovery success
 means only that the queue mutation is durable. It does not mean any item has
 dispatched.
 
-The operation MUST refuse a missing queue, a queue in any status other than
-`paused-by-failure`, a quarantined queue, a failed preflight, and every failed
-transaction. It MUST return exactly one typed rejection carrying a `reason` from
-this closed enum:
+A repeated request for an already-recovered queue MUST return that queue's
+existing receipt without a second mutation and without a second receipt. An
+already-recovered queue is one whose status is `active` and whose
+`failed_recovery_receipt_id` is set. The receipt lookup and its identity checks
+are owned by QM-058a.
+
+The operation MUST refuse a missing queue, a queue that is neither
+`paused-by-failure` nor already recovered, a failed preflight, and every failed
+transaction. A queue refused on status MUST carry the `queue_quarantined` reason
+when it is quarantined and `queue_not_recoverable` when it is not. Quarantine
+alone does NOT refuse a queue in `paused-by-failure`: failed recovery is the one
+operation permitted to act on a quarantined parked queue, and it retains that
+quarantine until the durable classification of QM-059 completes. The operation
+MUST return exactly one typed rejection carrying a `reason` from this closed
+enum:
 
 ```
 ENUM QueueRecoveryReason: queue_not_found, queue_not_recoverable,
@@ -1088,6 +1102,30 @@ through `-32029`.
 A rejected recovery MUST NOT clear handler-pause state. Raw setters and direct
 persistence MUST NOT implement recovery; it requires the named QueueStore
 transaction so status and item state change in one candidate.
+
+This rule states the operation, its refusals and its wire codes. Two companion
+rules own the rest of the same operation and MUST be read with it: QM-058a owns
+the receipt identity, the receipt path, the transaction order and the restart
+classification, and QM-059 owns the transaction owner and the quarantine rule.
+The production entry point is `internal/queuewiring` `QueueStore.RecoverFailed`,
+which cites all three.
+
+> **Amended 2026-08-05.** Three clauses here disagreed with the shipped
+> operation and with the two companion rules, and each is repaired.
+>
+> The field list omitted `run_id → None`. `internal/queue`
+> `ReactivateFailedItem` sets `item.RunID = nil` for every re-armed item, and
+> `internal/queue/resume_test.go` pins it. The withdrawn QM-058 was the only
+> rule that stated the clearing, so it is folded in here before that rule
+> retires.
+> The first said the operation refuses "a quarantined queue" without
+> qualification, which contradicted QM-059's rule that failed recovery is the
+> only operation that can act on a quarantined parked queue. The second was an
+> absence: this rule gave a repeated request no answer, so its closed refusal
+> set implied `queue_not_recoverable` on the second call, while QM-058a
+> requires the existing receipt to come back. `RecoverFailed` implements the
+> companion rules on both points. No wire code, refusal reason or transaction
+> step changed. Bead: hk-6lt60.
 
 `operator-resume` aimed at a queue in `paused-by-failure` MUST be refused with a
 typed error that names `queue-recover`. Reporting success there is forbidden:
@@ -1330,6 +1368,29 @@ The following operations are explicitly out of scope for v0.1 and reserved for v
 
 ### A.4 Changelog
 
+v0.1.8 — 2026-08-05 — Failed recovery is one operation again (spec repair,
+hk-6lt60). QM-058 is retired and its number is not reusable. It described the
+same operation as §8.3b QM-052b under a second number, and it came from the
+second and superseded table of the `queue-dogfood-readiness` changelog. QM-052b
+gains the three clauses the split had left it wrong on. The re-arm field list
+now clears `run_id`, which was the one true statement QM-058 alone carried. A
+repeated request returns the existing receipt without a second mutation.
+Quarantine alone does not refuse a queue in `paused-by-failure`. All three match
+`internal/queuewiring` `QueueStore.RecoverFailed`. QM-052b now points at its two
+companion rules. **QM-058a and QM-059 are kept**, because they are the only
+written form of the receipt binding, the transaction order, the restart
+classification, the transaction owner and the quarantine rule, and shipped code
+cites both by number. No wire code, refusal reason or transaction step changed.
+
+v0.1.7 — 2026-08-02 to 2026-08-04 — Failed-queue recovery, written twice
+(entry back-filled 2026-08-05). Four commits landed under this version and none
+of them wrote a changelog entry or moved `last-updated`. The kerf finalize
+added QM-058 and QM-059 from the superseded changelog table. A follow-up spec
+commit added QM-058a, the receipt binding and restart classification. The
+implementation commit then added §8.3b QM-052b, the plan of record's number for
+the same operation, without reconciling the two. A fourth commit amended §9.8
+QM-067 for a refused item. Refs: hk-6lt60.
+
 v0.1.6 — 2026-07-27 — Queue transaction and durability contract
 (`queue-transaction-contract`). Reconciles canonical named-queue topology and
 legacy-main migration; makes QueueStore the sole immutable
@@ -1392,14 +1453,60 @@ v0.1.0 — initial publication for extqueue work; see kerf/extqueue 05-changelog
 
 ## Amendment — durable failed-queue recovery
 
-### QM-058 — Failed recovery transaction
-
-The daemon MUST accept failed recovery only for a queue in
-`paused-by-failure`. One durable queue transaction MUST re-arm only failed
-items, reopen only failed groups, clear each retired `run_id`, and retain every
-completed item. The transaction MUST write a recovery receipt before dispatch
-can resume. A repeated request for the same recovered state MUST return that
-receipt without a second mutation.
+> **QM-058 — Failed recovery transaction — RETIRED 2026-08-05, and the number is
+> not reusable.** It required the daemon to accept failed recovery only for a
+> queue in `paused-by-failure`, required one durable transaction to re-arm only
+> failed items, reopen only failed groups, "clear each retired `run_id`" and
+> retain every completed item, required a recovery receipt before dispatch
+> resumes, and required a repeated request to return that receipt.
+>
+> **It described the same operation as §8.3b QM-052b, under a second number.**
+> Two rules for one operation is the failure this repair exists to remove. The
+> plan of record names the operation QM-052b: cards T1 through T4 of the kerf
+> work all cite "`queue-model.md` §8.3b QM-052b", and every production file that
+> implements it cites QM-052b first. QM-058 appears only in the second,
+> superseded changelog table, and both the changelog and the change design say
+> the plan of record wins a disagreement.
+>
+> **One of its clauses was the only statement of a real mutation, so it moved
+> before this rule retired.** "Clear each retired `run_id`" is true:
+> `internal/queue` `ReactivateFailedItem` sets `item.RunID = nil` for every
+> re-armed item, `internal/queue/resume_test.go` pins it, and the merge that
+> adopted the behavior said why — "without it a re-armed item still names the
+> run that failed it". QM-052b's field list did not name `run_id`, so it now
+> does. Nothing else in this rule is missing from QM-052b, QM-058a or QM-059.
+>
+> **Every clause worth keeping has a home.** The transaction, its preconditions,
+> its typed refusals and its wire codes are §8.3b QM-052b. The receipt and the
+> repeated-request answer are QM-058a below. The transaction owner and the
+> quarantine rule are QM-059 below. Nothing is lost by withdrawing this rule.
+>
+> **QM-058a and QM-059 are deliberately KEPT.** They are not duplicates. QM-058a
+> is the only statement of the receipt identity, the receipt path, the intent
+> binding, the transaction order and the four-way restart classification.
+> QM-059 is the only statement of the transaction owner and of the rule that a
+> quarantine clears only through a durable recovery classification. Both are
+> implemented and both are cited by number in shipped code —
+> `internal/queue/types.go`, `internal/queue/transaction.go`,
+> `internal/queue/cli/recover.go` and `internal/queuewiring/recovery.go` for
+> QM-058a, and `internal/queuewiring/recovery.go` and its test for QM-059.
+> Retiring
+> them would delete the only written form of behavior the daemon performs
+> today.
+>
+> **Two follow-ups this retirement does not do.** QM-058a and QM-059 still sit
+> after the §A.4 changelog rather than in §8 and §9 beside the rules they
+> extend, so a reader of §8.3b finds them only through the pointer added there.
+> And four citations across two scenario files —
+> `internal/scenario/named_queues_routing_test.go`, in its file header and in
+> two tests, and `internal/scenario/single_active_per_name_test.go` — name
+> "`specs/queue-model.md` §8.9 QM-058 (queue-list: enumerate all active
+> queues)". No §8.9 and no such rule has ever existed in this spec, `queue list`
+> has no requirement at all, and those citations are NOT references to the rule
+> retired here.
+>
+> Bead: hk-6lt60 (the finalize that took the losing table, and both follow-ups
+> above).
 
 ### QM-058a — Failed-recovery receipt binding and restart
 

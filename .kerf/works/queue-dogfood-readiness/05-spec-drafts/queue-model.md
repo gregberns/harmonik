@@ -69,7 +69,7 @@ RECORD Queue:
                                   -- on-disk file is .harmonik/queues/<name>.json (NQ-A2)
   workers           : Integer     -- per-queue concurrent-dispatch ceiling (QM-066, NQ-B1); omitted/0
                                   -- defaults to --max-concurrent; may oversubscribe (global cap still wins)
-  failed_recovery_receipt_id : UUID | None -- set only by the QM-058 failed-recovery transaction
+  failed_recovery_receipt_id : UUID | None -- set only by the §8.3b QM-052b failed-recovery transaction, per QM-058a
 ```
 
 > INFORMATIVE: **Named queues have no special semantics (N4).** The `name` field is a durable routing key — it determines which `.harmonik/queues/<name>.json` file the queue persists to and which per-queue worker pool dispatches it. The daemon assigns no special behavior to any particular name. For example, the flywheel bridge (per [/Users/gb/github/harmonik/specs/cognition-loop.md]) routes investigation beads to an 'investigate' named queue — that queue is mechanically identical to 'main'; the routing to a subscription-billed Claude worker is a property of which daemon process subscribes to it, not of the queue-model itself. There is no per-queue budget (N2): the queue-model is a mechanism-tagged subsystem with no gate/hook/budget points per §4.1(f). Any cost governance lives at the credential-isolation layer ([/Users/gb/github/harmonik/specs/credential-isolation.md]), not here.
@@ -127,7 +127,7 @@ ENUM GroupStatus:
 RECORD Item:
   bead_id           : BeadID                -- Beads ledger reference; immutable
   status            : ItemStatus            -- per-item state (see §2.7)
-  run_id            : UUID | None           -- daemon-minted on transition to dispatched per [execution-model.md §4.3]
+  run_id            : UUID | None           -- daemon-minted on transition to dispatched per [execution-model.md §4.3]; set to None on every item QM-052b recovery re-arms
   appended_at       : Timestamp | None      -- set when appended post-submit (streams only); None for submit-time items
   workflow_mode     : String | None         -- optional per-item workflow-mode override (EM-012a)
   workflow_ref      : String | None         -- optional path to the dot workflow when workflow_mode="dot"
@@ -138,11 +138,21 @@ RECORD Item:
   review_loop_failures : Integer            -- accumulated review-loop failures; retained across recovery
 ```
 
-`run_id` is the last dispatched run reference. QM-052b retains it for audit and
-restart inspection. `attempts` counts outer-loop dispatch attempts. It is zero
+`run_id` is the last dispatched run reference. QM-052b recovery sets it to None
+on every item it re-arms, so it survives only on items that recovery does not
+touch. `attempts` counts outer-loop dispatch attempts. It is zero
 in a new item and resets only when a failed queue recovers. `last_failure_reason`
 is diagnostic state. `review_loop_failures` is an independent bounded-spend
 counter. Recovery does not reset it.
+
+> **CORRECTED 2026-08-06.** This paragraph said "QM-052b retains it for audit
+> and restart inspection". That is false. `internal/queue` `RearmFailedItems`
+> calls `ReactivateFailedItem`, which sets `RunID` to nil on every re-armed
+> item, and `internal/queue/resume_test.go` pins it. The error mattered here
+> more than elsewhere because this directory is a finalize input: the sentence
+> named QM-052b by number and would have been copied into `specs/` on the next
+> finalize, over the QM-052b amendment that makes clearing `run_id` normative.
+> Bead: hk-6lt60.
 
 **`template_params` ingestion validation (normative).** Template params are **UNTRUSTED** ([workflow-graph.md §4 WG-045]): they are settable by any local agent over the queue-submit RPC and MAY carry external data. The daemon MUST validate `template_params` at submit time and **reject** the request (typed JSON-RPC error, before persist) when any key does not match `^[A-Z][A-Z0-9_]*$` (or exceeds 128 bytes), or any value contains a NUL/newline/other ASCII or Unicode control character, or any value exceeds an 8192-byte cap. Shell metacharacters in values are NOT rejected here — neutralising them is the post-parse shell-quoting close of [workflow-graph.md §4 WG-045], not the validator's job. The same validation is re-applied at the substitution chokepoint to cover the daemon-down local-persist path that bypasses the RPC. `queue-append` carries no `template_params`, so `queue-submit` is the sole ingestion chokepoint.
 
@@ -1417,6 +1427,22 @@ v0.1.1 — 2026-05-15 — gap-closure pass (hk-089gr). Six additive amendments s
 v0.1.0 — initial publication for extqueue work; see kerf/extqueue 05-changelog.md.
 
 ## Amendment — durable failed-queue recovery
+
+> **RETIRED 2026-08-05. DO NOT COPY QM-058 INTO `specs/`.** It describes the
+> same operation as §8.3b QM-052b, which is the plan of record's number for it —
+> cards T1 through T4 of this work all cite "§8.3b QM-052b". Its "clear each
+> retired `run_id`" clause is TRUE, and QM-058 was the only rule that stated it,
+> so the clause was folded into QM-052b BEFORE this retirement. `internal/queue`
+> `RearmFailedItems` calls `ReactivateFailedItem`, which sets `RunID` to nil on
+> every re-armed item, and `internal/queue/resume_test.go` pins it. Do not
+> restore QM-058 to recover that clause. QM-052b already carries it. An earlier
+> version of this banner called the clause false and cited this work's
+> integration record, which is wrong at the same point. See the correction at
+> `06-integration.md` "Contradictions Found" item 1. The identifier is retired in
+> `specs/queue-model.md` and is not reusable. **QM-058a and QM-059 below are NOT
+> retired.** They are the only written form of the receipt binding, the
+> transaction order, the restart classification, the transaction owner and the
+> quarantine rule, and shipped code cites both by number. Bead: hk-6lt60.
 
 ### QM-058 — Failed recovery transaction
 

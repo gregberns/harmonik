@@ -1068,6 +1068,17 @@ Refs: hk-ftyvo, hk-j1aq5
 
 #### EM-053a — Shutdown drain of a committed DOT run
 
+> **HOLD 2026-08-05 — RENUMBER BEFORE LANDING.** This rule is authorized. It is
+> the execution-model sibling of the RSM-021 replacement that landed on
+> 2026-08-05. Two things must happen before it goes into `specs/`. First, the
+> number: this draft uses EM-053a twice for two different rules, and the OTHER
+> one landed and is now retired in `specs/execution-model.md` with the number
+> burned. This rule needs a fresh identifier. Second, one clause: "call
+> `ReopenBead`, then emit `run_failed`" holds on every failure path here, and
+> the shipped drain does it on the close-failure path alone. The other three
+> paths reopen and emit no run terminal. Card T5b owns that choice, and the same
+> clause is held out of RSM-021 for the same reason. Bead: hk-6lt60.
+
 When shutdown begins after a DOT handler has committed work but before normal
 release completes, the daemon MUST treat the run as unfinished release work.
 This requirement amends the shutdown application of EM-052 and the restart
@@ -2214,6 +2225,16 @@ v0.3 chose (c) — path-scoping under `<run_id>/` — because it is a structural
 **Why the main-loop protocol was elevated to §7.4.** r2's orchestrator-implementer review found that v0.2's §7.2 (checkpoint-and-emit) and §7.3 (cascade) are clean drop-in pseudocode but the end-to-end main loop — from bead-claim to run-termination — is not expressible as a closed function against the spec alone. Three specific gaps: the `pick_one → create_run → dispatch` prefix has no owning section; the "when does a run end" decision lacks a single requirement; the dispatch-to-cascade handoff has no protocol analog. v0.3 adds §7.4 with `orchestrator_main_loop` and `execute_workflow` pseudocode, anchored by normative EM-015a (run_started emission), EM-015b (run_completed/run_failed emission), and EM-015c (terminal detection). S01 (Orchestrator Core) now has a single reading target rather than a four-spec cross-read.
 
 ## Amendment — terminal recovery record
+
+> **RETIRED 2026-08-05. DO NOT COPY THIS EM-053a INTO `specs/`.** It comes from
+> the second, superseded changelog table. The plan of record for this file is
+> the immutable Git-backed release claim, which landed on 2026-08-04 as §4.7
+> EM-031b. The two rules describe the same restart decision, cite neither each
+> other, and share no field. This one also names no storage medium, so it
+> posits a third store beside git and Beads, which EM-INV-001 and EM-031b bar.
+> The identifier is retired in `specs/execution-model.md` and is not reusable.
+> Note this draft uses EM-053a TWICE for two different rules — see the
+> shutdown-drain EM-053a earlier in this file. Bead: hk-6lt60.
 
 ### EM-053a — Durable committed-run recovery
 

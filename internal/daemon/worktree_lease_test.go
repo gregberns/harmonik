@@ -273,3 +273,197 @@ func wtLeaseContains(paths []string, want string) bool {
 	}
 	return false
 }
+
+// TestBootSweep_ASessionAnotherPassAlreadySparedStillProtectsItsWorktree covers
+// the half of the exemption that is easy to lose, because losing it looks like
+// nothing went wrong.
+//
+// The run probe writes two things: the session name into the shared exclusion
+// set, and the run id into the set that holds the worktree back. They are not
+// two spellings of one fact. The session keeps the agent's terminal; the run id
+// keeps the directory the agent writes into. A pass that produces one without
+// the other leaves a live agent typing into a checkout that has been deleted
+// underneath it, and the boot log says the run was protected.
+//
+// The exclusion set is shared and the run probe runs last, so it can find a
+// name another pass has already put there. The daemon's own spawn-target session
+// is the entry that gets in unconditionally, and ResolveDaemonSpawnSession takes
+// the tmux session the daemon is running in verbatim — so a daemon that comes up
+// inside a surviving run's session arrives at the run probe with that run's
+// session already exempt. Reading that as "this record is handled" skips the run
+// id, and the worktree goes.
+//
+// The abandoned run is the control. "The live run's worktree survived" is free
+// in a sweep that removed nothing, so a second run goes through the same call
+// with the same dead-process lease and its directory IS removed.
+func TestBootSweep_ASessionAnotherPassAlreadySparedStillProtectsItsWorktree(t *testing.T) {
+	t.Parallel()
+
+	repo := surviveRunRepo(t)
+	headSHA, headErr := resolveHEAD(t.Context(), repo)
+	if headErr != nil {
+		t.Fatalf("wtLease: resolve HEAD: %v", headErr)
+	}
+
+	// The run whose agent kept working after the daemon died.
+	const liveRun = "0f0e0d0c-0b0a-0908-0706-05040302cc01"
+	liveWT, liveCleanup, err := productionWorktreeFactory(t.Context(), repo, liveRun, headSHA)
+	if err != nil {
+		t.Fatalf("wtLease: create the live run's worktree: %v", err)
+	}
+	defer liveCleanup()
+	// Both leases name the daemon that took them, and that daemon is gone. The
+	// registry is the only thing that tells the two runs apart.
+	wtLeaseOverwriteHolder(t, liveWT, wtLeaseNoSuchProcess)
+
+	// The run whose agent went with the daemon. Nothing is working in here.
+	const abandonedRun = "0f0e0d0c-0b0a-0908-0706-05040302cc02"
+	abandonedWT, abandonedCleanup, err := productionWorktreeFactory(t.Context(), repo, abandonedRun, headSHA)
+	if err != nil {
+		t.Fatalf("wtLease: create the abandoned run's worktree: %v", err)
+	}
+	defer abandonedCleanup()
+	wtLeaseOverwriteHolder(t, abandonedWT, wtLeaseNoSuchProcess)
+
+	liveSession := lifecycle.TmuxSessionName(surviveRecoveryHash, "run-0f0e0d0c0b0a0908")
+	if writeErr := runpkg.Write(repo, runpkg.Record{
+		SchemaVersion: 1,
+		RunID:         liveRun,
+		BeadID:        "hk-still-being-worked",
+		SessionName:   liveSession,
+	}); writeErr != nil {
+		t.Fatalf("wtLease: write the live run's record: %v", writeErr)
+	}
+
+	adapter := &surviveRecoveryPanePIDs{live: map[string]int{liveSession: os.Getpid()}}
+	server := &surviveRecoverySessions{names: []string{liveSession}}
+
+	if _, sweepErr := RunOrphanSweep(t.Context(), repo, surviveRecoveryHash, time.Now(),
+		OrphanSweepConfig{
+			TmuxAdapter:   adapter,
+			TmuxLister:    server,
+			TmuxKiller:    server,
+			HandlerLister: surviveRecoveryNoProcesses{},
+			BrLister:      surviveRecoveryNoProcesses{},
+			// The run's session is already exempt before the run probe reads the
+			// registry. This is the one entry the sweep adds without asking anything
+			// about liveness, and it is the shape the defect needs.
+			DaemonSpawnSession: liveSession,
+		}); sweepErr != nil {
+		t.Logf("RunOrphanSweep reported non-fatal step errors: %v", sweepErr)
+	}
+
+	if _, statErr := os.Stat(abandonedWT); statErr == nil {
+		t.Fatalf("the sweep left the abandoned run's worktree at %s on disk.\n"+
+			"The reclaim did not run in this fixture, so the check below would report a "+
+			"protected live worktree when the truth is that nothing was removed at all.",
+			abandonedWT)
+	}
+
+	if _, statErr := os.Stat(liveWT); statErr != nil {
+		t.Errorf("the boot sweep removed %s, the worktree of a run whose agent is still "+
+			"working in it: %v\n"+
+			"Its session WAS spared — an earlier pass had already exempted the name. The run "+
+			"probe read that as nothing left to do and never recorded the run as live, so the "+
+			"agent kept its terminal and lost the directory it was working in.",
+			liveWT, statErr)
+	}
+}
+
+// TestBootSweep_TheAgePruneAlsoSparesARunThatOutlivedTheDaemon is the second
+// place the same exemption has to hold, and it is not the same case twice.
+//
+// The lease sweep RELEASES a lease it judged stale before it hands the path
+// back. So a surviving run's worktree is protected on the boot that finds the
+// lease, and arrives at the NEXT boot carrying no lease at all — which puts it
+// in the other list, the one the age prune walks. Age says nothing about that
+// run: the checkout is old because the run is long, not because the agent
+// stopped. Guarding only the force-removal would spare a live agent for exactly
+// one restart.
+//
+// Neither worktree here has a lease and both are old enough to prune, so the
+// only thing separating them is the run registry. The abandoned one is the
+// control: it goes through the same call and IS removed, so the live one
+// surviving is the exemption rather than a prune that did nothing.
+func TestBootSweep_TheAgePruneAlsoSparesARunThatOutlivedTheDaemon(t *testing.T) {
+	// t.Setenv, so this test cannot be parallel.
+	t.Setenv(EnvHarmonikWorktreeMaxAgeDays, "1")
+
+	repo := surviveRunRepo(t)
+	headSHA, headErr := resolveHEAD(t.Context(), repo)
+	if headErr != nil {
+		t.Fatalf("wtLease: resolve HEAD: %v", headErr)
+	}
+
+	const liveRun = "0f0e0d0c-0b0a-0908-0706-05040302bb01"
+	const abandonedRun = "0f0e0d0c-0b0a-0908-0706-05040302bb02"
+	liveWT := wtLeaseAgedUnleasedWorktree(t, repo, headSHA, liveRun)
+	abandonedWT := wtLeaseAgedUnleasedWorktree(t, repo, headSHA, abandonedRun)
+
+	liveSession := lifecycle.TmuxSessionName(surviveRecoveryHash, "run-0f0e0d0c0b0a0908")
+	if writeErr := runpkg.Write(repo, runpkg.Record{
+		SchemaVersion: 1,
+		RunID:         liveRun,
+		BeadID:        "hk-still-being-worked",
+		SessionName:   liveSession,
+	}); writeErr != nil {
+		t.Fatalf("wtLease: write the live run's record: %v", writeErr)
+	}
+
+	adapter := &surviveRecoveryPanePIDs{live: map[string]int{liveSession: os.Getpid()}}
+	server := &surviveRecoverySessions{names: []string{liveSession}}
+
+	if _, sweepErr := RunOrphanSweep(t.Context(), repo, surviveRecoveryHash, time.Now(),
+		OrphanSweepConfig{
+			TmuxAdapter:   adapter,
+			TmuxLister:    server,
+			TmuxKiller:    server,
+			HandlerLister: surviveRecoveryNoProcesses{},
+			BrLister:      surviveRecoveryNoProcesses{},
+		}); sweepErr != nil {
+		t.Logf("RunOrphanSweep reported non-fatal step errors: %v", sweepErr)
+	}
+
+	if _, statErr := os.Stat(abandonedWT); statErr == nil {
+		t.Fatalf("the age prune left the abandoned run's worktree at %s on disk.\n"+
+			"The prune did not run in this fixture, so the check below would report a protected "+
+			"live worktree when the truth is that nothing was pruned at all.", abandonedWT)
+	}
+
+	if _, statErr := os.Stat(liveWT); statErr != nil {
+		t.Errorf("the age prune removed %s, the worktree of a run whose agent is still working "+
+			"in it: %v\n"+
+			"The lease sweep released this worktree's lease on the previous boot, so it now looks "+
+			"unleased and old. The registry is the only thing left that says an agent has it.",
+			liveWT, statErr)
+	}
+}
+
+// wtLeaseAgedUnleasedWorktree makes a run's worktree, removes its lease, and
+// backdates every file in it so the age prune sees an old directory.
+//
+// The lease is removed rather than never written because the production factory
+// takes one — this is the state the LEASE SWEEP leaves behind after it releases a
+// lease it judged stale, which is the case the caller is about.
+func wtLeaseAgedUnleasedWorktree(t *testing.T, repo, headSHA, runID string) string {
+	t.Helper()
+	wtPath, cleanup, err := productionWorktreeFactory(t.Context(), repo, runID, headSHA)
+	if err != nil {
+		t.Fatalf("wtLease: create the worktree for run %s: %v", runID, err)
+	}
+	t.Cleanup(cleanup)
+	if relErr := workspace.ReleaseLeaseLock(workspace.LeaseLockPath(wtPath)); relErr != nil {
+		t.Fatalf("wtLease: release the lease so the worktree reads unleased: %v", relErr)
+	}
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	walkErr := filepath.Walk(wtPath, func(path string, _ os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		return os.Chtimes(path, old, old)
+	})
+	if walkErr != nil {
+		t.Fatalf("wtLease: backdate the worktree so the age prune sees it as old: %v", walkErr)
+	}
+	return wtPath
+}

@@ -590,31 +590,3 @@ func TestGitWinsB3F65_ScenarioB_JSONLMustNotOverrideGit(t *testing.T) {
 // ──────────────────────────────────────────────────────────────────────────────
 // Forward-doc marker for the Cat 3 classifier
 // ──────────────────────────────────────────────────────────────────────────────
-
-// TestGitWinsB3F65_ForwardDocMarkerCat3Classifier is a forward-doc marker for
-// hk-b3f.65 (EM-INV-005 behavioral sensor).
-//
-// The Cat 3 classifier (which routes Beads-closed/no-merge-commit and
-// JSONL-missing-commit divergences to investigator dispatch) is not yet
-// implemented.  When it lands, the implementer SHOULD:
-//
-//  1. Delete this forward-doc marker, OR
-//  2. Replace the t.SkipNow() call with concrete assertions against the
-//     classifier — verifying that Scenario A → Cat 3 dispatch and Scenario B →
-//     Cat 3 (or Cat 6b) dispatch, and that neither route silently auto-reconciles.
-//
-// Spec refs: execution-model.md §5 EM-INV-005; beads-integration.md §4.7 BI-022;
-// reconciliation/spec.md §8.4 Cat 3; reconciliation/spec.md §8.4 RC-INV-001.
-// Requirement-traceable bead: hk-b3f.65.
-func TestGitWinsB3F65_ForwardDocMarkerCat3Classifier(t *testing.T) {
-	t.Log("EM-INV-005 (hk-b3f.65): git wins on completion disagreement — behavioral sensor.")
-	t.Log("")
-	t.Log("Scenario A: Beads-closed / no-merge-commit → MUST route to Cat 3 investigator dispatch.")
-	t.Log("Scenario B: JSONL-references-missing-commit → MUST route to Cat 3 (or Cat 6b) flag.")
-	t.Log("")
-	t.Log("Forbidden in both scenarios: silent auto-reconciliation in any direction (EM-INV-005, BI-022).")
-	t.Log("")
-	t.Log("Cat 3 classifier not yet implemented.")
-	t.Log("When the classifier lands, extend ScenarioA and ScenarioB tests with concrete dispatch assertions.")
-	t.SkipNow()
-}

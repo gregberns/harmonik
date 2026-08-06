@@ -24,11 +24,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
@@ -265,71 +263,36 @@ func TestJSONLWriterAppendAfterCloseReturnsError(t *testing.T) {
 	}
 }
 
-// TestJSONLWriterFsyncConcurrentLatency is the functional counterpart to
-// BenchmarkJSONLWriterFsyncLatency. It verifies that N=10 concurrent goroutines
-// each emitting sync=true (F-class) events complete within the 50 ms P99
-// acceptance bound from hk-5zode. The test measures wall-clock latency per
-// Append call and asserts P99 < 50 ms.
+// TestJSONLWriterFsyncConcurrentLatency WAS HERE, and it measured the machine
+// rather than the writer. Deleted 2026-08-05 (hk-v6ee0). What it did and what
+// its removal costs, because a deletion that is not explained gets undone.
 //
-// This is a functional test (not a benchmark) so it always runs under `go test`.
-// The wall-clock budget is conservative enough to pass on CI while still
-// exercising the drainer's concurrency behaviour.
+// IT WAS NOT A P99. It timed 10 goroutines times 10 Appends, which is 100
+// samples, sorted them, and read index int(100*0.99) = 99 — the LARGEST of the
+// 100. One slow fsync failed the build. That is a maximum, and a maximum over
+// 100 samples on a shared laptop is a coin toss, not an acceptance bound.
 //
-// Bead ref: hk-5zode acceptance criterion.
-func TestJSONLWriterFsyncConcurrentLatency(t *testing.T) {
-	t.Parallel()
-
-	const runs = 10
-	const eventsPerRun = 10
-
-	path := jsonlWriterFixtureTempPath(t, "fsync_latency.jsonl")
-	w, err := eventbus.OpenJSONLWriter(path)
-	if err != nil {
-		t.Fatalf("OpenJSONLWriter: %v", err)
-	}
-	defer eventbusFixtureClose(t, w)
-
-	line := []byte(`{"type":"run_started","run_id":"test"}`)
-
-	var (
-		mu        sync.Mutex
-		latencies []time.Duration
-	)
-
-	var wg sync.WaitGroup
-	wg.Add(runs)
-	for range runs {
-		go func() {
-			defer wg.Done()
-			for range eventsPerRun {
-				start := time.Now()
-				if appendErr := w.Append(line, true); appendErr != nil {
-					t.Errorf("Append(sync=true): %v", appendErr)
-					return
-				}
-				elapsed := time.Since(start)
-				mu.Lock()
-				latencies = append(latencies, elapsed)
-				mu.Unlock()
-			}
-		}()
-	}
-	wg.Wait()
-
-	// Compute P99 over collected latencies.
-	sort.Slice(latencies, func(i, j int) bool { return latencies[i] < latencies[j] })
-	p99idx := int(float64(len(latencies)) * 0.99)
-	if p99idx >= len(latencies) {
-		p99idx = len(latencies) - 1
-	}
-	p99 := latencies[p99idx]
-
-	const budget = 50 * time.Millisecond
-	if p99 > budget {
-		t.Errorf("P99 Append latency %v exceeds 50ms budget (hk-5zode acceptance criterion)", p99)
-	}
-	t.Logf("Append latency at N=%d runs, %d F-class events/run: P99=%v", runs, eventsPerRun, p99)
-}
+// MEASURED 2026-08-05 on this tree at efbd62d33, with the writer unchanged
+// between the two runs:
+//   quiet box, -count=3            PASS 3 of 3
+//   inside `make fast`             FAIL, P99 73.98ms
+//   with 8 unrelated fsync writers FAIL, P99 56.87ms
+// The verdict follows the load on the box. Nothing about the code moved.
+//
+// WHAT THE DELETION COSTS. No test now fails when F-class Append latency
+// regresses. That is a real loss and it is the honest position: the assertion
+// that was here could not tell a regression from a busy disk, so a red from it
+// was never evidence and a green from it was never protection.
+//
+// WHAT STILL COVERS hk-5zode. BenchmarkJSONLWriterFsyncLatency below measures
+// the same scenario deliberately, on a quiet box, with a sample count you
+// choose. Run it when you change the drainer:
+//
+//	go test ./internal/eventbus/ -bench=BenchmarkJSONLWriterFsyncLatency -benchtime=5s
+//
+// The drainer's CONCURRENCY behaviour — no interleaving, no loss, one line per
+// Append under concurrent writers — is still asserted, by
+// TestJSONLWriterConcurrentAppend. Only the wall-clock number left.
 
 // BenchmarkJSONLWriterFsyncLatency measures P99 Append(sync=true) latency at
 // N=10 concurrent goroutines — the hk-5zode acceptance scenario. Run with:

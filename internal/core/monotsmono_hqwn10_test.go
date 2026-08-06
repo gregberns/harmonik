@@ -338,31 +338,3 @@ func TestMonoTsMono_EV007_NonDecreasingPredicateAcceptsAllNil(t *testing.T) {
 		t.Error("EV-007: non-decreasing predicate rejected an all-nil sequence; nil values must be treated as absent per EV-007 'when present' qualifier")
 	}
 }
-
-// TestMonoTsMono_EV007_ForwardDocSensor is a documentation-marker test for
-// event-model.md §4.2 EV-007 (hk-hqwn.10).
-//
-// EV-007 requires that within a single emitter process, timestamp_mono_nsec
-// (when present) MUST be non-decreasing across emissions in emission order.
-//
-// This test skips unconditionally because the emitter-side enforcement layer
-// (a runtime path that reads time.Now() monotonic, stamps each Event, and
-// rejects decreasing readings) is not yet implemented.
-// It exists as a discoverable anchor in the test suite.  When the enforcement
-// layer lands, the implementer SHOULD either:
-//
-//  1. Replace this marker with concrete assertions against the enforcement layer, OR
-//  2. Extend it with those assertions, retaining the EV-007 citation and hk-hqwn.10
-//     traceability.
-//
-// Requirement-traceable bead: hk-hqwn.10.
-func TestMonoTsMono_EV007_ForwardDocSensor(t *testing.T) {
-	t.Log("EV-007 (hk-hqwn.10): within a single emitter process, timestamp_mono_nsec (when present) MUST be non-decreasing across emissions in emission order.")
-	t.Log("Spec reference: event-model.md §4.2 EV-007.")
-	t.Log("")
-	t.Log("Emitter-side enforcement layer not yet implemented.")
-	t.Log("When that layer lands, the implementer SHOULD:")
-	t.Log("  1. Delete this forward-doc marker, OR")
-	t.Log("  2. Extend it with concrete assertions against the enforcement layer.")
-	t.SkipNow()
-}

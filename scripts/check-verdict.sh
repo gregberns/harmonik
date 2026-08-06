@@ -6,8 +6,11 @@
 # verdict exists in the diff-keyed cache at .harmonik/verdicts/<hash>.json.
 # Absent/stale/REQUEST_CHANGES/BLOCK all fail CLOSED.
 #
-# Uses the same diff computation and sha256 hash as agent-reviewer/run so the
-# hash resolves to the same verdict file.
+# Resolves the verdict file with the SAME function agent-reviewer/run uses to
+# write it — .claude/skills/agent-reviewer/verdict-key.sh. It used to hold its own
+# copy of that algorithm, kept in step by this comment, and the copy fell behind
+# the moment the key changed: the writer stored a verdict under one name and this
+# reader looked for another, so `make agent-review` refused every commit.
 #
 # Usage: check-verdict.sh [--diff <REF>]
 #   --diff REF    Git ref to diff from (default: HEAD~1)
@@ -33,22 +36,25 @@ GIT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
     exit 1
 }
 
-# ── Compute diff (same algorithm as agent-reviewer/run) ────────────────────
-DIFF="$(git diff "${DIFF_REF}" 2>/dev/null)"
-if [[ -z "$DIFF" ]]; then
-    DIFF="$(git diff "${DIFF_REF}..HEAD" 2>/dev/null)"
+SKILL_DIR="${GIT_ROOT}/.claude/skills/agent-reviewer"
+if [[ ! -f "${SKILL_DIR}/verdict-key.sh" ]]; then
+    echo "check-verdict: cannot find ${SKILL_DIR}/verdict-key.sh" >&2
+    echo "check-verdict: the verdict key is defined there and shared with agent-reviewer/run" >&2
+    exit 1
 fi
+# shellcheck source=../.claude/skills/agent-reviewer/verdict-key.sh
+. "${SKILL_DIR}/verdict-key.sh"
+
+DIFF="$(agent_reviewer_diff "$DIFF_REF")"
 if [[ -z "$DIFF" ]]; then
     echo "check-verdict: empty diff; skipping verdict check" >&2
     exit 0
 fi
 
-# ── Diff hash (first 16 hex chars of sha256, same as agent-reviewer/run) ──
-if command -v sha256sum &>/dev/null; then
-    DIFF_HASH="$(printf '%s' "$DIFF" | sha256sum | cut -c1-16)"
-else
-    DIFF_HASH="$(printf '%s' "$DIFF" | shasum -a 256 | cut -c1-16)"
-fi
+DIFF_HASH="$(agent_reviewer_verdict_key "$SKILL_DIR" "$DIFF")" || {
+    echo "check-verdict: could not compute the verdict key" >&2
+    exit 1
+}
 
 VERDICT_FILE="${GIT_ROOT}/.harmonik/verdicts/${DIFF_HASH}.json"
 

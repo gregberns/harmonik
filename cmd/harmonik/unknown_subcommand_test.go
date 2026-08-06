@@ -1,0 +1,164 @@
+package main
+
+// unknown_subcommand_test.go — a mistyped verb must be refused, not read as a
+// request to start a daemon.
+//
+// The defect: run dispatches by comparing os.Args[1] against about 48 verb
+// strings in a chain of if statements. The chain had no final else. An argument
+// that matched none of them fell through to flag.Parse, and the process started
+// a daemon against the current working directory.
+//
+// Proved on a built binary on 2026-08-05, in an empty directory:
+//
+//	$ harmonik statu
+//	harmonik daemon starting in /tmp/verbprobe
+//	...
+//	supervisor-watchdog: supervisor not running
+//	supervisor-watchdog: spawning supervisor
+//
+// The typo created .harmonik/events, .harmonik/beads-intents and
+// .harmonik/cognition in that directory, and after one minute it spawned a
+// supervisor to revive itself. The process had to be killed by hand. The
+// refusal is not a cosmetic message. It is the only thing that stops a typo
+// from leaving a self-reviving process behind.
+//
+// These tests call run in this process. That is safe only because the refusal
+// returns before run registers its flags and reads the working directory. The
+// ordering was proved by moving the refusal below the daemon's directory setup:
+// the suite then panicked with "flag redefined: project" on the second call to
+// run, and TestRefusedSubcommandTouchesNothing went red. So a "flag redefined"
+// panic from this file means somebody moved the refusal down.
+//
+// Bead ref: hk-j7yo0.
+
+import (
+	"bytes"
+	"io"
+	"os"
+	"strings"
+	"testing"
+)
+
+// capture carries the stderr text back from the reader goroutine, with the
+// error that ended the read.
+type capture struct {
+	text string
+	err  error
+}
+
+// runWithArgs calls run with os.Args set to argv. It returns the exit code and
+// everything run wrote to stderr.
+//
+// The read runs on its own goroutine so that a usage block larger than the pipe
+// buffer cannot wedge run mid-write.
+func runWithArgs(t *testing.T, argv ...string) (exitCode int, stderr string) {
+	t.Helper()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+
+	origArgs, origStderr := os.Args, os.Stderr
+	os.Args, os.Stderr = argv, w
+	t.Cleanup(func() { os.Args, os.Stderr = origArgs, origStderr })
+
+	captured := make(chan capture, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, copyErr := io.Copy(&buf, r)
+		captured <- capture{text: buf.String(), err: copyErr}
+	}()
+
+	exitCode = run()
+
+	os.Stderr = origStderr
+	if closeErr := w.Close(); closeErr != nil {
+		t.Fatalf("close stderr pipe writer: %v", closeErr)
+	}
+	got := <-captured
+	if closeErr := r.Close(); closeErr != nil {
+		t.Fatalf("close stderr pipe reader: %v", closeErr)
+	}
+	if got.err != nil {
+		t.Fatalf("read stderr: %v", got.err)
+	}
+
+	return exitCode, got.text
+}
+
+// TestUnknownSubcommandIsRefused drives the real entry point. The verbs are
+// words no chain block will ever claim, so a future verb addition cannot turn
+// this red for the wrong reason.
+func TestUnknownSubcommandIsRefused(t *testing.T) {
+	for _, verb := range []string{"statu", "quee", "nonesuch"} {
+		t.Run(verb, func(t *testing.T) {
+			code, stderr := runWithArgs(t, "harmonik", verb)
+
+			if code != exitUnknownSubcommand {
+				t.Errorf("run() = %d, want %d — a mistyped verb must be refused, not run", code, exitUnknownSubcommand)
+			}
+			if !strings.Contains(stderr, verb) {
+				t.Errorf("stderr must name the rejected verb %q; got: %s", verb, stderr)
+			}
+			if !strings.Contains(stderr, "SUBCOMMANDS") {
+				t.Errorf("stderr must carry the subcommand listing so the operator can find the right verb; got: %s", stderr)
+			}
+		})
+	}
+}
+
+// TestRefusedSubcommandTouchesNothing is the test that gives the refusal its
+// meaning. The original defect was an ordering defect: the process reached the
+// disk before it decided the argument was garbage.
+func TestRefusedSubcommandTouchesNothing(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	code, _ := runWithArgs(t, "harmonik", "statu")
+	if code != exitUnknownSubcommand {
+		t.Fatalf("run() = %d, want %d", code, exitUnknownSubcommand)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read %s: %v", dir, err)
+	}
+	if len(entries) != 0 {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("a refused verb wrote %v into the working directory; it must write nothing", names)
+	}
+}
+
+// TestDaemonInvocationsAreNotSubcommands guards the fail-dangerous direction.
+// The daemon starts with no positional argument at all. If the refusal claimed
+// any of these, it would break the daemon instead of protecting it.
+func TestDaemonInvocationsAreNotSubcommands(t *testing.T) {
+	for _, argv := range [][]string{
+		{"harmonik"},
+		{"harmonik", "--project", "/tmp/x"},
+		{"harmonik", "-project", "/tmp/x"},
+		{"harmonik", "--max-concurrent", "4"},
+		{"harmonik", "--no-auto-pull"},
+		{"harmonik", "--help"},
+		{"harmonik", "-h"},
+	} {
+		if verb, ok := unknownSubcommand(argv); ok {
+			t.Errorf("unknownSubcommand(%q) refused %q; a daemon invocation must pass through", argv, verb)
+		}
+	}
+}
+
+// TestPositionalArgumentIsASubcommand states the rule the refusal reads by: at
+// the end of the chain, a word is a verb that does not exist.
+func TestPositionalArgumentIsASubcommand(t *testing.T) {
+	for _, arg := range []string{"statu", "quee", "nonesuch"} {
+		verb, ok := unknownSubcommand([]string{"harmonik", arg})
+		if !ok || verb != arg {
+			t.Errorf("unknownSubcommand(harmonik %s) = (%q, %v), want (%q, true)", arg, verb, ok, arg)
+		}
+	}
+}

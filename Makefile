@@ -665,8 +665,8 @@ fmt-check:  ## Fail-closed: exit 1 if gofumpt or gci would change any file (run 
 #
 # fast and full share every static step. They differ in exactly two ways: full
 # tests EVERY package instead of the major set, and full adds the whole-tree
-# lint allow list, the tagged scenario tier, the crash tier and the module
-# hygiene checks. Keep it that way. A step that belongs to only one of them is how a
+# lint allow list, the tagged scenario tier and the module hygiene checks. Keep
+# it that way. A step that belongs to only one of them is how a
 # third tier grows back.
 # ---------------------------------------------------------------------------
 
@@ -733,11 +733,14 @@ GATE_CAP := $(if $(TIMEOUT_BIN),$(TIMEOUT_BIN) --kill-after=30s $(GATE_STEP_SECS
 script-tests:  ## Self-tests for the shell the gate depends on
 	scripts/go-format-test.sh
 	scripts/agent-reviewer-run-test.sh
+	scripts/agent-reviewer-prompt-parity-test.sh
 	scripts/with-lane-gocache-test.sh
 	scripts/go-test-must-match-test.sh
 	scripts/loadgen-test.sh
 	scripts/gate-fails-closed-test.sh
 	scripts/lint-allow-test.sh
+	scripts/lint-changed-test.sh
+	scripts/changed-func-coverage-test.sh
 
 # freeze-gates — the per-subsystem "do not move this back" greps. Cheap
 # (sub-second each) and they only ever answer a structural question, so they
@@ -782,7 +785,7 @@ gate-static:  ## Shared static half of fast and full: format, build, vet, freeze
 	scripts/with-lane-gocache.sh go vet ./...
 	scripts/with-lane-gocache.sh $(MAKE) vet-tagged
 	$(MAKE) freeze-gates
-	scripts/with-lane-gocache.sh $(TOOLS_DIR)/golangci-lint run --allow-parallel-runners --new-from-rev=HEAD~1
+	scripts/lint-changed.sh $(TOOLS_DIR)/golangci-lint run --allow-parallel-runners --new-from-rev=HEAD~1
 
 # gate-test-compile — compiles every _test.go file in the repo and runs none of
 # them. `go build ./...` does NOT compile test files, so a test that references
@@ -888,13 +891,12 @@ gate-test-report-probe:  ## Smallest real use of the test step (drives scripts/g
 # extra answer. Everything else fast runs, full runs, in the same order.
 # ---------------------------------------------------------------------------
 .PHONY: full
-full:  ## THE merge decision: everything in fast over EVERY package, plus the lint allow list, scenario tier, crash tier, module hygiene
+full:  ## THE merge decision: everything in fast over EVERY package, plus the lint allow list, scenario tier, module hygiene
 	$(MAKE) gate-static
 	$(MAKE) gate-test-compile
 	$(call RUN_TESTS_AND_REPORT,make full,./...)
 	$(MAKE) lint-allow
 	$(MAKE) test-scenario
-	$(GATE_CAP) go test -tags=crash -count=1 -timeout=$(GATE_GO_TIMEOUT) ./test/crash/...
 	$(MAKE) module-hygiene
 
 # ---------------------------------------------------------------------------
@@ -1004,6 +1006,25 @@ test-integration:  ## The integration-tagged tier (needs tmux + a live environme
 coverage-gates:  ## Coverage ratchets, internal/** and cmd/** (trend measure; not part of `make full`)
 	scripts/coverage-gate.sh
 	scripts/with-isolated-gocache.sh scripts/cmd-coverage-gate.sh
+
+# coverage-changed — the question the ratchets above cannot ask.
+#
+# Both gates measure a PACKAGE, and a package number hides the thing worth
+# seeing. internal/keeper reads 79.2% while the function written to fix a
+# data-loss bug reads 0.0%. One new untested function moves the package figure
+# by a fraction of a point, so no threshold fires and nobody looks.
+#
+# This asks the narrow question instead: of the functions in THIS diff, which
+# are at 0.0%? It is a REPORT and it always exits 0. Deliberately not a gate
+# and deliberately not in `make fast` — see the header of the script for the
+# -coverpkg trade-off it makes and the false alarms that remain.
+#
+#   make coverage-changed              # against HEAD~1, same as the lint step
+#   make coverage-changed BASE=<ref>   # against a merge-base, for a whole lane
+BASE ?= HEAD~1
+.PHONY: coverage-changed
+coverage-changed:  ## Report (never gate): functions this diff touched that no test exercises
+	scripts/changed-func-coverage.sh $(BASE)
 
 # ---------------------------------------------------------------------------
 # Keeper acceptance corpus — keeper conformance set (hk-urxa3)

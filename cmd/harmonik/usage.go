@@ -3,7 +3,34 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 )
+
+// exitUnknownSubcommand is the exit code for an argument that names no
+// subcommand. It matches the code `harmonik agent brief` already documents for
+// an unrecognised verb.
+const exitUnknownSubcommand = 2
+
+// unknownSubcommand reports the first argument, and true, when that argument is
+// a positional word rather than a flag.
+//
+// It is only correct at the END of run's subcommand chain. Every block in that
+// chain returns, so an argument still in hand at the end of it matched no verb.
+// The chain stays the single source of truth for which verbs exist. A second
+// list of verb names here would drift out of step with it.
+//
+// A leading "-" is never a subcommand. `harmonik --project DIR` is how the
+// daemon starts, and it must keep working.
+func unknownSubcommand(args []string) (string, bool) {
+	if len(args) < 2 {
+		return "", false
+	}
+	arg := args[1]
+	if arg == "" || strings.HasPrefix(arg, "-") {
+		return "", false
+	}
+	return arg, true
+}
 
 // harmonikUsage prints the top-level help for the harmonik command and is
 // assigned to flag.Usage so that both "harmonik --help" and flag parse errors

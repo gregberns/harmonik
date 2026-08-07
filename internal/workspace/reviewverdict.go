@@ -225,7 +225,7 @@ func ReadReviewVerdictVia(ctx context.Context, runner tmux.CommandRunner, worksp
 // ReadReviewVerdictVia (bead hk-1hgjr — the local twin of the remote hk-qts7r
 // fix).
 //
-// Motivation: the reviewloop finalize read (reviewloop.go) reads the reviewer's
+// Motivation: the finalize read reads the reviewer's
 // box-A-local worktree with a nil runner. If the daemon reads review.json at the
 // instant the reviewer's claude is still flushing / has not yet made the write
 // durable, os.ReadFile observes a truncated file and parseReviewVerdict returns

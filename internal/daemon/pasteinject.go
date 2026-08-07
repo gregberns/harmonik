@@ -2199,7 +2199,7 @@ func worktreeActivityFingerprint(ctx context.Context, wtPath string) (string, bo
 // time on a heavy diff) from a true no-verdict (reviewer produced nothing),
 // turning the previously-generic "verdict absent at iteration N" into a
 // self-explaining "reviewer budget exceeded" diagnostic — see the reviewloop
-// verdict-absent branch (reviewloop.go) and dot_cascade's reviewer-node path.
+// dot_cascade's reviewer-node path.
 //
 // Bead: hk-sah87.
 const reviewerBudgetSentinelName = "reviewer-budget-exceeded.json"
@@ -2257,7 +2257,7 @@ func writeReviewerBudgetSentinel(wtPath string, budget time.Duration, changedLin
 // to emit a distinct "reviewer budget exceeded" diagnostic in place of the
 // generic "verdict absent at iteration N".
 //
-// Exported (capitalized) so both the builtin review-loop (reviewloop.go) and the
+// Exported (capitalized) so the
 // DOT reviewer-node path (dot_cascade.go) can consult it without changing the
 // pasteInjectQuitOnReviewFile signature.
 //

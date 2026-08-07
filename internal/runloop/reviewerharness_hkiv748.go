@@ -16,13 +16,10 @@ package runloop
 //  2. node.Harness — reviewer node's own harness= attr, if valid.
 //  3. deps.launchSpecBuilder — DEFAULT: same resolved harness as the implementer.
 //
-// Review-loop mode (runReviewLoop):
-//   The reviewer specBuilder is built with nodeDefault = implArtifacts.resolvedAgentType
-//   (the implementer's resolved harness). For all-claude runs this is byte-identical to
-//   pre-T14 behaviour. No DOT reviewer_harness override is applicable in review-loop mode
-//   (no DOT node exists); that override is handled in dispatchDotAgenticNode.
+// A second walk for a hardcoded implementer→reviewer mode was documented here.
+// That mode is deleted and DOT is the only engine, so only the walk above runs.
 //
-// hk-pkxju amends the DEFAULT (inherited) leg of both walks: a reviewer must never
+// hk-pkxju amends the DEFAULT (inherited) leg of the walk: a reviewer must never
 // INHERIT a SessionIDCaptured harness (codex, pi). See reviewerDefaultHarness below.
 // The EXPLICIT legs (reviewer_harness= override, reviewer node's own harness= attr)
 // are untouched — an operator pin stays an operator pin.
@@ -71,9 +68,10 @@ import (
 // Bead: hk-pkxju.
 // ReviewerDefaultHarness applies the inherited-reviewer fallback.
 //
-// Temporary export: reviewloop.go still calls this from internal/daemon. LIFT L8
-// moves that caller into this package, after which this narrows back to
-// reviewerDefaultHarness.
+// Exported for a caller in internal/daemon. The comment here used to name
+// reviewloop.go as that caller and to promise a lift that would let this narrow
+// back to an unexported name. That file is deleted, so re-derive the remaining
+// caller before acting on the narrowing.
 func ReviewerDefaultHarness(
 	reg *handlercontract.HarnessRegistry,
 	implementer core.AgentType,

@@ -338,7 +338,7 @@ func executeCognitionGate(
 	// (harnessresolve.go) — so a single labelled bead, not just a global codex
 	// default, routed the gate onto codex. This is the third site of the
 	// "reviewer silently inherits a harness that cannot review" class; hk-pkxju
-	// closed reviewloop.go and dot_cascade.go and left this one out of scope.
+	// closed dot_cascade.go and left this one out of scope.
 	//
 	// Reuse of dotReviewerInheritedHarnessOverride (the DOT-cascade adapter) rather
 	// than raw reviewerDefaultHarness: the correction needs the harness the gate

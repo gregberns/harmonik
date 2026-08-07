@@ -196,7 +196,7 @@ func (p ImplementerBudgetExceededPayload) Valid() bool {
 //
 // Emitted when pasteInjectQuitOnReviewFile force-kills a hosted reviewer
 // session that exhausted its diff-scaled verdict budget without writing a
-// verdict file. Both the builtin review-loop path (reviewloop.go) and the DOT
+// verdict file. The DOT
 // reviewer-node path (dot_cascade.go) read the marker file written by
 // writeReviewerBudgetSentinel and emit this event in place of the generic
 // "verdict absent" error.

@@ -4,16 +4,21 @@ package daemon
 //
 // driveDotWorkflow walks an arbitrary validated DOT workflow graph node-by-node,
 // dispatching each node according to its type and using the cascade engine
-// (workflow.DecideNextNode) to resolve the next node after each outcome. It is a
-// GENERALIZATION of the hardcoded review-loop driver (reviewloop.go): instead of
-// a fixed implementer→reviewer cycle, it follows the graph's edges.
+// (workflow.DecideNextNode) to resolve the next node after each outcome. Rather
+// than a fixed implementer→reviewer cycle, it follows the graph's edges.
+//
+// This is the ONLY execution engine. Two earlier ones — a hardcoded
+// implementer→reviewer driver and a single-shot tail — are deleted, and a legacy
+// `single` queue input now selects the registered no-review graph. Comments here
+// used to describe parity with those engines. Do not read a removed parity note
+// as a missing feature, and do not rebuild either engine: a third copy of the
+// review loop was written as late as 2026-07-24 and deleted unmerged.
 //
 // # Node-type dispatch table
 //
 //   - non-agentic (e.g. noop): no agent. A SUCCESS outcome is synthesized and the
 //     single outbound edge is followed.
-//   - agentic: the handler is dispatched into the substrate exactly like
-//     single-mode / review-loop (worktree, paste-inject, commit detection). The
+//   - agentic: the handler is dispatched into the substrate (worktree, paste-inject, commit detection). The
 //     node's outcome is derived from the run result:
 //       * reviewer-class nodes (a .harmonik/review.json verdict was produced):
 //         outcome.preferred_label = the verdict (APPROVE / REQUEST_CHANGES / BLOCK).
@@ -93,12 +98,11 @@ import (
 // terminal node, dispatching each node by type and following edges via the
 // cascade engine.
 //
-// Parameters mirror runReviewLoop plus the loaded graph. parentSHA is the
-// worktree HEAD at creation time (used for HEAD-advanced / commit detection).
+// parentSHA is the worktree HEAD at creation time (used for HEAD-advanced /
+// commit detection).
 //
-// The bead transition (close / reopen) and merge-to-main are owned by the caller
-// after driveDotWorkflow returns, mirroring how runWorkLoop owns those steps for
-// runReviewLoop.
+// The bead transition (close / reopen) and the merge are owned by runWorkLoop,
+// the caller, after driveDotWorkflow returns.
 func driveDotWorkflow(
 	ctx context.Context,
 	env runloop.RunEnv,
@@ -240,7 +244,7 @@ func driveDotWorkflow(
 	// verdict, parallel to priorVerdict / priorVerdictFlags. It feeds the
 	// reviewer-feedback.iter-<N-1>.md file written before an implementer-resume
 	// back-edge (hk-wixms) so the resumed implementer receives the reviewer's
-	// REQUEST_CHANGES notes — mirroring reviewloop.go's WriteReviewerFeedback
+	// REQUEST_CHANGES notes — written by WriteReviewerFeedback
 	// path. Empty before any reviewer has run.
 	priorVerdictNotes := ""
 
@@ -724,7 +728,7 @@ func driveDotWorkflow(
 				// the resumed session (which already produced satisfying work in its
 				// prior pass) then has nothing concrete to do, sits idle until the
 				// budget watchdog kills it, and the run thrashes (no commit →
-				// no_progress → re-dispatch). This mirrors reviewloop.go's
+				// no_progress → re-dispatch). This matches the
 				// WriteReviewerFeedback path, which the builtin review loop already
 				// does correctly.
 				//
@@ -749,7 +753,7 @@ func driveDotWorkflow(
 				// a REMOTE DOT run wtPath is on the worker, so the write would not
 				// reach the worker's worktree; the resume would still degrade. There
 				// is no WriteReviewerFeedbackVia yet, so we log loudly and continue —
-				// symmetric with reviewloop.go's REMOTE limitation (FLAGGED follow-up).
+				// a REMOTE limitation (FLAGGED follow-up).
 				if iterationCount >= 2 {
 					priorIter := iterationCount - 1
 					var priorSummary string
@@ -1165,7 +1169,7 @@ func dispatchDotAgenticNode(
 	// once guarded now folds inside runPorts() via clockOrSystem).
 	emit := ports.Emitter
 	// Reviewer nodes need review-target.md on disk before the kick-off paste so
-	// the reviewer has a brief to read (mirrors reviewloop.go WriteReviewTarget).
+	// the reviewer has a brief to read.
 	if isReviewer {
 		headSHA, headErr := resolveDotWorktreeHEAD(ctx, runner, wtPath)
 		if headErr != nil {
@@ -1624,7 +1628,7 @@ func dispatchDotAgenticNode(
 		//
 		// hk-vv10r: this is a finalize read (runs once, after the reviewer node has
 		// already exited) — not a poller — so it should retry-until-valid on a
-		// transient ErrMalformed the same way reviewloop.go's finalize read does via
+		// transient ErrMalformed the same way the finalize read does via
 		// ReadReviewVerdictLocalRetry, on BOTH the local and remote branch.
 		// ReadReviewVerdictVia alone only retries its remote branch; the local
 		// branch falls through to the bare no-retry ReadReviewVerdict, so a local
@@ -1705,7 +1709,7 @@ func dispatchDotAgenticNode(
 				return core.Outcome{}, fmt.Errorf("node %q (reviewer) %s", node.ID, reason)
 			}
 		}
-		// Emit reviewer_verdict matching the builtin review-loop path (reviewloop.go:932).
+		// Emit reviewer_verdict.
 		// WorkflowMode is DOT; session_id reuses the reviewerSessionID minted before
 		// launch (hk-c73fs: reviewer_launched uses the same ID so the two events
 		// are correlated); claude_session_id is the reviewer node's Claude session.
@@ -1751,7 +1755,7 @@ func dispatchDotAgenticNode(
 	// exits without advancing HEAD on iteration ≥ 2, we return SUCCESS and allow
 	// the diff-hash no-progress check in driveDotWorkflow to fire before the next
 	// reviewer dispatch — exactly mirroring the review-loop path, which defers
-	// the analogous "no new commit" case to the diff-hash check (reviewloop.go
+	// the analogous "no new commit" case to the diff-hash check (
 	// defers to state.iterationCount >= 2 in its diff-hash block rather than the
 	// no-commit guard which fires only on iteration 1).
 	postHeadSHA, headErr := resolveDotWorktreeHEAD(ctx, runner, wtPath)

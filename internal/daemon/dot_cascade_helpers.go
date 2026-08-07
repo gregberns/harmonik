@@ -4,9 +4,9 @@ package daemon
 //
 // driveDotWorkflow walks an arbitrary validated DOT workflow graph node-by-node,
 // dispatching each node according to its type and using the cascade engine
-// (workflow.DecideNextNode) to resolve the next node after each outcome. It is a
-// GENERALIZATION of the hardcoded review-loop driver (reviewloop.go): instead of
-// a fixed implementer→reviewer cycle, it follows the graph's edges.
+// (workflow.DecideNextNode) to resolve the next node after each outcome. It follows the
+// graph's edges rather than a fixed implementer→reviewer cycle. It is the only
+// execution engine; the driver this once generalized is deleted.
 //
 // # Node-type dispatch table
 //
@@ -274,7 +274,7 @@ func nodeModelForHarness(resolvedModel, nodeModelAttr string, effHarness core.Ag
 // ReadReviewVerdict (NFR7 — pollers like the quit-watchdog gate need a fast
 // absent/malformed return). The DOT cascade's finalize verdict reads are NOT
 // pollers: they run once, after the reviewer node has already exited, exactly
-// like reviewloop.go's finalize read (which uses ReadReviewVerdictLocalRetry).
+// like the finalize read, which uses ReadReviewVerdictLocalRetry.
 // Without this, a local DOT run that observes review.json mid-flush gets a
 // single no-retry read and false-fails the whole run on a transient
 // ErrMalformed — the review-loop fix (hk-1hgjr) never applied to the DOT path.
@@ -962,7 +962,7 @@ func emitNodeDispatchDecided(ctx context.Context, bus handlercontract.EventEmitt
 }
 
 // emitDotReviewerLaunched emits reviewer_launched (§8.1a.2) for a DOT reviewer
-// node, matching the builtin review-loop path (reviewloop.go emitReviewerLaunched).
+// node.
 // WorkflowMode is WorkflowModeDot so consumers filtering on workflow_mode=dot
 // see a consistent launched/verdict pair (hk-c73fs).
 func emitDotReviewerLaunched(
@@ -989,8 +989,7 @@ func emitDotReviewerLaunched(
 	}
 }
 
-// emitDotReviewerVerdict emits reviewer_verdict for a DOT reviewer node,
-// matching the builtin review-loop path (reviewloop.go emitReviewerVerdict).
+// emitDotReviewerVerdict emits reviewer_verdict for a DOT reviewer node.
 // WorkflowMode is set to WorkflowModeDot to distinguish DOT-path verdicts.
 func emitDotReviewerVerdict(
 	ctx context.Context,
@@ -1026,8 +1025,7 @@ func emitDotReviewerVerdict(
 }
 
 // emitDotImplementerResumed emits implementer_resumed (§8.1a.1) before an
-// implementer-resume back-edge dispatch (iterationCount >= 2), matching the
-// builtin review-loop path (reviewloop.go emitImplementerResumed). WorkflowMode
+// implementer-resume back-edge dispatch (iterationCount >= 2), WorkflowMode
 // is WorkflowModeDot so consumers filtering on workflow_mode=dot see the resume
 // event with prior_verdict_summary populated from the prior reviewer notes or
 // the commit-nudge (hk-wixms).

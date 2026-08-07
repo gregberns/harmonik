@@ -432,7 +432,7 @@ const (
 	// reviewer session that exhausted its diff-scaled verdict budget without
 	// writing a verdict file. The marker file (reviewer-budget-exceeded.json)
 	// written by writeReviewerBudgetSentinel is the out-of-band signal read by
-	// both the builtin review-loop path (reviewloop.go) and the DOT reviewer-node
+	// the DOT reviewer-node
 	// path (dot_cascade.go) to emit this distinct event instead of the generic
 	// "verdict absent" error.
 	//

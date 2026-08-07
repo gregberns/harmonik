@@ -8,8 +8,7 @@ package core
 // diagnostic gap between run_started and reviewer_launched where silent
 // implementer failures previously produced no structured event.
 //
-// The event fires in both single-mode (workloop.go) and review-loop mode
-// (reviewloop.go) at the point where waitWithSocketGrace returns for the
+// The event fires at the point where waitWithSocketGrace returns for the
 // implementer phase.
 //
 // Durability class: F (terminal-state landmark — emitted once per implementer

@@ -68,6 +68,23 @@ func TestIsDaemonUp_SocketPresent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
 	}
+	// Register the accept goroutine's JOIN before the listener close, so cleanup
+	// runs them in the other order (LIFO): close the listener first, which is what
+	// unblocks Accept, then wait for the goroutine to be gone. See the note on
+	// acceptErrs below for why waiting matters.
+	acceptErrs := make(chan error, 8)
+	acceptDone := make(chan struct{})
+	t.Cleanup(func() {
+		<-acceptDone
+		for {
+			select {
+			case err := <-acceptErrs:
+				t.Errorf("close accepted connection: %v", err)
+			default:
+				return
+			}
+		}
+	})
 	t.Cleanup(func() {
 		if err := ln.Close(); err != nil {
 			t.Errorf("close listener: %v", err)
@@ -75,14 +92,25 @@ func TestIsDaemonUp_SocketPresent(t *testing.T) {
 	})
 
 	// Accept connections in a goroutine so the dial succeeds.
+	//
+	// The goroutine reports through a channel rather than calling t.Errorf
+	// directly. A t.Errorf from a goroutine the test never joins panics the WHOLE
+	// test binary with "Log in goroutine after ... has completed" whenever it lands
+	// after the last cleanup, and this goroutine only leaves its Accept loop when
+	// the listener closes — which IS a cleanup. So the unjoined shape has no
+	// ordering that makes it safe.
 	go func() {
+		defer close(acceptDone)
 		for {
 			conn, acceptErr := ln.Accept()
 			if acceptErr != nil {
 				return
 			}
 			if err := conn.Close(); err != nil {
-				t.Errorf("close accepted connection: %v", err)
+				select {
+				case acceptErrs <- err:
+				default:
+				}
 			}
 		}
 	}()
@@ -111,11 +139,17 @@ func injectAndWatch(t *testing.T, ndjsonLines []string, queueID string, groupInd
 		}
 	}()
 
+	// The writer goroutine reports its close error on a channel and is JOINED
+	// below. Calling t.Errorf from a goroutine the test never waits for panics the
+	// whole binary when it lands after the test completes.
+	writerErr := make(chan error, 1)
 	go func() {
 		defer func() {
 			if err := client.Close(); err != nil {
-				t.Errorf("close pipe client: %v", err)
+				writerErr <- err
+				return
 			}
+			close(writerErr)
 		}()
 		for _, line := range ndjsonLines {
 			if _, err := fmt.Fprintln(client, line); err != nil {
@@ -124,7 +158,19 @@ func injectAndWatch(t *testing.T, ndjsonLines []string, queueID string, groupInd
 		}
 	}()
 
-	return viaWatchGroupCompletion(server, queueID, watchedGroupIndex, nil, nil)
+	code := viaWatchGroupCompletion(server, queueID, watchedGroupIndex, nil, nil)
+	// Close the read end BEFORE joining the writer. viaWatchGroupCompletion
+	// returns on the first matching completion event and does not drain, so over
+	// an unbuffered net.Pipe a caller whose lines continue past that event would
+	// leave the writer parked in Fprintln and the join below would never return.
+	// Dropping the result is correct and not a shortcut: net.Pipe's Close is
+	// `once.Do(close(done)); return nil` — idempotent AND unconditionally nil. So
+	// this call cannot report anything, and neither can the deferred one.
+	_ = server.Close()
+	if err := <-writerErr; err != nil {
+		t.Errorf("close pipe client: %v", err)
+	}
+	return code
 }
 
 func mustMarshalViaDaemon(t *testing.T, value any) []byte {
@@ -251,30 +297,54 @@ func TestViaSendRequest_ValidResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
 	}
+	// Fake daemon: reply with {"ok":true,"result":{"queue":null}}.
+	//
+	// Errors travel back on a channel, not through t.Errorf. This goroutine used
+	// to call t.Errorf directly with nothing joining it, and a t.Errorf that lands
+	// after the last cleanup panics the whole cmd/harmonik binary — reported as
+	// some unrelated test failing.
+	daemonErrs := make(chan error, 4)
+	daemonDone := make(chan struct{})
+	t.Cleanup(func() {
+		<-daemonDone
+		for {
+			select {
+			case err := <-daemonErrs:
+				t.Errorf("fake daemon: %v", err)
+			default:
+				return
+			}
+		}
+	})
 	t.Cleanup(func() {
 		if err := ln.Close(); err != nil {
 			t.Errorf("close listener: %v", err)
 		}
 	})
-
-	// Fake daemon: reply with {"ok":true,"result":{"queue":null}}.
 	go func() {
+		defer close(daemonDone)
+		report := func(err error) {
+			select {
+			case daemonErrs <- err:
+			default:
+			}
+		}
 		conn, acceptErr := ln.Accept()
 		if acceptErr != nil {
 			return
 		}
 		defer func() {
 			if err := conn.Close(); err != nil {
-				t.Errorf("close daemon connection: %v", err)
+				report(fmt.Errorf("close daemon connection: %w", err))
 			}
 		}()
 		reply, marshalErr := json.Marshal(viaSocketResponse{Ok: true, Result: json.RawMessage(`{"queue":null}`)})
 		if marshalErr != nil {
-			t.Errorf("marshal daemon response: %v", marshalErr)
+			report(fmt.Errorf("marshal daemon response: %w", marshalErr))
 			return
 		}
 		if _, writeErr := fmt.Fprintf(conn, "%s\n", reply); writeErr != nil {
-			t.Errorf("write daemon response: %v", writeErr)
+			report(fmt.Errorf("write daemon response: %w", writeErr))
 		}
 	}()
 
@@ -299,6 +369,24 @@ func TestViaSubmitOrAppendWritesPendingGroup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
 	}
+	// Same shape as TestViaSendRequest_ValidResponse: the fake daemon reports
+	// through a channel and is joined in cleanup, because a t.Errorf from an
+	// unjoined goroutine panics the whole binary once the test has completed.
+	// The join is registered FIRST so it runs LAST — the listener close is what
+	// releases a goroutine still sitting in Accept.
+	fakeErrs := make(chan error, 4)
+	fakeDone := make(chan struct{})
+	t.Cleanup(func() {
+		<-fakeDone
+		for {
+			select {
+			case err := <-fakeErrs:
+				t.Errorf("fake daemon: %v", err)
+			default:
+				return
+			}
+		}
+	})
 	t.Cleanup(func() {
 		if closeErr := listener.Close(); closeErr != nil {
 			t.Errorf("close listener: %v", closeErr)
@@ -307,13 +395,20 @@ func TestViaSubmitOrAppendWritesPendingGroup(t *testing.T) {
 
 	received := make(chan []byte, 1)
 	go func() {
+		defer close(fakeDone)
+		report := func(err error) {
+			select {
+			case fakeErrs <- err:
+			default:
+			}
+		}
 		conn, acceptErr := listener.Accept()
 		if acceptErr != nil {
 			return
 		}
 		defer func() {
 			if closeErr := conn.Close(); closeErr != nil {
-				t.Errorf("close daemon connection: %v", closeErr)
+				report(fmt.Errorf("close daemon connection: %w", closeErr))
 			}
 		}()
 		payload, readErr := io.ReadAll(conn)
@@ -324,7 +419,7 @@ func TestViaSubmitOrAppendWritesPendingGroup(t *testing.T) {
 		if encodeErr := json.NewEncoder(conn).Encode(viaSocketResponse{
 			Ok: true, Result: json.RawMessage(`{"queue_id":"q-submit"}`),
 		}); encodeErr != nil {
-			t.Errorf("encode daemon response: %v", encodeErr)
+			report(fmt.Errorf("encode daemon response: %w", encodeErr))
 		}
 	}()
 

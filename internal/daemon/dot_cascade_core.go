@@ -839,7 +839,7 @@ func driveDotWorkflow(
 				if errors.Is(nodeErr, errDotNoChangeSubsumed) {
 					return dotWorkflowResult{
 						subsumed: true,
-						summary:  "noChange-subsumed: bead found in main",
+						summary:  "noChange-subsumed: the bead's work is already merged on the branch this run lands on",
 					}
 				}
 				// hk-bqf1q: reviewer produced no verdict (stall / hang / budget
@@ -1763,16 +1763,27 @@ func dispatchDotAgenticNode(
 		return core.Outcome{}, fmt.Errorf("resolve HEAD after node %q: %w", node.ID, headErr)
 	}
 	if postHeadSHA == preHeadSHA && !node.NonCommitting {
-		// Mirror the builtin noChange-subsumed check (workloop.go:1831-1848,
-		// hk-trjef): if the bead's work already landed in main, close-subsumed
-		// rather than hard-fail. Bead: hk-9v5yo.
-		// activeRepo, NOT env.ProjectDir. A cross-repo bead's work lands on the
-		// TARGET repo's main, so asking the harmonik project root whether this
-		// bead is already there answers a question about the wrong repository:
-		// subsumption could never fire and a subsumed cross-repo bead hard-failed
-		// at iteration 1 (hk-pq3ex). The single-mode guard has always used
-		// activeRepo here.
-		if shared.MainHistoryHasRefsTrailer(ctx, activeRepo, beadID) {
+		// The implementer moved nothing. A prior run may have merged this bead's
+		// work already, in which case the node closes the bead as subsumed rather
+		// than hard-failing it. Bead: hk-9v5yo, hk-trjef.
+		//
+		// Two coordinates decide WHERE to look, and both are read from the run,
+		// not written as literals (hk-1a7yb):
+		//
+		//   - activeRepo, NOT env.ProjectDir. A cross-repo bead's work lands in
+		//     the TARGET repo, so asking the harmonik project root whether this
+		//     bead is already there answers a question about the wrong
+		//     repository: subsumption could never fire and a subsumed cross-repo
+		//     bead hard-failed at iteration 1 (hk-pq3ex).
+		//   - baseBranch, the run's resolved lands_on, NOT "main". The former
+		//     probe ran `git log main` no matter which branch the run landed on.
+		//     On a program that merges to an integration branch, it read a
+		//     branch that holds none of the work.
+		//
+		// What counts as evidence is beadWorkLandedOn's subject
+		// (subsumptionevidence.go): a mention of the bead in a commit message is
+		// not proof the bead is done.
+		if beadWorkLandedOn(ctx, activeRepo, baseBranch, beadID) {
 			return core.Outcome{}, errDotNoChangeSubsumed
 		}
 		if iterationCount < 2 {

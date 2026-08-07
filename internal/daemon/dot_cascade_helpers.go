@@ -188,11 +188,11 @@ func outcomeIsAnAgentReport(outcome *handler.ExportedOutcomeEmittedPayload) bool
 }
 
 // errDotNoChangeSubsumed is returned by dispatchDotAgenticNode when the
-// implementer exited without advancing HEAD and the bead is already subsumed
-// in main (work landed via a prior run). driveDotWorkflow maps this to
+// implementer exited without advancing HEAD and a prior run already merged the
+// bead's work on the branch this run lands on. driveDotWorkflow maps this to
 // dotWorkflowResult{subsumed:true} so workloop.go can close-subsumed instead
-// of reopening. Bead: hk-9v5yo.
-var errDotNoChangeSubsumed = errors.New("dot: noChange-subsumed: work already in main")
+// of reopening. Bead: hk-9v5yo, hk-1a7yb.
+var errDotNoChangeSubsumed = errors.New("dot: noChange-subsumed: work already merged on the branch this run lands on")
 
 // errDotReviewerNoVerdict is returned by dispatchDotAgenticNode when a
 // reviewer node exits without writing a verdict file (stall, hang, or
@@ -229,8 +229,8 @@ type dotWorkflowResult struct {
 	summary string
 
 	// subsumed is true when the implementer exited without advancing HEAD and the
-	// bead was already found in main (noChange-subsumed). The caller closes the
-	// bead rather than reopening it.
+	// bead's work was already merged on the branch this run lands on
+	// (noChange-subsumed). The caller closes the bead rather than reopening it.
 	subsumed bool
 
 	// advisoryRC is true when the cascade completed via the advisory-RC exemption

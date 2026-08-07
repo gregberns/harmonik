@@ -5,10 +5,12 @@ package shared
 //
 // # Why this is shared and not codex-private
 //
-// harmonik detects bead completion by a git commit on the worktree HEAD that
-// carries a "Refs: <bead-id>" trailer (MainHistoryHasRefsTrailer below /
-// internal/daemon noCommitGuardShouldReopen; both line-match "Refs: <id>"
-// exactly). The claude
+// harmonik detects that a harness turn produced work by a git commit on the
+// worktree HEAD that carries a "Refs: <bead-id>" trailer
+// (WorktreeHEADHasRefsTrailer below, line-matching "Refs: <id>" exactly). That
+// is a claim about THIS TURN, on THIS worktree HEAD — it is not evidence that
+// the bead's work merged anywhere (hk-1a7yb; see the note where
+// MainHistoryHasRefsTrailer used to be). The claude
 // harness runs as an interactive TUI, so a commit without the trailer is caught
 // by the reviewer/no-commit guard and the bead is re-driven. codex and pi are
 // DIFFERENT: both are one-shot run-to-exit processes — there is no live REPL to
@@ -28,14 +30,12 @@ package shared
 // the remote SSH substrate behaves identically to local.
 //
 // Spec: specs/harness-contract.md §2 N2 (CompletionProcessExit);
-// specs/pi-harness.md §3 (PI-030/PI-031). The trailer contract is
-// MainHistoryHasRefsTrailer, which lives in this file too — the rule and the
-// harnesses that must satisfy it now share one copy.
+// specs/pi-harness.md §3 (PI-030/PI-031). The trailer TEXT has one definition
+// here (RefsTrailerLine), so the instruct, verify and fallback paths cannot
+// drift apart.
 //
 // Origin: internal/daemon/codexcommit.go, split out by
-// plans/2026-07-21-p2-extraction/E1a-codex-harness.md unit E1a-0;
-// MainHistoryHasRefsTrailer joined it from internal/daemon/workloop.go by
-// plans/2026-07-21-p2-extraction/RT19b-stranded-run-path-helpers.md.
+// plans/2026-07-21-p2-extraction/E1a-codex-harness.md unit E1a-0.
 
 import (
 	"context"
@@ -91,8 +91,8 @@ func (o RefsOutcome) String() string {
 	}
 }
 
-// RefsTrailerLine returns the exact "Refs: <bead-id>" trailer line the
-// daemon's commit-detection path (MainHistoryHasRefsTrailer, below) matches
+// RefsTrailerLine returns the exact "Refs: <bead-id>" trailer line the daemon's
+// commit-detection path (WorktreeHEADHasRefsTrailer, below) matches
 // line-for-line. Centralised so the instruct/verify/fallback paths all agree on
 // the exact text.
 func RefsTrailerLine(beadID core.BeadID) string {
@@ -102,7 +102,7 @@ func RefsTrailerLine(beadID core.BeadID) string {
 // WorktreeHEADHasRefsTrailer reports whether the worktree HEAD commit body
 // carries an exact "Refs: <beadID>" trailer line.
 //
-// It uses the same line-exact comparison as MainHistoryHasRefsTrailer so that
+// It uses the line-exact comparison of ContainsExactLine so that
 // "Refs: hk-foo.1" does NOT match a commit whose only trailer is
 // "Refs: hk-foo.10". Returns (false, err) on any git error (e.g. no commits
 // yet); the caller treats a git error as "trailer not present".
@@ -284,55 +284,33 @@ func AmendHEADAddRefsTrailer(ctx context.Context, runner tmux.CommandRunner, wtP
 	return nil
 }
 
-// MainHistoryHasRefsTrailer reports whether beadID appears as an exact
-// "Refs: <id>" trailer line in any commit on `main` in projectDir.
+// MainHistoryHasRefsTrailer is DELETED (hk-1a7yb). It reported whether beadID
+// appeared as an exact "Refs: <id>" line in any commit on the literal branch
+// `main`, and the daemon read that as "a prior run already completed this bead"
+// — the subsumption close on the graph path, and the stale-blocker close on the
+// claim-failure path.
 //
-// This is the daemon's post-run subsumption check: after a noChange-timeout kill
-// it decides whether the work was already completed by a prior run that merged
-// to main — in which case the bead is closed, not reopened.
+// Its own doc comment had forbidden that use since hk-f38n: "a match proves a
+// commit NAMES the bead. It does not prove the bead is done ... never use this
+// as a standalone completion test." The comment did not stop it. Bead hk-2hfyt,
+// a P1 fleet-down bug, closed as done because a whole-repo gofumpt run carried
+// the line "Refs: hk-2hfyt"; the fix never landed. The branch was also wrong:
+// this program merges to an integration branch, and `main` held none of its
+// work.
 //
-// hk-ly0hg: it uses `--grep` across the FULL main history rather than a fixed
-// -20 window, so a restart-interrupted run whose commit landed >20 commits ago is
-// still found. --fixed-strings prevents regex interpretation of bead IDs, and the
-// line-exact comparison (ContainsExactLine) prevents "Refs: hk-foo.1" from
-// matching a commit carrying "Refs: hk-foo.10".
+// The daemon now asks internal/daemon.beadWorkLandedOn, which takes the branch
+// from the run instead of a literal and requires the BI-022 evidence — a
+// `Harmonik-Bead-ID` trailer the daemon itself writes when it lands a task
+// branch, a non-docs diff, the commit still reachable from the branch tip, and
+// no later revert. See internal/daemon/subsumptionevidence.go.
 //
-// Returns false on any git error (conservative: treat as not subsumed).
-//
-// hk-f38n — a match proves a commit NAMES the bead. It does not prove the bead is
-// done. On a bead worked in several parts an older partial commit carries the same
-// ID, so this returns true while work is still outstanding. A pre-dispatch
-// subsumption check built on it closed a bead early, and the remaining work had to
-// be refiled under a new ID. So pair every call with evidence that the work itself
-// is absent — no HEAD advance, or a no-change timeout — and never use this as a
-// standalone completion test. Full record: the informative note under BI-022 in
-// specs/beads-integration.md §4.7.
-//
-// UNLIKE its neighbours in this file it does NOT route through a
-// tmux.CommandRunner: it probes the LOCAL project checkout's main history, never
-// a remote worker's. Do not "fix" that asymmetry — it is the behaviour the
-// daemon's noChange path depends on.
-//
-// Bead: hk-trjef, hk-ly0hg. Origin: internal/daemon/workloop.go
-// beadAlreadySubsumedInMain, moved by
-// plans/2026-07-21-p2-extraction/RT19b-stranded-run-path-helpers.md.
-func MainHistoryHasRefsTrailer(ctx context.Context, projectDir string, beadID core.BeadID) bool {
-	needle := RefsTrailerLine(beadID)
-	//nolint:gosec // G204: fixed git argv; needle is the daemon-built
-	// "Refs: <bead-id>" line passed as a single --grep argument (no shell), and
-	// --fixed-strings stops it being read as a pattern.
-	cmd := exec.CommandContext(ctx, "git", "log", "main", "--format=%B",
-		"--fixed-strings", "--grep", needle)
-	cmd.Dir = projectDir
-	out, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-	return ContainsExactLine(string(out), needle)
-}
+// Do not restore a mention-only probe here. If a caller needs "did this bead's
+// work merge", it needs that evidence, and one copy of it already exists in
+// lifecycle.GitMergeCommitScanner.
 
 // ContainsExactLine reports whether body contains line as an exact line
-// (line-for-line, CR-tolerant), matching MainHistoryHasRefsTrailer semantics.
+// (line-for-line, CR-tolerant). WorktreeHEADHasRefsTrailer uses the same
+// comparison, so "Refs: hk-foo.1" never matches "Refs: hk-foo.10".
 func ContainsExactLine(body, line string) bool {
 	for _, l := range strings.Split(body, "\n") {
 		if strings.TrimRight(l, "\r") == line {

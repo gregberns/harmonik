@@ -31,8 +31,8 @@ func dotFixtureCrossRepoBody(targetRepo string) string {
 }
 
 // dotFixtureRepoWithSubsumedWork builds a git repo whose main branch already
-// carries a commit with this bead's `Refs:` trailer — the state a prior run
-// leaves behind when it landed the work.
+// carries the merge commit a prior run leaves behind when it landed this bead's
+// work.
 func dotFixtureRepoWithSubsumedWork(t *testing.T, bead core.BeadID) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -41,7 +41,14 @@ func dotFixtureRepoWithSubsumedWork(t *testing.T, bead core.BeadID) string {
 	return dir
 }
 
-// dotFixtureLandSubsumedCommit adds a trailered commit to dir's main branch.
+// dotFixtureLandSubsumedCommit lands this bead's work on dir's current branch,
+// the way the daemon lands it: a real file change plus the `Harmonik-Bead-ID`
+// trailer that synthesizeMergeCommitMessage writes (WM-019).
+//
+// The trailer used to be `Refs: <bead>`, which named the bead and proved
+// nothing (hk-1a7yb). A commit that only names a bead is now the subject of
+// TestDotNode_MentionOnlyCommitIsNotEvidenceOfCompletion, where the assertion
+// is the opposite one.
 func dotFixtureLandSubsumedCommit(t *testing.T, dir string, bead core.BeadID) {
 	t.Helper()
 	//nolint:gosec // G306: test fixture file.
@@ -49,7 +56,7 @@ func dotFixtureLandSubsumedCommit(t *testing.T, dir string, bead core.BeadID) {
 		t.Fatalf("dotFixtureLandSubsumedCommit: write: %v", err)
 	}
 	dotFixtureGit(t, dir, "add", "landed.txt")
-	dotFixtureGit(t, dir, "commit", "-m", "feat: work landed by a prior run\n\nRefs: "+string(bead))
+	dotFixtureGit(t, dir, "commit", "-m", "squash(run/"+string(bead)+"): task branch landing\n\nHarmonik-Bead-ID: "+string(bead))
 }
 
 func dotFixtureGit(t *testing.T, dir string, args ...string) {

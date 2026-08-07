@@ -23,7 +23,6 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
-	"github.com/gregberns/harmonik/internal/harness/shared"
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
@@ -184,14 +183,13 @@ func ExportedPasteInjectImplementerResume(
 // wrapper can accept it.
 type quitSenderExported = quitSender
 
-// ExportedBeadAlreadySubsumedInMain exposes the main-history Refs-trailer probe
-// for tests. The implementation left internal/daemon for
-// shared.MainHistoryHasRefsTrailer (P2 E5 RT19b); this shim keeps the existing
-// daemon_test callers compiling unchanged.
+// ExportedBeadWorkLandedOn exposes the subsumption-evidence probe for tests.
+// It asks the branch the caller names — there is no default, because the
+// default was the defect (hk-1a7yb).
 //
-// Bead: hk-trjef.
-func ExportedBeadAlreadySubsumedInMain(ctx context.Context, projectDir string, beadID core.BeadID) bool {
-	return shared.MainHistoryHasRefsTrailer(ctx, projectDir, beadID)
+// Bead: hk-trjef, hk-1a7yb.
+func ExportedBeadWorkLandedOn(ctx context.Context, repoDir, branch string, beadID core.BeadID) bool {
+	return beadWorkLandedOn(ctx, repoDir, branch, beadID)
 }
 
 // ExportedAutoCloseStaleBlockersOnClaimFailure exposes
@@ -200,5 +198,8 @@ func ExportedBeadAlreadySubsumedInMain(ctx context.Context, projectDir string, b
 // Bead: hk-rnsjs.
 func ExportedAutoCloseStaleBlockersOnClaimFailure(ctx context.Context, p TestRuntimeParams, beadID core.BeadID) {
 	runtime := ExportedTestRuntime(p)
-	autoCloseStaleBlockersOnClaimFailure(ctx, runtime.ledger, runtime.env.IntentLogDir, runtime.env.BrTimeoutCfg, testLedgerRepairPort(p), beadID)
+	// ProjectDir, matching the production call in scheduler.go. The seam passed
+	// IntentLogDir here while it had no callers, so a test written through it
+	// would have probed a directory the production path never asks about.
+	autoCloseStaleBlockersOnClaimFailure(ctx, runtime.ledger, runtime.env.ProjectDir, runtime.env.TargetBranch, runtime.env.BrTimeoutCfg, testLedgerRepairPort(p), beadID)
 }

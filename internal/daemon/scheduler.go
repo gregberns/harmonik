@@ -1666,9 +1666,11 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 			if queueItemIndex < 0 {
 				readyPathAttempts[beadID]++
 			}
-			// hk-rnsjs: if the bead is blocked by stale dependencies already in
-			// main, auto-close them so the next workloop retry can claim the bead.
-			autoCloseStaleBlockersOnClaimFailure(ctx, ledger, baseEnv.ProjectDir, baseEnv.BrTimeoutCfg, ledgerRepair, beadID)
+			// hk-rnsjs: if the bead is blocked by stale dependencies that already
+			// merged, auto-close them so the next workloop retry can claim the
+			// bead. The branch asked is the daemon's configured target branch
+			// (hk-1a7yb), never a literal.
+			autoCloseStaleBlockersOnClaimFailure(ctx, ledger, baseEnv.ProjectDir, baseEnv.TargetBranch, baseEnv.BrTimeoutCfg, ledgerRepair, beadID)
 			// On queue-path: revert the item back to pending so the loop can retry.
 			// NQ-B1: target the selected queue by name (capturedQueueName).
 			if queueItemIndex >= 0 && queueStore != nil {
@@ -1811,16 +1813,21 @@ func runDispatchedBead(runCtx, daemonCtx context.Context, env runloop.RunEnv, rp
 
 // autoCloseStaleBlockersOnClaimFailure is called after a ClaimBead failure to
 // detect and auto-close stale blocker beads whose implementations have already
-// landed on main. When br rejects a claim because the target bead is "blocked"
-// (has open dependencies not yet closed in Beads), but those dependencies were
-// already merged to main, the bead cannot be claimed until the stale blocker
-// records are closed.
+// landed on targetBranch. When br rejects a claim because the target bead is
+// "blocked" (has open dependencies not yet closed in Beads), but those
+// dependencies were already merged, the bead cannot be claimed until the stale
+// blocker records are closed.
 //
 // The function:
 //  1. Calls ShowBead to confirm the bead's current status is CoarseStatusBlocked.
 //  2. Collects all bead IDs referenced in the bead's edge list (both directions).
-//  3. For each candidate blocker, calls shared.MainHistoryHasRefsTrailer.
+//  3. For each candidate blocker, calls beadWorkLandedOn against targetBranch.
 //  4. If subsumed, calls SweepCloseBead to close the stale record.
+//
+// targetBranch is the daemon's configured target branch. It was formerly the
+// literal "main" inside the probe, which made a blocker that landed on the
+// program's integration branch invisible — the bead then stayed blocked for
+// work that was already merged (hk-1a7yb).
 //
 // On the next workloop retry the bead should no longer be blocked and
 // ClaimBead will succeed.
@@ -1828,8 +1835,8 @@ func runDispatchedBead(runCtx, daemonCtx context.Context, env runloop.RunEnv, rp
 // No-op when repair.staleBlockerCloser is nil (backward-compat for test stubs
 // that do not set this field).
 //
-// Bead ref: hk-rnsjs.
-func autoCloseStaleBlockersOnClaimFailure(ctx context.Context, ledger beadLedger, projectDir string, timeout brcli.TimeoutConfig, repair ledgerRepairPort, beadID core.BeadID) {
+// Bead ref: hk-rnsjs, hk-1a7yb.
+func autoCloseStaleBlockersOnClaimFailure(ctx context.Context, ledger beadLedger, projectDir, targetBranch string, timeout brcli.TimeoutConfig, repair ledgerRepairPort, beadID core.BeadID) {
 	if repair.staleBlockerCloser == nil {
 		return
 	}
@@ -1856,10 +1863,10 @@ func autoCloseStaleBlockersOnClaimFailure(ctx context.Context, ledger beadLedger
 		}
 	}
 	for blockerID := range seen {
-		if !shared.MainHistoryHasRefsTrailer(ctx, projectDir, blockerID) {
+		if !beadWorkLandedOn(ctx, projectDir, targetBranch, blockerID) {
 			continue
 		}
-		fmt.Fprintf(os.Stderr, "daemon: workloop: claim-failure auto-close stale blocker %s (subsumed in main, unblocks %s)\n", blockerID, beadID)
+		fmt.Fprintf(os.Stderr, "daemon: workloop: claim-failure auto-close stale blocker %s (merged on %s, unblocks %s)\n", blockerID, targetBranch, beadID)
 		if closeErr := repair.staleBlockerCloser.SweepCloseBead(ctx, timeout, blockerID); closeErr != nil {
 			fmt.Fprintf(os.Stderr, "daemon: workloop: SweepCloseBead stale blocker %s: %v\n", blockerID, closeErr)
 		}

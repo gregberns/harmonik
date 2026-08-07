@@ -78,7 +78,9 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -284,6 +286,71 @@ type coldstartRun struct {
 	// PARKED at the take waits on this first, so its grace covers scheduling
 	// rather than the whole tunnel and worktree setup.
 	atTakeSite chan struct{}
+
+	// bus collects the events the run emits. Kept so a failure can name the
+	// reason the run gave rather than only that no agent appeared.
+	bus *runplanBus
+
+	// mu guards the two outcome fields below, which the run goroutine writes
+	// and a failing assertion on the test goroutine reads.
+	mu sync.Mutex
+	// returned records that beadRunOne came back, which distinguishes a run
+	// still working from one that already gave up.
+	returned bool
+	// ok is what beadRunOne reported.
+	ok bool
+}
+
+// outcome describes how the run ended, for a failure message.
+//
+// "no agent started" has two very different causes and the assertion cannot
+// tell them apart on its own: the run may still be parked on a resource, or it
+// may have failed early and returned, in which case waiting the full limit only
+// delays a diagnosis that already exists. This reports which one happened and
+// the events the run emitted on its way out.
+func (r *coldstartRun) outcome() string {
+	r.mu.Lock()
+	returned, ok := r.returned, r.ok
+	r.mu.Unlock()
+	if !returned {
+		return "the run had NOT returned, so it is still parked somewhere upstream of the agent spawn"
+	}
+	var seen []string
+	for _, ev := range r.bus.seen() {
+		seen = append(seen, string(ev))
+	}
+	events := strings.Join(seen, ", ")
+	if events == "" {
+		events = "none"
+	}
+	reason := string(r.bus.firstPayload(core.EventTypeRunFailed))
+	if reason == "" {
+		reason = "(no run_failed payload)"
+	}
+	return fmt.Sprintf("the run ALREADY RETURNED (beadRunOne reported %t) before the agent ever "+
+		"started, so this wait could never have succeeded. Events emitted: %s\nrun_failed: %s",
+		ok, events, reason)
+}
+
+// coldstartAddWorktree adds a real git worktree of repoDir at dir.
+//
+// It shares repoDir's object store, so the baseline SHA the graph node reads
+// from the worktree and the tip it diffs against both resolve. An independent
+// repository cannot promise that, however carefully its commit is built.
+func coldstartAddWorktree(t *testing.T, repoDir, dir string) {
+	t.Helper()
+	cmd := exec.CommandContext(t.Context(), "git", "worktree", "add", "--detach", dir, "HEAD")
+	cmd.Dir = repoDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("coldstartAddWorktree: git worktree add %s: %v\n%s", dir, err, out)
+	}
+	t.Cleanup(func() {
+		rm := exec.Command("git", "worktree", "remove", "--force", dir)
+		rm.Dir = repoDir
+		if out, err := rm.CombinedOutput(); err != nil {
+			t.Logf("coldstartAddWorktree: cleanup %s: %v\n%s", dir, err, out)
+		}
+	})
 }
 
 // coldstartPrepare builds a runnable beadRunOne call.
@@ -298,15 +365,25 @@ func coldstartPrepare(t *testing.T, opt coldstartOptions) *coldstartRun {
 	// The worktree is handed in rather than created, so no test here depends on
 	// git worktree add against a worker that does not exist.
 	//
-	// It must still be a git repository with one commit. The graph node reads the
-	// worktree HEAD before it launches the agent and keeps that SHA as the node
-	// baseline, and it refuses a baseline it could not read. A bare temp dir made
-	// `git rev-parse HEAD` return empty, so every run here died at "resolve HEAD
-	// before agentic node" and never built a launch spec — which is the step that
-	// takes the cold-start token this whole file measures. Six tests then waited
-	// 30s each for an agent that could not exist.
-	worktreeDir := t.TempDir()
-	hooksockGitInit(t, worktreeDir)
+	// It must be a real worktree OF projectDir, sharing its object store. The
+	// graph node keeps the worktree HEAD as the node baseline and then diffs that
+	// baseline against the tip. Both SHAs must resolve in the same repository or
+	// the diff fails and the run gives up before it ever spawns an agent.
+	//
+	// This used to be an INDEPENDENT repository built by the same hooksockGitInit
+	// as projectDir. That produced two commits with the same tree, author and
+	// message, differing only in their timestamp, which git records to the
+	// second. The two SHAs were therefore equal whenever both commits landed in
+	// the same wall-clock second and different whenever they straddled a boundary
+	// — measured at about one pair in eight. On the unequal runs the baseline SHA
+	// did not exist in the worktree repo, `git diff base..tip` exited 128, and
+	// the run failed at "diff-hash error before agentic node". The test then
+	// waited its full 30s for an agent that had already been abandoned, and
+	// reported it as a cold-start-gate failure. The gate was never involved. The
+	// test passed only by accidental SHA collision between two unrelated
+	// repositories.
+	worktreeDir := filepath.Join(t.TempDir(), "worktree")
+	coldstartAddWorktree(t, projectDir, worktreeDir)
 	worktreeFactory := func(context.Context, string, string, string) (string, func(), error) {
 		return worktreeDir, func() {}, nil
 	}
@@ -342,9 +419,10 @@ func coldstartPrepare(t *testing.T, opt coldstartOptions) *coldstartRun {
 	}
 
 	ledger := &runplanacqLedger{}
+	bus := &runplanBus{}
 	params := remotefixParams(t, projectDir)
 	params.BrAdapter = ledger
-	params.Bus = &runplanBus{}
+	params.Bus = bus
 	params.HandlerArgs = opt.agent.handlerArgs()
 	params.AdapterRegistry2 = coldstartRegistryFor(t, opt.adapter)
 	params.WorkerRegistry = workerReg
@@ -365,6 +443,7 @@ func coldstartPrepare(t *testing.T, opt coldstartOptions) *coldstartRun {
 		ledger:      ledger,
 		agent:       opt.agent,
 		atTakeSite:  atTakeSite,
+		bus:         bus,
 	}
 }
 
@@ -385,7 +464,10 @@ func (r *coldstartRun) start(t *testing.T) <-chan struct{} {
 	go func() {
 		defer close(done)
 		defer cancel()
-		runBeadOneTest(ctx, r.deps, r.env, "", r.preSelected, false)
+		ok := runBeadOneTest(ctx, r.deps, r.env, "", r.preSelected, false)
+		r.mu.Lock()
+		r.returned, r.ok = true, ok
+		r.mu.Unlock()
 	}()
 	t.Cleanup(func() {
 		// Plain write, not letFinish: a cleanup must not call t.Fatalf, and the
@@ -618,8 +700,9 @@ func TestColdStartToken_ALocalRunTakesNoColdStartToken(t *testing.T) {
 
 	if !agent.waitStarted() {
 		t.Fatalf("a LOCAL run started no agent within %v against a full cold-start channel.\n"+
-			"A local run constructs no reverse tunnel and must skip the cold-start gate entirely.",
-			coldstartWaitLimit)
+			"A local run constructs no reverse tunnel and must skip the cold-start gate entirely.\n"+
+			"%s",
+			coldstartWaitLimit, run.outcome())
 	}
 	if got := len(token); got != 1 {
 		t.Errorf("cold-start tokens outstanding while a local run was live = %d, want 1 — the one "+

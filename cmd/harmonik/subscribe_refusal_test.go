@@ -54,6 +54,20 @@ func refusalReply() map[string]any {
 // captureStd redirects os.Stdout and os.Stderr for the duration of fn and
 // returns what was written to each. It mutates process globals, so no test
 // using it may call t.Parallel().
+//
+// EVERY DESCRIPTOR IT OPENS, IT CLOSES. This helper used to close the two WRITE
+// ends and drop the two READ ends on the floor. Six callers, so twelve
+// descriptors leaked for the life of the cmd/harmonik test binary. The write
+// ends had to be closed because closing them is what delivers EOF to the
+// readers; the read ends had nothing forcing the issue, and so nobody noticed.
+//
+// That is the same shape as the leak repaired in
+// internal/daemon/run_terminal_writer_lifetime_test.go, where an unclosed FIFO
+// write end was inherited by a forked child and wedged a test for 58 seconds. It
+// is milder here — os.Pipe descriptors are close-on-exec, so no child inherits
+// these — but "milder" is a property of this call site, not of the habit. A test
+// helper that opens four descriptors and closes two is one refactor away from
+// being the expensive kind.
 func captureStd(t *testing.T, fn func()) (stdout, stderr string) {
 	t.Helper()
 	outR, outW, err := os.Pipe()
@@ -64,6 +78,9 @@ func captureStd(t *testing.T, fn func()) (stdout, stderr string) {
 	if err != nil {
 		t.Fatalf("pipe stderr: %v", err)
 	}
+	// Closed after the drains finish, not deferred: a deferred close would race
+	// the ReadAll goroutines, which are still reading when this function returns
+	// its values.
 	origOut, origErr := os.Stdout, os.Stderr
 	os.Stdout, os.Stderr = outW, errW
 
@@ -78,7 +95,11 @@ func captureStd(t *testing.T, fn func()) (stdout, stderr string) {
 	fn()
 	_ = outW.Close()
 	_ = errW.Close()
-	return <-outCh, <-errCh
+	stdout, stderr = <-outCh, <-errCh
+	// Both ReadAll calls have returned, so nothing is reading these any more.
+	_ = outR.Close()
+	_ = errR.Close()
+	return stdout, stderr
 }
 
 // TestSubscribeCommand_DaemonRefusalIsNotSuccess pins that `harmonik subscribe`

@@ -183,18 +183,28 @@ func TestPidfileRelease_Idempotent(t *testing.T) {
 	}
 }
 
-// TestPidfileAcquire_OCloexec verifies that the fd opened by AcquirePidfile
-// has FD_CLOEXEC set, confirming O_CLOEXEC was applied.
+// TestPidfileAcquire_OCloexec asserts that the fd opened by AcquirePidfile has
+// FD_CLOEXEC set. READ THE NEXT PARAGRAPH BEFORE YOU TRUST IT.
 //
-// This used to claim the flag was "the key differentiator from
-// plFixtureAcquirePidfile which omits O_CLOEXEC". That is FALSE and the belief
-// behind it is dangerous. The fixture opens with os.OpenFile, and Go's os
-// package ORs O_CLOEXEC into every open it makes — so both descriptors carry the
-// flag and there is no differentiator. What actually omits it is a RAW
-// syscall.Open, and exactly that mistake cost a 58-second wedge in
-// internal/daemon/run_terminal_writer_lifetime_test.go, where a FIFO write end
-// without the flag was inherited by a neighbour's forked child and kept the
-// pipe's reader from ever seeing EOF.
+// THIS TEST CANNOT FAIL, and it is kept only because deleting it would remove
+// the record of why. Go's os package ORs O_CLOEXEC into every open it makes
+// (src/os/file_unix.go, unconditional), and AcquirePidfile opens with
+// os.OpenFile. So the explicit syscall.O_CLOEXEC in that call is decoration:
+// PROVEN by mutation on 2026-08-07 — deleting the flag from
+// internal/lifecycle/pidfile.go leaves this test green. It guards Go's behaviour,
+// not ours, and it is named for a spec line ("O_CLOEXEC is mandatory") that it
+// does not actually hold anyone to. Tracked for repair; do not read a green here
+// as evidence about this codebase.
+//
+// The comment this replaces was worse than useless. It said the flag was "the
+// key differentiator from plFixtureAcquirePidfile which omits O_CLOEXEC". The
+// fixture also opens with os.OpenFile, so it omits nothing and there is no
+// differentiator — and the belief the sentence teaches, that an ordinary open
+// can be missing the flag while a raw one is the safe kind, is exactly backwards.
+// That belief is what let a real leak through: a raw syscall.Open on a FIFO write
+// end in internal/daemon/run_terminal_writer_lifetime_test.go was inherited by a
+// neighbour's forked child, and the pipe's reader never saw EOF, wedging a test
+// for 58 seconds against a one-second bound.
 //
 // The rule worth carrying away: descriptors born from os.* are close-on-exec for
 // free; descriptors born from a raw syscall are not, and must name the flag.

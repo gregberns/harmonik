@@ -299,7 +299,11 @@ func buildAgentTaskContent(p AgentTaskPayload) string {
 		sb.WriteString("When running discovery commands (find, grep, ls, rg), use relative paths anchored to your worktree, NOT the main repo:\n\n")
 		sb.WriteString("  CORRECT:   find . -name '*.go'\n")
 		sb.WriteString(fmt.Sprintf("  CORRECT:   find %s/internal -name '*.go'\n", p.WorkspacePath))
-		sb.WriteString("  WRONG:     find /Users/gb/github/harmonik/internal -name '*.go'   (main repo — your edits will be lost)\n\n")
+		// The WRONG example names no path. It used to name one operator's own
+		// checkout, which every project's agent-task.md then carried, telling
+		// an implementer somewhere else to avoid a directory that has nothing
+		// to do with it. The lesson is carried by the two CORRECT lines above.
+		sb.WriteString("  WRONG:     any absolute path outside the worktree above   (your edits will be lost)\n\n")
 		sb.WriteString("If a discovery command returns paths under the main repo root, translate them into your worktree before reading or editing.\n")
 		// F18 (logmine hk-rpk5k): agents reach for repo-root .harmonik/ instead of worktree-local.
 		sb.WriteString(fmt.Sprintf("Note: your worktree has its OWN `.harmonik/` directory at `%s/.harmonik/` (agent-task.md, reviewer-feedback files). The MAIN repo's `.harmonik/` (queue.json, events.jsonl, daemon.sock) is a DIFFERENT tree — do not read or write there.\n", p.WorkspacePath))

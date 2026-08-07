@@ -60,6 +60,13 @@ const writerLifetimeStillBlocked = 3 * time.Second
 // accident.
 const writerLifetimeAfterRelease = time.Second
 
+// writerLifetimePostReturnGrace is how long the reader-wait keeps polling after
+// the run has returned before it concludes no collection is coming. It replaces
+// the remaining 60 seconds of a 60-second timeout with a fifth of a second, and
+// it is not zero because a regressed run can return microseconds before its
+// collection reaches the blocking open.
+const writerLifetimePostReturnGrace = 200 * time.Millisecond
+
 // writerLifetimeWaitForReader opens the write end of a named pipe, and returns
 // only once a READER has opened the other end. The second result is false when
 // no reader arrived within timeout.
@@ -72,9 +79,20 @@ const writerLifetimeAfterRelease = time.Second
 // It reports rather than calling t.Fatal, because the caller has a live
 // goroutine to join first. A test that ends while that goroutine is still
 // running panics the whole binary the moment the goroutine logs.
-func writerLifetimeWaitForReader(t *testing.T, path string, timeout time.Duration) (*os.File, bool) {
+//
+// driveDone is closed when the run under test has returned. Watching it is what
+// stops this helper from spending its whole timeout proving an ABSENCE. If the
+// run finishes without ever starting a collection there is no reader coming and
+// there never will be, and the honest report is available immediately; polling
+// on to the deadline only delays a verdict that is already decided, and it
+// delays it behind a message about a timeout, which reads as a slow machine
+// rather than as a run that did no collection. Pass nil when there is nothing
+// to watch.
+func writerLifetimeWaitForReader(t *testing.T, path string, timeout time.Duration, driveDone <-chan struct{}) (*os.File, bool) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
+	runReturned := false
+	var runReturnedAt time.Time
 	for time.Now().Before(deadline) {
 		// O_CLOEXEC IS LOAD-BEARING, NOT HYGIENE. This is the write end of the
 		// FIFO that holds the session-data collection at its read, and closing it
@@ -98,9 +116,34 @@ func writerLifetimeWaitForReader(t *testing.T, path string, timeout time.Duratio
 			t.Errorf("writerLifetime: open the write end of %s: %v", path, err)
 			return nil, false
 		}
-		time.Sleep(5 * time.Millisecond)
+		// Keep polling for a short grace after the run returns, then stop. The
+		// grace is not politeness: in the REGRESSED tree this test exists to catch
+		// — the one where the run does not wait for its writer — the run can return
+		// microseconds before the collection reaches its blocking open. With no
+		// grace this branch would fire first and report the wrong thing, when the
+		// precise claim-1 message ("the run returned while the session-data writer
+		// it started was still going") is the one that names the defect.
+		if runReturned && time.Now().After(runReturnedAt.Add(writerLifetimePostReturnGrace)) {
+			t.Errorf("writerLifetime: nothing opened %s for reading, and the run has now "+
+				"returned.\n"+
+				"This is not a timeout and not a slow machine. Two things produce it and the "+
+				"test cannot tell them apart from here: the run started no session-data "+
+				"collection at all, or it started one that never reached its first read. "+
+				"Either way there is no writer for this test to say anything about, and its "+
+				"three claims would all be defended by an absence.", path)
+			return nil, false
+		}
+		select {
+		case <-driveDone:
+			if !runReturned {
+				runReturned = true
+				runReturnedAt = time.Now()
+			}
+		case <-time.After(5 * time.Millisecond):
+		}
 	}
-	t.Errorf("writerLifetime: nothing opened %s for reading within %s.\n"+
+	t.Errorf("writerLifetime: nothing opened %s for reading within %s, and the run had not "+
+		"returned either.\n"+
 		"The run must reach its session-data collection, which reads that file on its way to "+
 		"writing session-data.jsonl. If it never does, this test measures nothing and the claim "+
 		"below is defended by an absence.", path, timeout)
@@ -168,7 +211,7 @@ func TestRunTerminal_TheRunWaitsForTheSessionDataWriterItStarted(t *testing.T) {
 		t.Fatal("writerLifetime: the fixture never seeded the project directory")
 	}
 
-	writeEnd, gotReader := writerLifetimeWaitForReader(t, fifoPath, 60*time.Second)
+	writeEnd, gotReader := writerLifetimeWaitForReader(t, fifoPath, 60*time.Second, driveDone)
 	if !gotReader {
 		<-driveDone
 		return

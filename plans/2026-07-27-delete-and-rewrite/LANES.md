@@ -159,7 +159,7 @@ shared branch. Alpha commits here directly and merges the other lane into it.
 
 **Owns** `internal/daemon/**`, `internal/runlease/**`, `internal/runloop/**`,
 `internal/runexec/**`, `internal/workflow/dot/**`, `internal/brcli/**`,
-`internal/transport/tunnel/**`,
+`internal/crewrun/**`, `internal/transport/tunnel/**`,
 `internal/harness/shared/**`, `specs/run-state-machine.md`,
 `specs/execution-model.md`, and `DECOMPOSITION-MAP.md`. Alpha also owns each extraction contract,
 the daemon construction change, and deletion of the old daemon adapter.
@@ -172,6 +172,27 @@ the daemon construction change, and deletion of the old daemon adapter.
 > Because it collides with no other lane's compile unit, alpha may work it in a separate worktree
 > beside the daemon work. **Any exported-symbol change here breaks alpha's build with no gate that can
 > see it** — announce it the same way §5 requires for a cross-lane package.
+
+> **`internal/crewrun` was added 2026-08-06, after a third audit found it in no lane.** Measured at
+> `f1e40cbb1`: 4 production files, 671 production lines, 11 import sites — 9 in `internal/daemon` and
+> 2 in `cmd/harmonik`. It is its own compile unit, so §1 does not decide it, and the same consumer
+> count that placed `internal/brcli` places this: it is alpha's. `internal/crewrun/idlereap.go` holds
+> the crew idle reaper named in `hk-wn8wp`, so alpha takes that verdict.
+>
+> **`internal/workspace` was added 2026-08-06 in the same audit, and it goes the other way.** Measured
+> at `f1e40cbb1`: 32 production files, 7,782 production lines, 70 test files, and 32 import sites
+> spread over seven packages — `internal/daemon` 18, `internal/runmerge` 4, `internal/scenario` 3,
+> `cmd/harmonik` 3, `internal/transport/codesync` 2, `internal/lifecycle` 1, `internal/harness/claude`
+> 1. At 56 percent daemon the consumer count is mixed, so the `brcli` rule does not reach it and two
+> other facts decide. It is its own compile unit, so it does not collide with alpha's 930-second
+> package. And its largest open item, the honest worktree probe in `createworktree.go` (`hk-uaka2`,
+> the distributed-execution plan's named first blocker), is independent of alpha's daemon-contract
+> series, so holding it in the serial lane only delays it. **It is bravo's.**
+>
+> **Say what that costs.** `internal/daemon` imports it at 18 sites, so a bravo change to its exported
+> surface breaks alpha's build with no gate that can see it. §5's announce-before-you-commit rule
+> applies in full, exactly as it already does for `internal/core` and `internal/queue`. Bravo also
+> takes the `IsLeaseLockStale` verdict in `hk-wn8wp`.
 
 > **`internal/runexec` and `internal/workflow/dot` were added 2026-08-03, after an audit found them
 > in NO lane.** Both sit on the critical path and both break alpha's tests, which is the reason for
@@ -201,7 +222,7 @@ condition.
 package.
 
 **Owns** `internal/queue/**` (including `cli/`), `internal/queuewiring/**`, `internal/lifecycle/**`
-(including `tmux/`), `internal/core/**`, `internal/replay/**`, `internal/projectconfig/**`,
+(including `tmux/`), `internal/core/**`, `internal/workspace/**`, `internal/replay/**`, `internal/projectconfig/**`,
 `internal/runmerge/**`, `internal/eventbus/**`, `internal/hookrelay/**`, `cmd/harmonik/**`, and —
 carried over from step 9 — `scripts/scratch-daemon.sh`, `scripts/core-loop-matrix.sh`,
 `.github/workflows/scenario.yml`, `test/twins/**`, `test/scenario/**`,
@@ -836,11 +857,20 @@ the pure policy core.
 
 Neither lane may decide these. Each one is stated with what it blocks and what each answer costs.
 
-1. **Do the escape check and the no-commit guard belong to the Run machine, or to the caller?**
-   Blocks step 7's second half and all of step 8. Moving them into the machine changes behaviour —
-   graph runs that pass today start being guarded, and graph mode is the default. Deleting the escape
-   check instead admits the machine's guarding phase is decorative. A run-state-machine spec amendment
-   travels with either answer. The map files this as D2 and schedules it one step late.
+1. ~~**Do the escape check and the no-commit guard belong to the Run machine, or to the caller?**~~
+   **ANSWERED 2026-08-06, and the question was already half-stale when it was asked.** The escaped-
+   worktree guard was deleted on 2026-08-04 and the deletion is recorded as a rule in
+   `specs/run-state-machine.md` RSM-008. It had zero production call sites, and its one test asserted
+   the escape event fired zero times while nothing could emit that event, so the test was green from
+   the day it was written. Both options this item offered assumed the guard ran somewhere. It did not.
+
+   **The operator's replacement direction, 2026-08-06.** "Wandering out of a worktree" has no honest
+   cheap signal, and a dirty main checkout is a bad proxy for it — hard prevention is a sandboxing
+   problem and is later work. The COMMIT is the part worth guarding: by default an agent may commit
+   only to its own run branch in its own worktree. The wider reach must still exist, granted per bead,
+   so a research task that legitimately needs another directory or branch can declare that need.
+   **This is backlog. The dogfood build comes first.** Filed as `hk-pxtjn`, which carries the full
+   history and the false-failure mode any proposal must answer first.
 
 2. **Three abandoned branches sat in the lane namespace. Reconcile them or delete them. Still open
    — and one of them was deleted, reported unrecoverable, and then recovered.**
@@ -869,19 +899,49 @@ Neither lane may decide these. Each one is stated with what it blocks and what e
    this is the branch; the likely cause is a different base for the count. **Treat both sets as
    approximate.** Neither method was recorded, so 42 and 88 are not a correction.
 
-   **The operator decision is unchanged and still needed: reconcile this work or declare it dead.**
-   Recovery only means the choice still exists. Until it is made, `internal/core/transition.go` stays
-   contested and any commit touching it says so.
+   **ASSESSED 2026-08-06 at the operator's request. The recommendation is: declare it dead, keep the
+   tag, harvest nothing.** Awaiting the operator's word, and it is the only part of this item still
+   open.
+
+   Of the 88 changed files, 53 are tests this program deliberately deleted, and about ten are
+   load-probe litter (`PROBE.md`, `CONC1.md`, `docs/conc-a.md` … `conc-f.md`). Two commits are pull
+   requests already merged. The same two commits appear seven times each — a broken rebase loop, not
+   work. It does not merge: 23 files conflict, and the specs it edits have been amended 8 to 12 times
+   since its base, which is 533 commits behind.
+
+   The only genuinely new code is two packages. **`internal/runloop/reviewcycle` is a third
+   implementation of the review loop** — phases, an iteration cap, verdict routing and HEAD-advance
+   no-progress detection, every one of which the DOT cascade already does. The operator's ruling:
+   there is one engine and it is DOT. `hk-qbsha` removes the leftover review-loop vocabulary that
+   keeps regrowing this idea. **`internal/runloop/continuity` is a different problem** — session
+   identity across a resume — and that problem is real and unbuilt (`internal/continuity` does not
+   exist at HEAD). Whoever starts `codex-continuity` T1 may want to read it. That is a look, not a
+   merge.
+
+   Until the operator answers, `internal/core/transition.go` stays contested and any commit touching
+   it says so.
 
    **What this cost, so it is not repeated.** An agent deleted a branch that this very item named as
    one an agent must not delete, and the loss stayed invisible for days because a deleted ref leaves
    nothing that any status command reads. The two branches that survived did so because somebody
    tagged them first. Tag before delete.
 
-3. **Reconcile `main`.** Still the one move that fixes the stale lint base, the poisoned worktree
-   source and the required check together. `origin/main` is divergent and its required check has been
-   red since 2026-07-17. It needs a push, and an agent must not rewrite the branch every merge is
-   judged against.
+3. ~~**Reconcile `main`.**~~ **CLOSED 2026-08-06 by operator ruling. Stop raising it.** Nothing needs
+   to happen to `main`. This program merges into it at the end; it is not a live reference in the
+   meantime. The operator's words: if something compares this branch's work against `main`, that
+   thing is wrong and should be deleted rather than served.
 
-4. **The guard choice in `specs/run-state-machine.md` §3.3**, and the four charter-amending candidates
-   in `DECOMPOSITION-MAP.md` §3b. Both were waiting before this session and still are.
+   Two real defects hid behind this item and are now filed. **`hk-uwhrb` (P1, dogfood blocker):** this
+   repo has no `.harmonik/branching.yaml`, so every branch default falls through to the literal
+   `"main"` — what a worktree is cut from, what finished work lands on, what the reconciler targets,
+   and what the branch reaper treats as safe to delete. A daemon started today would cut from a
+   21-July tree. The fix is mostly that one file. **`hk-1a7yb` (P1):** the subsumption check runs a
+   literal `git log main` that no configuration can reach, and it closes a bead on evidence that only
+   proves some commit NAMED it. That is how a P1 fleet-down bug closed: a whole-repo `gofumpt` commit
+   carried its `Refs:` trailer.
+
+   **Anywhere `main` is hard-coded, treat it as most likely wrong.** That is the standing rule this
+   item leaves behind.
+
+4. **The four charter-amending candidates in `DECOMPOSITION-MAP.md` §3b.** Still waiting. The guard
+   choice in `specs/run-state-machine.md` §3.3 that used to sit beside them is answered — see item 1.

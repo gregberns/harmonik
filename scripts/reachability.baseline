@@ -470,7 +470,6 @@ darwin/arm64 github.com/gregberns/harmonik/internal/lifecycle.ReconciliationLock
 darwin/arm64 github.com/gregberns/harmonik/internal/lifecycle.ReconciliationLock.WriteVerdictExecuted
 darwin/arm64 github.com/gregberns/harmonik/internal/lifecycle.ReconciliationLockPath
 darwin/arm64 github.com/gregberns/harmonik/internal/lifecycle.ReconciliationLocksDir
-darwin/arm64 github.com/gregberns/harmonik/internal/lifecycle.RemoveStalePidfile
 darwin/arm64 github.com/gregberns/harmonik/internal/lifecycle.SetsidDaemon
 darwin/arm64 github.com/gregberns/harmonik/internal/lifecycle.SpawnSysProcAttr
 darwin/arm64 github.com/gregberns/harmonik/internal/lifecycle.SpillFilePath
@@ -1093,7 +1092,6 @@ linux/amd64 github.com/gregberns/harmonik/internal/lifecycle.ReconciliationLock.
 linux/amd64 github.com/gregberns/harmonik/internal/lifecycle.ReconciliationLock.WriteVerdictExecuted
 linux/amd64 github.com/gregberns/harmonik/internal/lifecycle.ReconciliationLockPath
 linux/amd64 github.com/gregberns/harmonik/internal/lifecycle.ReconciliationLocksDir
-linux/amd64 github.com/gregberns/harmonik/internal/lifecycle.RemoveStalePidfile
 linux/amd64 github.com/gregberns/harmonik/internal/lifecycle.SetsidDaemon
 linux/amd64 github.com/gregberns/harmonik/internal/lifecycle.SpawnSysProcAttr
 linux/amd64 github.com/gregberns/harmonik/internal/lifecycle.SpillFilePath

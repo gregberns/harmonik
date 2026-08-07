@@ -148,8 +148,11 @@ func TestScenario_PL001_SecondDaemonPidfileLocked(t *testing.T) {
 //
 // AcquirePidfile handles this naturally: it acquires the flock (succeeds because
 // no one holds it), truncates the stale content, and writes fresh three-line
-// content (PID/PGID/instanceID). RemoveStalePidfile is the explicit cleanup
-// helper; AcquirePidfile's truncate-rewrite achieves the same observable effect.
+// content (PID/PGID/instanceID). PL-024 says "remove the stale pidfile", and the
+// truncate-rewrite reaches the same observable end state. This test is the whole
+// of PL-024's coverage: a separate unlink helper existed beside AcquirePidfile
+// for a caller that never appeared, and it was deleted rather than left looking
+// like part of startup.
 //
 // Assertions:
 //  1. Stale pidfile written before daemon.Start with a dead PID (no flock).

@@ -999,13 +999,17 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 			PathLabel: "dot", Detail: dotResult.summary,
 		})
 	case dotResult.subsumed:
-		// noChange-subsumed: implementer exited without advancing HEAD because
-		// the work already landed in main via a prior run. Approved close, no
-		// merge — no new commits (hk-9v5yo); RSM-035 event-carried strings.
+		// noChange-subsumed: implementer exited without advancing HEAD because a
+		// prior run already merged the work on the branch this run lands on.
+		// Approved close, no merge — no new commits (hk-9v5yo); RSM-035
+		// event-carried strings. The text says "the branch this run lands on"
+		// and not "main": the probe reads the run's resolved lands_on, so an
+		// operator who reads "main" here would go and look at the wrong branch
+		// (hk-1a7yb).
 		bridge.Feed(ctx, runexec.Event{
 			Kind: runexec.EvModeOutcome, ModeOutcome: runexec.ModeSubsumed,
 			EmitOutcome: true, PathLabel: "dot noChange-subsumed",
-			Detail: "noChange-subsumed: bead found in main",
+			Detail: "noChange-subsumed: the bead's work is already merged on the branch this run lands on",
 		})
 	default:
 		// Non-success terminal (BLOCK / cap-hit / no-progress / structural

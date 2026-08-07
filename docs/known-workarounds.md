@@ -72,12 +72,18 @@ failures back as fleet beads. The fleet daemon is never touched.
 
 ```bash
 # The fast inner loop (drive from your fleet checkout; pass the scratch path):
-./scripts/scratch-daemon.sh init   /tmp/hk-scratch   # one-time clone + init + build
+./scripts/scratch-daemon.sh init   /tmp/hk-scratch --rev "$(git rev-parse HEAD)"   # --rev is REQUIRED
+./scripts/scratch-daemon.sh build  /tmp/hk-scratch   # compile the pinned commit
 ./scripts/scratch-daemon.sh up     /tmp/hk-scratch   # start standalone daemon (no supervisor)
 ./scripts/scratch-daemon.sh cycle  /tmp/hk-scratch   # after each edit: down → build → up
 ./scripts/scratch-daemon.sh batch  /tmp/hk-scratch smoke --beads hk-test001   # run + verdict
 ./scripts/scratch-daemon.sh down   /tmp/hk-scratch
 ```
+
+Editing the scratch tree and cycling still works. The build then labels the binary
+`<revision>+local-edits`, and that label travels into `up`, `status` and every
+`BATCH_SUMMARY`. The build refuses nothing. The label only stops an edited run
+from reading as a clean audit of the pinned revision.
 
 **Full runbook — including the `batch` / `feedback` output contracts, the minimal
 `--file <queue.json>` format, two worked examples (a trivial 1-bead batch and the

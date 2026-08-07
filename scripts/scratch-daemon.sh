@@ -23,8 +23,22 @@
 # `pkill harmonik` (or even `pkill -f "harmonik --project"`) would kill the fleet
 # daemon — this script deliberately does neither.
 #
+# THE REVISION UNDER AUDIT IS A REQUIRED INPUT.
+#   `init` will not run without --rev. This script exists to grade ONE commit, and
+#   until hk-scratch-daemon-audits-wrong-tree-zljvm it had no way to be told which
+#   one: it cloned the origin URL (which serves the remote's DEFAULT BRANCH, not
+#   your candidate), it skipped the clone when the scratch directory already had a
+#   .git (so a second run graded the first run's leftovers), and it never ran
+#   fetch, checkout, reset or pull at all. `build` then printed the tree's own HEAD,
+#   which made a stale tree look chosen. The result was a green verdict on the
+#   wrong code.
+#   Now: --rev is required, the tree is FORCED to it, HEAD is READ BACK and
+#   compared, and build / up / status / batch each name the revision they act on.
+#   An existing scratch tree is a hard error unless you pass --reuse, and --reuse
+#   still forces the tree to --rev.
+#
 # Usage:
-#   ./scripts/scratch-daemon.sh init   <scratch-path> [<source-repo>]
+#   ./scripts/scratch-daemon.sh init   <scratch-path> --rev <commit-ish> [--source <repo>] [--reuse]
 #   ./scripts/scratch-daemon.sh build  <scratch-path>
 #   ./scripts/scratch-daemon.sh up     <scratch-path>
 #   ./scripts/scratch-daemon.sh status <scratch-path>
@@ -50,10 +64,20 @@
 #                             the composition-root audit table at boot; that table is the
 #                             boot record for the queue-only subsystems posture.
 #
+# init options:
+#   --rev <commit-ish>  REQUIRED. The commit, branch or tag under audit.
+#   --source <repo>     Where to fetch it from. Default: this script's own checkout,
+#                       NOT its origin URL — an unpushed candidate must still work.
+#   --reuse             Keep an existing scratch tree instead of failing. The tree is
+#                       still forced to --rev, so reuse saves the clone and nothing else.
+#                       It also drops the previous run's binary, so `up` cannot start a
+#                       daemon built from the revision you just moved away from.
+#
 # Pairs with the fast remote reproducer:
 #   go test -tags=scenario -run TestScenario_RemoteSubstrate_Localhost_DOT_E2E ./internal/daemon/
 #
-# Refs: hk-4tdlw (scratch-clone standalone test-daemon iteration loop).
+# Refs: hk-4tdlw (scratch-clone standalone test-daemon iteration loop),
+#       hk-scratch-daemon-audits-wrong-tree-zljvm (required + verified revision pin).
 
 set -euo pipefail
 
@@ -132,6 +156,183 @@ scratch_sock()    { echo "$1/.harmonik/daemon.sock"; }
 scratch_pidfile() { echo "$1/.harmonik/daemon.pid"; }
 scratch_log()     { echo "$1/.harmonik/scratch-daemon.log"; }
 scratch_origin()  { echo "$1/.harmonik/scratch-origin.git"; }
+# The commit `init --rev` pinned this scratch tree to, plus the spelling the
+# caller asked for. Written by init, read by every subcommand that reports a
+# result, so no result can be printed without naming the code it came from.
+scratch_revfile() { echo "$1/.harmonik/audit-revision"; }
+# The revision the CURRENT scratch binary was built from. Deleting the binary is
+# not enough on its own — this pairs a binary with a commit so `up` can refuse a
+# daemon whose executable and whose tree disagree.
+scratch_binrevfile() { echo "$1/.harmonik/bin/built-revision"; }
+
+# ---------------------------------------------------------------------------
+# Revision pinning
+#
+# WHY THIS EXISTS. This script audits a candidate commit. Before hk-scratch-
+# daemon-audits-wrong-tree-zljvm it had no way to be told which commit that was:
+# `init` cloned the origin URL, which takes the remote's DEFAULT BRANCH; it
+# skipped the clone entirely when the scratch already had a .git, so a second
+# run graded whatever the first run left behind; and `git fetch`, `git checkout`,
+# `git reset` and `git pull` appeared nowhere in the file, so nothing ever moved
+# the tree to a named commit. `build` then printed the tree's own HEAD, which
+# made a stale tree read as a deliberate choice. A wrong tree reported green.
+#
+# The rule now: the revision is a REQUIRED input, the tree is FORCED to it, HEAD
+# is READ BACK and compared, and every verdict names the commit it came from.
+# ---------------------------------------------------------------------------
+
+# resolve_rev <repo> <commit-ish> — print the full SHA a commit-ish names, or
+# return 1.
+#
+# ORDER IS LOAD-BEARING. refs/remotes/scratch-source/* is what the fetch just
+# wrote, so it holds the freshest view of the source. The bare spelling is tried
+# AFTER it, because in a reused clone the bare name can still resolve to a stale
+# LOCAL branch left by an earlier run: the fetch writes only the scratch-source
+# namespace, so a bare `main` would quietly name the old commit while the new one
+# sat right there unused. A raw SHA and a tag are unaffected — neither resolves
+# under scratch-source, so both fall through to the bare spelling.
+resolve_rev() {
+    local repo="$1" rev="$2" cand out
+    for cand in "refs/remotes/scratch-source/$rev" "$rev" "refs/remotes/origin/$rev"; do
+        if out="$(git -C "$repo" rev-parse --verify --quiet "${cand}^{commit}" 2>/dev/null)"; then
+            printf '%s\n' "$out"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# audit_revision <scratch> — the commit init pinned the tree to. Empty when the
+# tree carries no pin.
+audit_revision() {
+    local f
+    f="$(scratch_revfile "$1")"
+    [ -f "$f" ] || return 0
+    cut -f1 <"$f" | head -1
+}
+
+# assert_pinned <scratch> — refuse to act on a tree whose revision is unknown or
+# has moved, and print the pinned commit so the caller can name it.
+#
+# Two separate refusals, because they are two different accidents. NO PIN means
+# the tree was never placed by `init --rev`, so nothing can say what it holds. A
+# MISMATCH means something moved HEAD after init — a hand checkout, a stray
+# script — and the run would report on code that is not the code under audit.
+# Neither can be recovered from here, and neither may be reported as a result.
+assert_pinned() {
+    local scratch="$1" want head
+    want="$(audit_revision "$scratch")"
+    if [ -z "$want" ]; then
+        die "$scratch carries no audit revision — it was not placed by '$0 init <scratch> --rev <commit-ish>'.
+  This script cannot name the commit in that tree, so it will not report a result from it.
+  Fix: rm -rf '$scratch' && $0 init '$scratch' --rev <commit-ish>"
+    fi
+    head="$(git -C "$scratch" rev-parse HEAD 2>/dev/null)" \
+        || die "$scratch is not a git tree — run: $0 init '$scratch' --rev <commit-ish>"
+    if [ "$head" != "$want" ]; then
+        die "$scratch has drifted off its audited revision.
+  init pinned : $want
+  HEAD is now : $head
+  A result from this tree would name the wrong commit. Re-init to the revision you mean to audit."
+    fi
+    printf '%s\n' "$want"
+}
+
+# local_edits <scratch> — list every difference between the working tree and the
+# pinned commit that would end up INSIDE the binary. Empty output means the
+# binary this tree produces really is the pinned commit.
+#
+# WHY THIS IS SCOPED TO BUILD INPUTS, AND NOT "IS THE TREE CLEAN". A correct init
+# does not leave a clean tree: `harmonik init --force` rewrites AGENTS.md,
+# AGENT_INDEX.md and STATUS.md while bootstrapping the project. A clean-tree rule
+# would therefore accuse every real scratch of tampering. Worse, the daemon under
+# test runs `reset --hard` on the project after a successful landing, which
+# REVERSES those same rewrites — so a rule keyed on "the tree still looks how
+# init left it" flips state when nobody edited anything, and `make core-loop-lt`
+# would start failing on its second cycle. Both measured on a real scratch clone,
+# not assumed.
+#
+# Build inputs have neither problem. Measured on a real scratch: init and build
+# together modify NOTHING that Go compiles, so the honest baseline here is empty,
+# and no baseline file is needed at all.
+#
+# WHY THIS EXCLUDES RATHER THAN SELECTS. The first version of this listed the
+# build inputs it knew about — '*.go' 'go.mod' 'go.sum' 'cmd/harmonik/assets' —
+# and missed internal/daemon/standard-bead.dot, which internal/daemon/
+# standardgraph.go pulls in with //go:embed and which defines the DOT workflow
+# this script runs by DEFAULT. Editing it produced a bare-commit stamp on a
+# binary containing a different workflow graph. An allowlist of build inputs has
+# to be re-audited every time somebody embeds a new file type, and when it is
+# wrong it is wrong SILENTLY, in the direction of calling a modified tree clean.
+#
+# The exclusion list is the opposite trade. It names what `init` ITSELF writes:
+# `harmonik init --force` rewrites the top-level docs and re-provisions all ten
+# embedded skills into .claude/skills/ (cmd/harmonik/init_cmd.go provisionSkills
+# skips existing files only when --force is absent, and this script always passes
+# --force), and .harmonik holds this scratch's own daemon state. Everything else
+# counts. When THIS list is wrong, a clean tree gets labelled — visible, loud, and
+# safe. Measured on a real scratch clone: after init and build, this returns
+# nothing.
+#
+# .claude/skills is tracked and is NOT a build input: the binary embeds
+# cmd/harmonik/assets/skills/, which this sweep still covers. The two are required
+# to stay byte-identical, so today they agree and the rewrite is a no-op. The
+# first time they drift, every audit of that commit would otherwise stamp
+# +local-edits with no way to clear it, because init rewrites those files on every
+# run.
+#
+# --untracked-files=all is load-bearing. `go build` compiles every .go file in a
+# package directory whether or not git tracks it, so an untracked
+# internal/daemon/zz_patch.go is in the binary. The second sweep adds .go files
+# that .gitignore hides, which the first cannot see and Go compiles regardless.
+local_edits() {
+    local scratch="$1" tracked ignored
+    # NOT `2>/dev/null` on this one. Empty output from here means "no local
+    # edits", so a git that could not answer — an index.lock held by the daemon
+    # under test is the realistic case, since it runs its own git operations on
+    # this tree — would be read as a clean tree and stamp a bare commit on code
+    # nobody inspected. That is the silent false-clean this whole function exists
+    # to prevent, so it fails instead.
+    if ! tracked="$(git -C "$scratch" status --porcelain --untracked-files=all -- . \
+            ':(exclude).harmonik' \
+            ':(exclude).claude/skills' \
+            ':(exclude)AGENTS.md' ':(exclude)AGENT_INDEX.md' ':(exclude)STATUS.md' \
+            ':(exclude)CLAUDE.md' ':(exclude)HANDOFF.md' 2>&1)"; then
+        die "cannot read the working tree of $scratch: ${tracked%%$'\n'*}
+  An unanswered check here would read as 'no local edits' and stamp a bare commit, so it stops instead."
+    fi
+    # `--ignored` reports whole ignored DIRECTORIES rather than only the paths the
+    # pathspec names, so this is filtered down to .go files. Without the filter
+    # every run reports .harmonik/bin/ and friends as local edits. A failure here
+    # is not fatal: the sweep above already covers everything git tracks or sees.
+    ignored="$(git -C "$scratch" status --porcelain --untracked-files=all --ignored=matching -- '*.go' 2>/dev/null \
+        | grep -E '\.go$' || true)"
+    printf '%s\n%s\n' "$tracked" "$ignored" | grep -v '^[[:space:]]*$' | sort -u || true
+}
+
+# build_stamp <scratch> <revision> — what the binary built from this tree may
+# honestly call itself.
+#
+# WHY THIS LABELS INSTEAD OF REFUSING. This script serves two callers. An
+# assessor audits one commit and must never get a green verdict on other code. A
+# developer edits the scratch tree and re-runs `cycle`, which both
+# docs/scratch-daemon-runbook.md and docs/known-workarounds.md document as the
+# inner loop. Refusing to build an edited tree would serve the first and delete
+# the second.
+#
+# Naming serves both. A clean tree stamps the bare commit. An edited tree stamps
+# a value that is NOT a commit and cannot be mistaken for one, and that label
+# travels into the build output, `up`, `status`, BATCH_SUMMARY and the results
+# artifact. The developer keeps the loop; the assessor cannot be handed a verdict
+# that looks like a clean audit of a commit it was not.
+build_stamp() {
+    local scratch="$1" rev="$2"
+    if [ -n "$(local_edits "$scratch")" ]; then
+        printf '%s+local-edits\n' "$rev"
+    else
+        printf '%s\n' "$rev"
+    fi
+}
 
 # isolate_push_target makes merge-gate pushes structurally local to the scratch
 # project. A normal clone inherits its source as origin; without this rewrite a
@@ -152,12 +353,12 @@ isolate_push_target() {
     fi
     git -C "$scratch" remote set-url origin "$origin"
 
-    if ! git -C "$scratch" rev-parse --verify --quiet "$branch" >/dev/null 2>&1; then
-        git -C "$scratch" branch "$branch" HEAD
-    fi
-    if ! git --git-dir="$origin" rev-parse --verify --quiet "refs/heads/$branch" >/dev/null 2>&1; then
-        git -C "$scratch" push origin "$branch:refs/heads/$branch" >/dev/null
-    fi
+    # Force both refs to HEAD rather than creating them only when absent. On an
+    # `init --reuse` the tree has just been moved to a new audit revision, and a
+    # scratch/main left at the PREVIOUS revision would make the daemon land its
+    # work on the commit that is no longer under audit.
+    git -C "$scratch" branch --force "$branch" HEAD
+    git -C "$scratch" push --force origin "$branch:refs/heads/$branch" >/dev/null
 
     [ -f "$branching" ] || die "scratch branching config missing after init: $branching"
     awk -v branch="$branch" '
@@ -304,24 +505,128 @@ provision_matrix_config() {
 # Subcommand: init
 # ---------------------------------------------------------------------------
 cmd_init() {
-    local scratch source_repo
+    local scratch source_repo="" rev="" reuse=0
     scratch="$(guard_path "${1:-}")"
-    source_repo="${2:-}"
+    shift || true
 
+    # Back-compat: a bare second positional is the source repo. Everything after
+    # it is a flag. The REVISION has no positional spelling on purpose — it must
+    # be named, and a caller that forgets it gets an error, not a guess.
+    case "${1:-}" in
+        ""|--*) ;;
+        *) source_repo="$1"; shift;;
+    esac
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --rev)      [ $# -ge 2 ] || die "init: --rev needs a value"; rev="$2"; shift 2;;
+            --rev=*)    rev="${1#--rev=}"; shift;;
+            --source)   [ $# -ge 2 ] || die "init: --source needs a value"; source_repo="$2"; shift 2;;
+            --source=*) source_repo="${1#--source=}"; shift;;
+            --reuse)    reuse=1; shift;;
+            *) die "init: unknown flag '$1' (use --rev <commit-ish> [--source <repo>] [--reuse])";;
+        esac
+    done
+
+    [ -n "$rev" ] || die "init: --rev <commit-ish> is REQUIRED.
+  This script audits ONE commit. Without --rev it would clone whatever branch the
+  source happens to point at and report that as the result for the commit you meant.
+  Usage: $0 init '$scratch' --rev <commit-ish> [--source <repo>] [--reuse]"
+
+    # Default source: the LOCAL checkout this script lives in, NOT its origin URL.
+    # The origin URL serves the remote's default branch and does not necessarily
+    # carry the candidate commit at all — a local branch or an unpushed commit is
+    # exactly the case an audit has to handle.
     if [ -z "$source_repo" ]; then
-        # Default: this repo (the one the script lives in). Prefer the origin URL
-        # so the clone is a true independent checkout; fall back to the local path.
-        local repo_root
-        repo_root="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
-        source_repo="$(git -C "$repo_root" remote get-url origin 2>/dev/null || echo "$repo_root")"
+        source_repo="$(fleet_root)"
+        [ -n "$source_repo" ] || die "init: no --source given and this script is not inside a git repo"
     fi
 
+    # Resolve the revision in the SOURCE first, when the source is a local repo.
+    # A typo must fail before anything is cloned, and the source is the authority
+    # on what the caller meant.
+    local want=""
+    if [ -d "$source_repo" ]; then
+        want="$(resolve_rev "$source_repo" "$rev")" \
+            || die "init: --rev '$rev' does not name a commit in source repo '$source_repo'"
+    fi
+
+    # An existing tree is the second half of the wrong-tree defect: the old code
+    # skipped the clone and audited whatever the previous run left. Refuse it.
+    # --reuse keeps the tree on purpose, and the tree is still forced to --rev
+    # below, so reuse saves the clone without ever changing what gets graded.
     if [ -d "$scratch/.git" ]; then
-        echo "[scratch-daemon] clone already present at $scratch — skipping git clone"
+        if [ "$reuse" -eq 0 ]; then
+            die "init: '$scratch' already holds a git tree (HEAD $(git -C "$scratch" rev-parse HEAD 2>/dev/null || echo unknown)).
+  Reusing it silently would audit whatever the previous run left there.
+  Start clean:     rm -rf '$scratch' && $0 init '$scratch' --rev '$rev'
+  Or reuse it:     $0 init '$scratch' --rev '$rev' --reuse   (still forced to '$rev')"
+        fi
+        echo "[scratch-daemon] --reuse: keeping the tree at $scratch — forcing it to '$rev'"
     else
         echo "[scratch-daemon] cloning $source_repo → $scratch"
         git clone "$source_repo" "$scratch"
     fi
+
+    # Move the tree to the named revision. Nothing above this point guarantees the
+    # tree holds the code under audit: a clone takes the source's default branch,
+    # and --reuse keeps the previous run's checkout.
+    #
+    # The fetch is allowed to fail. A fresh clone already carries every branch, and
+    # a reused tree usually does too, so a failure here is only fatal if the
+    # revision then does not resolve — which the next block checks and dies on. The
+    # verdict comes from reading HEAD back, never from this command's status.
+    local fetch_err=""
+    if ! fetch_err="$(git -C "$scratch" fetch --quiet --tags --force "$source_repo" \
+            '+refs/heads/*:refs/remotes/scratch-source/*' 2>&1)"; then
+        fetch_err=" (fetch from '$source_repo' also failed: ${fetch_err%%$'\n'*})"
+    else
+        fetch_err=""
+    fi
+
+    if [ -z "$want" ]; then
+        # A non-local source (a URL) could not be pre-resolved, so the scratch tree
+        # is the only place left to resolve in. That is safe ONLY if the fetch
+        # succeeded. If it did not, every ref here is whatever a previous run left,
+        # and resolving against them is exactly how a stale tree gets audited under
+        # a fresh commit's name. Fail instead of resolving on stale data.
+        [ -z "$fetch_err" ] \
+            || die "init: cannot reach source '$source_repo', so '$rev' can only be resolved against refs a previous run left in '$scratch'.${fetch_err}"
+        want="$(resolve_rev "$scratch" "$rev")" \
+            || die "init: --rev '$rev' does not name a commit in '$scratch'${fetch_err}"
+    else
+        git -C "$scratch" rev-parse --verify --quiet "${want}^{commit}" >/dev/null \
+            || die "init: commit $want ('$rev') is not present in '$scratch'${fetch_err}"
+    fi
+
+    echo "[scratch-daemon] checking out $rev → $want"
+    git -C "$scratch" checkout --quiet --detach --force "$want" \
+        || die "init: cannot check out $want ('$rev') in $scratch"
+    git -C "$scratch" reset --quiet --hard "$want"
+    # An untracked leftover from a previous run is still the previous run's code.
+    # .harmonik is this scratch's own daemon state (binary, socket, pidfile,
+    # config) rather than part of the revision, so it is the one thing kept.
+    git -C "$scratch" clean -qfdx -e .harmonik
+
+    # VERIFY. Every step above can fail in a way that leaves the tree on the wrong
+    # commit, and a wrong tree reporting green is the whole failure this guards
+    # against. Read HEAD back and compare rather than trusting the commands.
+    local head
+    head="$(git -C "$scratch" rev-parse HEAD)"
+    [ "$head" = "$want" ] \
+        || die "init: checkout did not take — asked for '$rev' ($want), HEAD is $head"
+
+    # Drop any binary a previous run built. The clean step above deliberately
+    # spares .harmonik, and the binary lives at .harmonik/bin/harmonik, so without
+    # this an `init --reuse` to a NEW revision leaves the OLD revision's executable
+    # in place. `up` only checks that the file exists, so the daemon would run the
+    # previous commit's code while every line of output named the new one — the
+    # wrong-tree defect again, wearing the fix's own label. Removing it makes `up`
+    # fail with "scratch binary not built" until someone rebuilds.
+    rm -f "$(scratch_bin "$scratch")" "$(scratch_binrevfile "$scratch")"
+
+    mkdir -p "$scratch/.harmonik"
+    printf '%s\t%s\n' "$want" "$rev" >"$(scratch_revfile "$scratch")"
+    echo "[scratch-daemon] AUDIT REVISION: $want ($rev)"
 
     # Bootstrap harmonik state only if absent — a clone of a harmonik-managed repo
     # already carries .harmonik/config.yaml, so this is a no-op there.
@@ -337,7 +642,10 @@ cmd_init() {
     fi
     isolate_push_target "$scratch"
     provision_matrix_config "$scratch"
-    echo "[scratch-daemon] init complete. Next: $0 build $scratch && $0 up $scratch"
+    # isolate_push_target and the harmonik bootstrap both touch the tree. Confirm
+    # the pin one more time so init cannot report success on a moved tree.
+    assert_pinned "$scratch" >/dev/null
+    echo "[scratch-daemon] init complete at $want ($rev). Next: $0 build $scratch && $0 up $scratch"
 }
 
 # ---------------------------------------------------------------------------
@@ -349,24 +657,63 @@ cmd_build() {
     [ -d "$scratch/cmd/harmonik" ] || die "$scratch is not a harmonik checkout (no cmd/harmonik) — run init first"
     bin="$(scratch_bin "$scratch")"
     mkdir -p "$(dirname "$bin")"
-    local commit_hash
-    commit_hash="$(git -C "$scratch" rev-parse HEAD 2>/dev/null || echo unknown)"
-    echo "[scratch-daemon] building scratch binary → $bin (commit $commit_hash)"
+    # The commit comes from the PIN, not from whatever HEAD happens to be. The old
+    # code read HEAD and fell back to the literal string "unknown", so a tree
+    # nobody had placed on purpose still produced a build that looked stamped and
+    # deliberate. assert_pinned refuses instead, and there is no fallback value.
+    local commit_hash stamp
+    commit_hash="$(assert_pinned "$scratch")"
+    # What this binary may honestly be called. Equal to commit_hash for a clean
+    # tree; suffixed when the tree carries edits that Go will compile in.
+    stamp="$(build_stamp "$scratch" "$commit_hash")"
+    if [ "$stamp" != "$commit_hash" ]; then
+        echo "[scratch-daemon] WARNING: this tree carries local edits to code that Go compiles:" >&2
+        local_edits "$scratch" >&2
+        echo "[scratch-daemon] WARNING: the binary will be labelled '$stamp'. It is NOT $commit_hash, and no result from it is an audit of that commit." >&2
+    fi
+    echo "[scratch-daemon] building scratch binary → $bin (revision $stamp)"
     # Build FROM the scratch clone's source so the daemon runs exactly the code in
     # that checkout. Same ldflags stamp as the Makefile's build-harmonik target.
-    go build -C "$scratch" -ldflags "-X main.commitHash=${commit_hash}" -o "$bin" ./cmd/harmonik
-    echo "[scratch-daemon] build OK"
+    go build -C "$scratch" -ldflags "-X main.commitHash=${stamp}" -o "$bin" ./cmd/harmonik
+    # Record what this binary is, so `up` and `batch` can refuse or disclose. Written
+    # only after a successful build: a failed build must not leave a stamp claiming
+    # the binary is current.
+    printf '%s\n' "$stamp" >"$(scratch_binrevfile "$scratch")"
+    echo "[scratch-daemon] build OK at revision $stamp"
 }
 
 # ---------------------------------------------------------------------------
 # Subcommand: up
 # ---------------------------------------------------------------------------
 cmd_up() {
-    local scratch bin sess log sock
+    local scratch bin sess log sock rev
     scratch="$(guard_path "${1:-}")"
     assert_not_supervised "$scratch"
+    # The daemon about to start runs the code in this tree. Refuse to start one
+    # nobody can name the revision of.
+    rev="$(assert_pinned "$scratch")"
     bin="$(scratch_bin "$scratch")"
     [ -x "$bin" ] || die "scratch binary not built — run: $0 build $scratch"
+    # The tree being pinned says nothing about the BINARY. Confirm the executable
+    # about to run was built from the revision under audit; otherwise the daemon
+    # runs one commit while every line of output names another.
+    local binrev
+    binrev="$(cat "$(scratch_binrevfile "$scratch")" 2>/dev/null || true)"
+    if [ -z "$binrev" ]; then
+        die "the scratch binary carries no build revision — it was not built by '$0 build'. Run: $0 build $scratch"
+    fi
+    # The binary may be the bare commit, or that commit plus the local-edits
+    # label. Anything else was built from a DIFFERENT commit and must not run
+    # under this pin's name.
+    if [ "$binrev" != "$rev" ] && [ "$binrev" != "${rev}+local-edits" ]; then
+        die "the scratch binary was built from a different revision than the tree holds.
+  tree  : $rev
+  binary: $binrev
+  Rebuild before starting the daemon: $0 build $scratch"
+    fi
+    if [ "$binrev" != "$rev" ]; then
+        echo "[scratch-daemon] WARNING: starting a daemon built from $binrev — this is not a clean $rev, and no result from it is an audit of that commit." >&2
+    fi
     sess="$(session_name "$scratch")"
     log="$(scratch_log "$scratch")"
     sock="$(scratch_sock "$scratch")"
@@ -379,7 +726,8 @@ cmd_up() {
     local workflow_mode="${SCRATCH_WORKFLOW_MODE:-dot}"
     local extra_flags="${SCRATCH_DAEMON_FLAGS:-}"
 
-    echo "[scratch-daemon] starting standalone daemon (session=$sess, project=$scratch)"
+    # Report the BINARY's label, not the tree's pin: the binary is what runs.
+    echo "[scratch-daemon] starting standalone daemon (session=$sess, project=$scratch, revision=$binrev)"
     # Standalone start = the bare `harmonik --project <path>` binary run INSIDE a
     # tmux session. This script starts no `harmonik supervise` process. That alone
     # does NOT give you a supervisor-free daemon: the daemon carries its own
@@ -452,6 +800,27 @@ cmd_status() {
     pid="$(read_pid "$pf")"
 
     echo "[scratch-daemon] project : $scratch"
+    # status is a read-only reporter, so it describes the pin instead of dying on
+    # a bad one. It still has to say plainly when the tree cannot be named, and
+    # when it has moved off the revision init placed it on.
+    local want head
+    want="$(audit_revision "$scratch")"
+    head="$(git -C "$scratch" rev-parse HEAD 2>/dev/null || true)"
+    if [ -z "$want" ]; then
+        echo "[scratch-daemon] revision: NOT PINNED — no audit revision recorded; results from this tree name no commit"
+    elif [ "$want" != "$head" ]; then
+        echo "[scratch-daemon] revision: DRIFTED — init pinned $want but HEAD is ${head:-<not a git tree>}"
+    elif [ -n "$(local_edits "$scratch")" ]; then
+        echo "[scratch-daemon] revision: $want  (pinned, HEAD matches) — MODIFIED: the tree carries local edits to compiled code"
+        local_edits "$scratch" | sed 's/^/[scratch-daemon]   /'
+    else
+        echo "[scratch-daemon] revision: $want  (pinned, HEAD matches, no local edits)"
+    fi
+    if [ -f "$(scratch_binrevfile "$scratch")" ]; then
+        echo "[scratch-daemon] binary  : built from $(cat "$(scratch_binrevfile "$scratch")")"
+    else
+        echo "[scratch-daemon] binary  : not built by '$0 build'"
+    fi
     # session_name needs the binary; degrade gracefully if it is missing.
     if [ -x "$(scratch_bin "$scratch")" ]; then
         sess="$(session_name "$scratch")"
@@ -582,8 +951,10 @@ cmd_cycle() {
 #
 # Output contract (stable + parseable — documented for the reviewer and hk-1gkc8):
 #   - A JSON artifact at <scratch>/.harmonik/batch-<name>-<queue_id>.json: an array of
-#       { "bead", "run_id"|null, "verdict": pass|fail|incomplete, "fail_signature"|null }
-#     where fail_signature is a one-line (<=200ch) excerpt of the run's failure summary.
+#       { "bead", "run_id"|null, "verdict": pass|fail|incomplete, "fail_signature"|null,
+#         "revision" }
+#     where fail_signature is a one-line (<=200ch) excerpt of the run's failure summary,
+#     and revision is the audited commit the result came from (see AUDIT REVISION above).
 #     This artifact is the authoritative machine input for the feedback-bead step.
 #   - A RETAINED event capture at <scratch>/.harmonik/batch-<name>-<queue_id>.events.ndjson:
 #     the raw NDJSON subscribe stream the fold above was computed from. It is kept
@@ -597,7 +968,7 @@ cmd_cycle() {
 #   - Stable stdout lines (grep-able), one BATCH_ITEM per item, tab-separated:
 #       BATCH_SUBMIT  name=<name> queue_id=<id> items=<n>
 #       BATCH_ITEM\t<bead>\t<verdict>\t<run_id|->\t<fail_signature|->
-#       BATCH_SUMMARY name=<name> total=<n> pass=<p> fail=<f> incomplete=<i> results=<path> events=<path>
+#       BATCH_SUMMARY name=<name> total=<n> pass=<p> fail=<f> incomplete=<i> results=<path> events=<path> revision=<sha>
 #   - 'incomplete' = no terminal event before SCRATCH_BATCH_TIMEOUT elapsed.
 #
 # Exit: 0 if every item passed; 1 if any item failed or stayed incomplete.
@@ -659,6 +1030,49 @@ cmd_batch() {
         [ -f "$events_file" ] || die "batch: --from-events file '$events_file' not found"
     fi
     [ -n "$mode" ] || die "batch: one of --beads <ids>, --file <queue.json>, or --from-events <ndjson> is required"
+
+    # Which revision this batch is a verdict ON.
+    #
+    # The LIVE modes run the scratch tree's code through a real daemon, so the
+    # tree must be pinned and the result carries that commit. The OFFLINE
+    # --from-events mode re-folds an event stream that was captured earlier; it
+    # reads no source tree, so it cannot claim one. It reports the pin when the
+    # directory happens to carry one and says so plainly when it does not, rather
+    # than leaving the field blank and letting a reader assume a commit.
+    local batch_rev
+    if [ "$mode" = "events" ]; then
+        # Prefer the BINARY's label over the tree's pin, exactly as the live path
+        # does. The events were produced by a daemon, and the binary is the only
+        # record of what that daemon was. Reading the pin alone launders the
+        # local-edits label: edit, cycle, batch (correctly stamped
+        # <sha>+local-edits), then re-fold the SAME retained capture and the rows
+        # would say a bare <sha>, which `feedback` then writes into a fleet bead.
+        batch_rev="$(cat "$(scratch_binrevfile "$scratch")" 2>/dev/null || true)"
+        [ -n "$batch_rev" ] || batch_rev="$(audit_revision "$scratch")"
+        if [ -z "$batch_rev" ]; then
+            batch_rev="none-offline-events-fold"
+        elif [ "${batch_rev%%+*}" != "$(git -C "$scratch" rev-parse HEAD 2>/dev/null)" ]; then
+            # The events came from whatever ran earlier, and the tree has moved
+            # since. The pin still names the right commit for THIS event file only
+            # if the file was captured before the move, which cannot be checked
+            # from here. Say so rather than let the stamp look verified.
+            echo "[scratch-daemon] WARNING: the scratch tree has moved off $batch_rev; this fold stamps a revision it cannot verify against the event file" >&2
+        fi
+    else
+        batch_rev="$(assert_pinned "$scratch")"
+        # A live batch is a verdict on the code the DAEMON ran, and the daemon ran
+        # the binary. If that binary carries the local-edits label, the verdict
+        # must carry it too, or a modified run reads as a clean audit of the pin.
+        local live_binrev
+        live_binrev="$(cat "$(scratch_binrevfile "$scratch")" 2>/dev/null || true)"
+        if [ -n "$live_binrev" ] && [ "$live_binrev" != "$batch_rev" ]; then
+            # Warn BEFORE reassigning, so the message can name both the binary and
+            # the pinned commit it differs from.
+            echo "[scratch-daemon] WARNING: this batch runs a binary labelled '$live_binrev', not a clean build of $batch_rev. No result below is an audit of that commit." >&2
+            batch_rev="$live_binrev"
+        fi
+    fi
+    echo "[scratch-daemon] batch '$name' — revision: $batch_rev"
 
     timeout="${SCRATCH_BATCH_TIMEOUT:-1800}"
     command -v jq >/dev/null 2>&1 || die "batch: jq is required to parse the event stream"
@@ -837,6 +1251,12 @@ def oneline:
     # 6) Emit the structured summary: JSON artifact + stable stdout lines.
     local results_file total pass fail
     results_file="$scratch/.harmonik/batch-${name}-${queue_id}.json"
+    # Stamp the revision onto every row before the artifact is written. The
+    # BATCH_SUMMARY line names the revision too, but that goes to stdout and
+    # nobody keeps it. This file is the durable evidence, and `feedback` reads it
+    # to open beads against a failure, so the commit has to travel with the rows
+    # rather than with the console output.
+    results="$(printf '%s' "$results" | jq -c --arg rev "$batch_rev" 'map(. + {revision: $rev})')"
     printf '%s\n' "$results" >"$results_file"
     total="$(printf '%s' "$results" | jq 'length')"
     pass="$(printf '%s' "$results" | jq '[.[] | select(.verdict=="pass")] | length')"
@@ -857,7 +1277,10 @@ def oneline:
         events_out="$scratch/.harmonik/batch-${name}-${queue_id}.events.ndjson"
         mv -f "$raw" "$events_out" || events_out="$raw"
     fi
-    echo "BATCH_SUMMARY name=$name total=$total pass=$pass fail=$fail incomplete=$incomplete results=$results_file events=$events_out"
+    # revision= is LAST so the existing prefix-anchored readers of this line keep
+    # matching. It is not optional: a pass/fail count that cannot say which commit
+    # produced it is not a verdict.
+    echo "BATCH_SUMMARY name=$name total=$total pass=$pass fail=$fail incomplete=$incomplete results=$results_file events=$events_out revision=$batch_rev"
 
     # Non-zero exit if anything failed or stayed incomplete, so callers can branch on it.
     [ "$fail" -eq 0 ] && [ "$incomplete" -eq 0 ]
@@ -867,7 +1290,8 @@ def oneline:
 # Subcommand: feedback  (scratch batch FAILURES -> deduped MAIN/fleet-repo beads)
 # ---------------------------------------------------------------------------
 # Reads a batch results artifact (the JSON array `batch` writes — an array of
-#   { "bead", "run_id"|null, "verdict": pass|fail|incomplete, "fail_signature"|null })
+#   { "bead", "run_id"|null, "verdict": pass|fail|incomplete, "fail_signature"|null,
+#     "revision" })
 # and, for every FAIL item, creates-or-updates an actionable bead on the MAIN/FLEET
 # repo's beads DB so a scratch-run failure becomes work the real daemon can pick up.
 # `pass` and `incomplete` items are ignored.
@@ -972,7 +1396,7 @@ cmd_feedback() {
     # space-padded provenance hashes already filed this run.
     local seen_hashes=" "
     local created=0 updated=0 nfail=0
-    local item bead run_id sig hash label_prov title body found existing
+    local item bead run_id sig item_rev hash label_prov title body found existing
     while IFS= read -r item; do
         [ -n "$item" ] || continue
         nfail=$((nfail + 1))
@@ -980,6 +1404,11 @@ cmd_feedback() {
         run_id="$(printf '%s' "$item" | jq -r '.run_id // "-"')"
         sig="$(printf '%s' "$item"    | jq -r '.fail_signature // empty')"
         [ -n "$sig" ] || sig="(no signature; bead $bead)"
+        # Which commit produced this failure. Older artifacts predate the field, so
+        # say so plainly rather than leaving the line blank or omitting it — a
+        # reader must be able to tell "not recorded" from "recorded as nothing".
+        item_rev="$(printf '%s' "$item" | jq -r '.revision // empty')"
+        [ -n "$item_rev" ] || item_rev="(not recorded)"
 
         # Stable dedupe key: batch-name + 0x1f + signature (queue_id deliberately excluded).
         hash="$(printf '%s\x1f%s' "$batch_name" "$sig" | prov_hash)"
@@ -994,8 +1423,8 @@ cmd_feedback() {
 
         title="[scratch-fail] ${batch_name}: ${sig}"
         title="${title:0:160}"
-        body="$(printf 'Auto-filed from a scratch-daemon batch failure (scripts/scratch-daemon.sh feedback).\n\nbatch: %s\nscratch_bead: %s\nscratch_run_id: %s\nprovenance: %s\nfail_signature: %s\n' \
-            "$batch_name" "$bead" "$run_id" "$label_prov" "$sig")"
+        body="$(printf 'Auto-filed from a scratch-daemon batch failure (scripts/scratch-daemon.sh feedback).\n\nbatch: %s\nrevision: %s\nscratch_bead: %s\nscratch_run_id: %s\nprovenance: %s\nfail_signature: %s\n' \
+            "$batch_name" "$item_rev" "$bead" "$run_id" "$label_prov" "$sig")"
 
         # Look up an existing OPEN feedback bead by the provenance label (fleet DB).
         found="$( cd "$fleet" && br list --label "$label_prov" --json 2>/dev/null )" || found=""

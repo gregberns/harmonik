@@ -6,7 +6,8 @@
 # scratch-daemon.sh `init` appends the ACTIVE YAML below (everything past the marker) onto
 # the generated config. The append is idempotent by CONTENT: provision_matrix_config compares
 # the already-applied block against this file and re-applies when they differ. Edit this file
-# and re-run `scratch-daemon.sh init <scratch>` and the change lands. Do not re-add a
+# and re-run `scratch-daemon.sh init <scratch> --rev <commit> --reuse` and the change lands.
+# (`--rev` is required, and `--reuse` keeps the existing clone.) Do not re-add a
 # "skip when key X is present" guard — that guard silently shadowed the whole block once
 # already (hk-es4f7) and a config block that does not apply is worse than no block.
 #

@@ -154,10 +154,12 @@ test-subprocess:  ## Run WS2.4 non-docker subprocess boot smoke (-tags=subproces
 # Override the scratch dir with LT_SCRATCH=… . Cite: M6-PLAN §WS4-5.
 #
 # hk-xy9ym: this target must be SELF-SERVING for the CHECKED-OUT (pinned) code. It:
-#   1. wipes + inits LT_SCRATCH by cloning the LOCAL checkout ($(CURDIR)) — NOT origin/main
-#      (scratch-daemon.sh init defaults to the origin URL and SKIPS a re-clone when .git
-#      exists, so a stale origin/main clone would otherwise persist and be the daemon-under-
-#      test). Cloning the local repo checks out this branch's HEAD = the pinned code.
+#   1. wipes + inits LT_SCRATCH from the LOCAL checkout ($(CURDIR)) at this checkout's
+#      exact HEAD, passed to `init --rev`. hk-xy9ym originally got this by wiping the
+#      directory first and cloning the local path, which worked only because of the wipe:
+#      `init` had no revision argument at all. hk-scratch-daemon-audits-wrong-tree-zljvm
+#      made the revision REQUIRED and made `init` force and verify the checkout, so the
+#      guarantee now comes from naming the commit rather than from the `rm -rf` above it.
 #   2. seeds the fixture beads into the fresh scratch DB + writes the cell->bead_id map, so
 #      the scoped cell actually LAUNCHES (bare/un-seeded => every cell PENDING, no agent).
 #   3. scopes to pi:local — the one leg that proves the full core-loop contract e2e with a
@@ -193,9 +195,11 @@ core-loop-lt: build-all  ## WS4-5 forced LT gate: inits scratch from LOCAL check
 	@# Stop any stale scratch daemon (pidfile-scoped; fleet-safe) BEFORE wiping the dir so a
 	@# leftover run from a prior invocation is never orphaned. Tolerate a not-yet-created scratch.
 	bash scripts/scratch-daemon.sh down "$(LT_SCRATCH)" 2>/dev/null || true
-	@# Guarantee a FRESH clone of the PINNED code: wipe, then init from the LOCAL checkout.
+	@# Guarantee a FRESH clone of the PINNED code: wipe, then init from the LOCAL
+	@# checkout at THIS checkout's HEAD. --rev is what pins it; the wipe only saves
+	@# init from having to be told --reuse.
 	rm -rf "$(LT_SCRATCH)"
-	bash scripts/scratch-daemon.sh init "$(LT_SCRATCH)" "$(CURDIR)"
+	bash scripts/scratch-daemon.sh init "$(LT_SCRATCH)" --source "$(CURDIR)" --rev "$$(git -C "$(CURDIR)" rev-parse HEAD)"
 	@# Seed the fixture beads into the fresh scratch DB + emit the cell->bead_id map so the
 	@# scoped cell launches (isolates origin + pre-creates the pi landing branch).
 	bash scripts/core-loop-seed.sh "$(LT_SCRATCH)" "$(LT_SEED_MAP)"
@@ -834,6 +838,7 @@ script-tests:  ## Self-tests for the shell the gate depends on
 	scripts/go-test-must-match-test.sh
 	scripts/loadgen-test.sh
 	scripts/gate-fails-closed-test.sh
+	scripts/scratch-daemon-rev-pin-test.sh
 	scripts/lint-allow-test.sh
 	scripts/lint-changed-test.sh
 	scripts/changed-func-coverage-test.sh

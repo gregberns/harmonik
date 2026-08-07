@@ -76,7 +76,21 @@ func writerLifetimeWaitForReader(t *testing.T, path string, timeout time.Duratio
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		fd, err := syscall.Open(path, syscall.O_WRONLY|syscall.O_NONBLOCK, 0)
+		// O_CLOEXEC IS LOAD-BEARING, NOT HYGIENE. This is the write end of the
+		// FIFO that holds the session-data collection at its read, and closing it
+		// is how this test releases the collection. Without O_CLOEXEC the
+		// descriptor is INHERITED by every process the test binary forks while it
+		// is open — and this test is t.Parallel() in a package whose neighbours
+		// fork git, /bin/sh handlers and `sleep 300`. A FIFO reader sees EOF only
+		// when the LAST write end closes, so our Close dropped only OUR copy while
+		// a neighbour's child still held a duplicate, and the collection stayed
+		// blocked for that child's whole life.
+		//
+		// Go's os.OpenFile always sets O_CLOEXEC; a raw syscall.Open does not, and
+		// Go's fork/exec dups only ProcAttr.Files and leaves every other
+		// non-CLOEXEC descriptor open in the child. Any raw open in this tree owes
+		// itself this flag.
+		fd, err := syscall.Open(path, syscall.O_WRONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
 		if err == nil {
 			return os.NewFile(uintptr(fd), path), true
 		}

@@ -35,8 +35,15 @@ func queueCliFixtureTempDir(t *testing.T) string {
 	harmonikDir := filepath.Join(candidate, ".harmonik")
 	sockCandidate := filepath.Join(harmonikDir, sockFile)
 
+	// STRICTLY less than, not <=. One byte of sun_path is the NUL terminator the
+	// kernel writes, so a path of exactly sunPathMax bytes is refused by bind(2)
+	// with EINVAL. lifecycle.ValidateSocketPathLength is the canonical spelling and
+	// uses `<`; this fixture used `<=` and so admitted the one length the kernel
+	// rejects, which surfaces as "invalid argument" from the listener or as a
+	// five-second wait in queueCliFixtureWaitReady — both of which read as a defect
+	// in the CLI under test. Same class as hk-m3jai / hk-ta6dg.
 	var root string
-	if len(sockCandidate) <= sunPathMax {
+	if len(sockCandidate) < sunPathMax {
 		root = candidate
 	} else {
 		dir, err := os.MkdirTemp("/tmp", "qcli-")

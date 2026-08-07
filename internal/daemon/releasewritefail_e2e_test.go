@@ -59,6 +59,22 @@ func (l *breakQueuesOnClaimLedger) ReopenBead(_ context.Context, _ string, _ brc
 	return nil
 }
 
+// waitFor blocks until cond holds, or fails the test naming what it was waiting
+// for. A poll beats a fixed sleep here: it is faster on an idle machine, it does
+// not flake on a loaded one, and a starved work loop reports as a timeout on a
+// named condition instead of as a zero-event assertion failure.
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out after 20s waiting for %s", what)
+}
+
 // A release whose write does not reach disk must be as loud as a reservation
 // whose write does not reach disk. The raw revert this replaces logged the
 // persist error to stderr and carried on, so the operator had no event at all.
@@ -132,7 +148,7 @@ func TestReleaseWriteFailure_ReportsTheFailedWrite(t *testing.T) {
 		NoAutoPull:       true,
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
 
 	loopDone := make(chan struct{})
@@ -141,7 +157,11 @@ func TestReleaseWriteFailure_ReportsTheFailedWrite(t *testing.T) {
 		daemon.ExportedRunWorkLoop(ctx, deps) //nolint:errcheck,gosec // G104: background loop; returns on ctx cancel
 	}()
 
-	// Long enough for the one tick that reserves, claims and releases.
+	// Wait for the work the assertions describe, rather than for a fixed span of
+	// wall clock. internal/daemon is a heavily parallel package on a machine that
+	// may be loaded, and a sleep long enough to be safe there is a sleep every
+	// future run pays for. Polling also turns a starved loop into a named
+	// timeout instead of a confusing zero-event failure.
 	//
 	// This does NOT exercise the once-per-queue report bound, and waiting longer
 	// would not: the failed release leaves the item at dispatched, nothing
@@ -149,7 +169,15 @@ func TestReleaseWriteFailure_ReportsTheFailedWrite(t *testing.T) {
 	// opportunity ever arises. That unreachability is what makes the event count
 	// below trustworthy. The dedup bound is pinned by the reserve-path sibling,
 	// TestReservationWriteFailure_NeverClaimsAndNeverLaunches.
-	time.Sleep(1200 * time.Millisecond)
+	waitFor(t, "the claim to fail and the release to report", func() bool {
+		return ledger.claimCalls.Load() > 0 &&
+			len(collectEventsByType(bus, string(core.EventTypeInfrastructureUnavailable))) > 0
+	})
+	// Cheap insurance only. What actually preserves the exactly-one count is that
+	// the assertions read the bus AFTER the loop has exited, so every emission is
+	// already recorded; reportQueueWriteError also emits its pair back to back on
+	// the loop goroutine, so the two cannot be observed apart.
+	time.Sleep(200 * time.Millisecond)
 	cancel()
 	select {
 	case <-loopDone:
@@ -163,16 +191,8 @@ func TestReleaseWriteFailure_ReportsTheFailedWrite(t *testing.T) {
 		t.Fatal("ClaimBead was never called — the loop never reached the release this test exists to drive")
 	}
 
-	var infra []stubEmittedEvent
-	var degradedCount int
-	for _, evt := range bus.allEvents() {
-		switch evt.EventType {
-		case string(core.EventTypeInfrastructureUnavailable):
-			infra = append(infra, evt)
-		case string(core.EventTypeDaemonDegraded):
-			degradedCount++
-		}
-	}
+	infra := collectEventsByType(bus, string(core.EventTypeInfrastructureUnavailable))
+	degradedCount := len(collectEventsByType(bus, string(core.EventTypeDaemonDegraded)))
 	if len(infra) != 1 {
 		t.Fatalf("emitted %d infrastructure_unavailable events; want exactly 1 — a release whose "+
 			"write did not reach disk must report once, and only once", len(infra))

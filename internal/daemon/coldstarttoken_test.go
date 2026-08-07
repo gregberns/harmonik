@@ -315,8 +315,9 @@ func (r *coldstartRun) outcome() string {
 	if !returned {
 		return "the run had NOT returned, so it is still parked somewhere upstream of the agent spawn"
 	}
-	var seen []string
-	for _, ev := range r.bus.seen() {
+	emitted := r.bus.seen()
+	seen := make([]string, 0, len(emitted))
+	for _, ev := range emitted {
 		seen = append(seen, string(ev))
 	}
 	events := strings.Join(seen, ", ")
@@ -345,7 +346,12 @@ func coldstartAddWorktree(t *testing.T, repoDir, dir string) {
 		t.Fatalf("coldstartAddWorktree: git worktree add %s: %v\n%s", dir, err, out)
 	}
 	t.Cleanup(func() {
-		rm := exec.Command("git", "worktree", "remove", "--force", dir)
+		// Not t.Context(): the test context is already cancelled by the time a
+		// cleanup runs, so the removal would never start. This one is its own,
+		// and bounded so a wedged git cannot hold the suite open.
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		rm := exec.CommandContext(ctx, "git", "worktree", "remove", "--force", dir)
 		rm.Dir = repoDir
 		if out, err := rm.CombinedOutput(); err != nil {
 			t.Logf("coldstartAddWorktree: cleanup %s: %v\n%s", dir, err, out)

@@ -184,8 +184,20 @@ func TestPidfileRelease_Idempotent(t *testing.T) {
 }
 
 // TestPidfileAcquire_OCloexec verifies that the fd opened by AcquirePidfile
-// has FD_CLOEXEC set, confirming O_CLOEXEC was applied. This is the key
-// differentiator from plFixtureAcquirePidfile which omits O_CLOEXEC.
+// has FD_CLOEXEC set, confirming O_CLOEXEC was applied.
+//
+// This used to claim the flag was "the key differentiator from
+// plFixtureAcquirePidfile which omits O_CLOEXEC". That is FALSE and the belief
+// behind it is dangerous. The fixture opens with os.OpenFile, and Go's os
+// package ORs O_CLOEXEC into every open it makes — so both descriptors carry the
+// flag and there is no differentiator. What actually omits it is a RAW
+// syscall.Open, and exactly that mistake cost a 58-second wedge in
+// internal/daemon/run_terminal_writer_lifetime_test.go, where a FIFO write end
+// without the flag was inherited by a neighbour's forked child and kept the
+// pipe's reader from ever seeing EOF.
+//
+// The rule worth carrying away: descriptors born from os.* are close-on-exec for
+// free; descriptors born from a raw syscall are not, and must name the flag.
 //
 // Spec ref: process-lifecycle.md §4.1 PL-002b step 1 — "O_CLOEXEC is
 // mandatory."

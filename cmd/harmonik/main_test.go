@@ -564,14 +564,28 @@ func TestVersionFlagLong_ExitsZero(t *testing.T) {
 	mainFixtureSaveRestoreArgs(t, []string{"harmonik", "--version"})
 
 	origStdout := os.Stdout
-	_, w, err := os.Pipe()
+	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("os.Pipe: %v", err)
 	}
 	os.Stdout = w
+	// Keep BOTH ends and drain the read end. The read end used to be discarded,
+	// which leaked a descriptor for the lifetime of this test binary and left
+	// nobody reading the pipe: if `--version` ever grew past the 64 KiB pipe
+	// buffer, run() would block on the write with no reader and this test would
+	// hang rather than fail. Draining on a goroutine started BEFORE run() is the
+	// shape that cannot wedge.
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		//nolint:errcheck // a drain that fails still ends the goroutine; nothing asserts on the bytes
+		_, _ = io.Copy(io.Discard, r)
+	}()
 	t.Cleanup(func() {
-		_ = w.Close()
 		os.Stdout = origStdout
+		_ = w.Close() // releases the drain goroutine
+		<-drained
+		_ = r.Close()
 	})
 
 	exitCode := run()

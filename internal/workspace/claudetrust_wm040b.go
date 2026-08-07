@@ -148,6 +148,39 @@ func defaultClaudeGlobalConfigPath() string {
 	return filepath.Join(home, ".claude.json")
 }
 
+// DefaultClaudeProjectsDir returns the directory where Claude Code keeps its
+// per-project session transcripts. Precedence (first match wins):
+//
+//  1. HARMONIK_CLAUDE_PROJECTS_DIR — the full directory path. This is the test
+//     seam. Without it a test reads the operator's real transcript store, which
+//     was measured at 1.9 GB on the development machine and is empty on a fresh
+//     one, so the same test gives two different answers on two machines.
+//  2. CLAUDE_CONFIG_HOME/projects — Claude Code's own directory convention, the
+//     same variable defaultClaudeGlobalConfigPath honours.
+//  3. ~/.claude/projects — the production default.
+//
+// The sibling of defaultClaudeGlobalConfigPath: one answers "where is Claude's
+// config file", this one answers "where are Claude's transcripts", and both
+// have to be redirectable for a test run to be independent of the host.
+func DefaultClaudeProjectsDir() string {
+	if p := os.Getenv("HARMONIK_CLAUDE_PROJECTS_DIR"); p != "" {
+		return p
+	}
+	if dir := os.Getenv("CLAUDE_CONFIG_HOME"); dir != "" {
+		return filepath.Join(dir, "projects")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		// No home means there is no transcript store to name, and an invented path
+		// would be worse than none: a reader that finds an empty directory cannot
+		// tell "no usage" from "nowhere to look". Empty says the second thing, and
+		// each caller decides what to do about it. The daemon's tuner treats it as
+		// a reason not to start at all.
+		return ""
+	}
+	return filepath.Join(home, ".claude", "projects")
+}
+
 // EnsureWorktreeTrust pre-seeds Claude Code's user-level config (~/.claude.json)
 // with a trust entry for worktreePath so that no interactive "Trust this
 // directory?" prompt appears when Claude Code starts inside a daemon-spawned

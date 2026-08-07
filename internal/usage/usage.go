@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/sessiondata"
+	"github.com/gregberns/harmonik/internal/workspace"
 )
 
 // TokenUsage is the four-category token count; type is owned by sessiondata.
@@ -147,10 +148,14 @@ func DefaultConfig(projectDir string) Config {
 	now := time.Now().UTC()
 	since := now.Add(-24 * time.Hour)
 	return Config{
-		Since:             normTS(since.Format(time.RFC3339)),
-		Until:             normTS(now.Format(time.RFC3339)),
-		EventsFile:        filepath.Join(projectDir, ".harmonik", "events", "events.jsonl"),
-		ClaudeProjectsDir: filepath.Join(os.Getenv("HOME"), ".claude", "projects"),
+		Since:      normTS(since.Format(time.RFC3339)),
+		Until:      normTS(now.Format(time.RFC3339)),
+		EventsFile: filepath.Join(projectDir, ".harmonik", "events", "events.jsonl"),
+		// Resolved through the seam, not from $HOME. internal/usage is outside the
+		// core package set, but cmd/harmonik is inside it and calls this function
+		// through `harmonik usage`, so a core test reached the operator's real
+		// transcript store from here.
+		ClaudeProjectsDir: workspace.DefaultClaudeProjectsDir(),
 		ProjectDir:        projectDir,
 	}
 }

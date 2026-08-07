@@ -18,6 +18,7 @@ import (
 	"github.com/gregberns/harmonik/internal/projectconfig"
 	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/queuewiring"
+	"github.com/gregberns/harmonik/internal/workspace"
 )
 
 // wireSocketListener performs PL-005 step 4 / step 8a and PL-003 (P9-P11):
@@ -294,11 +295,20 @@ func (bs *bootState) startBandwidthTunerIfEnabled(ctx context.Context) bool {
 	if maxN <= 0 {
 		maxN = 1
 	}
-	homeDir, homeDirErr := os.UserHomeDir()
-	if homeDirErr != nil {
+	// The transcript store is resolved through the seam, never from
+	// os.UserHomeDir here: a test that boots this subsystem must be able to point
+	// the tuner at a fixture instead of the operator's real ~/.claude/projects.
+	//
+	// An empty answer means there is no home directory to resolve, so there is no
+	// transcript store to measure. Starting the tuner anyway would read zero usage
+	// and report full headroom, which pins concurrency at maxN — the opposite of
+	// what a tuner is for. This is the same decision the code made before the seam
+	// existed, when a failed os.UserHomeDir returned false here.
+	projectsDir := workspace.DefaultClaudeProjectsDir()
+	if projectsDir == "" {
 		return false
 	}
-	tuner := NewBandwidthTuner(bs.concurrencyCtrl, maxN, cfg.SubscriptionTokenCeiling, homeDir)
+	tuner := NewBandwidthTuner(bs.concurrencyCtrl, maxN, cfg.SubscriptionTokenCeiling, projectsDir)
 	tuner.SetGate(bs.pollGate)       // SS-007: OFF at INACTIVE (hk-w6q7)
 	bs.tunerBackstop.SetTuner(tuner) // arm the pre-Seal backstop subscriber
 	go tuner.Run(ctx)

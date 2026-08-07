@@ -72,7 +72,7 @@ func piCarveLaunchThenRateLimit(t *testing.T, agentType core.AgentType) int {
 	}
 	controller := NewConcurrencyController(4)
 	backstop := &bandwidthTunerBackstop{}
-	backstop.SetTuner(NewBandwidthTuner(controller, 4, 1_000_000, home))
+	backstop.SetTuner(NewBandwidthTuner(controller, 4, 1_000_000, filepath.Join(home, ".claude", "projects")))
 	backstop.SetRunRegistry(registry)
 
 	retryAfter := 60

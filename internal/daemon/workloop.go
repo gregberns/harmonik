@@ -337,7 +337,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 				StartedAt:         sdStartedAt,
 				EndedAt:           sdEndedAt,
 				ProjectDir:        env.ProjectDir,
-				ClaudeProjectsDir: filepath.Join(os.Getenv("HOME"), ".claude", "projects"),
+				ClaudeProjectsDir: workspace.DefaultClaudeProjectsDir(),
 			}); collectErr != nil {
 				fmt.Fprintf(os.Stderr, "daemon: workloop: collect session data for run %s: %v\n", runID, collectErr)
 			}

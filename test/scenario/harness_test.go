@@ -43,6 +43,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/testhelpers/hermetic"
 )
 
 // twinBinaryPath is set by TestMain after the twin binary is built once.
@@ -55,7 +56,19 @@ var codexTwinBinaryPath string
 // once per test binary run and stores their paths in twinBinaryPath /
 // codexTwinBinaryPath. A twin build failure fails the whole tier. A skipped
 // twin scenario would hide the failed build and turn a broken tier green.
+//
+// It also fences the tier off the host, through hermetic.Setup. The scenario
+// fixtures run `git commit` and set a user identity but never turn signing off,
+// so on a machine with commit.gpgsign=true in its global gitconfig — a common
+// operator setting — every one of them fails.
+//
+// This tier is easy to miss and was: it is behind //go:build scenario, so a
+// hostile-environment sweep with `go test ./...` never compiles it, while
+// `make full` does run it. A verification that cannot see a tier is not evidence
+// about that tier.
 func TestMain(m *testing.M) {
+	cleanup := hermetic.Setup()
+
 	bin, err := scenarioFixtureBuildTwin()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "scenario: build harmonik-twin-claude: %v\n", err)
@@ -70,7 +83,9 @@ func TestMain(m *testing.M) {
 	}
 	codexTwinBinaryPath = codexBin
 
-	os.Exit(m.Run())
+	code := m.Run()
+	cleanup()
+	os.Exit(code)
 }
 
 // scenarioFixtureBuildTwin builds cmd/harmonik-twin-claude into a temp directory

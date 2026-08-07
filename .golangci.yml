@@ -63,6 +63,21 @@ linters:
       - path: ^internal/testhelpers/
         linters:
           - forbidigo
+      # The depguard component matrix below describes the PRODUCTION import graph:
+      # which subsystem may link which. internal/testhelpers/hermetic is not in
+      # that graph. It imports the standard library and nothing else, it is
+      # reachable only from a TestMain, and its whole job is to fence a test binary
+      # off the operator's home directory and global gitconfig so the suite gives
+      # the same answer on any machine.
+      #
+      # Nineteen component rules would otherwise each need the same edge added for
+      # the same reason, which says the rule is aimed at the wrong thing rather
+      # than that the import is wrong. The carve-out is deliberately narrow: only
+      # this one import, and only in a test file.
+      - linters:
+          - depguard
+        path: _test\.go$
+        text: internal/testhelpers/hermetic
       # cmd/ is the CLI. Printing to stdout IS its output, so "use the structured
       # logger" is a false positive there by construction — it accounted for 184
       # of the tree's 235 forbidigo findings. tools/ and internal/testhelpers/

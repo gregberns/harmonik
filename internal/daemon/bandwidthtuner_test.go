@@ -72,7 +72,7 @@ func TestTranscriptTokensUsed_SumsWindow(t *testing.T) {
 	})
 
 	since := time.Now().Add(-5 * time.Hour)
-	got, err := transcriptTokensUsed(home, since)
+	got, err := transcriptTokensUsed(filepath.Join(home, ".claude", "projects"), since)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestTranscriptTokensUsed_SumsWindow(t *testing.T) {
 func TestTranscriptTokensUsed_MissingDir(t *testing.T) {
 	home := t.TempDir()
 	// ~/.claude/projects does not exist
-	got, err := transcriptTokensUsed(home, time.Now().Add(-5*time.Hour))
+	got, err := transcriptTokensUsed(filepath.Join(home, ".claude", "projects"), time.Now().Add(-5*time.Hour))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestBandwidthTuner_tick_FullHeadroom(t *testing.T) {
 	}
 
 	ctrl := NewConcurrencyController(4)
-	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, home)
+	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, filepath.Join(home, ".claude", "projects"))
 	// No usage → full headroom → effectiveMax should be 4.
 	tuner.tick()
 	if got := ctrl.Get(); got != 4 {
@@ -128,7 +128,7 @@ func TestBandwidthTuner_tick_HalfUsed(t *testing.T) {
 	})
 
 	ctrl := NewConcurrencyController(4)
-	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, home)
+	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, filepath.Join(home, ".claude", "projects"))
 	tuner.tick()
 	// headroom = 500k/1M → ratio=0.5 → round(4*0.5) = 2
 	if got := ctrl.Get(); got != 2 {
@@ -154,7 +154,7 @@ func TestBandwidthTuner_tick_CeilingExhausted(t *testing.T) {
 	})
 
 	ctrl := NewConcurrencyController(4)
-	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, home)
+	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, filepath.Join(home, ".claude", "projects"))
 	tuner.tick()
 	// headroom ≤ 0 → clamp to 1
 	if got := ctrl.Get(); got != 1 {
@@ -205,7 +205,7 @@ func TestBandwidthTunerBackstop_ForwardsNotify(t *testing.T) {
 	}
 
 	ctrl := NewConcurrencyController(4)
-	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, home)
+	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, filepath.Join(home, ".claude", "projects"))
 
 	b := &bandwidthTunerBackstop{}
 	b.SetTuner(tuner)
@@ -236,7 +236,7 @@ func TestBandwidthTunerBackstop_ClearedIgnored(t *testing.T) {
 	}
 
 	ctrl := NewConcurrencyController(4)
-	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, home)
+	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, filepath.Join(home, ".claude", "projects"))
 
 	b := &bandwidthTunerBackstop{}
 	b.SetTuner(tuner)
@@ -269,7 +269,7 @@ func TestBandwidthTunerBackstop_ZeroRetryAfter(t *testing.T) {
 	}
 
 	ctrl := NewConcurrencyController(4)
-	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, home)
+	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, filepath.Join(home, ".claude", "projects"))
 
 	b := &bandwidthTunerBackstop{}
 	b.SetTuner(tuner)
@@ -314,7 +314,7 @@ func TestBandwidthTunerBackstop_EndToEndBusDelivery(t *testing.T) {
 
 	// Construct the tuner and arm the backstop AFTER sealing (matching daemon init order).
 	ctrl := NewConcurrencyController(4)
-	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, home)
+	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, filepath.Join(home, ".claude", "projects"))
 	b.SetTuner(tuner)
 
 	// Build a hook store with the bus wired in.
@@ -361,7 +361,7 @@ func TestBandwidthTunerBackstop_Pi_EventSkipsGlobalTuner(t *testing.T) {
 	}
 
 	ctrl := NewConcurrencyController(4)
-	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, home)
+	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, filepath.Join(home, ".claude", "projects"))
 
 	// Register a Pi run in the registry.
 	piRunID := core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000010"))
@@ -406,7 +406,7 @@ func TestBandwidthTunerBackstop_NonPi_EventReachesGlobalTuner(t *testing.T) {
 	}
 
 	ctrl := NewConcurrencyController(4)
-	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, home)
+	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, filepath.Join(home, ".claude", "projects"))
 
 	// Register a Claude (non-Pi) run.
 	claudeRunID := core.RunID(uuid.MustParse("01960084-0000-7000-8000-000000000011"))
@@ -446,7 +446,7 @@ func TestBandwidthTuner_NotifyRateLimit_SnapsToOne(t *testing.T) {
 	}
 
 	ctrl := NewConcurrencyController(4)
-	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, home)
+	tuner := NewBandwidthTuner(ctrl, 4, 1_000_000, filepath.Join(home, ".claude", "projects"))
 
 	tuner.NotifyRateLimit(2 * time.Minute)
 	if got := ctrl.Get(); got != 1 {

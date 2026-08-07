@@ -107,6 +107,13 @@ var osMutations = map[string]bool{
 // internal/testhelpers carries the same carve-out in .golangci.yml.
 var testInfraDirs = map[string]bool{
 	"internal/testhelpers": true,
+	// internal/testhelpers/hermetic is the same carve-out one level down. It is a
+	// leaf that fences a test binary off the operator's home directory and global
+	// gitconfig, and its only callers are TestMain functions, so by construction
+	// no production code reaches it. It is a separate package rather than part of
+	// internal/testhelpers because that package imports internal/core, and an
+	// in-package test file in core then cannot import it back without a cycle.
+	"internal/testhelpers/hermetic": true,
 }
 
 // knownUnwiredWriters maps "<pkgdir>.<FuncName>" to the consequence of it

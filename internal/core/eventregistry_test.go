@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/gregberns/harmonik/internal/testhelpers/hermetic"
 )
 
 // initialRegistrySnapshot holds the entries captured at TestMain time (after
@@ -19,14 +21,22 @@ import (
 // production entries regardless of execution order.
 var initialRegistrySnapshot map[string]typeEntry
 
+// hermetic.Setup, not hermetic.Main, because this TestMain already has work of
+// its own. It makes this package's tests give the same answer on any machine —
+// see internal/testhelpers/hermetic for the seams it redirects and why.
 func TestMain(m *testing.M) {
+	cleanup := hermetic.Setup()
+
 	globalEventRegistry.mu.Lock()
 	initialRegistrySnapshot = make(map[string]typeEntry, len(globalEventRegistry.entries))
 	for k, v := range globalEventRegistry.entries {
 		initialRegistrySnapshot[k] = v
 	}
 	globalEventRegistry.mu.Unlock()
-	os.Exit(m.Run())
+
+	code := m.Run()
+	cleanup()
+	os.Exit(code)
 }
 
 // eventRegistryReset restores the global registry to the production state

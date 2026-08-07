@@ -15,6 +15,7 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/lifecycle"
+	"github.com/gregberns/harmonik/internal/testhelpers/hermetic"
 )
 
 // TestMain isolates the WHOLE daemon test package from the real ~/.claude.json
@@ -37,20 +38,18 @@ import (
 // Per-test helpers that need their OWN isolated config (e.g. the non-parallel
 // scenario tests, rlIsolateClaudeConfig) override this with their own temp path
 // and RESTORE this default on cleanup, so the package-wide isolation is sticky.
-func TestMain(m *testing.M) {
-	var tmpDir string
-	if _, set := os.LookupEnv("HARMONIK_CLAUDE_CONFIG_PATH"); !set {
-		if dir, err := os.MkdirTemp("", "harmonik-daemon-test-claude-cfg-"); err == nil {
-			tmpDir = dir
-			_ = os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", filepath.Join(dir, ".claude.json"))
-		}
-	}
-	code := m.Run()
-	if tmpDir != "" {
-		_ = os.RemoveAll(tmpDir)
-	}
-	os.Exit(code)
-}
+//
+// That isolation now comes from hermetic.Main, which does the same thing for
+// ~/.claude.json and covers the two seams this TestMain missed: the global
+// gitconfig and ~/.claude/projects (the work loop read the operator's real
+// transcript store).
+//
+// The gitconfig seam was the larger of the two here. One run of this package on
+// f5dd00f7b with HOME pointed at an empty directory whose .gitconfig set
+// commit.gpgsign=true gave 216 failing tests, every one of them "gpg failed to
+// sign the data". See internal/testhelpers/hermetic for the method and for why
+// that count is specific to the tree it was taken on.
+func TestMain(m *testing.M) { hermetic.Main(m) }
 
 // TestDaemonStartCompiles verifies the package compiles and that Start can be
 // invoked with a zero-value Config without panicking. This is the smoke-test

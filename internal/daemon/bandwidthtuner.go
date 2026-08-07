@@ -153,13 +153,16 @@ type transcriptUsage struct {
 // suppresses upward adjustment until the retry-after window expires.
 // SetGate wires the INACTIVE poll gate (SS-007, hk-w6q7); call before Run.
 type BandwidthTuner struct {
-	ctrl     *ConcurrencyController
-	maxN     int
-	ceiling  int64
-	homeDir  string
-	interval time.Duration
-	window   time.Duration
-	gate     *PollGate // nil = ungated; set via SetGate before Run
+	ctrl    *ConcurrencyController
+	maxN    int
+	ceiling int64
+	// projectsDir is Claude Code's transcript store. The caller resolves it, so
+	// the tuner never reads the operator's home directly and a test can point it
+	// at a fixture. See internal/workspace.DefaultClaudeProjectsDir.
+	projectsDir string
+	interval    time.Duration
+	window      time.Duration
+	gate        *PollGate // nil = ungated; set via SetGate before Run
 
 	// rateLimitUntilNanos is the unix-nanosecond timestamp until which upward
 	// adjustment is suppressed.  0 = no active backoff.  Written by
@@ -169,15 +172,16 @@ type BandwidthTuner struct {
 
 // NewBandwidthTuner creates a BandwidthTuner.  ctrl must be non-nil.
 // maxN is the static --max-concurrent ceiling; ceiling is the per-5h token cap
-// supplied via --subscription-token-ceiling.
-func NewBandwidthTuner(ctrl *ConcurrencyController, maxN int, ceiling int64, homeDir string) *BandwidthTuner {
+// supplied via --subscription-token-ceiling. projectsDir is Claude Code's
+// transcript store, resolved by the caller.
+func NewBandwidthTuner(ctrl *ConcurrencyController, maxN int, ceiling int64, projectsDir string) *BandwidthTuner {
 	return &BandwidthTuner{
-		ctrl:     ctrl,
-		maxN:     maxN,
-		ceiling:  ceiling,
-		homeDir:  homeDir,
-		interval: bandwidthTunerInterval,
-		window:   bandwidthTunerWindow,
+		ctrl:        ctrl,
+		maxN:        maxN,
+		ceiling:     ceiling,
+		projectsDir: projectsDir,
+		interval:    bandwidthTunerInterval,
+		window:      bandwidthTunerWindow,
 	}
 }
 
@@ -241,7 +245,7 @@ func (t *BandwidthTuner) tick() {
 	t.rateLimitUntilNanos.Store(0)
 
 	since := now.Add(-t.window)
-	used, err := transcriptTokensUsed(t.homeDir, since)
+	used, err := transcriptTokensUsed(t.projectsDir, since)
 	if err != nil || t.ceiling <= 0 {
 		// If we can't read transcripts, leave ceiling unchanged.
 		return
@@ -276,9 +280,7 @@ func (t *BandwidthTuner) tick() {
 //
 // Files not modified since `since` are skipped to avoid reading large
 // historical transcripts.
-func transcriptTokensUsed(homeDir string, since time.Time) (int64, error) {
-	projectsDir := filepath.Join(homeDir, ".claude", "projects")
-
+func transcriptTokensUsed(projectsDir string, since time.Time) (int64, error) {
 	entries, err := os.ReadDir(projectsDir)
 	if err != nil {
 		if os.IsNotExist(err) {

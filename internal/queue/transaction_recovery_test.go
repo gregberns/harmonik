@@ -13,6 +13,21 @@ import (
 	"testing"
 )
 
+// recoverFailedReplaceIntentBytes resolves one failed-recovery intent from its
+// durable bytes. Production reaches the same code through
+// RecoverReplaceIntents, which finds the intent on disk rather than being
+// handed it; these tests pin the single-intent behaviour underneath that sweep.
+func recoverFailedReplaceIntentBytes(projectDir string, intentBytes []byte) (ReplaceRecoveryAction, error) {
+	intent, err := decodeReplaceIntent(intentBytes)
+	if err != nil {
+		return ReplaceRefuse, err
+	}
+	if intent.FailedRecoveryReceiptBinding == nil {
+		return ReplaceRefuse, errors.New("replace intent has no failed recovery receipt binding")
+	}
+	return recoverFailedReplaceIntent(projectDir, intent, intentBytes, osNamespaceOps())
+}
+
 func transactionRecoveryFixturePlan(t *testing.T) ReplacementPlan {
 	t.Helper()
 	plan := transactionFixturePlan(t, t.TempDir())
@@ -185,7 +200,7 @@ func TestRecoverFailedReplaceIntent_InstallsMissingReceiptThenCleansIntent(t *te
 		t.Fatal(err)
 	}
 
-	action, err := RecoverFailedReplaceIntent(plan.ProjectDir, intentBytes)
+	action, err := recoverFailedReplaceIntentBytes(plan.ProjectDir, intentBytes)
 	if err != nil || action != ReplacePromoteCanonical {
 		t.Fatalf("RecoverFailedReplaceIntent = (%q, %v), want promote canonical", action, err)
 	}
@@ -232,7 +247,7 @@ func TestRecoverFailedReplaceIntent_ExactReceiptCleansIntent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	action, err := RecoverFailedReplaceIntent(plan.ProjectDir, intentBytes)
+	action, err := recoverFailedReplaceIntentBytes(plan.ProjectDir, intentBytes)
 	if err != nil || action != ReplacePromoteCanonical {
 		t.Fatalf("RecoverFailedReplaceIntent = (%q, %v), want promote canonical", action, err)
 	}
@@ -269,7 +284,7 @@ func TestRecoverFailedReplaceIntent_ConflictingReceiptRefusesWithoutMutation(t *
 		t.Fatal(err)
 	}
 
-	action, err := RecoverFailedReplaceIntent(plan.ProjectDir, intentBytes)
+	action, err := recoverFailedReplaceIntentBytes(plan.ProjectDir, intentBytes)
 	if action != ReplaceRefuse || err == nil {
 		t.Fatalf("RecoverFailedReplaceIntent = (%q, %v), want refusal", action, err)
 	}
@@ -307,7 +322,7 @@ func TestRecoverFailedReplaceIntent_CleansUncommittedCandidateAndKeepsPrior(t *t
 		t.Fatal(err)
 	}
 
-	action, err := RecoverFailedReplaceIntent(plan.ProjectDir, intentBytes)
+	action, err := recoverFailedReplaceIntentBytes(plan.ProjectDir, intentBytes)
 	if err != nil || action != ReplaceNotCommitted {
 		t.Fatalf("RecoverFailedReplaceIntent = (%q, %v), want not committed", action, err)
 	}

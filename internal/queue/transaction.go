@@ -227,6 +227,7 @@ type namespaceOps struct {
 	link      func(string, string) error
 	remove    func(string) error
 	readFile  func(string) ([]byte, error)
+	readDir   func(string) ([]os.DirEntry, error)
 	openDir   func(string) (*os.File, error)
 	syncDir   func(*os.File) error
 	closeDir  func(*os.File) error
@@ -266,6 +267,7 @@ func osNamespaceOps() namespaceOps {
 		link:      os.Link,
 		remove:    os.Remove,
 		readFile:  os.ReadFile,
+		readDir:   os.ReadDir,
 		openDir:   os.Open,
 		syncDir:   (*os.File).Sync,
 		closeDir:  (*os.File).Close,
@@ -933,21 +935,14 @@ func classifyFailedRecoveryIntent(
 	}
 }
 
-// RecoverFailedReplaceIntent completes a failed-recovery transaction after a
+// recoverFailedReplaceIntent completes a failed-recovery transaction after a
 // restart. It accepts only the exact durable intent bytes for the named queue.
 // It does not install memory or wake dispatch. The startup owner does that only
 // after this function returns a durable action.
-func RecoverFailedReplaceIntent(projectDir string, intentBytes []byte) (ReplaceRecoveryAction, error) {
-	intent, err := decodeReplaceIntent(intentBytes)
-	if err != nil {
-		return ReplaceRefuse, err
-	}
-	if intent.FailedRecoveryReceiptBinding == nil {
-		return ReplaceRefuse, errors.New("replace intent has no failed recovery receipt binding")
-	}
-	return recoverFailedReplaceIntent(projectDir, intent, intentBytes, osNamespaceOps())
-}
-
+//
+// RecoverReplaceIntents is the way in. There used to be an exported
+// single-intent wrapper here as well, for a caller outside the package that
+// never appeared; the startup sweep replaced it.
 func recoverFailedReplaceIntent(
 	projectDir string,
 	intent ReplaceIntentV1,
@@ -1320,7 +1315,7 @@ func validateUUIDv7(value string) error {
 }
 
 func replaceIntentPath(projectDir, name string) string {
-	return filepath.Join(queuesDir(projectDir), name+".replace-intent")
+	return filepath.Join(queuesDir(projectDir), name+replaceIntentSuffix)
 }
 
 func failedRecoveryReceiptsDir(projectDir string) string {

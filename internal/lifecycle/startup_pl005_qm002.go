@@ -164,6 +164,13 @@ func LoadQueueAtStartup(
 		return nil, fmt.Errorf("lifecycle: queue migration failed: %w", err)
 	}
 
+	// Finish or roll back any durable replace intent a crash left behind, before
+	// a single queue file is read. A leftover intent refuses the next install
+	// for its queue, which the QueueStore reads as an indeterminate commit and
+	// quarantines on — so an unresolved intent wedges that queue for every later
+	// boot as well.
+	recoverReplaceIntents(ctx, projectDir, logger)
+
 	names, err := queue.EnumerateQueueNames(projectDir)
 	if err != nil {
 		logger.WarnContext(ctx, "queue: EnumerateQueueNames failed; starting with no active queues",
@@ -184,6 +191,38 @@ func LoadQueueAtStartup(
 		}
 	}
 	return loaded, nil
+}
+
+// recoverReplaceIntents resolves every leftover durable replace intent and logs
+// the outcome of each one.
+//
+// It never fails startup. An intent the sweep cannot resolve leaves its queue
+// exactly as it was found, which is the same state the daemon booted into
+// before this pass existed — so the worst case is the old behaviour plus a log
+// line naming the queue. A refusal is logged at error level because it means a
+// queue is wedged and needs a person.
+func recoverReplaceIntents(ctx context.Context, projectDir string, logger *slog.Logger) {
+	recoveries, err := queue.RecoverReplaceIntents(projectDir)
+	if err != nil {
+		logger.WarnContext(ctx, "queue: replace-intent recovery could not read the queues directory",
+			"error", err,
+		)
+		return
+	}
+	for _, r := range recoveries {
+		if r.Resolved() {
+			logger.InfoContext(ctx, "queue: resolved a replace intent left by an earlier crash",
+				"queue_name", r.NormalizedName,
+				"action", string(r.Action),
+			)
+			continue
+		}
+		logger.ErrorContext(ctx, "queue: replace intent could not be resolved; this queue refuses further mutation until the intent file is dealt with",
+			"queue_name", r.NormalizedName,
+			"intent_path", filepath.Join(projectDir, ".harmonik", "queues", r.NormalizedName+".replace-intent"),
+			"error", r.Err,
+		)
+	}
 }
 
 // loadOneQueueAtStartup loads a single named queue file and runs QM-002a +

@@ -137,9 +137,12 @@ Notes that matter for accuracy:
 The smallest possible loop: stand up a scratch daemon and run one bead through it.
 
 ```bash
-# From your fleet checkout. One-time setup (clone + init + build).
-./scripts/scratch-daemon.sh init  /tmp/hk-scratch
-./scripts/scratch-daemon.sh up    /tmp/hk-scratch        # build happened in init; just start it
+# From your fleet checkout. One-time setup (clone + init).
+# --rev is REQUIRED: it names the commit under test. Without it the script would
+# have to guess, which is how it used to audit the wrong tree.
+./scripts/scratch-daemon.sh init  /tmp/hk-scratch --rev "$(git rev-parse HEAD)"
+./scripts/scratch-daemon.sh build /tmp/hk-scratch        # compile the pinned commit
+./scripts/scratch-daemon.sh up    /tmp/hk-scratch
 
 # Run a single bead as a named batch. 'smoke' is the queue + summary label.
 ./scripts/scratch-daemon.sh batch /tmp/hk-scratch smoke --beads hk-test001
@@ -150,7 +153,7 @@ Expected stdout (shape):
 ```
 BATCH_SUBMIT  name=smoke queue_id=019ee... items=1
 BATCH_ITEM	hk-test001	pass	019ee...-run	-
-BATCH_SUMMARY name=smoke total=1 pass=1 fail=0 incomplete=0 results=/tmp/hk-scratch/.harmonik/batch-smoke-019ee....json events=/tmp/hk-scratch/.harmonik/batch-smoke-019ee....events.ndjson
+BATCH_SUMMARY name=smoke total=1 pass=1 fail=0 incomplete=0 results=/tmp/hk-scratch/.harmonik/batch-smoke-019ee....json events=/tmp/hk-scratch/.harmonik/batch-smoke-019ee....events.ndjson revision=684cee2b5...
 ```
 
 After editing daemon code in `/tmp/hk-scratch`, re-run the inner loop and the batch:

@@ -373,10 +373,17 @@ if [ "$FULL" = "1" ]; then
     echo "[smoke] --- Phase E: REAL daemon lifecycle (clone + build + up + down) ---"
     CLONE="$ROOT/clone"
     REPO_ROOT="$(git -C "$SELF_DIR" rev-parse --show-toplevel)"
+    REPO_HEAD="$(git -C "$REPO_ROOT" rev-parse HEAD)"
     # Clone the LOCAL checkout (throwaway, offline, fast) rather than origin — still a
     # fully independent clone with its own socket/tmux/binary, but no network round-trip.
-    if $SD init "$CLONE" "$REPO_ROOT" >"$ROOT/init.out" 2>&1 \
+    # --rev is REQUIRED (hk-scratch-daemon-audits-wrong-tree-zljvm): the smoke test must
+    # exercise the code it was run against, not the source's default branch.
+    if $SD init "$CLONE" --source "$REPO_ROOT" --rev "$REPO_HEAD" >"$ROOT/init.out" 2>&1 \
         && $SD build "$CLONE" >"$ROOT/build.out" 2>&1; then
+        assert_eq "$REPO_HEAD" "$(git -C "$CLONE" rev-parse HEAD)" \
+            "clone is at the revision init was given, not the source's default branch"
+        assert_eq "$REPO_HEAD" "$(cut -f1 <"$CLONE/.harmonik/audit-revision")" \
+            "init recorded the audit revision"
         scratch_origin="$(git -C "$CLONE" remote get-url origin 2>/dev/null)"
         clone_real="$(cd "$CLONE" && pwd -P)"
         expected_origin="$clone_real/.harmonik/scratch-origin.git"

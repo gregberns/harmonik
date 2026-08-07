@@ -171,7 +171,8 @@ fleet ledger — you never run it.
 
 Order of operations.
 
-1. `scripts/scratch-daemon.sh init <scratch>` and `build <scratch>`.
+1. `scripts/scratch-daemon.sh init <scratch> --rev <commit>` and `build <scratch>`.
+   `--rev` is required and names the commit under test.
 2. Give the clone its own ledger if it has none. `br init --db
    <scratch>/.beads/beads.db`. Every `br` call below carries the same `--db`,
    which is how you stay out of the fleet ledger without leaving your own CWD.

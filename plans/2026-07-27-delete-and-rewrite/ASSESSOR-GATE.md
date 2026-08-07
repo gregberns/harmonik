@@ -41,11 +41,19 @@ code. Items were **not** individually reproduced. Two consequences follow, and n
 
 ### A1. The assessor cannot run at all
 
-- **`hk-joacj`** — `harmonik init` scaffolds no `scripts/scenario-gate.sh`, but the default graph's
-  commit gate hardcodes that path, so **a fresh project's first bead fails with exit 127.** The
-  assessor's scratch daemon *is* a fresh project. Strongest single candidate for "nothing works and
-  the reason is trivial".
 - **`hk-g0xgo`** — a stale sentinel trip file wedges all dispatch on an observe-mode daemon.
+
+> **`hk-joacj` was listed here and is withdrawn.** It said a fresh project's first bead dies at the
+> commit gate because the shipped graph hardcodes `scripts/scenario-gate.sh`, which `harmonik init`
+> never writes. That script is deleted and the gate now runs `make full`. The defect survives in a
+> new form — `init` writes no Makefile either, so the shipped default still names a command only
+> this repo has — but **the assessor is not exposed to it**: `scripts/scratch-daemon.sh` builds its
+> scratch project as a clone of this checkout, so the Makefile is there. Moved to List B, and the
+> bead is corrected.
+>
+> Worth reading as a warning about this file: that item was placed from the bead's own text without
+> re-deriving it, and the bead was two weeks stale. **Re-check before you spend a day on anything
+> here.**
 
 > **Sandboxing is OFF for the assessor — operator, 2026-08-06.** `hk-quoka` (a sandboxed run gets
 > zero network egress) and `hk-bzydx` (a sandboxed run cannot reach its harness state directory) are
@@ -167,9 +175,16 @@ unauthenticated) · `hk-rlvhi`, `hk-xbrc2`, `hk-j7yo0` (stale binary and wrong-v
 
 ## What has to happen before this file can be trusted as a plan
 
-1. **Define the core-queue test scope**, per the operator's ruling above. That scope is what "the
-   build works" means for this sign-off. Everything outside it is ignorable or disable-able, which
-   dissolves the load-flake question rather than answering it.
+1. ~~**Define the core-queue test scope.**~~ **DONE 2026-08-06: `make core`.** It runs `CORE_PKGS` in
+   the `Makefile`, which is `CHARTER.md` §3's decided pipeline — config, event bus, queue, bead-ledger
+   adapter, worktrees, harness registry and one substrate, work loop, merge — resolved to packages in
+   the charter's own order. Nothing was added to the set; §3 says anything absent is deferred by
+   default rather than by argument. Keeper, crew, captain, dashboard, sentinel, subscribe, the socket
+   listener and the second and third substrates are all outside it, by that section.
+
+   **`make core` is what "the build works" means for this sign-off.** `make full` stays the merge
+   decision and stays whole-tree. A green `core` beside a red `full` is a real answer, not a
+   contradiction: the tool does its job and something outside the core does not.
 2. **Triage the remaining ~40 P1 issues against the criterion at the top.** List A is a floor.
 
 Sandboxing is settled: it is off, and the two sandbox items moved to List B.

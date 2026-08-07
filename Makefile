@@ -706,6 +706,74 @@ FAST_PKGS := \
 	./internal/workflow \
 	./cmd/harmonik
 
+# ---------------------------------------------------------------------------
+# CORE_PKGS — the core set, and the only thing that has to be green.
+#
+# Operator, 2026-08-06: "This whole tool set revolves around the ability to run
+# beads through the queue. That's the core. There's a dozen other tools in here
+# — those are not core." Tests outside this set do not have to run, and may be
+# ignored or disabled.
+#
+# This is NOT a new judgment. CHARTER.md §3 decided the set on 2026-07-28 and
+# calls it DECIDED, not proposed. It is written there as a pipeline:
+#
+#   config → event bus → queue → bead-ledger adapter → worktrees →
+#   harness registry + one substrate → work loop → merge
+#
+# The list below is that pipeline resolved to packages, one group per stage, in
+# the charter's own order. Nothing is added: §3 says anything absent is deferred
+# by default rather than by argument.
+#
+# WHAT IS DELIBERATELY OUT, and it is most of the tree. §3 names comms, crew,
+# captain, keeper, dashboard, live-state, subscribe and the sentinel — AND the
+# socket listener, by operator decision the same day. So internal/keeper,
+# internal/crew, internal/crewrun, internal/dashboard, internal/sentinel,
+# internal/presence, internal/digest, internal/watch, internal/schedule and
+# internal/supervise are all out, along with the second and third substrates
+# (internal/harness/codex, internal/harness/pi and the codex* packages) — §3
+# says "one substrate", and claude is it.
+#
+# WHY THIS TARGET EXISTS. The daemon suite goes red under load with a different
+# test each time, and that has been investigated four or five times without
+# resolution. Scoping is the answer that was actually available: a flake in a
+# package the queue does not depend on stops being a blocker by definition
+# rather than by another investigation.
+#
+# THIS DOES NOT REPLACE `make full`. `make full` is still the merge decision and
+# still tests every package. `make core` answers a different and narrower
+# question — is the thing this tool exists to do working — and that is the
+# question an assessor sign-off rests on.
+CORE_PKGS := \
+	./internal/projectconfig \
+	./internal/branching \
+	./internal/daemon/bootconfig \
+	./internal/eventbus \
+	./internal/queue \
+	./internal/queue/cli \
+	./internal/queue/readiness \
+	./internal/queuewiring \
+	./internal/brcli \
+	./internal/workspace \
+	./internal/harness/shared \
+	./internal/harness/claude \
+	./internal/lifecycle \
+	./internal/lifecycle/tmux \
+	./internal/substrate \
+	./internal/daemon \
+	./internal/runloop \
+	./internal/runexec \
+	./internal/runlease \
+	./internal/runlaunch \
+	./internal/workflow \
+	./internal/workflow/dot \
+	./internal/runmerge \
+	./internal/mergeq \
+	./internal/core \
+	./internal/handler \
+	./internal/handlercontract \
+	./internal/gitprobe \
+	./cmd/harmonik
+
 # Per-step wall-clock cap. A hung step must FAIL, never hang and never pass.
 # Two caps, because they catch different hangs:
 #   GATE_GO_TIMEOUT   goes to `go test -timeout`. A test that blocks forever
@@ -896,6 +964,26 @@ fast:  ## THE inner loop: format, build, vet, compile every test, unit-test the 
 	$(MAKE) gate-static
 	$(MAKE) gate-test-compile
 	$(call RUN_TESTS_AND_REPORT,make fast,$(FAST_PKGS))
+
+# ---------------------------------------------------------------------------
+# make core — is the thing this tool exists to do working?
+#
+# Runs the core set defined at CORE_PKGS above (CHARTER.md §3), and nothing
+# else. Use it to answer "can this run beads through the queue" without a
+# verdict from a dozen packages the queue does not depend on.
+#
+# It runs the same test step as `fast` and `full`, so it reports through
+# tools/testreport and its NOT RUN section names every skipped test — read that
+# section, because a disabled test is still an unproven claim.
+#
+# NOT a substitute for `make full`, which stays the merge decision and stays
+# whole-tree. A green here and a red there means the core works and something
+# outside it does not, which is a real and useful answer, not a contradiction.
+# ---------------------------------------------------------------------------
+.PHONY: core
+core:  ## The core set only (CHARTER §3): can this run beads through the queue?
+	$(MAKE) gate-static
+	$(call RUN_TESTS_AND_REPORT,make core,$(CORE_PKGS))
 
 # gate-test-report-probe — the smallest real use of the test step above.
 #

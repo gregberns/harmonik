@@ -67,10 +67,15 @@ import (
 func kfe058MakeScripts(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
+	// Must stay in step with the requiredScripts list in runKeeperEnable
+	// (keeper_enable_doctor_cmd.go). This fixture went stale when the
+	// SessionStart hook was added: the untagged sibling test was updated and
+	// this one was not, because no build target compiled it.
 	for _, name := range []string{
 		"keeper-statusline.sh",
 		"keeper-stop-hook.sh",
 		"keeper-precompact-hook.sh",
+		"keeper-sessionstart-hook.sh",
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"), 0o755); err != nil {
 			t.Fatalf("kfe058MakeScripts: write %s: %v", name, err)

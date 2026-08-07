@@ -118,16 +118,62 @@ test-e2e-real-claude:  ## Run real-Claude E2E smoke (requires credentials + bina
 # Prereq: build-all compiles cmd/harmonik and the twins that daemon scenarios
 # locate without a rebuild.
 # Budget: 10 minutes, matching the scenario sub-run in `make full`.
-# Covers all packages that carry //go:build scenario files:
-#   ./test/scenario/...  — top-level scenario package (test/scenario/harness_test.go)
-#   ./internal/daemon/...— daemon-resident scenario tests (scenario_*.go files)
+#
+# THE PACKAGE LIST IS DERIVED, by scripts/scenario-pkgs.sh, which asks `go list`
+# what the scenario tag turns on rather than grepping for the tag line — read
+# that script's header for why both greps that were tried are wrong. It used to
+# be `./test/scenario/...
+# ./internal/daemon/...` written by hand, under a comment claiming that "covers
+# all packages that carry //go:build scenario files". That claim was false and
+# had been for a long time. Scenario files had spread to four more packages, and
+# 11 test functions there were compiled by NO target and run by NO target:
+#   cmd/harmonik      4 (init, decisions list, decisions gate, keeper enable)
+#   internal/runloop  4 (TestScenarioGateEfficacy_* — whether the scenario gate
+#                        can tell a compile failure from a genuine red, which is
+#                        the difference between a gate and a fail-open)
+#   internal/sentinel 2 (adversary fresh-context and at-most-once-per-window)
+#   internal/keeper   1 (orphaned-decision reap)
+# `make vet-tagged` TYPECHECKS them, which is why they still compiled, but
+# typechecking runs nothing, so they were free to rot — and one had.
+# TestScenario_KeeperEnableOn058_HKF5Z was red: its fixture wrote three keeper
+# scripts after runKeeperEnable started requiring four. The untagged sibling
+# test was updated at the time. This one was not, because nothing ran it.
+# The 11 tagged functions themselves cost under 8 seconds together. Refs hk-od9d4.
+#
+# WHAT THE WIDENING COSTS. `go test -tags=scenario ./cmd/harmonik` runs the WHOLE
+# package, not only its tagged files, so four more packages means every ordinary
+# test in them under -race too — about 950 more test functions. In isolation they
+# cost 140 seconds, cmd/harmonik being 138 of it.
+#
+# In the tier they cost almost nothing, because `go test` runs packages
+# concurrently and internal/daemon is 453 seconds on its own. Measured
+# 2026-08-07, same box, same flags, back to back:
+#
+#   old list (test/scenario + internal/daemon)   464s, 18 failures
+#   new list (six packages)                      471s, 17 failures
+#
+# So seven seconds. Note the failure counts: THIS TIER IS ALREADY RED, and was
+# before this change — see hk-97gcz and hk-ynohn. The 13 tests that fail in both
+# runs are the same 13. Widening added exactly one new red,
+# TestWatcher_WarnCooldown_SuppressesImmediateRefire, which is a pre-existing
+# keeper flake that fails standalone under plain `-short` on an untouched
+# checkout, now hk-keeper-warn-cooldown-clock-bet-c5umc. The rest of the
+# difference is this tier's own run-to-run churn.
+#
+# Deriving the list rather than reaching for `./...` still matters. `./...` would
+# add every remaining package in the tree on the same terms, and `make full` has
+# already run all of them under -short in the step before this one.
+#
 # See docs/methodology/TESTING.md §Scenario fixture determinism recipe for the
 # worktree-factory / merge-mutex / phase-aware-twin / Skip* recipe used here.
 .PHONY: test-scenario
 test-scenario: build-all  ## Run scenario tier (-race, -tags=scenario, 10m budget; prereq: build-all)
-	@scenario_log=$$(mktemp); \
+	@scenario_pkgs=$$(scripts/scenario-pkgs.sh) || exit 1; \
+	echo "test-scenario: packages carrying //go:build scenario files:"; \
+	echo "$$scenario_pkgs" | sed 's/^/  /'; \
+	scenario_log=$$(mktemp); \
 	status=0; \
-	go test -v -race -tags=scenario -timeout 10m ./test/scenario/... ./internal/daemon/... >"$$scenario_log" 2>&1 || status=$$?; \
+	go test -v -race -tags=scenario -timeout 10m $$scenario_pkgs >"$$scenario_log" 2>&1 || status=$$?; \
 	cat "$$scenario_log"; \
 	awk '/^--- SKIP:/ {n++} END {printf "scenario skips: %d\n", n+0}' "$$scenario_log"; \
 	rm -f "$$scenario_log"; \
@@ -840,6 +886,7 @@ script-tests:  ## Self-tests for the shell the gate depends on
 	scripts/gate-fails-closed-test.sh
 	scripts/scratch-daemon-rev-pin-test.sh
 	scripts/lint-allow-test.sh
+	scripts/scenario-pkgs-test.sh
 	scripts/lint-changed-test.sh
 	scripts/changed-func-coverage-test.sh
 	scripts/with-lane-gocache.sh scripts/reachability-gate-test.sh
@@ -932,7 +979,18 @@ gate-test-compile:  ## Compile every _test.go file, run none
 # probe drift away from the thing it claims to test, and a probe that no longer
 # matches the real step proves nothing about the real step.
 #
-# $(1) is a label for the messages. $(2) is the package list.
+# $(1) is a label for the messages. $(2) is the package list. $(3) is the
+# short-mode flag, and it is a PARAMETER rather than a constant because the
+# three callers do not want the same answer.
+#
+# THE FLAG USED TO BE HARD-CODED `-short`, IN ALL THREE. That made `make core`
+# green without running the tests that answer the question `core` exists to ask.
+# `-short` skips 45 tests in the core set — 35 in internal/daemon and 10 in
+# internal/runloop — and the daemon 35 include TestScenario_HappyPath_N1 and
+# TestSmokeLoop, the two end-to-end tests that put a bead in one end of the queue
+# and assert it comes out closed at the other. A gate that asks "can this run
+# beads through the queue?" and skips those reads as finished when it is not.
+# Refs hk-od9d4.
 #
 # THE RENDERER IS BUILT, NOT `go run`. Two reasons, both learned here. `go run`
 # would compile the tool against the default shared GOCACHE while every
@@ -950,7 +1008,7 @@ scripts/with-lane-gocache.sh go build -o "$$BINDIR/testreport" ./tools/testrepor
 	|| { echo "$(1): could not build tools/testreport, so no run can be judged"; exit 2; }; \
 TEST_STATUS=0; \
 TMPDIR=/tmp $(GATE_CAP) scripts/with-lane-gocache.sh \
-	go test -json -short -count=1 -timeout=$(GATE_GO_TIMEOUT) $(2) \
+	go test -json $(3) -count=1 -timeout=$(GATE_GO_TIMEOUT) $(2) \
 	> "$$RAW" || TEST_STATUS=$$?; \
 REPORT_STATUS=0; \
 "$$BINDIR/testreport" < "$$RAW" || REPORT_STATUS=$$?; \
@@ -968,7 +1026,7 @@ endef
 fast:  ## THE inner loop: format, build, vet, compile every test, unit-test the major packages, lint changed lines
 	$(MAKE) gate-static
 	$(MAKE) gate-test-compile
-	$(call RUN_TESTS_AND_REPORT,make fast,$(FAST_PKGS))
+	$(call RUN_TESTS_AND_REPORT,make fast,$(FAST_PKGS),-short)
 
 # ---------------------------------------------------------------------------
 # make core — is the thing this tool exists to do working?
@@ -984,11 +1042,34 @@ fast:  ## THE inner loop: format, build, vet, compile every test, unit-test the 
 # NOT a substitute for `make full`, which stays the merge decision and stays
 # whole-tree. A green here and a red there means the core works and something
 # outside it does not, which is a real and useful answer, not a contradiction.
+#
+# THIS TARGET RUNS WITHOUT `-short`, AND THAT IS THE POINT. `-short` skips 45
+# tests in this set, and the skipped set is not incidental: it is the real-daemon
+# end-to-end tier, including TestScenario_HappyPath_N1 (real daemon.Start, real
+# twin subprocess, asserts the full run_started → agent_ready → run_completed
+# event subsequence and the bead reaching closed) and TestSmokeLoop (one ready
+# bead through a real br ledger, a real git worktree, a real merge, to closed).
+# Those two ARE the headline claim. Running the gate with them off answered
+# nothing and read as finished.
+#
+# THE COST. The test step roughly doubles: measured once on one box, `-short`
+# took 144s and skipped 45 tests, and no `-short` took 246s and skipped none for
+# shortness. Whole-target wall clock was about 400s, most of the rest being
+# gate-static. Treat those as an order of magnitude, not a promise — they were
+# taken on one machine on one day, and they will drift. Re-measure before you
+# quote them. Refs hk-od9d4.
+#
+# WHY `twins` IS A PREREQUISITE. Seven of the newly-enabled tests look for
+# ./twin-fail, ./twin-hang and ./harmonik-twin-claude at the checkout root and
+# `t.Skip` when they are absent. Without this prerequisite they would trade one
+# silent skip for another and the gate would still not run them. `twins` builds
+# all five twin binaries into this checkout, so they run. If one still skips,
+# tools/testreport names it in the NOT RUN section.
 # ---------------------------------------------------------------------------
 .PHONY: core
-core:  ## The core set only (CHARTER §3): can this run beads through the queue?
+core: twins  ## The core set only (CHARTER §3): can this run beads through the queue?
 	$(MAKE) gate-static
-	$(call RUN_TESTS_AND_REPORT,make core,$(CORE_PKGS))
+	$(call RUN_TESTS_AND_REPORT,make core,$(CORE_PKGS),)
 
 # gate-test-report-probe — the smallest real use of the test step above.
 #
@@ -1003,7 +1084,7 @@ core:  ## The core set only (CHARTER §3): can this run beads through the queue?
 # self-test the `go` on PATH is a stub, so nothing real is compiled or run.
 .PHONY: gate-test-report-probe
 gate-test-report-probe:  ## Smallest real use of the test step (drives scripts/gate-fails-closed-test.sh)
-	$(call RUN_TESTS_AND_REPORT,make gate-test-report-probe,./internal/sentinel)
+	$(call RUN_TESTS_AND_REPORT,make gate-test-report-probe,./internal/sentinel,-short)
 
 # ---------------------------------------------------------------------------
 # make full — the merge decision.
@@ -1017,7 +1098,7 @@ gate-test-report-probe:  ## Smallest real use of the test step (drives scripts/g
 full:  ## THE merge decision: everything in fast over EVERY package, plus the lint allow list, scenario tier, module hygiene
 	$(MAKE) gate-static
 	$(MAKE) gate-test-compile
-	$(call RUN_TESTS_AND_REPORT,make full,./...)
+	$(call RUN_TESTS_AND_REPORT,make full,./...,-short)
 	$(MAKE) lint-allow
 	$(MAKE) test-scenario
 	$(MAKE) module-hygiene
@@ -1183,7 +1264,8 @@ test-keeper-conformance-full: test-keeper-conformance  ## The above + the L-twin
 # Invoked by the release CI workflow (hk-jdesv adds the .github/workflows step).
 # Runs each phase in order; any nonzero exit propagates immediately.
 #   1. lint               — golangci-lint full run
-#   2. go test -short     — unit suite, -race, skip heavy E2E (hk-p258q)
+#   2. go test -short     — unit suite, -race, skip heavy real-daemon E2E. The
+#                           E2E tier runs in phase 3 below, and in `make core`.
 #   3. scenario suite     — full -tags=scenario run with twins (see test-scenario)
 #   4. --version smoke    — verify the built binary starts and prints a version
 # ---------------------------------------------------------------------------

@@ -185,6 +185,44 @@ unauthenticated) · `hk-rlvhi`, `hk-xbrc2`, `hk-j7yo0` (stale binary and wrong-v
    **`make core` is what "the build works" means for this sign-off.** `make full` stays the merge
    decision and stays whole-tree. A green `core` beside a red `full` is a real answer, not a
    contradiction: the tool does its job and something outside the core does not.
+
+   **Amended 2026-08-07 (`hk-od9d4`): `make core` now runs without `-short`, and that is what makes
+   it worth running.** As first written it passed `-short`, which skipped 45 tests in the core set —
+   35 in `internal/daemon`, 10 in `internal/runloop`. The daemon 35 included
+   `TestScenario_HappyPath_N1` and `TestSmokeLoop`, the two end-to-end tests that put a bead in one
+   end of the queue and assert it comes out closed at the other. The gate was green without ever
+   running the proof it existed to give. The test step goes from 144 seconds to 246. `make core` now
+   also depends on `twins`, because seven of the newly-enabled tests skip silently when the twin
+   binaries are not built, and a silent skip reads exactly like a pass.
+
+   **Read this before you treat a green `make core` as a stable result.** Three runs on 2026-08-07
+   gave green, red, red, with a different test each time. One red was
+   `TestT6_10BeadSequentialDrain`, a teardown race in a newly-enabled test: it watched the bead
+   ledger, asserted on the event log, and cancelled the daemon in between. That one is fixed, and the
+   test then passed 12 of 12.
+
+   The other was `TestMultiBead_TwoBeadsCompleteBothClose` (`hk-4f1bs`), and it is a different kind
+   of finding. It is **not** short-skipped, so it was already flaky in `make core` before this
+   change. It passes 12 of 12 alone in 5 to 8 seconds against a 25-second budget, so it is not
+   marginal on a quiet box — it only fails under load. **And this change adds load.** Dropping
+   `-short` admits the real-daemon end-to-end tier into the same `internal/daemon` test binary, so a
+   wall-clock budget in that package now competes with more work than it used to. Expect this change
+   to make `hk-4f1bs` fire somewhat more often, not less. It is left open deliberately: 25 seconds is
+   generous, and raising it would hide the question of what the loop is doing in that window.
+
+   That is the same "goes red under load with a different test each time" behaviour `CORE_PKGS` was
+   scoped to work around, and scoping did not remove it — it is inside the core set. **Treat a single
+   red in `internal/daemon` as unproven until it repeats.** Re-run before you act on one.
+
+   **`make test-scenario` is a separate matter and it is still red.** The same change widened that
+   tier from two packages to the six that actually carry `//go:build scenario` files, which is how
+   the 11 never-run tests were found. Measured back to back on 2026-08-07: the old package list gave
+   18 failures in 464 seconds, the new one 17 in 471. The tier was already red before the change —
+   that is `hk-97gcz` and `hk-ynohn`, both still on List A — and widening it cost seven seconds and
+   added one pre-existing keeper flake
+   (`hk-keeper-warn-cooldown-clock-bet-c5umc`, which fails standalone under plain `-short` on an
+   untouched checkout). `make full` runs this tier, so **`make full` is red today for reasons that
+   predate this work.** `make core` is green.
 2. **Triage the remaining ~40 P1 issues against the criterion at the top.** List A is a floor.
 
 Sandboxing is settled: it is off, and the two sandbox items moved to List B.

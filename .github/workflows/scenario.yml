@@ -1,6 +1,8 @@
 # Tier 3 — make test-scenario
 # Builds all twin binaries then runs the scenario suite (-race, -tags=scenario, 10m).
-# Covers test/scenario/... and internal/daemon/... scenario build-tag files.
+# Covers every package that carries a `//go:build scenario` file. The package
+# list is derived at run time by scripts/scenario-pkgs.sh, so it cannot go stale
+# when a scenario file lands somewhere new. Do not restate the list here.
 # Non-merge-blocking: no required status check configured in branch protection
 # (main requires only "check (Tier 2)"). So this workflow reports the truth and
 # blocks nothing.

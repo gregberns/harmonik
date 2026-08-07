@@ -32,7 +32,7 @@ func socketOpFixtureStartListenerFull(t *testing.T, oh daemon.OperatorControlHan
 	// (sockaddr_un.sun_path). t.TempDir() yields a ~123-char
 	// /var/folders/... path that silently overflows the limit, so
 	// RunSocketListenerFull never binds and socketFixtureWaitReady times
-	// out at 5s. Use the shared short-path helper instead (Refs: hk-p258q).
+	// out at 5s. Use the shared short-path helper instead.
 	sockPath = socketFixtureTempSockPath(t)
 
 	ctx, cancel := context.WithCancel(t.Context())

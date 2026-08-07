@@ -107,6 +107,7 @@ The single authoritative map of **which test tier runs where** and **which tier 
 | --- | --- | --- | --- |
 | §1–§5 unit / integration / scenario(in-proc) / crash-recovery(fast) / property — via `-short` | `make full` | `ci.yml` → *make full* | **Yes** — blocks merge |
 | gofumpt+gci / vet / build / golangci-lint | `make fast` (inside `make full`) | `ci.yml` → *make full* | **Yes** |
+| Core set (CHARTER §3 pipeline) **with no `-short`** — the real-daemon E2E tier included | `make core` | *(none — local / assessor)* | Assessor sign-off gate. This is the target that answers "can this run beads through the queue?", so it runs the 45 tests `-short` skips, `TestScenario_HappyPath_N1` and `TestSmokeLoop` among them. About 250s. |
 | commit-message trailers / secret scan | `scripts/validate-commit-msg.sh` · `make secret-scan` (via `/check`) | *(agent-driven; git hooks retired)* | No |
 | §3 scenario suite (full, `-tags=scenario`, incl. `internal/daemon` scenario files) | `make test-scenario` | `scenario.yml` → *scenario (Tier 3)* | **No today** (`continue-on-error`); WS1.1 flips the **`./test/scenario/...`-only** invocation to a required check — never the daemon bundle, which `t.Skipf`s green on sshd-less runners |
 | full `-race`, no `-short`, uncapped parallel | `make test-race-nightly` | `nightly-race.yml` | No (nightly shake-out) |
@@ -247,12 +248,13 @@ The flake is a fixable test-harness defect: shared-state / lock contention, a da
 
 The test is a *legitimate* slow real-daemon E2E (multi-second socket waits, real review loops, strict cross-goroutine event ordering) that is too non-deterministic for a fast merge gate but is still valuable in full CI. Quarantine moves it out of `-short`; it **still runs** in the full CI / Tier-3 lane.
 
-- **Canonical mechanism:** call the shared guard `skipRealDaemonE2EInShort(t)` at the top of the test (defined in `internal/daemon/shortskip_hkp258q_test.go`; ~24 sibling tests already use it). It `t.Skip`s only when `testing.Short()` — the per-bead `commit_gate` runs `make full`, whose whole-repo test step passes `-short`, so the test is skipped there but runs in the tagged scenario tier and in `make test-race-nightly`.
-- **Canonical example:** `hk-6ra3p` — three real-daemon review-loop bridge tests (e.g. `TestReviewLoopBridge_CHB009_ReviewerAlwaysMintsFresh`) intermittently failed under `-short` and could flake the per-bead gate for `internal/daemon` beads; quarantined behind the guard.
+- **Canonical mechanism:** call the shared guard `skipRealDaemonE2EInShort(t)` at the top of the test (defined in `internal/daemon/shortskip_test.go`; 57 call sites across 31 files already use it). It `t.Skip`s only when `testing.Short()`, so the test is out of `make fast` and out of the whole-repo step of `make full`, and it still runs in **`make core`** (which passes no `-short`), in the tagged scenario tier, and in `make test-race-nightly`.
+- **Before you reach for it, know what it costs.** Guarding a test here takes it out of the inner loop, not out of the build. Corrected 2026-08-07 (`hk-od9d4`): this section used to say the guard was a *temporary* shelving with an owning un-shelve bead, `hk-p258q`. That bead never existed, so the shelving became permanent by accident, and for a time `make core` — the gate an assessor sign-off rests on — passed `-short` too and skipped all 45 of them, including the two end-to-end tests that prove a bead goes through the queue. The guard is now a standing decision about the inner loop, and `make core` is what runs the guarded set.
+- **Canonical example:** three real-daemon review-loop bridge tests (e.g. `TestReviewLoopBridge_CHB009_ReviewerAlwaysMintsFresh`) intermittently failed under `-short` and could flake the per-bead gate for `internal/daemon` beads, so they went behind the guard. This example used to cite `hk-6ra3p`. Checked 2026-08-07: **that bead does not exist either.** It is dropped rather than repeated, per the rule in the bullet above. Review-loop mode has since been retired, so the tests it names are gone too.
 - **Hard limits:**
   - Quarantine = move out of `-short` **only**. Never `t.Skip` unconditionally, never delete, never `//nolint`-away the suite.
   - **Never quarantine a fast unit test.** A fast test that flakes has a fixable root cause (category 2) — fix it; do not hide it.
-  - Quarantine is a *temporary shelving* with an owning un-shelve bead (the guard's docstring tracks `hk-p258q`). The end state is the test back in the gate once the underlying real-daemon-boot reds are fixed.
+  - **A guard that names a bead must name one that exists.** Check with `br show <id>` before you write the id, and again if you copy an existing guard's wording. A reference to a bead that was never opened reads like a plan and is not one.
 
 ### 4. File a bug — don't quarantine-and-forget
 
@@ -269,7 +271,7 @@ The flake is the messenger for a **genuine product or infrastructure defect**. T
 | Shared global file / lock contention | De-flake | Per-test config isolation (`TestMain` + temp path) | `hk-1o0cc` |
 | `-race` data race; package-level var mutated under `t.Parallel()` | De-flake | Remove the race (drop parallel, or guard the var) | `hk-1o0cc` |
 | Too-tight timeout loses on a loaded box | De-flake | Bump to a realistic value | `hk-1o0cc` |
-| Slow real-daemon / socket / review-loop E2E flakes the fast gate | Quarantine | `skipRealDaemonE2EInShort(t)` (out of `-short` only) | `hk-6ra3p`, `hk-p258q` |
+| Slow real-daemon / socket / review-loop E2E flakes the fast gate | Quarantine | `skipRealDaemonE2EInShort(t)` — out of `-short` only, and still runs in `make core` | `hk-od9d4` |
 | Flake reveals a real product/infra race or daemon bug | File a bug | Tracked bead + repro; test stays | `hk-gq3my`, `hk-i0hor`, `hk-numyh`, `hk-5pwv5` |
 
 **Anti-patterns (forbidden):** deleting a flaky test; `t.Skip`ing it unconditionally with no owning bead; quarantining a fast unit test instead of fixing its root cause; quarantining an env-induced red instead of fixing the environment; bumping a timeout to mask a real product slowness (that's category 4, not category 2).

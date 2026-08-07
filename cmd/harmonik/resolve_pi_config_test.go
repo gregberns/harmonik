@@ -354,22 +354,21 @@ func TestResolvePiConfig_APIKeyFile_SetButEmpty_FailsLoud(t *testing.T) {
 
 // TestResolvePiConfig_APIKeyFile_TildeExpanded verifies that a ~ prefix is expanded
 // to the user home directory and the expanded path is stored in the returned config.
+// Not parallel: t.Setenv moves HOME for the whole process, which is what makes
+// the ~ expansion land in a temp tree instead of the operator's real home. The
+// earlier shape wrote /Users/<operator>/.harmonik-test-xmfoi-expand.key — a
+// FIXED name in a directory no test owns — from a t.Parallel() test. Two runs of
+// this package at once (two worktrees, or -count=2) collide on that one path and
+// one run's cleanup deletes the other run's file mid-assertion.
 func TestResolvePiConfig_APIKeyFile_TildeExpanded(t *testing.T) {
-	t.Parallel()
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Skip("cannot determine home dir:", err)
-	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
 	// Write a real key file under home so the validation passes.
 	keyFile := filepath.Join(home, ".harmonik-test-xmfoi-expand.key")
 	if err := os.WriteFile(keyFile, []byte("sk-or-tilde-test"), 0o600); err != nil {
 		t.Fatalf("setup: write key file: %v", err)
 	}
-	t.Cleanup(func() {
-		if err := os.Remove(keyFile); err != nil && !os.IsNotExist(err) {
-			t.Errorf("cleanup key file: %v", err)
-		}
-	})
 
 	cfg := fullPiCfg()
 	cfg.APIKeyFile = "~/.harmonik-test-xmfoi-expand.key"

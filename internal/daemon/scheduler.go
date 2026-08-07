@@ -1671,31 +1671,43 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 			// bead. The branch asked is the daemon's configured target branch
 			// (hk-1a7yb), never a literal.
 			autoCloseStaleBlockersOnClaimFailure(ctx, ledger, baseEnv.ProjectDir, baseEnv.TargetBranch, baseEnv.BrTimeoutCfg, ledgerRepair, beadID)
-			// On queue-path: revert the item back to pending so the loop can retry.
+			// On queue-path: give the reservation back so the loop can retry, through
+			// the same durable owner that took it (hk-mk4cl). The raw revert this
+			// replaces logged a failed persist and carried on, which left memory
+			// saying pending and disk saying dispatched with a RunID for a run that
+			// was never claimed and never launched. The next boot reads disk.
+			//
+			// The release also identifies its item by bead and by the run holding
+			// it. The old block located the item by group and item POSITION, so a
+			// wrong position silently reopened a different item for dispatch.
+			//
 			// NQ-B1: target the selected queue by name (capturedQueueName).
-			if queueItemIndex >= 0 && queueStore != nil {
-				lq := queueStore.LockForMutation()
-				liveQ := lq.LockedQueueByName(capturedQueueName)
-				if liveQ != nil {
-					for gi := range liveQ.Groups {
-						if queueGroupIdxFd != nil && liveQ.Groups[gi].GroupIndex != *queueGroupIdxFd {
-							continue
-						}
-						if queueItemIndex < len(liveQ.Groups[gi].Items) {
-							liveQ.Groups[gi].Items[queueItemIndex].Status = queue.ItemStatusPending
-							liveQ.Groups[gi].Items[queueItemIndex].RunID = nil
-							// hk-6pspu: record claim failure reason; do NOT reset Attempts (monotonic).
-							liveQ.Groups[gi].Items[queueItemIndex].LastFailureReason = claimErr.Error()
-						}
-					}
-					lq.LockedSetQueueByName(capturedQueueName, liveQ)
-					// Persist the claim-failure revert (hk-xsutm).
-					if persistErr := queue.Persist(ctx, baseEnv.ProjectDir, liveQ); persistErr != nil {
-						fmt.Fprintf(os.Stderr, "daemon: workloop: Persist claim-revert queueID=%s: %v\n",
-							liveQ.QueueID, persistErr)
-					}
+			if queueItemIndex >= 0 && queueStore != nil && queueGroupIdxFd != nil {
+				release := releaseReservation(ctx, queueStore, baseEnv.ProjectDir, queueReservation{
+					QueueName:  capturedQueueName,
+					GroupIndex: *queueGroupIdxFd,
+					ItemIndex:  queueItemIndex,
+					BeadID:     beadID,
+					RunID:      runID,
+				}, claimErr.Error())
+				// A failed release is not fatal to the loop — refusing to continue
+				// would strand the item the release exists to free — but it is never
+				// silent. Only reservationReleased means the item came back; a
+				// dispatched item is never re-selected, so every other verdict has to
+				// reach stderr or it becomes a stall with no signal.
+				switch release.Verdict {
+				case reservationReleased:
+					// The item is durably pending again; the loop retries it.
+				case reservationWriteFailed:
+					// The store has quarantined the queue, so the next tick refuses
+					// it; this is the one report that names the repair.
+					reportQueueWriteError(ctx, dispatchGates, capturedQueueName, release)
+				default:
+					fmt.Fprintf(os.Stderr,
+						"daemon: workloop: release claim-revert queue=%q bead=%s run=%s verdict=%s: %v — "+
+							"the item is still dispatched and will not be re-selected until the boot reconciliation pass\n",
+						capturedQueueName, beadID, runID, release.Verdict, release.Err)
 				}
-				lq.Done()
 			}
 			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 				return exitClean()

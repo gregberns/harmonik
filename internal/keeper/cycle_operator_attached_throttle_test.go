@@ -60,10 +60,25 @@ func newAttachTestCyclerSample(
 	return keeper.NewCycler(cfg, em)
 }
 
-// TestCycler_OperatorAttached_ThrottledAcrossTicks verifies that many MaybeRun
-// ticks while the operator stays attached collapse to a SINGLE operator_attached
-// event within the sample window — not one event per tick.
+// TestCycler_OperatorAttached_ThrottledAcrossTicks is DISABLED. It cannot fail.
+//
+// Its name and the comment this replaced both sell throttle coverage: many ticks
+// collapsing to a single operator_attached event. Its assertion is that the event
+// fired ZERO times, and nothing in the keeper can emit that event — every keeper
+// emission is an ActEmit action in step.go and there is none for this type. So
+// the test has been green since it was written and always will be.
+//
+// Skipped rather than deleted, per the operator's 2026-08-06 rule: a test that
+// cannot fail should not cost a run, and must not disappear either. A skip is
+// named in tools/testreport's NOT RUN section on EVERY run, including a green
+// one, so this stays in front of whoever reads the next report.
+//
+// Do not re-enable by making the assertion pass. Answer hk-61urw first: decide
+// whether the keeper should emit this event at all. If it should not, delete this
+// test and the dead attached-source branch in internal/digest/resolver.go. If it
+// should, this test is a specification waiting for an implementation.
 func TestCycler_OperatorAttached_ThrottledAcrossTicks(t *testing.T) {
+	t.Skip("hk-61urw: asserts an event the keeper cannot emit; green since written, cannot fail")
 	t.Parallel()
 
 	const (
@@ -104,10 +119,15 @@ func TestCycler_OperatorAttached_ThrottledAcrossTicks(t *testing.T) {
 	}
 }
 
-// TestCycler_OperatorAttached_ReEmitsAfterInterval verifies the throttle is a
-// SAMPLE, not a one-shot: once the sample interval elapses, a still-attached
-// session emits again so the digest resolver's attached-source stays fresh.
+// TestCycler_OperatorAttached_ReEmitsAfterInterval is DISABLED, for the same
+// reason as the throttle test above and with the same terms. Its name promises
+// that a still-attached session emits again once the sample interval elapses.
+// Its assertion is that the event fired zero times, and nothing can emit it.
+//
+// See the note on TestCycler_OperatorAttached_ThrottledAcrossTicks. hk-61urw
+// owns the decision that lets either test come back.
 func TestCycler_OperatorAttached_ReEmitsAfterInterval(t *testing.T) {
+	t.Skip("hk-61urw: asserts an event the keeper cannot emit; green since written, cannot fail")
 	t.Parallel()
 
 	const (

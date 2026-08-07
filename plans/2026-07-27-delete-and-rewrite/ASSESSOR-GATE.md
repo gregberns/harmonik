@@ -45,17 +45,23 @@ code. Items were **not** individually reproduced. Two consequences follow, and n
   commit gate hardcodes that path, so **a fresh project's first bead fails with exit 127.** The
   assessor's scratch daemon *is* a fresh project. Strongest single candidate for "nothing works and
   the reason is trivial".
-- **`hk-quoka`** — a sandboxed run gets zero egress, because the allowed-domain list is
-  operator-supplied and production sets none, so the harness cannot reach its own model endpoint.
-- **`hk-bzydx`** — a sandboxed run cannot reach the harness state directory, so every sandboxed
-  claude or codex run fails at init.
-  *For both sandbox items: confirm whether sandboxing is on in the assessor's configuration first. If
-  it is off, they drop to List B immediately.*
 - **`hk-g0xgo`** — a stale sentinel trip file wedges all dispatch on an observe-mode daemon.
+
+> **Sandboxing is OFF for the assessor — operator, 2026-08-06.** `hk-quoka` (a sandboxed run gets
+> zero network egress) and `hk-bzydx` (a sandboxed run cannot reach its harness state directory) are
+> therefore **moved to List B**. They are still real and still serious; they are simply not on this
+> path. Do not promote them back without turning sandboxing on first.
 
 ### A2. The assessor reaches a verdict, but the verdict is not honest
 
 This group is the reason the list exists. Each one makes something pass that should not.
+
+> **How to treat these — operator rule, 2026-08-06. Disable, do not delete, and do not fix now.**
+> A test that cannot fail is not helping, so it should not cost a run. It also must not vanish, or
+> the next person writes it again. `t.Skip` it with a reason naming the issue, and `tools/testreport`
+> names it in the **NOT RUN** section of every run, green ones included. Getting these back to a
+> real green is later work, done deliberately. The full rule is in `PRINCIPLES.md` §7. First two
+> applied 2026-08-06 in `internal/keeper`.
 
 - **`hk-hs4b0`** — `make full` runs a crash tier containing zero tests and always exits 0. `make full`
   is the merge decision.
@@ -95,9 +101,14 @@ These matter more than usual because lanes run beside the assessor on one box.
 - **`hk-c6dt2`** — the orphan sweep kills **other projects'** `br` processes: it matches on the
   process name with no project scoping.
 - **`hk-59flr`, `hk-hqttl`, `hk-fr7ht`** — the daemon suite goes red under load with a different test
-  each time, and each passes alone. Until this is settled, **no red and no green from a loaded box is
-  evidence**, which makes every other item on this page unmeasurable. Fixing it may only mean writing
-  down a controlled-load rule.
+  each time, and each passes alone.
+
+  > **Do not open another investigation into this — operator, 2026-08-06.** It has been looked at
+  > four or five times and re-raising it is not progress. **The ruling narrows the question instead:
+  > the only thing that has to work is the core queue.** Tests outside that do not have to run, and
+  > can be ignored or disabled. Scope the suite to the core queue and judge on that. A flake in a
+  > package the queue does not depend on stops being a blocker by definition rather than by
+  > investigation.
 
 ### A5. Cheap safety, do them while you are in there
 
@@ -114,6 +125,13 @@ These matter more than usual because lanes run beside the assessor on one box.
 ## List B — fix while the assessor works, or before major daemon work resumes
 
 Real, mostly serious, and not on the path between a local scratch run and an honest verdict.
+
+**Sandbox — moved here 2026-08-06 because sandboxing is off for the assessor:**
+`hk-quoka` (a sandboxed run gets zero egress: the allowed-domain list is operator-supplied and
+production sets none, so the harness cannot reach its own model endpoint) · `hk-bzydx` (a sandboxed
+run cannot reach `~/.claude` or `$CODEX_HOME`, so it fails at init) · `hk-mp37h`, `hk-scaj0` (the
+per-bead sandbox switch and the uniform-sandbox epic). **These become blocking the moment sandboxing
+is turned on.**
 
 **Not exercised by a local, single-concurrency, local-only audit:**
 `hk-uaka2` and `hk-t8myp` (the wrapped worktree probe and the remote shutdown drain — remote path
@@ -149,8 +167,9 @@ unauthenticated) · `hk-rlvhi`, `hk-xbrc2`, `hk-j7yo0` (stale binary and wrong-v
 
 ## What has to happen before this file can be trusted as a plan
 
-1. **Settle the load flake first (`hk-59flr` / `hk-hqttl` / `hk-fr7ht`).** Every other verdict on this
-   page depends on the suite being able to tell you something true.
-2. **Confirm the assessor's actual configuration** — sandbox on or off, local-only, concurrency one.
-   That single answer moves several A1 items to List B.
-3. **Triage the remaining ~40 P1 issues against the criterion at the top.** List A is a floor.
+1. **Define the core-queue test scope**, per the operator's ruling above. That scope is what "the
+   build works" means for this sign-off. Everything outside it is ignorable or disable-able, which
+   dissolves the load-flake question rather than answering it.
+2. **Triage the remaining ~40 P1 issues against the criterion at the top.** List A is a floor.
+
+Sandboxing is settled: it is off, and the two sandbox items moved to List B.

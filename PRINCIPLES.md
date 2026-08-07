@@ -126,6 +126,32 @@ stop and check whether a test does what it claims — that is the work.
 - **Suspect a green gate as readily as a red one.** A gate that reports "nothing to do" is making a
   claim, and it can be wrong the same way a test can.
 
+### When you find a test that cannot fail, disable it in place
+
+Operator rule, 2026-08-06. **A test that cannot fail is not helping, so stop paying to run it — but
+do not let it disappear either.** Deleting it loses the knowledge that the claim it named is
+unproven, and the next person writes it again. Leaving it running costs time and, worse, it keeps
+counting toward the green.
+
+So: `t.Skip` it, with a reason that names the issue that owns the decision. Do not delete it, and do
+not "fix" it by making the assertion pass.
+
+    func TestThing(t *testing.T) {
+        t.Skip("hk-xxxxx: asserts an event nothing can emit; green since written, cannot fail")
+
+The visibility is automatic. `tools/testreport` names every skipped test, per package, in its
+**NOT RUN** section on every run — including a green one. That section exists for exactly this. A
+disabled test therefore stays in front of whoever reads the next report until someone earns the
+right to delete it or make it real.
+
+Above the skip, write what the test claimed, why it cannot fail, and what has to be decided before
+it can come back. That paragraph is the deliverable; the skip is just the switch.
+
+**Judge the whole test, not the line.** When a test's entire subject is the unprovable claim, skip
+the test. When one vacuous assertion sits inside a test that does prove something real, the test
+keeps running and the assertion is a separate question — and if answering it needs a design decision
+nobody has made, leave it and say so in the issue rather than quietly deleting evidence.
+
 ## 8. Prefer behavior you can re-run
 
 Where a subsystem's input is real and messy, capture the raw stream once and replay it offline

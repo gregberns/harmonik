@@ -231,7 +231,7 @@ func TestSubsystemPartition_BusConsumers_DisabledDaemonStillReachesWorkLoop(t *t
 	t.Setenv("HARMONIK_DEBUG_WIRING", "1")
 
 	projectDir, jsonlPath := sockpartProjectDir(t, buspartAllDisabledYAML)
-	logs := sockpartRunDaemon(t, projectDir, jsonlPath, 1500*time.Millisecond)
+	logs := sockpartRunDaemon(t, projectDir, jsonlPath)
 
 	for _, tc := range buspartCases {
 		if !strings.Contains(logs, tc.logWant) {

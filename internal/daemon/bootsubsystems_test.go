@@ -360,7 +360,7 @@ func TestSubsystemPartition_BootSubsystems_DisabledDaemonStillReachesWorkLoop(t 
 	t.Setenv("HARMONIK_DEBUG_WIRING", "1")
 
 	projectDir, jsonlPath := sockpartProjectDir(t, bootpartAllDisabledYAML)
-	logs := sockpartRunDaemon(t, projectDir, jsonlPath, 1500*time.Millisecond)
+	logs := sockpartRunDaemon(t, projectDir, jsonlPath)
 
 	for _, want := range []string{
 		"crew idle reaper not constructed",

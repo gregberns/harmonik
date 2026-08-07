@@ -424,6 +424,12 @@ type surviveRunOpts struct {
 	// run will meet — see run_terminal_writer_lifetime_test.go, which seeds a
 	// named pipe so the run's own background writer can be held still.
 	seedProject func(projectDir string)
+
+	// runner is the run's command runner (the Config.Runner seam). It is the
+	// fact the LAUNCH reads to decide whether it takes the run's own session, so
+	// it is also the fact the record write has to read. Nil leaves the run with
+	// no runner, which is the ordinary local path every other test here drives.
+	runner tmux.CommandRunner
 }
 
 // surviveRunOneAgenticNodeGraph is the smallest graph that reaches a real agent
@@ -574,6 +580,7 @@ func surviveRunDriveWith(t *testing.T, opts surviveRunOpts) *surviveRunOutcome {
 		AdapterRegistry2: registry,
 		Substrate:        sub,
 		WorktreeFactory:  worktreeFactory,
+		Runner:           opts.runner,
 		TargetBranch:     "main",
 		// Short enough that the daemon-keeps-running case reaches its ready
 		// timeout quickly; the shutdown cases abort long before it.

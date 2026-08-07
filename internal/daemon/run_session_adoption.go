@@ -51,13 +51,16 @@ func setUpRunSession(
 	rp runloop.RunPorts,
 	handles runloop.SharedHandles,
 	runScope *runlease.Scope,
-	remote bool,
+	hasRunner bool,
 	runID core.RunID,
 	beadID core.BeadID,
 ) bool {
-	// A remote run's agent lives on the worker, in the worker's session. Box A's
-	// tmux server has nothing to keep alive for it.
-	if remote || env.ProjectDir == "" {
+	// hasRunner is the run's command runner, reported as a fact rather than
+	// re-derived here. A run with one executes its agents somewhere this tmux
+	// server does not reach — a worker over SSH — so box A has no session to keep
+	// alive for it. It is the SAME fact the launch tests before it takes the run's
+	// session, so the record can never name a session no launch will create.
+	if hasRunner || env.ProjectDir == "" {
 		return false
 	}
 	ts, isTmux := handles.Substrate.(*tmuxSubstrate)

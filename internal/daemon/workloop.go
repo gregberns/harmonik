@@ -774,21 +774,15 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 			fmt.Sprintf("worktree_create_failed: %v", wtErr))
 		return
 	}
-	// ── The run's own tmux session, and the record that names it ────────────
+	// useIndepSession says whether this run got a tmux session of its own. It is
+	// answered below, once the run knows which host its agents will run on, and it
+	// is read here so the scope's disposition and the launch's session agree.
 	//
-	// This is where a run stops being a thing only this daemon process knows
-	// about. It takes a tmux session of its own, writes a record naming that
-	// session under .harmonik/runs/, and from then on a daemon that is SIGKILLed
-	// leaves an agent that is still working and a record the next boot can find
-	// it by. Without the record the surviving session is untracked: nothing can
-	// adopt it, nothing can say which bead it holds, and the bead is re-dispatched
-	// under the agent still working it.
-	//
-	// The write is HERE, before the cascade, because the record has to exist
-	// before the session does. A record written after the spawn does not exist at
-	// all for a daemon killed in between, which is the one crash the durable
-	// registry is for.
-	useIndepSession := setUpRunSession(&env, rp, handles, runScope, rbc != nil, runID, beadID)
+	// The gap between the declaration and the answer is load-bearing. Both readers
+	// are DEFERRED and both run on this goroutine, so each sees the answered value.
+	// Calling runExit() before the cascade would read the unanswered false and
+	// reclaim a run that is meant to keep its record.
+	useIndepSession := false
 
 	// The scope decides whether to keep the run's resources at close, and it asks
 	// once for the whole run.
@@ -904,6 +898,29 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	} else if handles.Runner != nil {
 		dotRunner = handles.Runner // hk-hd2w6: Config.Runner injection (test seam)
 	}
+
+	// ── The run's own tmux session, and the record that names it ────────────
+	//
+	// This is where a run stops being a thing only this daemon process knows
+	// about. It takes a tmux session of its own, writes a record naming that
+	// session under .harmonik/runs/, and from then on a daemon that is SIGKILLed
+	// leaves an agent that is still working and a record the next boot can find
+	// it by. Without the record the surviving session is untracked: nothing can
+	// adopt it, nothing can say which bead it holds, and the bead is re-dispatched
+	// under the agent still working it.
+	//
+	// The write is HERE, before the cascade, because the record has to exist
+	// before the session does. A record written after the spawn does not exist at
+	// all for a daemon killed in between, which is the one crash the durable
+	// registry is for.
+	//
+	// It is also here, rather than a hundred lines earlier next to the worktree,
+	// because dotRunner is the fact both this decision and the launch read. The
+	// launch takes the run's session only when it has no runner, so a run that
+	// wrote a record on a DIFFERENT test of the same fact would name a session no
+	// launch ever creates — a record pointing at nothing, which is worse than no
+	// record at all. One value, decided once, read at both ends.
+	useIndepSession = setUpRunSession(&env, rp, handles, runScope, dotRunner != nil, runID, beadID)
 
 	// Drive the cascade: walk start → … → terminal, dispatching each node by
 	// type (non-agentic synthesize-success, agentic substrate-dispatch,

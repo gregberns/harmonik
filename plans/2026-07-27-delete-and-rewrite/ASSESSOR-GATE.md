@@ -115,8 +115,17 @@ This group is the reason the list exists. Each one makes something pass that sho
 - **`hk-mzwex`** — a typo in the diff ref makes **both halves of the review gate pass**.
 - **`hk-2h2fa`** — the review gate approved a 1,412-line deletion that orphaned two subsystems and
   called it a clean diff.
-- **`hk-7bfqe`** — `specs/assessor-handoff-schema.md` contradicts itself: §9 says version 3 is
-  current, §4 and §8 say a handoff must equal 2. **This is the assessor's own contract.** Cheap.
+> **`hk-7bfqe` is FIXED and was withdrawn from this list on 2026-08-07.** It said
+> `specs/assessor-handoff-schema.md` contradicted itself — §9 saying version 3, §4 and §8 requiring
+> 2, and an appended amendment adding a `readiness` gate kind valid only at 3. `fa6fe25f9` retired
+> that amendment and put the frontmatter and §9 back to 2. Verified against the tree: the field
+> table, §8, §9 and both examples all say 2, and no `gate: readiness` text survives. The bead is
+> closed.
+>
+> **It was found stale by a reviewer, not by this file, and it had sat on List A for two days.**
+> That is the third time this week an item here has been read from a bead rather than re-derived.
+> Re-check before you spend a day on anything in this list — the instruction at the top of the file
+> is not decoration.
 
 **Placed 2026-08-07.** Each of these makes a gate report something other than what it tested.
 
@@ -145,6 +154,16 @@ This group is the reason the list exists. Each one makes something pass that sho
   about the machine and, worse, rewrote the operator's real `~/.codex/config.toml` on the way. It
   died before `lint-allow` or `test-scenario` ever ran, which means every earlier report of "`make
   full` is red for the scenario tier" was naming a tier the target never reached.
+- **`hk-codex-billing-guard-race-xychw`** — **the production half of the item above, and it is the
+  more serious one.** The billing guard rewrites `config.toml` with a truncating write, re-reads it
+  to verify, and takes no lock of any kind. Measured by an independent review: **8,047 of 12,000
+  concurrent reads saw a truncated file with no key.** The daemon registers ONE codex harness aimed
+  at the operator's real `~/.codex` and dispatches beads concurrently, so a launch can be refused by
+  the guard's own write — and a live codex child reading inside that window sees no billing pin,
+  which is the API-pool fallback the guard exists to prevent. The guard can defeat itself. The same
+  package already documented this exact hazard for the stale-WAL guard and gave that one a lock
+  check; the billing guard got nothing. **On List A because an assessor audit that drives concurrent
+  dispatch can be refused a launch for a reason that is not about the candidate commit.**
 
 ### A3. The run does not survive its own lifecycle
 
@@ -179,6 +198,14 @@ These matter more than usual because lanes run beside the assessor on one box.
   reaper, and wipe the shared build cache during later runs. Contaminates every flake measurement.
 - **`hk-c6dt2`** — the orphan sweep kills **other projects'** `br` processes: it matches on the
   process name with no project scoping.
+- **`hk-codex-home-zero-value-caah1`** (added 2026-08-07) — `codex.NewHarness` accepts an empty
+  `codexHome` and resolves the ZERO VALUE to the operator's real `$HOME/.codex`. One of the things
+  that value reaches is a sweep that **`os.Remove`s** `state_*.sqlite-wal` files. Before
+  `hk-codex-harness-real-home-rquc5` that pointed a file-deleting glob at the operator's real
+  `~/.codex`, and it no-opped only by accident of the test process's working directory. The config
+  rewrite was the visible half of that bead; this is the half that could have destroyed data. The
+  repair is at the composition root: resolve the home in `newHarnessRegistry` and have the
+  constructor refuse an empty value.
 - **`hk-59flr`, `hk-hqttl`, `hk-fr7ht`** — the daemon suite goes red under load with a different test
   each time, and each passes alone.
 
@@ -218,9 +245,14 @@ These matter more than usual because lanes run beside the assessor on one box.
   and it is the difference between a merge decision that can pass and one that structurally cannot.
   **Not yet observed directly**: the runs on 2026-08-07 died in the test step before reaching it.
 - **`hk-0o5ya`** — the daemon stopped deciding completion from a commit-message mention
-  (`a4981d686`), and `specs/execution-model.md` EM-063 plus `specs/cognition-loop.md` §4.8 still
-  require it. Confirmed still present on 2026-08-07. The specs are normative here, so the false
-  green can be re-implemented from them and pass review.
+  (`a4981d686`), and two specs still require it. Confirmed still present on 2026-08-07. The specs
+  are normative here, so the false green can be re-implemented from them and pass review.
+  **Two clauses, and they are not equally bad — a reviewer flagged the distinction and it is worth
+  keeping.** `specs/execution-model.md` EM-063 Phase 2 and `specs/cognition-loop.md` §4.8 tier 2
+  both use the bare grep ALONE as an already-landed test, and those are the defect.
+  `specs/cognition-loop.md`'s "two-phase done" definition is a THIRD clause and it is weaker: it
+  requires the trailer AND a `run_completed{success}` event, so it is not the same false green. Fix
+  the two skip clauses; do not sweep the definition in with them.
 
 ---
 

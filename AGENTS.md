@@ -99,6 +99,17 @@ skill owns the read/write discipline. Only the traps you cannot look up stay her
 - **Commit with `git commit -F <file>`, never `-m`.** Non-trivial commits require `Reviewed-By:` and
   `Review-Verdict:` trailers (JSON, `schema_version: 1`); a `BLOCK` verdict is never committed.
   Validation is agent-enforced — git hooks are retired. `--no-verify` is forbidden.
+  **What the trailer is for: it must never claim a review that did not happen.** Quote the reviewer's
+  verdict verbatim and do not author your own approval. But if no reviewer can be reached — the
+  session has no sub-agents, or it is ending — then **record that fact in the trailer and commit
+  anyway**. Recording an absent review and approving your own work are different acts, and they have
+  failed in the same direction before: such a trailer states that no reviewer was reached and carries
+  **no** verdict of `APPROVE`. Leaving finished work uncommitted is the worse failure — a commit
+  labelled "not reviewed" is a state the next person can act on, while work stranded in a worktree is
+  one `checkout` from gone. Never treat "I could not get a review" as a reason to stop.
+  **Verify what you are about to ship, not what you edited:** a review reads the working tree and a
+  commit ships the index, and nothing makes them agree. Confirm `git diff` is empty for the reviewed
+  files before writing the trailer.
 - **Run `/check` after committing.** Two targets and only two: `make fast` while you work, `make full`
   before anyone accepts the work. `make full` is the merge decision and it is what CI runs. It tests
   every package, it never scopes by what changed, and it never approves on a timeout, an OOM, a
@@ -106,4 +117,4 @@ skill owns the read/write discipline. Only the traps you cannot look up stay her
 
 <!-- end-bv-agent-instructions -->
 
-> **Maintainer note — the block above is machine-regenerable.** `br agents --update` rewrites everything between the `bv-agent-instructions-v2` markers from br's generic upstream template. Three harmonik-specific corrections live inside it and WILL be reverted to upstream's (false) wording if you run that command: (1) the bead ledger is gitignored and machine-local, not "stored in `.beads/` and tracked in git"; (2) `git commit -m "..."` alone omits this repo's required trailers; (3) commit-message validation is agent-enforced via the `/check` flow — git hooks (lefthook) are retired, not "wired via `lefthook.yml`". Re-apply all three after any `br agents --update`, and diff the block before accepting the result.
+> **Maintainer note — the block above is machine-regenerable.** `br agents --update` rewrites everything between the `bv-agent-instructions-v2` markers from br's generic upstream template. Four harmonik-specific corrections live inside it and WILL be reverted to upstream's (false) wording if you run that command: (1) the bead ledger is gitignored and machine-local, not "stored in `.beads/` and tracked in git"; (2) `git commit -m "..."` alone omits this repo's required trailers; (3) commit-message validation is agent-enforced via the `/check` flow — git hooks (lefthook) are retired, not "wired via `lefthook.yml`"; (4) the review-trailer rule carries its own escape hatch — an unreachable reviewer is recorded in the trailer and the work is committed, never left uncommitted. Re-apply all four after any `br agents --update`, and diff the block before accepting the result.

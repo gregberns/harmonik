@@ -154,7 +154,7 @@ This group is the reason the list exists. Each one makes something pass that sho
   about the machine and, worse, rewrote the operator's real `~/.codex/config.toml` on the way. It
   died before `lint-allow` or `test-scenario` ever ran, which means every earlier report of "`make
   full` is red for the scenario tier" was naming a tier the target never reached.
-- **`hk-codex-billing-guard-race-xychw`** — **the production half of the item above, and it is the
+- **`hk-codex-billing-guard-race-v6dl5`** — **the production half of the item above, and it is the
   more serious one.** The billing guard rewrites `config.toml` with a truncating write, re-reads it
   to verify, and takes no lock of any kind. Measured by an independent review: **8,047 of 12,000
   concurrent reads saw a truncated file with no key.** The daemon registers ONE codex harness aimed
@@ -419,7 +419,7 @@ unauthenticated) · `hk-rlvhi`, `hk-xbrc2`, `hk-j7yo0` (stale binary and wrong-v
 
    1. **Run `make leakcheck` FIRST, then check the load.** `uptime` tells you the number and not
       whose it is, and the scenario tier has been measured leaking a test binary that span at 100%
-      CPU for 76 minutes after its own run finished (`hk-gate-leaks-spinning-test-binary-x4qgy`). A
+      CPU for 76 minutes after its own run finished (`hk-gate-leaks-spinning-test-binary-6iqal`). A
       box that looks busy because of the LAST run is not "other agents were working", and reading it
       that way retires a red for the wrong reason. If other work was on the box, the run does not
       count. Re-run on a quiet one.
@@ -510,7 +510,7 @@ Each was run alone at `-race -count=3`, at load 3.2–7.2 with 44–45 GiB free.
   passes. It fails because its sensor scans the shared event log without filtering to its own run,
   and its message names a cause it never established. Its sibling in the same file calls a fixture
   helper for exactly this reason; this one omits the call.
-- **FIFTEEN STRUCTURAL UNDER-BUDGETS.** `hk-scenario-budgets-structural-2z9dx`.
+- **FIFTEEN STRUCTURAL UNDER-BUDGETS.** `hk-scenario-budgets-structural-udd1t`.
 
 **THIS FILE'S "large margins" CLAIM IS WRONG FOR MOST OF THE FAMILY, and the correction matters
 because a policy hangs off it.** The text above generalises from `hk-4f1bs` — "5 to 8 seconds against
@@ -525,13 +525,13 @@ smaller cap on top of it; two of those logged their named property as PASSED and
 teardown stopwatch.
 
 **Four of the nineteen cannot fail on the property they are named for** and two are pure duplicates
-that should be deleted — `hk-scenario-tests-cannot-fail-x9wij`. The sharpest:
+that should be deleted — `hk-scenario-tests-cannot-fail-zlu0f`. The sharpest:
 `TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency` asserts peak concurrency is **at most** 4 with
 no lower bound, and the loaded run recorded a peak of 1 — so it would pass unchanged if concurrency
 were completely broken.
 
 **And step 1 of the triage procedure below is unreliable by construction.**
-`hk-gate-leaks-spinning-test-binary-x4qgy`: the `make full` run that produced these numbers leaked a
+`hk-gate-leaks-spinning-test-binary-6iqal`: the `make full` run that produced these numbers leaked a
 `daemon.test` at 100% CPU for 76 minutes, 66 minutes past its own 10-minute timeout. Every "re-run on
 a quiet box" after it — including the ones in this file — was taken on a box the previous run had
 poisoned by a full core. "Check the load" cannot tell you WHOSE load it is. Run `make leakcheck`

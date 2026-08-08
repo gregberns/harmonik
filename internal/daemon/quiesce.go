@@ -452,6 +452,11 @@ func (a *QuiesceArbiter) run(ctx context.Context) {
 func (a *QuiesceArbiter) tick(ctx context.Context, maxSleep time.Duration) {
 	// Max-sleep failsafe (Risk 2): unconditionally wake sessions that have slept
 	// past the ceiling, regardless of drain state.  Runs even when Drain is nil.
+	// The delete happens here, inside the same lock that selects the record, so
+	// this caller obeys wakeSession's contract like the other three: the session
+	// is out of a.sleeping before anyone nudges it. Selecting under the lock and
+	// deleting after the wake would leave a window in which the socket handler
+	// could pick the same record and nudge it a second time.
 	a.mu.Lock()
 	var expired []sessionSleepRecord
 	for _, rec := range a.sleeping {
@@ -459,16 +464,15 @@ func (a *QuiesceArbiter) tick(ctx context.Context, maxSleep time.Duration) {
 			expired = append(expired, rec)
 		}
 	}
+	for _, rec := range expired {
+		delete(a.sleeping, rec.agentName)
+	}
 	a.mu.Unlock()
 
 	for _, rec := range expired {
 		fmt.Fprintf(os.Stderr, "daemon: quiesce: max-sleep failsafe: waking %q (slept %v)\n",
 			rec.agentName, time.Since(rec.sleptAt).Round(time.Second))
-		a.nudgePane(ctx, rec.agentName, rec.paneTarget)
-		a.clearSleepMarker(rec.sessionID)
-		a.mu.Lock()
-		delete(a.sleeping, rec.agentName)
-		a.mu.Unlock()
+		a.wakeSession(ctx, rec.agentName, rec.paneTarget, rec.sessionID)
 	}
 }
 
@@ -727,9 +731,38 @@ func (a *QuiesceArbiter) executeWake(ctx context.Context, sig wakeSignal) {
 
 	for _, rec := range targets {
 		fmt.Fprintf(os.Stderr, "daemon: quiesce: waking %q (%s)\n", rec.agentName, sig.reason)
-		a.nudgePane(ctx, rec.agentName, rec.paneTarget)
-		a.clearSleepMarker(rec.sessionID)
+		a.wakeSession(ctx, rec.agentName, rec.paneTarget, rec.sessionID)
 	}
+}
+
+// wakeSession clears a session's sleep marker and then nudges its pane.
+//
+// THE ORDER IS THE POINT, and it is the opposite of the obvious one.
+//
+// Every wake path used to nudge first and remove the marker second. That leaves
+// a window: a daemon that dies between the two calls leaves the marker on disk
+// with the keeper still suppressing the session, and nothing in memory left to
+// wake it. That is exactly the state reconcileOrphanedMarkers exists to clean up
+// at the next boot — so the old order manufactured, on every single wake, the
+// condition the boot-time repair pass was written to undo.
+//
+// Clearing first makes the crash window benign. A daemon that dies after the
+// clear and before the nudge leaves a session that is merely un-nudged: the
+// keeper is no longer suppressing it, so it is reachable again. Losing a
+// keystroke is recoverable. Losing the marker removal is not.
+//
+// The same reorder closes a test race. The old sequence let an observer that
+// waited on the nudge read the marker before the removal ran — measured at 6
+// failures per 1000 under load, with zero nudge timeouts, which is what a race
+// on the removal looks like and not what a failing wake looks like. Do not
+// "fix" that by polling for the marker's absence or lengthening a timeout;
+// both hide the race and leave the crash window open (hk-zt68b).
+//
+// Callers must remove the session from a.sleeping under the lock BEFORE calling
+// this, so concurrent wakes cannot double-nudge.
+func (a *QuiesceArbiter) wakeSession(ctx context.Context, agentName, paneTarget, sessionID string) {
+	a.clearSleepMarker(sessionID)
+	a.nudgePane(ctx, agentName, paneTarget)
 }
 
 // nudgePane sends an Enter key to paneTarget to wake a parked session.
@@ -909,8 +942,7 @@ func (a *QuiesceArbiter) HandleDaemonWake(ctx context.Context, agentName string,
 		return nil
 	}
 	fmt.Fprintf(os.Stderr, "daemon: quiesce: waking %q (operator wake --agent)\n", agentName)
-	a.nudgePane(ctx, agentName, rec.paneTarget)
-	a.clearSleepMarker(rec.sessionID)
+	a.wakeSession(ctx, agentName, rec.paneTarget, rec.sessionID)
 	return nil
 }
 
@@ -928,8 +960,7 @@ func (a *QuiesceArbiter) wakeAllSessions(ctx context.Context) {
 	a.mu.Unlock()
 	for _, rec := range targets {
 		fmt.Fprintf(os.Stderr, "daemon: quiesce: waking %q (operator wake --all)\n", rec.agentName)
-		a.nudgePane(ctx, rec.agentName, rec.paneTarget)
-		a.clearSleepMarker(rec.sessionID)
+		a.wakeSession(ctx, rec.agentName, rec.paneTarget, rec.sessionID)
 	}
 	// Restore schedule jobs that were suspended by sleep and remove the fleet
 	// marker so external gate checks (harness crons) resume normally. hk-xjr1n.

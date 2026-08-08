@@ -79,10 +79,10 @@ func TestScenario_EventPayloadStartV2_DOTLifecycle(t *testing.T) {
 
 	realBrPath := codexLifecycleFixtureBrPath(t)
 	project := scenarioFixtureProjectDir(t)
-	projectDir, err := filepath.EvalSymlinks(project.projectDir)
-	if err != nil {
-		t.Fatalf("resolve scenario project path: %v", err)
-	}
+	// scenarioFixtureProjectDir already returns a symlink-resolved path, and it
+	// measured THAT path against the sun_path limit. Re-resolving here is what
+	// used to make the guard and the bound socket two different strings.
+	projectDir := project.projectDir
 	jsonlPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
 	codexLifecycleFixtureGitRepo(t, projectDir)
 	codexLifecycleFixtureWorkflowDot(t, projectDir)
@@ -266,10 +266,10 @@ func TestScenario_EventPayloadQueueSubscribeLegacySingle(t *testing.T) {
 
 	realBrPath := codexLifecycleFixtureBrPath(t)
 	project := scenarioFixtureProjectDir(t)
-	projectDir, err := filepath.EvalSymlinks(project.projectDir)
-	if err != nil {
-		t.Fatalf("resolve scenario project path: %v", err)
-	}
+	// scenarioFixtureProjectDir already returns a symlink-resolved path, and it
+	// measured THAT path against the sun_path limit. Re-resolving here is what
+	// used to make the guard and the bound socket two different strings.
+	projectDir := project.projectDir
 	jsonlPath := filepath.Join(projectDir, ".harmonik", "events", "events.jsonl")
 	codexLifecycleFixtureGitRepo(t, projectDir)
 

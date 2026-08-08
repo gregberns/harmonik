@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"syscall"
 	"testing"
 	"time"
 
@@ -269,29 +268,30 @@ func TestRunSocketListener_StaleRemoval(t *testing.T) {
 }
 
 // socketFixtureCreateStaleSocket creates a Unix domain socket inode at sockPath
-// without registering any automatic cleanup (simulating a SIGKILL'd daemon that
-// left its socket file on disk). The socket is bound via syscall so the OS does
-// not remove the file when the file descriptor is closed.
+// with nothing listening behind it — the state a SIGKILL'd daemon leaves.
+//
+// The inode has to survive the close, and net.UnixListener unlinks its socket
+// file on Close by default. SetUnlinkOnClose(false) turns that off, which is
+// what lets this use net instead of a raw syscall.Socket. The earlier raw
+// version was written believing net always unlinks, and it cost a descriptor
+// that was not close-on-exec: a raw descriptor is inherited by any subprocess
+// forked before it closes, whereas one from net.* carries the flag for free.
+// internal/specaudit TestRawDescriptorCreatorsNameCloexec now holds that line.
 //
 // Returns a cleanup function that removes the stale socket file. If the socket
 // file is consumed by the daemon under test, the cleanup is a no-op.
 func socketFixtureCreateStaleSocket(t *testing.T, sockPath string) func() {
 	t.Helper()
 
-	fd, err := syscall.Socket(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	l, err := net.ListenUnix("unix", &net.UnixAddr{Name: sockPath, Net: "unix"})
 	if err != nil {
-		t.Fatalf("socketFixtureCreateStaleSocket: socket: %v", err)
+		t.Fatalf("socketFixtureCreateStaleSocket: listen %q: %v", sockPath, err)
 	}
-
-	sa := &syscall.SockaddrUnix{Name: sockPath}
-	if err := syscall.Bind(fd, sa); err != nil {
-		_ = syscall.Close(fd)
-		t.Fatalf("socketFixtureCreateStaleSocket: bind %q: %v", sockPath, err)
-	}
-	// Close the fd — the socket inode remains on disk (no automatic removal like
-	// net.Listener.Close does). This is the state left by a SIGKILL'd daemon.
-	if err := syscall.Close(fd); err != nil {
-		t.Fatalf("socketFixtureCreateStaleSocket: close fd: %v", err)
+	l.SetUnlinkOnClose(false)
+	// Close the listener — the socket inode stays on disk with no listener behind
+	// it. This is the state left by a SIGKILL'd daemon.
+	if err := l.Close(); err != nil {
+		t.Fatalf("socketFixtureCreateStaleSocket: close listener: %v", err)
 	}
 
 	return func() {
@@ -304,8 +304,7 @@ func socketFixtureCreateStaleSocket(t *testing.T, sockPath string) func() {
 // a SIGKILL), RunSocketListener must detect the stale socket, remove it, and
 // successfully bind so that the daemon starts instead of failing with EADDRINUSE.
 //
-// The test creates a Unix domain socket inode via syscall.Bind (no listener goroutine
-// behind it), then starts RunSocketListener and asserts that the socket is
+// The test creates a Unix domain socket inode with no listener behind it, then starts RunSocketListener and asserts that the socket is
 // re-created and is accepting connections.
 //
 // Bead ref: hk-63omj (recovery: stale daemon.sock after SIGKILL → EADDRINUSE).

@@ -4,7 +4,7 @@ assessor_name: assessor-alpha-bravo-merge
 epic_id: hk-s1cvx
 branch: work/alpha-integration-merge
 gate: merge
-commit: 4ecab4f35
+commit: 40d83b4f4
 found_by_sources: [assessor, operator]
 report_path: .harmonik/reports/alpha-bravo-merge-gate.md
 spawned_by: operator
@@ -28,7 +28,7 @@ Two lanes finished work on the same base commit `3ca2c85a8`. Together they are t
 
 | Lane | Branch | Commit | Content |
 |---|---|---|---|
-| alpha | `work/alpha-integration-merge` | `4ecab4f35` | 2 commits: the core queue data race fix + a gate-document correction |
+| alpha | `work/alpha-integration-merge` | `40d83b4f4` | 3 commits: the core queue data race fix, a gate-document correction, and this mission file |
 | bravo | `work/bravo-reachability` | `16efbb28b` | 5 commits: close-on-exec check, sleep-marker reorder, socket-path guard, queue candidate-file leak, claim-failure revert |
 
 **There is no merge commit, and you are not waiting for one.** The merge onto a shared branch is an
@@ -76,7 +76,11 @@ grep -c -- '--rev' scripts/scratch-daemon.sh    # 22 = safe. 0 = do not gate fro
 
 Both fixes are present on `work/alpha-integration-merge` and on `work/bravo-reachability`. They were
 absent from `/Users/gb/github/harmonik` at `de4b9baeb`. The operator fast-forwards that checkout to
-`4ecab4f35` before starting you — run the grep anyway and refuse if it answers 0.
+`40d83b4f4` before starting you — that is what puts this mission file there too. Run the grep
+anyway and refuse if it answers 0.
+
+**One commit of the three is this document.** It changes no code. Audit the tree at the branch tip
+and say so; do not treat a docs-only commit as a reason to re-pin.
 
 ## Step 1 — stand up the scratch clone, pinned
 

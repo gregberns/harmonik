@@ -59,6 +59,11 @@ fresh clone and these did not survive a single day.
 `shared.MainHistoryHasRefsTrailer` and leaves a tombstone. **Its spec half is not fixed** — that is
 `hk-0o5ya`, placed in A5 below.
 
+**Four of the five are closed. `hk-core-red-run-terminal-writer-urbeg` is deliberately still open.**
+Its repair is in the tree and was read there, but that bead's own claim is that a TEST is red, and no
+confirming run has been taken. The fix being present and the test passing are two different facts,
+and this file has been wrong before by treating the first as the second.
+
 **This says nothing about the roughly forty CLOSED-but-unverified issues** the earlier note worried
 about, and nothing about anything filed after this date. The floor rule stands.
 
@@ -405,6 +410,49 @@ unauthenticated) · `hk-rlvhi`, `hk-xbrc2`, `hk-j7yo0` (stale binary and wrong-v
    (`hk-keeper-warn-cooldown-clock-bet-c5umc`, which fails standalone under plain `-short` on an
    untouched checkout). `make full` runs this tier, so **`make full` is red today for reasons that
    predate this work.** `make core` is green.
-2. **Triage the remaining ~40 P1 issues against the criterion at the top.** List A is a floor.
+2. ~~**Triage the remaining ~40 P1 issues against the criterion at the top.**~~ **DONE 2026-08-07
+   for the OPEN set** — see the dated section near the top of this file. List A is still a floor: the
+   closed-but-unverified issues were not examined, and nothing filed after that date is covered.
+
+---
+
+## What `make full` actually does, measured 2026-08-07 on `f56c770c`
+
+**`make full` is red, and for the first time this week it is red at the stage everyone thought it was
+red at.** Until today it died two stages earlier, so every report of "red for the scenario tier" was
+naming a tier the target never reached. Three runs on a quiet box, 46 GiB free:
+
+| Stage | Result |
+| --- | --- |
+| `gate-static` | pass |
+| `gate-test-compile` | pass |
+| whole-tree `go test -short ./...` | **pass** — 74,817 tests, 108 of 108 packages, 53 skipped. Green on two consecutive runs. |
+| `lint-allow` | **pass** — was 14 file-and-linter pairs off the list on the base (`hk-lint-allow-red-on-base-hdln0`), now fixed, and the 5 stale entries deleted. |
+| `test-scenario` | **FAIL** — 19 failures across `internal/daemon` under `-tags scenario` and `test/scenario`. |
+| `module-hygiene` | not reached |
+
+**What was in the way, and it was not what the record said.** `internal/harness/codex` built four
+harnesses against `$HOME/.codex` and then ran the fail-closed billing guard, so the merge decision
+asked a question about the machine — and, because the guard writes `config.toml` before it asserts,
+**rewrote the operator's real Codex config on every run.** Four parallel tests truncating one shared
+file is why it presented as a flake. `hk-codex-harness-real-home-rquc5`.
+
+**The scenario tier is the remaining red and it is not new.** The 19 failures are almost entirely
+wall-clock timeouts waiting for a bead state change, inside a `-tags scenario` daemon run that took
+507 seconds. That is `hk-97gcz` and `hk-ynohn`, plus the A4 load family. **Only ONE of the 19 appears
+in the eight names `hk-97gcz` recorded** (`TestScenario_MultiBead_SerializedNCompletion`), which is
+direct support for `hk-scenario-tier-nondeterministic-xt1wa`: the tier names a different set every
+run, so neither its pass nor its failure is evidence about the code.
+
+**None of the 19 is attributable to the work that got the gate this far, and that was measured rather
+than argued.** Across both commits exactly one non-test, non-doc file changed —
+`internal/daemon/workloop.go`, one line, a De Morgan rewrite of `daemonStopping`. All six reachable
+input combinations were enumerated and the old and new expressions agree on every one, the nil handle
+included, with no dereference in either form. Everything else is test files, this document and the
+lint allow list.
+
+**So the honest statement of where the gate stands: four of its five stages pass, and the fifth is a
+tier whose own bead says its result is not evidence.** Whether that blocks the sign-off is an
+operator call, and this file still does not have the authority to waive a red.
 
 Sandboxing is settled: it is off, and the two sandbox items moved to List B.

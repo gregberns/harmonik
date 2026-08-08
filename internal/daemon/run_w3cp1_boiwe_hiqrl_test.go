@@ -12,6 +12,7 @@ package daemon_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -20,6 +21,76 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 	"github.com/gregberns/harmonik/internal/queue"
 )
+
+// workLoopDrainBudget is how long the work loop gets to drain its queue, and it
+// is the timeout on the loop's own context.
+//
+// It used to be shadowed by a second, shorter deadline. Each wait in this file
+// selected on a time.After nested inside a context that outlived it — four at
+// 25s inside 30s, one at 15s inside 20s — so the inner timer always won and the
+// context budget was decorative. That made
+// every one of these tests a bet on a wall clock, and the bet loses under this
+// package's parallel load: three different tests here —
+// TestMultiBead_MaxConcurrentOne, TestMultiBead_TwoBeadsCompleteBothClose and
+// TestSmoke_MultiBead_MaxConcurrent2_BothComplete — failed at ~25.2s on trees
+// whose code was fine, while passing 20 out of 20 in isolation (hk-33e6p).
+//
+// Both budgets here are deliberately generous. They are backstops for a genuine
+// hang, not measurements of how fast a drain ought to be. This one is still a
+// bet — a real drain that runs past 90s fails, and it fails with a message that
+// says the drain did not happen — but 90s is 3.6x the budget that was losing,
+// and it is no longer shadowed by a shorter timer that always won first.
+const workLoopDrainBudget = 90 * time.Second
+
+// workLoopExitGrace is how long the loop then gets to actually RETURN once its
+// context has been cancelled. Separate from the drain budget on purpose: a loop
+// that drains and unwinds slowly is a different failure from one that never
+// drains, and only the second is what these tests are about.
+const workLoopExitGrace = 30 * time.Second
+
+// awaitWorkLoopExit waits for the work loop to return and proves it returned for
+// the RIGHT REASON.
+//
+// The discriminator is the subtle part, and the obvious version of it is wrong.
+// These tests build testCtx as a child of workDone, and production signals a
+// completed drain BY CANCELLING workDone. So a successful drain necessarily
+// leaves testCtx.Err() non-nil, and "did the context get cancelled?" cannot tell
+// success from failure — it is true either way. The parent tells them apart.
+// A drain cancels workDone, so workDone.Err() is context.Canceled. A blown
+// budget expires testCtx, the CHILD, and a child's deadline never propagates
+// upward — so workDone.Err() stays nil. Both parents are WithCancel(Background),
+// so context.DeadlineExceeded never appears on them at all: nil is the
+// blown-budget signature, and a check written against DeadlineExceeded would
+// pass on nil and restore the exact false pass this helper removes. Canceled is
+// a fact about the work, not a reading of a clock, which is the point here.
+//
+// For the same reason the wait cannot select on testCtx.Done(): that fires the
+// instant the drain cancels, which is exactly when the loop is being given the
+// news and has not returned yet. One wall clock is still load-bearing —
+// workLoopDrainBudget decides the verdict for a drain that runs past it — but it
+// sits far above any plausible drain instead of below every one of them.
+//
+// workDone is the context production cancels when the work finishes (drainCtx or
+// exitCtx). drained describes what the caller was waiting for.
+func awaitWorkLoopExit(t *testing.T, workDone context.Context, loopDone <-chan error, drained string) {
+	t.Helper()
+	select {
+	case err := <-loopDone:
+		if err != nil {
+			t.Errorf("runWorkLoop returned non-nil error: %v", err)
+		}
+		// A loop whose budget simply expired also returns cleanly here. Without
+		// this check that would read as success and the test would pass without
+		// the queue ever draining.
+		if !errors.Is(workDone.Err(), context.Canceled) {
+			t.Fatalf("runWorkLoop exited, but %s did not happen (cancel context err = %v)",
+				drained, workDone.Err())
+		}
+	case <-time.After(workLoopDrainBudget + workLoopExitGrace):
+		t.Fatalf("runWorkLoop did not return within %s after %s",
+			workLoopDrainBudget+workLoopExitGrace, drained)
+	}
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // hk-w3cp1 — multi-bead one-shot
@@ -89,7 +160,7 @@ func TestMultiBead_TwoBeadsCompleteBothClose(t *testing.T) {
 	}
 	deps := daemon.ExportedTestRuntime(p)
 
-	testCtx, testCancel := context.WithTimeout(drainCtx, 30*time.Second)
+	testCtx, testCancel := context.WithTimeout(drainCtx, workLoopDrainBudget)
 	defer testCancel()
 
 	loopDone := make(chan error, 1)
@@ -97,14 +168,7 @@ func TestMultiBead_TwoBeadsCompleteBothClose(t *testing.T) {
 		loopDone <- daemon.ExportedRunWorkLoopWithTestPorts(testCtx, deps, p)
 	}()
 
-	select {
-	case err := <-loopDone:
-		if err != nil {
-			t.Errorf("runWorkLoop returned non-nil error: %v", err)
-		}
-	case <-time.After(25 * time.Second):
-		t.Fatal("runWorkLoop did not exit after two-bead queue drained (cancelOnQueueDrain not invoked)")
-	}
+	awaitWorkLoopExit(t, drainCtx, loopDone, "the two-bead queue drained (cancelOnQueueDrain not invoked)")
 
 	// Both beads must have been closed.
 	closed := ledger.closedIDs()
@@ -180,7 +244,7 @@ func TestMultiBead_MaxConcurrentOne(t *testing.T) {
 	}
 	deps := daemon.ExportedTestRuntime(p)
 
-	testCtx, testCancel := context.WithTimeout(drainCtx, 30*time.Second)
+	testCtx, testCancel := context.WithTimeout(drainCtx, workLoopDrainBudget)
 	defer testCancel()
 
 	loopDone := make(chan error, 1)
@@ -188,14 +252,7 @@ func TestMultiBead_MaxConcurrentOne(t *testing.T) {
 		loopDone <- daemon.ExportedRunWorkLoopWithTestPorts(testCtx, deps, p)
 	}()
 
-	select {
-	case err := <-loopDone:
-		if err != nil {
-			t.Errorf("runWorkLoop returned non-nil error: %v", err)
-		}
-	case <-time.After(25 * time.Second):
-		t.Fatal("runWorkLoop did not exit after sequential two-bead queue drained")
-	}
+	awaitWorkLoopExit(t, drainCtx, loopDone, "the sequential two-bead queue drained")
 
 	closed := ledger.closedIDs()
 	if len(closed) < 2 {
@@ -302,7 +359,7 @@ func TestExtraContext_WorkloopSingleBead(t *testing.T) {
 	}
 	deps := daemon.ExportedTestRuntime(p)
 
-	testCtx, testCancel := context.WithTimeout(drainCtx, 20*time.Second)
+	testCtx, testCancel := context.WithTimeout(drainCtx, workLoopDrainBudget)
 	defer testCancel()
 
 	loopDone := make(chan error, 1)
@@ -310,14 +367,7 @@ func TestExtraContext_WorkloopSingleBead(t *testing.T) {
 		loopDone <- daemon.ExportedRunWorkLoopWithTestPorts(testCtx, deps, p)
 	}()
 
-	select {
-	case err := <-loopDone:
-		if err != nil {
-			t.Errorf("runWorkLoop returned non-nil error: %v", err)
-		}
-	case <-time.After(15 * time.Second):
-		t.Fatal("runWorkLoop did not exit after context-annotated bead drained")
-	}
+	awaitWorkLoopExit(t, drainCtx, loopDone, "the context-annotated bead drained")
 
 	closed := ledger.closedIDs()
 	if len(closed) == 0 {
@@ -451,7 +501,7 @@ func TestQueueItemWorkflowMode_WorkloopHonoursItemMode(t *testing.T) {
 	}
 	deps := daemon.ExportedTestRuntime(p)
 
-	testCtx, testCancel := context.WithTimeout(exitCtx, 30*time.Second)
+	testCtx, testCancel := context.WithTimeout(exitCtx, workLoopDrainBudget)
 	defer testCancel()
 
 	loopDone := make(chan error, 1)
@@ -459,19 +509,15 @@ func TestQueueItemWorkflowMode_WorkloopHonoursItemMode(t *testing.T) {
 		loopDone <- daemon.ExportedRunWorkLoopWithTestPorts(testCtx, deps, p)
 	}()
 
-	select {
-	case err := <-loopDone:
-		if err != nil {
-			t.Errorf("runWorkLoop returned non-nil error: %v", err)
-		}
-		// Bead must be in a terminal state (closed or reopened).
-		closed := ledger.closedIDs()
-		reopened := ledger.reopenedIDs()
-		if len(closed) == 0 && len(reopened) == 0 {
-			t.Error("bead neither closed nor reopened; expected at least one terminal transition")
-		}
-	case <-time.After(25 * time.Second):
-		t.Fatal("runWorkLoop did not exit for the per-item-mode bead")
+	awaitWorkLoopExit(t, exitCtx, loopDone, "the per-item-mode bead drained")
+
+	// Bead must be in a terminal state (closed or reopened). This ran inside the
+	// select's success case before; it belongs after the wait, because the wait
+	// now fails the test outright on every other path.
+	closed := ledger.closedIDs()
+	reopened := ledger.reopenedIDs()
+	if len(closed) == 0 && len(reopened) == 0 {
+		t.Error("bead neither closed nor reopened; expected at least one terminal transition")
 	}
 }
 
@@ -541,7 +587,7 @@ func TestSmoke_MultiBead_MaxConcurrent2_BothComplete(t *testing.T) {
 	}
 	deps := daemon.ExportedTestRuntime(p)
 
-	testCtx, testCancel := context.WithTimeout(drainCtx, 30*time.Second)
+	testCtx, testCancel := context.WithTimeout(drainCtx, workLoopDrainBudget)
 	defer testCancel()
 
 	loopDone := make(chan error, 1)
@@ -549,14 +595,7 @@ func TestSmoke_MultiBead_MaxConcurrent2_BothComplete(t *testing.T) {
 		loopDone <- daemon.ExportedRunWorkLoopWithTestPorts(testCtx, deps, p)
 	}()
 
-	select {
-	case err := <-loopDone:
-		if err != nil {
-			t.Errorf("smoke: runWorkLoop returned error: %v", err)
-		}
-	case <-time.After(25 * time.Second):
-		t.Fatal("smoke: runWorkLoop did not exit within timeout")
-	}
+	awaitWorkLoopExit(t, drainCtx, loopDone, "the smoke queue drained")
 
 	closed := ledger.closedIDs()
 	if len(closed) < 2 {

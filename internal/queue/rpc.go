@@ -1052,11 +1052,40 @@ func (a *HandlerAdapter) HandleQueueSubmit(ctx context.Context, params json.RawM
 		return nil, rpcErr
 	}
 
+	// Read every value the rest of this function needs BEFORE the queue is
+	// published, because publishing hands q to another goroutine (hk-e7y44).
+	// LockedSetQueueByName puts q in the shared store and Wake starts the work
+	// loop writing q.Groups[i].Status through activateFirstPendingGroupLocked.
+	// The emit block below used to count the beads with a range over q.Groups,
+	// which copies each Group by VALUE — Status included — so it read a field
+	// the scheduler was writing. The emits do not mutate the queue, but not
+	// mutating is not the same as not touching it.
+	var (
+		submittedPayload core.QueueSubmittedPayload
+		queueName        string
+		queueWorkers     int
+	)
+	if q != nil {
+		totalBeads := 0
+		for _, g := range q.Groups {
+			totalBeads += len(g.Items)
+		}
+		submittedPayload = core.QueueSubmittedPayload{
+			QueueID:            q.QueueID,
+			SubmittedAt:        q.SubmittedAt.Format(time.RFC3339),
+			GroupCount:         len(q.Groups),
+			TotalBeadCount:     totalBeads,
+			QueueSchemaVersion: q.SchemaVersion,
+		}
+		queueName = q.Name
+		queueWorkers = q.Workers
+	}
+
 	// Thread the persisted queue into the running workloop (hk-4ukkq). Under the
 	// mutation lock we MUST write back through the LOCKED view — NOT a.qs.SetQueue,
 	// which re-acquires the non-reentrant queueMu and would self-deadlock (the same
 	// trap B1's appendUnderLock avoids via lv.LockedSetQueueByName). Wake the
-	// workloop, then release the lock before the (non-mutating) emits below.
+	// workloop, then release the lock.
 	if q != nil {
 		if hasLock {
 			lv.LockedSetQueueByName(NormaliseQueueName(q.Name), q)
@@ -1074,36 +1103,25 @@ func (a *HandlerAdapter) HandleQueueSubmit(ctx context.Context, params json.RawM
 	// QM-062) but is logged ONCE here at submit so operators notice the queue can
 	// never reach its requested width. Emitted to stderr (the daemon's diagnostic
 	// channel); not an error.
-	if q != nil && a.globalMaxConcurrent >= 1 && q.Workers > a.globalMaxConcurrent {
+	if q != nil && a.globalMaxConcurrent >= 1 && queueWorkers > a.globalMaxConcurrent {
 		fmt.Fprintf(os.Stderr,
 			"daemon: queue-submit: queue %q workers=%d oversubscribes global --max-concurrent=%d; global ceiling still applies (QM-062/QM-066)\n",
-			q.Name, q.Workers, a.globalMaxConcurrent)
+			queueName, queueWorkers, a.globalMaxConcurrent)
 	}
 
 	// Emit queue_submitted event (hk-peucr). The queue has already been
 	// persisted inside HandleQueueSubmit so QM-063 (persist-before-emit) is
 	// satisfied.
 	if a.bus != nil && q != nil {
-		totalBeads := 0
-		for _, g := range q.Groups {
-			totalBeads += len(g.Items)
-		}
-		payload := core.QueueSubmittedPayload{
-			QueueID:            q.QueueID,
-			SubmittedAt:        q.SubmittedAt.Format(time.RFC3339),
-			GroupCount:         len(q.Groups),
-			TotalBeadCount:     totalBeads,
-			QueueSchemaVersion: q.SchemaVersion,
-		}
-		if raw, err := json.Marshal(payload); err == nil {
+		if raw, err := json.Marshal(submittedPayload); err == nil {
 			a.emitOrLog(ctx, "HandleQueueSubmit", core.EventTypeQueueSubmitted, raw)
 		}
 
 		// Emit queue_item_deferred_for_ledger_dep for QM-025 deferred items.
-		detectedAt := q.SubmittedAt.Format(time.RFC3339)
+		detectedAt := submittedPayload.SubmittedAt
 		for _, pair := range ledgerDepPairs {
 			deferPayload := core.QueueItemDeferredForLedgerDepPayload{
-				QueueID:       q.QueueID,
+				QueueID:       submittedPayload.QueueID,
 				GroupIndex:    pair.GroupIndex,
 				BeadID:        string(pair.BeadID),
 				BlockerBeadID: string(pair.BlockerBeadID),

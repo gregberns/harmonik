@@ -12,6 +12,14 @@ package codex_test
 //     credential strip parity (OPENAI_API_KEY/CODEX_API_KEY → empty overrides),
 //     CODEX_HOME present, WorkDir = workspace.
 //   - Seed/Retask/Teardown are no-op / nil-safe.
+//
+// A test that calls LaunchSpec MUST pass t.TempDir() as codexHome. An empty
+// codexHome normalises to $HOME/.codex (resolveCodexHome), and LaunchSpec runs
+// the fail-closed billing guard, which WRITES config.toml before it asserts. So
+// an empty value makes the test read and rewrite the operator's real Codex home:
+// the result then depends on the machine, and parallel tests race each other on
+// one shared file. The constant-method, DetectReady and Seed/Retask/Teardown
+// tests never reach the guard, so they may keep the empty default.
 
 import (
 	"context"
@@ -117,7 +125,7 @@ func TestCodexHarness_LaunchSpec_InitialDelegates(t *testing.T) {
 		BaseEnv:       []string{"PATH=/usr/bin"},
 	}
 
-	h := codex.ExportedNewCodexHarness("", "")
+	h := codex.ExportedNewCodexHarness("", t.TempDir())
 	spawn, err := h.LaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("CodexHarness.LaunchSpec: %v", err)
@@ -158,7 +166,7 @@ func TestCodexHarness_LaunchSpec_ResumeDelegates(t *testing.T) {
 		PriorSessionID: &threadID,
 	}
 
-	h := codex.ExportedNewCodexHarness("", "")
+	h := codex.ExportedNewCodexHarness("", t.TempDir())
 	spawn, err := h.LaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("CodexHarness.LaunchSpec: %v", err)
@@ -184,7 +192,7 @@ func TestCodexHarness_LaunchSpec_CustomBinary(t *testing.T) {
 		Model:         "o4-mini",
 	}
 
-	h := codex.ExportedNewCodexHarness("/usr/local/bin/codex", "")
+	h := codex.ExportedNewCodexHarness("/usr/local/bin/codex", t.TempDir())
 	spawn, err := h.LaunchSpec(rc)
 	if err != nil {
 		t.Fatalf("CodexHarness.LaunchSpec: %v", err)
@@ -277,7 +285,10 @@ func TestCodexHarness_LaunchSpec_EmptyWorkspaceErrors(t *testing.T) {
 		BeadID:        "hk-m57va-test-err",
 	}
 
-	h := codex.ExportedNewCodexHarness("", "")
+	// An isolated CODEX_HOME matters even on an error path: with the operator's
+	// real ~/.codex the billing guard can supply the error, and the test would
+	// pass without ever reaching the workspace validation it is named for.
+	h := codex.ExportedNewCodexHarness("", t.TempDir())
 	if _, err := h.LaunchSpec(rc); err == nil {
 		t.Error("LaunchSpec with empty WorkspacePath: want error, got nil")
 	}

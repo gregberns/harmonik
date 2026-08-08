@@ -37,6 +37,33 @@ code. Items were **not** individually reproduced. Two consequences follow, and n
 
 ---
 
+## 2026-08-07 — the unplaced items were sorted, and five were already fixed
+
+**The gap this file declared is now closed for the open set.** Every open P0 and P1 that this file
+had never named was read and placed. That was 27 issues: 5 P0 and 22 P1. They are now in List A or
+List B below, and each carries the reason it went there.
+
+**Five of the 27 were already fixed in the tree and still open in the ledger.** Re-derived against
+`e4c91dfec`, not taken from the bead text. Cite the commit, never the bead id — ids do not survive a
+fresh clone and these did not survive a single day.
+
+| Issue | Fixed by | What was checked |
+| --- | --- | --- |
+| `hk-assessor-contract-cannot-execute-61a4g` (P0) | `b5c628fed` | `operating.md` now names `make core` and `make full`, and says in place that `make check-short` does not exist and must not come back. |
+| `hk-scratch-daemon-audits-wrong-tree-zljvm` (P0) | `14cd25722` | `scratch-daemon.sh` requires `--rev`, forces the tree to it, reads HEAD back and compares. |
+| `hk-core-red-run-terminal-writer-urbeg` (P0) | `c7ea4a3e2` | The FIFO write end takes `O_CLOEXEC`, and a checker test now fails if any raw descriptor call omits it. |
+| `hk-sunpath-guard-unresolved-y2gwy` (P1) | `c7ea4a3e2` | The fixture resolves symlinks and then measures, through `lifecycle.ValidateSocketPathLength`. |
+| `hk-ziouf` (P1) | `54c3c38ad`, `684cee2b5` | The root cause was a fixture that built two repositories whose commits collided on SHA. The gate assertion was naming the wrong subject. |
+
+`hk-1a7yb`, already in List B, is also fixed: `a4981d686` deletes
+`shared.MainHistoryHasRefsTrailer` and leaves a tombstone. **Its spec half is not fixed** — that is
+`hk-0o5ya`, placed in A5 below.
+
+**This says nothing about the roughly forty CLOSED-but-unverified issues** the earlier note worried
+about, and nothing about anything filed after this date. The floor rule stands.
+
+---
+
 ## List A — fix before the candidate goes to the assessor
 
 ### A1. The assessor cannot run at all
@@ -86,6 +113,34 @@ This group is the reason the list exists. Each one makes something pass that sho
 - **`hk-7bfqe`** — `specs/assessor-handoff-schema.md` contradicts itself: §9 says version 3 is
   current, §4 and §8 say a handoff must equal 2. **This is the assessor's own contract.** Cheap.
 
+**Placed 2026-08-07.** Each of these makes a gate report something other than what it tested.
+
+- **`hk-core-gate-nondeterministic-m9vlf`** (P0) — `make core` is the HARD gate, and it names a
+  different set of failures on every run. Neither its pass nor its red is evidence about the code.
+  The triage procedure at the end of this file is the current answer, not a fix.
+- **`hk-core-target-not-scoped-qgk9a`** — `make core` does not run what its name promises: a
+  whole-tree static stage runs first, and one package is silently excluded. The hard gate does not
+  test the set the sign-off is defined against.
+- **`hk-gate-static-new-from-rev-eejbl`** — the static gate lints against `HEAD~1`, so what it
+  checks depends on where the assessor stands in history rather than on the candidate commit. A
+  clean lint result means much less than it reads.
+- **`hk-scenario-tier-nondeterministic-xt1wa`** — the same defect as the core gate's, in the tier
+  the core gate does not cover. Both sampled runs also sat under the disk-low dispatch pause, so
+  the disjoint failure sets are unexplained until somebody re-runs above 10 GiB free.
+- **`hk-fabricated-review-trailer-zbkqf`** (P0) — a commit carried a review verdict its reviewer
+  never issued. The cold-diff-review leg reads trailers as evidence, so a fabricated one buys an
+  approval that never happened. **This is also blocker 1 for the operator: bind a verdict to the
+  reviewer that issued it, or stop treating trailers as evidence.**
+- **`hk-oge5e`** — production reaches the edge cascade through a caller that skips the only function
+  taking a guard or a gate. No gate can deny or escalate a transition, so a run that should be
+  stopped proceeds and reports success.
+- **`hk-codex-harness-real-home-rquc5`** — FIXED the same day it was found, recorded here because it
+  is the reason `make full` was red and nobody could say so. Four tests built the codex harness
+  against `$HOME/.codex` and then ran the fail-closed billing guard, so `make full` asked a question
+  about the machine and, worse, rewrote the operator's real `~/.codex/config.toml` on the way. It
+  died before `lint-allow` or `test-scenario` ever ran, which means every earlier report of "`make
+  full` is red for the scenario tier" was naming a tier the target never reached.
+
 ### A3. The run does not survive its own lifecycle
 
 - **`hk-hsp9e`** (P0) — both halves of hang handling are dead: nothing kills a hung agent, and nothing
@@ -97,6 +152,17 @@ This group is the reason the list exists. Each one makes something pass that sho
   is inert.** Graph is the only path, which makes this the live one.
 - **`hk-rr1dy`** — handler-state schema split: the daemon writes version 2, the CLI accepts only
   version 1. The operator cannot read the daemon's own state.
+
+**Placed 2026-08-07.**
+
+- **`hk-e7y44`** — `queue submit` publishes the queue, wakes the work loop, releases the lock, and
+  only then walks the same object to build its payload. The queue is the one thing this tool has to
+  do, and the live-verify leg drives it hard.
+- **`hk-agent-worktree-stale-base-kh2rv`** — two of three agents dispatched on 2026-08-07 got a
+  worktree cut from a stale base, one of them 847 commits behind, in a tree where the package it was
+  sent to fix did not exist. The live-verify leg drives real dispatch, so this grades the wrong code.
+- **`hk-1xp9h`** — the socket server registers 28 routes and checks readiness on none of them. The
+  assessor stops and starts its scratch daemon, which is exactly when a pre-ready request lands.
 
 ### A4. The test bed corrupts itself or the machine
 
@@ -118,6 +184,17 @@ These matter more than usual because lanes run beside the assessor on one box.
   > package the queue does not depend on stops being a blocker by definition rather than by
   > investigation.
 
+**Placed 2026-08-07.** Both of these corrupt the measurement rather than the code.
+
+- **`hk-7ssd1`** — a hand-rolled load generator typed inline into an agent's shell leaked 12 spin
+  loops for 22 hours at load 27. Second occurrence. **This matters more here than its priority
+  suggests: this file's own triage procedure says load decides the result, so a leaked spinner
+  makes every red and every green on the box meaningless.** There is no script to patch; the
+  pattern is typed inline, so the fix is a rule and `scripts/leakcheck.sh`.
+- **`hk-unlcp`** — the git stash stack belongs to the repository, not the worktree, so one agent's
+  `git stash pop` takes another's work. Observed 2026-08-06 with real work briefly lost. Lanes run
+  beside the assessor on one box.
+
 ### A5. Cheap safety, do them while you are in there
 
 - **`hk-ifj6p`** — an unknown first token falls through and **boots a daemon against the current
@@ -127,6 +204,18 @@ These matter more than usual because lanes run beside the assessor on one box.
 - **`hk-6c85b`** — six daemon functions survive deletion, including the gate that stops an agent
   launching unsandboxed.
 - **`hk-7ue65`, `hk-zusgg`** — two freeze gates pin files that the extraction removed.
+
+**Placed 2026-08-07.**
+
+- **`hk-lint-allow-red-on-base-hdln0`** — 14 file-and-linter pairs are off the allow list on the
+  integration base, and `lint-allow` takes the whole of `make full` with it. The same run reports
+  five allow-list entries that are now clean, so the list has drifted in both directions. Cheap,
+  and it is the difference between a merge decision that can pass and one that structurally cannot.
+  **Not yet observed directly**: the runs on 2026-08-07 died in the test step before reaching it.
+- **`hk-0o5ya`** — the daemon stopped deciding completion from a commit-message mention
+  (`a4981d686`), and `specs/execution-model.md` EM-063 plus `specs/cognition-loop.md` §4.8 still
+  require it. Confirmed still present on 2026-08-07. The specs are normative here, so the false
+  green can be re-implemented from them and pass review.
 
 ---
 
@@ -167,6 +256,33 @@ reporting).
 ledger — real, and the working rule is already written down) · `hk-4pulw` (comms sender is
 unauthenticated) · `hk-rlvhi`, `hk-xbrc2`, `hk-j7yo0` (stale binary and wrong-verb messages) ·
 `hk-qbsha` (the review-loop vocabulary; the code pass landed, specs remain).
+
+**Placed 2026-08-07 — real, and not between a local scratch run and an honest verdict:**
+
+- `hk-ykbo3` — the run record and the launch read different facts, but the two only disagree when
+  the remote-bead context is set. The assessor runs local.
+- `hk-graph-worktreerootpath-projectroot-zz0it` — wrong on a cross-repo run only, and harmless
+  today because a loose substring match fires whatever it is given. Local audit does not reach it.
+- `hk-yvlak` — the keeper scrub that protects a crew handoff has no test, proven by reintroducing
+  the data loss. Keeper is outside the core set by `CHARTER.md` §3.
+- `hk-wn8wp` — the reachability baseline ratified guards, gates, locks and reapers production never
+  calls. It is the parent of `hk-oge5e` and `hk-1xp9h`, both of which went to List A on their own
+  runtime effect. What is left here is the baseline's own honesty.
+- `hk-5cn51` — the shipped defaults are written for this repo, so a fresh project cannot boot a
+  captain or crew. Same reasoning that moved `hk-joacj`: `scripts/scratch-daemon.sh` builds its
+  scratch project as a clone of this checkout, so the assessor is not exposed. **It becomes List A
+  the moment the audit stops cloning this repo.**
+- `hk-tunnel-port-early-failure-path-9adih` — two tunnel tests may measure an early-failure path
+  rather than the ending they are named for. **Unverified by its own author.** Test honesty, no
+  runtime effect, but do not read the bead as established.
+- `hk-85pqo` — worktree trust writes into the operator's real `~/.claude.json` and nothing prunes
+  it: 11 of 5,358 entries point at a path that still exists. Housekeeping. **Pruning the operator's
+  real config needs their yes — this is blocker 2 for the operator.**
+- `hk-qdr-lost-authorized-changes-e14eo` — four authorized spec changes were never written and
+  never landed. Spec debt.
+- `hk-specs-crossrepo-stale-i1bcg` — two specs still say cross-repo dispatch is refused. It has
+  been supported for some time. Spec staleness, and the specs are normative, so it will mislead a
+  reader before it breaks a run.
 
 **Close rather than fix:** `hk-main-required-check-red-i14hq`. The operator ruled on 2026-08-06 that
 `main` needs nothing until the merge at the end. Nothing should judge this branch's work against it.

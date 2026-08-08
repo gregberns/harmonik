@@ -245,7 +245,7 @@ func wtLeaseOverwriteHolderDead(t *testing.T, wtPath string) {
 	t.Helper()
 	const pid = wtLeaseNoSuchProcess
 	leasePath := workspace.LeaseLockPath(wtPath)
-	existing, readErr := os.ReadFile(leasePath) //nolint:gosec // the path is built from a temp dir by this test
+	existing, readErr := os.ReadFile(leasePath) //nolint:gosec // G304: the path is built from a temp dir by this test
 	if readErr != nil {
 		t.Fatalf("wtLease: read the lease this test is about to rewrite: %v", readErr)
 	}

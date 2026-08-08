@@ -84,18 +84,24 @@ func captureStd(t *testing.T, fn func()) (stdout, stderr string) {
 	origOut, origErr := os.Stdout, os.Stderr
 	os.Stdout, os.Stderr = outW, errW
 
-	outCh := make(chan string, 1)
-	errCh := make(chan string, 1)
-	// A read fault here would silently truncate the captured stream, and the
-	// assertions downstream read that truncation as "the command printed
-	// nothing". Append the error to the captured text so it fails loudly instead.
-	drain := func(r io.Reader, ch chan<- string) {
-		b, err := io.ReadAll(r)
-		if err != nil {
-			ch <- string(b) + "\n[capture failed: " + err.Error() + "]"
-			return
-		}
-		ch <- string(b)
+	// A read fault here truncates the captured stream, and a truncated stream is
+	// indistinguishable from "the command printed nothing".
+	//
+	// An earlier version of this appended the error text to the captured string.
+	// A reviewer showed that was only half a fix: every stderr assertion in this
+	// file is a POSITIVE Contains, so a truncated stderr does fail — but the
+	// stdout assertion is a NEGATIVE Contains, and a truncated stdout satisfies
+	// it silently. So the read error is reported here instead, where it cannot
+	// depend on the polarity of a downstream assertion.
+	type capture struct {
+		text string
+		err  error
+	}
+	outCh := make(chan capture, 1)
+	errCh := make(chan capture, 1)
+	drain := func(r io.Reader, ch chan<- capture) {
+		b, readErr := io.ReadAll(r)
+		ch <- capture{text: string(b), err: readErr}
 	}
 	go drain(outR, outCh)
 	go drain(errR, errCh)
@@ -106,11 +112,19 @@ func captureStd(t *testing.T, fn func()) (stdout, stderr string) {
 	fn()
 	_ = outW.Close()
 	_ = errW.Close()
-	stdout, stderr = <-outCh, <-errCh
+	outCap, errCap := <-outCh, <-errCh
 	// Both ReadAll calls have returned, so nothing is reading these any more.
 	_ = outR.Close()
 	_ = errR.Close()
-	return stdout, stderr
+	if outCap.err != nil {
+		t.Errorf("captureStd: reading stdout failed, so every assertion below is measuring a "+
+			"truncated stream rather than what the command printed: %v", outCap.err)
+	}
+	if errCap.err != nil {
+		t.Errorf("captureStd: reading stderr failed, so every assertion below is measuring a "+
+			"truncated stream rather than what the command printed: %v", errCap.err)
+	}
+	return outCap.text, errCap.text
 }
 
 // TestSubscribeCommand_DaemonRefusalIsNotSuccess pins that `harmonik subscribe`

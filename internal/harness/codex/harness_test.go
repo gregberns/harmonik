@@ -219,7 +219,9 @@ func TestCodexHarness_LaunchSpec_CredentialKeysStripped(t *testing.T) {
 	}
 
 	// CodexHarness.LaunchSpec runs the fail-closed billing guard (C3/T11) by
-	// default — RunCtx exposes no SkipBillingGuard, so we point CODEX_HOME at a
+	// default — handlercontract.RunCtx exposes no SkipBillingGuard and
+	// Harness.LaunchSpec builds the internal codex.RunCtx without it, so no test
+	// on this seam can turn the guard off. We point CODEX_HOME at a
 	// writable temp dir and let the guard materialize a valid
 	// forced_login_method=chatgpt config.toml and PASS, exactly as the production
 	// cascade (T12) sets up CODEX_HOME. (An unwritable/real home would make the
@@ -260,8 +262,9 @@ func TestCodexHarness_LaunchSpec_CodexHomePresent(t *testing.T) {
 	}
 
 	// Use a writable temp dir as CODEX_HOME so the fail-closed billing guard
-	// (C3/T11, which CodexHarness.LaunchSpec runs by default since RunCtx exposes
-	// no SkipBillingGuard) can materialize a valid forced_login_method=chatgpt
+	// (C3/T11, which CodexHarness.LaunchSpec always runs, because SkipBillingGuard
+	// is not on handlercontract.RunCtx and the adapter does not set it) can
+	// materialize a valid forced_login_method=chatgpt
 	// config.toml and PASS — the same setup the production cascade (T12) performs.
 	// The previous "/custom/codex/home" tripped mkdir on a read-only path.
 	codexHome := t.TempDir()
@@ -285,12 +288,26 @@ func TestCodexHarness_LaunchSpec_EmptyWorkspaceErrors(t *testing.T) {
 		BeadID:        "hk-m57va-test-err",
 	}
 
-	// An isolated CODEX_HOME matters even on an error path: with the operator's
-	// real ~/.codex the billing guard can supply the error, and the test would
-	// pass without ever reaching the workspace validation it is named for.
+	// t.TempDir() here is defence in depth rather than a fix for a live defect.
+	// A REVIEWER REFUTED THE STRONGER CLAIM THIS COMMENT USED TO MAKE, and the
+	// refutation is worth keeping: BuildLaunchSpec returns on an empty
+	// WorkspacePath at the top of the function, and runCodexBillingGuard runs
+	// near the bottom, so the guard can NEVER supply this test's error. The
+	// isolated home costs nothing and keeps every LaunchSpec test in this file
+	// spelled the same way, which is what stops the next one being written wrong.
+	//
+	// The real weakness was never the home. It was that `err != nil` passes for
+	// an error from any of the three things LaunchSpec does, so the test could
+	// report success while measuring something else. Assert the identity.
 	h := codex.ExportedNewCodexHarness("", t.TempDir())
-	if _, err := h.LaunchSpec(rc); err == nil {
-		t.Error("LaunchSpec with empty WorkspacePath: want error, got nil")
+	_, err := h.LaunchSpec(rc)
+	if err == nil {
+		t.Fatal("LaunchSpec with empty WorkspacePath: want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "workspacePath must be non-empty") {
+		t.Errorf("LaunchSpec with empty WorkspacePath returned the wrong error: %v\n"+
+			"The test is named for workspace validation. An error from the billing guard or "+
+			"the stale-WAL sweep would satisfy a bare non-nil check and measure nothing.", err)
 	}
 }
 
@@ -298,8 +315,14 @@ func TestCodexHarness_LaunchSpec_EmptyWorkspaceErrors(t *testing.T) {
 // on an initial turn launches WITHOUT --model through the harness adapter, so codex
 // uses its config-default (account) model. Inverts the retired hk-heh3t fail-loud
 // guard (the ~30-min omitted-model hang no longer reproduces, and a named model 400s
-// on the HN-022 ChatGPT path). Uses SkipBillingGuard so the shape check needs no
-// materialized config.toml.
+// on the HN-022 ChatGPT path).
+//
+// This comment said "Uses SkipBillingGuard" until 2026-08-07 and that was FALSE.
+// It uses an isolated CODEX_HOME. SkipBillingGuard is a field on the package's
+// own codex.RunCtx, not on handlercontract.RunCtx, and Harness.LaunchSpec builds
+// the internal struct without it — so no test reaching the harness through the
+// handlercontract seam can skip the guard, whatever it says. The pi harness
+// records the same fact in its RunCtx doc comment.
 func TestCodexHarness_LaunchSpec_EmptyModelAccountDefault(t *testing.T) {
 	t.Parallel()
 

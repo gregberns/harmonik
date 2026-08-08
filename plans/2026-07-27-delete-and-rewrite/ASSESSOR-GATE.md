@@ -417,7 +417,12 @@ unauthenticated) · `hk-rlvhi`, `hk-xbrc2`, `hk-j7yo0` (stale binary and wrong-v
 
    **WHAT TO DO WITH A RED, in order.** A single red is not a verdict.
 
-   1. Check the load. If other work was on the box, the run does not count. Re-run on a quiet one.
+   1. **Run `make leakcheck` FIRST, then check the load.** `uptime` tells you the number and not
+      whose it is, and the scenario tier has been measured leaking a test binary that span at 100%
+      CPU for 76 minutes after its own run finished (`hk-gate-leaks-spinning-test-binary-x4qgy`). A
+      box that looks busy because of the LAST run is not "other agents were working", and reading it
+      that way retires a red for the wrong reason. If other work was on the box, the run does not
+      count. Re-run on a quiet one.
    2. Re-run the failing test alone. Every member of this family passes alone with a large margin.
       A test that fails alone is NOT this family and IS a real signal — treat it as one.
    3. If it fails alone, or fails repeatedly on a quiet box, that is a finding. Stop and read it.
@@ -486,5 +491,50 @@ lint allow list.
 **So the honest statement of where the gate stands: four of its five stages pass, and the fifth is a
 tier whose own bead says its result is not evidence.** Whether that blocks the sign-off is an
 operator call, and this file still does not have the authority to waive a red.
+
+### The 19 were then isolated, and they are three things, not one
+
+Each was run alone at `-race -count=3`, at load 3.2–7.2 with 44–45 GiB free.
+
+- **ONE REAL DEFECT, and it is in the core queue.**
+  `TestScenario_TerminatedButLocked_BootReconcileReleasesDispatchLock` **fails alone**, with a
+  detector-confirmed data race. Every functional assertion in it passes; the only failure is the
+  race. It is `hk-e7y44`, already on List A — the scheduler writes a group's status under the
+  queue-store lock while the submit path walks the same object after releasing it. A detected race
+  is never a false positive. **This is the only one of the nineteen that is evidence about the
+  product.**
+- **ONE DETERMINISTICALLY BROKEN TEST.** `TestScenario_Codex_EmptyModel_FullLifecycle` fails 3 of 3
+  alone on a quiet box, in 25.8s every time — not load-sensitive at all. It asks for a workflow mode
+  that has been RETIRED, so the run walks the standard graph, whose commit gate tries to run
+  `make full` inside a three-file temp directory that is not a Go module. Every codex assertion in it
+  passes. It fails because its sensor scans the shared event log without filtering to its own run,
+  and its message names a cause it never established. Its sibling in the same file calls a fixture
+  helper for exactly this reason; this one omits the call.
+- **FIFTEEN STRUCTURAL UNDER-BUDGETS.** `hk-scenario-budgets-structural-2z9dx`.
+
+**THIS FILE'S "large margins" CLAIM IS WRONG FOR MOST OF THE FAMILY, and the correction matters
+because a policy hangs off it.** The text above generalises from `hk-4f1bs` — "5 to 8 seconds against
+a 25-second budget" — and concludes that widening a timeout masks a flake. Measured:
+`TestT2_ExitZeroNoSignal` is 4.7s against a 6s poll inside an 8s context, **1.3x**. The T2 family is
+1.3–1.6x. `TestT4_CloseBeadError` allows 7s for two sequential dispatches that each incur a 3-second
+stop-hook grace, so its **structural floor is 6s**. Only two of the fifteen fit "large margin".
+These budgets were set against the happy path and never against the grace the fixtures actually pay,
+so widening them is a real fix here rather than the masking the policy warns about. **Five of the
+fifteen need no number at all** — they already wait on the right milestone and then impose a second,
+smaller cap on top of it; two of those logged their named property as PASSED and then failed on a
+teardown stopwatch.
+
+**Four of the nineteen cannot fail on the property they are named for** and two are pure duplicates
+that should be deleted — `hk-scenario-tests-cannot-fail-x9wij`. The sharpest:
+`TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency` asserts peak concurrency is **at most** 4 with
+no lower bound, and the loaded run recorded a peak of 1 — so it would pass unchanged if concurrency
+were completely broken.
+
+**And step 1 of the triage procedure below is unreliable by construction.**
+`hk-gate-leaks-spinning-test-binary-x4qgy`: the `make full` run that produced these numbers leaked a
+`daemon.test` at 100% CPU for 76 minutes, 66 minutes past its own 10-minute timeout. Every "re-run on
+a quiet box" after it — including the ones in this file — was taken on a box the previous run had
+poisoned by a full core. "Check the load" cannot tell you WHOSE load it is. Run `make leakcheck`
+before any timing measurement, not `uptime`.
 
 Sandboxing is settled: it is off, and the two sandbox items moved to List B.

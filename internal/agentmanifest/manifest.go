@@ -139,7 +139,14 @@ type Manifest struct {
 	Type        string      `yaml:"type"`
 	Cardinality Cardinality `yaml:"cardinality"`
 	// Harness is the default actor: claude | codex | pi.
-	Harness   string         `yaml:"harness"`
+	Harness string `yaml:"harness"`
+	// Role optionally points soul.md and operating.md at a shared role folder
+	// instead of the type folder — a repo-root-relative path such as
+	// "roles/assessor". It exists so a role's instructions can be read and
+	// followed by any agent, with no harmonik process involved, while the type
+	// folder keeps only the harmonik-side wiring. Empty means the historical
+	// behaviour: both files are read from the type folder itself.
+	Role      string         `yaml:"role"`
 	Identity  Identity       `yaml:"identity"`
 	Context   []ContextEntry `yaml:"context"`
 	Triggers  []Trigger      `yaml:"triggers"`
@@ -157,6 +164,9 @@ type TypeFolder struct {
 	Name string
 	// Dir is the absolute path to the type folder.
 	Dir string
+	// RoleDir is the directory soul.md and operating.md were actually read from.
+	// It equals Dir unless the manifest names a role folder.
+	RoleDir string
 	// Manifest is the parsed manifest.yaml.
 	Manifest Manifest
 	// SoulContent is the byte-for-byte content of soul.md (the provenance master).
@@ -199,22 +209,34 @@ func Load(agentsDir, typeName string) (*TypeFolder, error) {
 		return nil, fmt.Errorf("%w: parse %q: %w", ErrInvalid, mPath, err)
 	}
 
-	soulPath := filepath.Join(dir, soulFile)
-	//nolint:gosec // G304: soulPath is constructed from caller-supplied agentsDir + validated typeName
+	// soul.md and operating.md come from the role folder when the manifest names
+	// one, and from the type folder otherwise. The error messages below name the
+	// directory actually read, because "type assessor has no soul.md" sent a
+	// reader to the wrong folder for as long as both spellings existed.
+	identityDir, err := roleDir(agentsDir, m.Role)
+	if err != nil {
+		return nil, fmt.Errorf("%w: type %q: %w", ErrInvalid, typeName, err)
+	}
+	if identityDir == "" {
+		identityDir = dir
+	}
+
+	soulPath := filepath.Join(identityDir, soulFile)
+	//nolint:gosec // G304: soulPath is constructed from caller-supplied agentsDir + validated typeName or a validated role path
 	soulData, err := os.ReadFile(soulPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("%w: type %q has no %s", ErrInvalid, typeName, soulFile)
+			return nil, fmt.Errorf("%w: type %q has no %s in %s", ErrInvalid, typeName, soulFile, identityDir)
 		}
 		return nil, fmt.Errorf("agentmanifest: read %q: %w", soulPath, err)
 	}
 
-	opPath := filepath.Join(dir, operatingFile)
-	//nolint:gosec // G304: opPath is constructed from caller-supplied agentsDir + validated typeName
+	opPath := filepath.Join(identityDir, operatingFile)
+	//nolint:gosec // G304: opPath is constructed from caller-supplied agentsDir + validated typeName or a validated role path
 	opData, err := os.ReadFile(opPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("%w: type %q has no %s", ErrInvalid, typeName, operatingFile)
+			return nil, fmt.Errorf("%w: type %q has no %s in %s", ErrInvalid, typeName, operatingFile, identityDir)
 		}
 		return nil, fmt.Errorf("agentmanifest: read %q: %w", opPath, err)
 	}
@@ -222,6 +244,7 @@ func Load(agentsDir, typeName string) (*TypeFolder, error) {
 	tf := &TypeFolder{
 		Name:             typeName,
 		Dir:              dir,
+		RoleDir:          identityDir,
 		Manifest:         m,
 		SoulContent:      string(soulData),
 		OperatingContent: string(opData),
@@ -280,6 +303,64 @@ func validateManifest(tf *TypeFolder) error {
 		}
 	}
 	return nil
+}
+
+// roleDir turns a manifest's role path into the directory to read soul.md and
+// operating.md from. It returns "" when the manifest names no role, which means
+// the caller reads them from the type folder as it always has.
+//
+// The path is repo-root relative, the same spelling a path-bearing context ref
+// uses, and the repo root is agentsDir's grandparent (<root>/.harmonik/agents).
+// An absolute path or one that climbs out of the repo is refused rather than
+// resolved: a role folder is a checked-in part of the project, so anything
+// pointing outside it is a mistake, not a deployment.
+func roleDir(agentsDir, role string) (string, error) {
+	if role == "" {
+		return "", nil
+	}
+	if filepath.IsAbs(role) {
+		return "", fmt.Errorf("role %q must be repo-root relative, not absolute", role)
+	}
+	clean := filepath.Clean(role)
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("role %q escapes the repo root", role)
+	}
+	repoRoot := filepath.Dir(filepath.Dir(agentsDir))
+	return filepath.Join(repoRoot, clean), nil
+}
+
+// soulPathFor returns where a type's soul.md lives, following that type's own
+// role: key when it declares one.
+//
+// parent_intent names a sibling type and then reads its soul.md. Both readers
+// used to build agentsDir/<type>/soul.md directly, so moving one role's soul.md
+// into roles/ broke every OTHER type that named it as a parent — the child was
+// well-formed and still failed to validate. This is the one lookup that crosses
+// from one type folder into another, so it is the one that has to follow the
+// indirection too.
+//
+// Any problem reading or parsing the parent manifest falls back to the type
+// folder, which is where soul.md lived before role folders existed.
+func soulPathFor(agentsDir, typeName string) string {
+	dir := filepath.Join(agentsDir, typeName)
+	fallback := filepath.Join(dir, soulFile)
+
+	//nolint:gosec // G304: path is agentsDir + a caller-validated type name
+	data, err := os.ReadFile(filepath.Join(dir, manifestFile))
+	if err != nil {
+		return fallback
+	}
+	var m struct {
+		Role string `yaml:"role"`
+	}
+	if err := yaml.Unmarshal(data, &m); err != nil || m.Role == "" {
+		return fallback
+	}
+	rd, err := roleDir(agentsDir, m.Role)
+	if err != nil || rd == "" {
+		return fallback
+	}
+	return filepath.Join(rd, soulFile)
 }
 
 // ResolveRef returns the filesystem path for a context ref under the given agentsDir.

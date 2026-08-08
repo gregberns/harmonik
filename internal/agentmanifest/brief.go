@@ -122,12 +122,12 @@ func resolveParentIntent(agentsDir, parentType string) (string, error) {
 	if parentType == "operator" {
 		return operatorIntentLine, nil
 	}
-	soulPath := filepath.Join(agentsDir, parentType, soulFile)
+	soulPath := soulPathFor(agentsDir, parentType)
 	//nolint:gosec // G304: soulPath is constructed from validated inputs
 	data, err := os.ReadFile(soulPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("%w: parent type %q has no soul.md", ErrNotFound, parentType)
+			return "", fmt.Errorf("%w: parent type %q has no soul.md at %s", ErrNotFound, parentType, soulPath)
 		}
 		return "", fmt.Errorf("agentmanifest: read parent soul %q: %w", soulPath, err)
 	}

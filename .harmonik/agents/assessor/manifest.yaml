@@ -2,13 +2,16 @@ type: assessor
 cardinality: { min: 0, max: n }
 harness: claude
 
+# soul.md and operating.md live here. This folder keeps only harmonik wiring.
+role: roles/assessor
+
 identity:
   soul: soul.md
   parent_intent: admiral
 
 context:
   - { ref: boot,                          as: skill,       presence: injected }
-  - { ref: operating.md,                  as: instruction, presence: injected }
+  - { ref: roles/assessor/operating.md, as: instruction, presence: injected }
   - { ref: agent-comms,                   as: skill,       presence: injected }
   - { ref: beads-cli,                     as: skill,       presence: retrieved }
   - { ref: scripts/scratch-daemon.sh,     as: doc,         presence: retrieved }

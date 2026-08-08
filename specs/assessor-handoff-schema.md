@@ -36,11 +36,11 @@ initiative. It flows between three components:
   `harmonik start`, which only knows `captain|crew`
   (`08-assessor-wireup-plan.md` headline).
 - **Assessor** — *resumes into* the handoff, *parses* the YAML frontmatter to
-  derive its gate parameters (`.harmonik/agents/assessor/operating.md` step 1
+  derive its gate parameters (`roles/assessor/operating.md` step 1
   parses `{branch, epic_id, gate}`), *re-hydrates* from it on keeper restart, and
   forms a **reasoned PASS/BLOCK** — its own judgment over the three legs (LT/XT/CR)
   plus a claimed-done-vs-reality reconciliation, measured against the good-enough
-  principles (`.harmonik/agents/assessor/good-enough-principles.md` — WS5-5,
+  principles (`roles/assessor/good-enough-principles.md` — WS5-5,
   forward reference; being authored alongside this schema). The verdict is posted
   to `spawned_by` (the admiral) over the admiral↔assessor `--topic gate` signoff
   channel; the admiral holds the final release decision.
@@ -49,8 +49,9 @@ All three MUST agree on this format, field names, charsets, and required-field
 rules. Any breaking change requires a `schema_version` bump and updates to all
 three readers/writers in a single atomic commit.
 
-**This document does NOT own:** the assessor manifest
-(`.harmonik/agents/assessor/soul.md` / `operating.md` / `manifest.yaml`), the
+**This document does NOT own:** the assessor role
+(`roles/assessor/soul.md` / `operating.md`) or its harmonik wiring
+(`.harmonik/agents/assessor/manifest.yaml`), the
 severity→P-level→found-by mapping (`07-assessor-severity-framework.md`), the
 remediation disposition labels (`09-remediation-loop-design.md`), the
 reasoned-verdict formation (owned by `operating.md` §Merge-gate step 6 — the

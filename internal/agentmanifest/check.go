@@ -51,12 +51,12 @@ func checkParentIntent(agentsDir, parentIntent string) []Defect {
 
 	var defects []Defect
 	pi := parentIntent
-	parentSoul := filepath.Join(agentsDir, pi, soulFile)
+	parentSoul := soulPathFor(agentsDir, pi)
 	if _, statErr := os.Stat(parentSoul); statErr != nil {
 		if errors.Is(statErr, os.ErrNotExist) {
 			defects = append(defects, Defect{
 				Field:   "identity.parent_intent",
-				Message: fmt.Sprintf("parent type %q has no soul.md (type folder does not exist or is missing soul.md)", pi),
+				Message: fmt.Sprintf("parent type %q has no soul.md at %s", pi, parentSoul),
 			})
 		} else {
 			defects = append(defects, Defect{

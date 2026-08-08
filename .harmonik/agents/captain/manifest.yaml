@@ -2,13 +2,16 @@ type: captain
 cardinality: { min: 0, max: 1 }
 harness: claude
 
+# soul.md and operating.md live here. This folder keeps only harmonik wiring.
+role: roles/captain
+
 identity:
   soul: soul.md
   parent_intent: admiral
 
 context:
   - { ref: boot,                                         as: skill,       presence: injected }
-  - { ref: operating.md,                                 as: instruction, presence: injected }
+  - { ref: roles/captain/operating.md,                    as: instruction, presence: injected }
   - { ref: agent-comms,                                  as: skill,       presence: injected }
   - { ref: harmonik-dispatch,                            as: skill,       presence: retrieved }
   - { ref: beads-cli,                                    as: skill,       presence: retrieved }

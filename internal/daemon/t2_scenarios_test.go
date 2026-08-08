@@ -19,7 +19,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -27,6 +26,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/daemon/scenariotest"
 )
 
 // t2FixtureProjectDir creates a project dir with git repo.
@@ -79,13 +79,17 @@ func t2WorktreePath(projectDir, runID string) string {
 	return filepath.Join(projectDir, ".harmonik", "worktrees", runID)
 }
 
-// t2FindBinaryInWorktree finds a pre-built twin at a repo-relative path.
-// It resolves relative to this test file's module root.
+// t2FindBinary finds a pre-built twin that `make twins` writes to the checkout
+// root. It used to look only at this worktree's root, so in any git worktree —
+// which is where most work on this repo happens — the six TestT2_* tests below
+// found nothing and skipped silently. scenariotest.CheckoutBinaryPath also tries
+// the main checkout.
+//
+// When the binary is nowhere it returns the path it looked at first, not "", so
+// the caller's os.Stat still fails and its skip message names a real location.
 func t2FindBinary(name string) string {
-	_, thisFile, _, _ := runtime.Caller(0)
-	// thisFile = .../internal/daemon/t2_scenarios_test.go
-	root := filepath.Dir(filepath.Dir(filepath.Dir(thisFile)))
-	return filepath.Join(root, name)
+	path, _ := scenariotest.CheckoutBinaryPath(name)
+	return path
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

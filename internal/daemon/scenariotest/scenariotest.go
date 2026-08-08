@@ -494,35 +494,51 @@ func TwinBinaryPath() (string, bool) {
 			return env, true
 		}
 	}
+	if path, ok := CheckoutBinaryPath("harmonik-twin-claude"); ok {
+		return path, true
+	}
+	return "", false
+}
 
-	// 2 + 3. Locate relative to this source file's directory, trying both the
-	// worktree root (4 levels up from the source file) and the main-repo root
-	// (resolved via `git rev-parse --git-common-dir` which strips the .git suffix).
+// CheckoutBinaryPath resolves a pre-built binary that `make twins` writes to the
+// checkout root — "harmonik-twin-claude", "twin-fail" or "twin-hang" — trying
+// the worktree root first and then the main repo root.
+//
+// It exists because the same lookup was written three times and only one copy
+// had the main-repo fallback. The two copies without it (t2FindBinary in
+// t2_scenarios_test.go, hfatalFixtureTwinPath in workloop_handlerpause_qxtbq_test.go)
+// made seven real-daemon failure-path tests SILENTLY SKIP in every git worktree,
+// because a worktree gets a fresh root with no built binaries in it. A test that
+// skips for a missing binary reads exactly like a test that passed. Refs hk-od9d4.
+//
+// When no binary is found it returns ok=false AND the path it looked at first,
+// so a caller's skip or failure message can name a real location instead of an
+// empty string.
+func CheckoutBinaryPath(name string) (string, bool) {
 	_, thisFile, _, ok := runtime.Caller(0)
-	if ok {
-		// thisFile = .../internal/daemon/scenariotest/scenariotest.go
-		// worktree root = 4 dirs up
-		worktreeRoot := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(thisFile))))
-		for _, candidate := range []string{
-			filepath.Join(worktreeRoot, "harmonik-twin-claude"),
-		} {
-			if _, err := os.Stat(candidate); err == nil {
-				return candidate, true
-			}
-		}
-
-		// 3. Walk up looking for .git to find the actual repo root; handles
-		// the case where the test runs from a worktree and the binary lives in
-		// the main checkout (the common case during development).
-		if mainRoot := findMainRepoRoot(worktreeRoot); mainRoot != "" {
-			candidate := filepath.Join(mainRoot, "harmonik-twin-claude")
-			if _, err := os.Stat(candidate); err == nil {
-				return candidate, true
-			}
+	if !ok {
+		return name, false
+	}
+	// thisFile = .../internal/daemon/scenariotest/scenariotest.go
+	// checkout root = 4 dirs up
+	worktreeRoot := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(thisFile))))
+	primary := filepath.Join(worktreeRoot, name)
+	if statOK(primary) {
+		return primary, true
+	}
+	// The binary commonly lives only in the main checkout while the test runs
+	// from a worktree. Walk up to the .git pointer to find it.
+	if mainRoot := findMainRepoRoot(worktreeRoot); mainRoot != "" {
+		if candidate := filepath.Join(mainRoot, name); statOK(candidate) {
+			return candidate, true
 		}
 	}
+	return primary, false
+}
 
-	return "", false
+func statOK(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // findMainRepoRoot walks the directory tree upward from start looking for a

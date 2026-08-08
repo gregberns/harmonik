@@ -272,6 +272,41 @@ func t6CountJSONLEvents(t *testing.T, jsonlPath string) map[string]int {
 	return counts
 }
 
+// t6WaitForEventCount polls the JSONL log until eventType has been written want
+// times, or until the budget runs out. It asserts nothing. The caller's own
+// assertion still decides, and still sees the true count.
+//
+// WHY IT IS NEEDED. t6PollAllClosed watches the BEAD LEDGER, and the daemon
+// writes the terminal ledger transition BEFORE it emits run_completed. So the
+// poll can return the instant the last bead reads "closed" while the daemon is
+// still inside the emit for that same bead. A caller that cancels the daemon
+// context there kills the in-flight close. The close then fails in its retry
+// backoff with "context canceled during transient-failure backoff" and emits
+// run_failed. The bead is closed and the work is done. Only the event is lost,
+// and only because the test raced its own teardown.
+//
+// It takes no *testing.T assertion and no t.Helper(), because it never fails the
+// test. On timeout it simply returns and lets the caller decide.
+//
+// This is the flake recorded in hk-oipc9 on 2026-07-31, whose signature is
+// "run_completed=9 run_failed=1" and which that bead calls "load-shaped rather
+// than logic-shaped". Load widens the window, but the window is the test's own:
+// it reads one source, asserts on another, and cancels in between. Seen again
+// once in three runs on 2026-08-07 with all_closed=true.
+//
+// This is a teardown fix, not a weaker assertion, and not a retry. When the
+// events genuinely never arrive, the budget expires and the caller fails on the
+// true count exactly as before. Refs hk-oipc9, hk-od9d4.
+func t6WaitForEventCount(t *testing.T, jsonlPath, eventType string, want int, budget time.Duration) {
+	deadline := time.Now().Add(budget)
+	for time.Now().Before(deadline) {
+		if t6CountJSONLEvents(t, jsonlPath)[eventType] >= want {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // T6-1: 10-bead sequential drain
 // ─────────────────────────────────────────────────────────────────────────────
@@ -305,6 +340,13 @@ func TestT6_10BeadSequentialDrain(t *testing.T) {
 	go func() { startDone <- daemon.Start(ctx, cfg) }()
 
 	allClosed, elapsed := t6PollAllClosed(t, brWrapper, beadIDs, 120*time.Second)
+
+	// Let the last close finish emitting before the cancel below kills it.
+	// See t6WaitForEventCount for what happens without this. Skipped when the
+	// drain already failed, so a broken run does not also pay the full budget.
+	if allClosed {
+		t6WaitForEventCount(t, jsonlPath, string(core.EventTypeRunCompleted), 10, 15*time.Second)
+	}
 
 	cancel()
 	select {

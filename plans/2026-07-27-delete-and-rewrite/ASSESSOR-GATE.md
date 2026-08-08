@@ -185,6 +185,110 @@ unauthenticated) · `hk-rlvhi`, `hk-xbrc2`, `hk-j7yo0` (stale binary and wrong-v
    **`make core` is what "the build works" means for this sign-off.** `make full` stays the merge
    decision and stays whole-tree. A green `core` beside a red `full` is a real answer, not a
    contradiction: the tool does its job and something outside the core does not.
+
+   **Amended 2026-08-07 (`hk-od9d4`): `make core` now runs without `-short`, and that is what makes
+   it worth running.** As first written it passed `-short`, which skipped 45 tests in the core set —
+   35 in `internal/daemon`, 10 in `internal/runloop`. The daemon 35 included
+   `TestScenario_HappyPath_N1` and `TestSmokeLoop`, the two end-to-end tests that put a bead in one
+   end of the queue and assert it comes out closed at the other. The gate was green without ever
+   running the proof it existed to give. The test step goes from 144 seconds to 246. `make core` now
+   also depends on `twins`, because seven of the newly-enabled tests skip silently when the twin
+   binaries are not built, and a silent skip reads exactly like a pass.
+
+   **`make core` IS NOT RELIABLY GREEN, AND THE ASSESSOR MUST KNOW THAT BEFORE RUNNING IT.**
+   Six full runs on 2026-08-07 gave **three green and three red**, with a different test failing each
+   time. Every red was in `internal/daemon`. The four distinct tests seen failing were:
+
+   | Test | Skipped by `-short` before? | Status |
+   | --- | --- | --- |
+   | `TestT6_10BeadSequentialDrain` | yes — this change enabled it | **fixed** (`hk-oipc9`), then 12 of 12 green |
+   | `TestMultiBead_TwoBeadsCompleteBothClose` | no — already in the gate | open, `hk-4f1bs`, and 12 of 12 green alone |
+   | `TestWorkLoop_TwoConcurrentBeads` | no — already in the gate | open, same family |
+   | `TestParallelSmoke_TwoBeadsConcurrent` | yes — this change enabled it | open, same family, and took 61s in the failing run against about 6s normally |
+
+   Read the middle column carefully, because it carries the honest verdict on this change. **Two of
+   the four were already in the gate**, unguarded, running in every `make core` before this change.
+   The other two are tests this change admitted, one of which had a real defect that is now fixed.
+
+   Be careful about what that does and does not prove. It is tempting to write "so the gate was
+   always flaky", and the evidence does not support it. The one recorded pre-change run was green:
+   5,238 pass, 45 skipped, exit 0. What is measured is that those two tests were **present and
+   unguarded**, not that they were failing. The paragraph below argues this change adds the
+   contention that trips them, which cuts the other way. Both things are true and neither is the
+   whole story.
+
+   **This family is already on List A, at A4: `hk-59flr`, `hk-hqttl`, `hk-fr7ht` — "the daemon suite
+   goes red under load with a different test each time, and each passes alone."** That entry carries
+   an operator ruling from 2026-08-06: do not open another investigation, scope the suite to the core
+   queue and judge on that, because "a flake in a package the queue does not depend on stops being a
+   blocker by definition rather than by investigation." **The scoping was done and it does not reach
+   these four.** All four live in `internal/daemon`, which is inside the core set, so there is no
+   package boundary to put between them and the gate. The ruling is not being reopened
+   here. It is being reported that its remedy does not cover this case, which is a fact the operator
+   needs and did not have when the ruling was made.
+
+   `TestWorkLoop_TwoConcurrentBeads` also has recorded history worth reading before anyone re-derives
+   it: `hk-5pwv5` (closed 2026-06-11) names that exact test, puts it in a "macOS socket-path and
+   contention class", and records it reproducing in isolation on clean `main` as environmental rather
+   than a code regression. It was closed as likely subsumed by a fix that moved daemon tests off the
+   shared `~/.claude.json`. It is back.
+
+   These are all one failure family: the daemon suite goes red under load
+   with a different test each time. The Makefile's own `CORE_PKGS` comment says it "has been
+   investigated four or five times without resolution", and scoping the package set was the answer
+   that was available at the time. Scoping did not remove it, because the family lives inside the
+   core set. Every one of these tests passes alone with large margins — `hk-4f1bs` finishes in 5 to 8
+   seconds against a 25-second budget — so what fails is a wall-clock bet under contention, not the
+   product path. **And this change adds contention:** dropping `-short` puts 35 real-daemon
+   end-to-end tests into the same `internal/daemon` binary, so every wall-clock budget in that
+   package now competes with more work.
+
+   **HOW LOADED THE BOX IS DECIDES THE RESULT, so run the gate on a quiet one.** The first five runs
+   were taken on a shared development machine with other agents working on it. Load average moved
+   between about 4 and 7 on ten cores across the session, and the reds cluster in the busy part of
+   it. One deliberate contention probe made this unmistakable: the same core set run with
+   `go test -p 4` while three other agent sessions were active produced **six** failures, and
+   `TestT6_10BeadSequentialDrain` — which passes in about 45 seconds and had just gone 12 for 12 —
+   took 121 seconds. Several other failures landed within a second of 60, which is a budget expiring,
+   not a product path breaking. `hk-4f1bs` records the same operating condition independently.
+
+   **The quietest run available supports that.** A sixth run was queued behind a wait-for-quiet loop
+   and started at load 3.90 with 37 GiB free: **green, exit 0, 465 seconds, 71,456 tests across 29
+   packages, 3 skipped** — and those 3 are unrelated `internal/queue` subtests, not the real-daemon
+   tier. Running tally is therefore three green and three red in six, and the reds cluster in the busy
+   part of the session.
+
+   So the numbers above are a floor on reliability, not a fair estimate of it. An assessor running
+   alone should see fewer reds than three in six. That is a reason to re-run rather than a reason to
+   trust one green.
+
+   **WHAT TO DO WITH A RED, in order.** A single red is not a verdict.
+
+   1. Check the load. If other work was on the box, the run does not count. Re-run on a quiet one.
+   2. Re-run the failing test alone. Every member of this family passes alone with a large margin.
+      A test that fails alone is NOT this family and IS a real signal — treat it as one.
+   3. If it fails alone, or fails repeatedly on a quiet box, that is a finding. Stop and read it.
+   4. If it only fails inside a loaded full run, it is this family. Record it against `hk-4f1bs`
+      with the load figure and move on.
+
+   The criterion is the FAMILY — a wall-clock budget in `internal/daemon` losing under contention —
+   not the four names in the table. The table is what has been seen so far, not the full membership.
+
+   **Does a red in this family block the sign-off?** That is an operator call and it has not been
+   made. This file records what the gate does. It does not have the authority to waive a red.
+
+   This is a worse-looking gate and a better one. It can now fail on the tests that prove the core
+   works, and before those tests never ran.
+
+   **`make test-scenario` is a separate matter and it is still red.** The same change widened that
+   tier from two packages to the six that actually carry `//go:build scenario` files, which is how
+   the 11 never-run tests were found. Measured back to back on 2026-08-07: the old package list gave
+   18 failures in 464 seconds, the new one 17 in 471. The tier was already red before the change —
+   that is `hk-97gcz` and `hk-ynohn`, both still on List A — and widening it cost seven seconds and
+   added one pre-existing keeper flake
+   (`hk-keeper-warn-cooldown-clock-bet-c5umc`, which fails standalone under plain `-short` on an
+   untouched checkout). `make full` runs this tier, so **`make full` is red today for reasons that
+   predate this work.** `make core` is green.
 2. **Triage the remaining ~40 P1 issues against the criterion at the top.** List A is a floor.
 
 Sandboxing is settled: it is off, and the two sandbox items moved to List B.

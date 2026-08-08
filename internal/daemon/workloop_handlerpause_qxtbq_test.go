@@ -31,7 +31,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -41,6 +40,7 @@ import (
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/daemon/scenariotest"
 	"github.com/gregberns/harmonik/internal/eventbus"
 )
 
@@ -118,13 +118,13 @@ func (l *hfatalLedger) closedIDs() []core.BeadID {
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-// hfatalFixtureTwinPath resolves the harmonik-twin-claude binary at the repo
-// root relative to this test file's location.
+// hfatalFixtureTwinPath resolves the harmonik-twin-claude binary that
+// `make twins` writes to the checkout root. It used to look only at this
+// worktree's root, so in a worktree it found nothing and the test skipped
+// silently. scenariotest.CheckoutBinaryPath also tries the main checkout.
 func hfatalFixtureTwinPath() string {
-	_, thisFile, _, _ := runtime.Caller(0)
-	// thisFile = .../internal/daemon/workloop_handlerpause_qxtbq_test.go
-	root := filepath.Dir(filepath.Dir(filepath.Dir(thisFile)))
-	return filepath.Join(root, "harmonik-twin-claude")
+	path, _ := scenariotest.CheckoutBinaryPath("harmonik-twin-claude")
+	return path
 }
 
 // hfatalFixtureMakeRunID returns a UUIDv7-based RunID for synthetic events.

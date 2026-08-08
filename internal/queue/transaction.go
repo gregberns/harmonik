@@ -309,11 +309,52 @@ func writeReplacement(ctx context.Context, plan ReplacementPlan, ops namespaceOp
 			OutcomeNotCommitted,
 			fmt.Errorf("replace intent: %w", errors.Join(install.Err, cleanupErr)),
 		)
-	case noReplaceRefused, noReplaceIndeterminate:
+	case noReplaceRefused:
+		// Refused means our intent was not installed. Three producers reach here:
+		// the path already held different bytes, a conflicting record appeared
+		// while we were installing, or the path could not be read at all. The first
+		// two leave another transaction's intent on disk. The third establishes
+		// nothing about the path — so do not lean on "the intent belongs to
+		// somebody else" as the reason.
+		//
+		// The reason removal is safe in all three is narrower: the candidate
+		// basename carries THIS transaction's id, and this transaction did not
+		// install an intent, so no intent on disk can name this candidate. Nothing
+		// will come back for it. Remove it, or a queue that keeps refusing grows
+		// one orphan file per attempt, forever.
+		cleanupErr := ops.remove(candidatePath)
 		return replacementFailure(
 			intent,
 			OutcomeCommitIndeterminate,
-			fmt.Errorf("replace intent refused: %w", install.Err),
+			fmt.Errorf("replace intent refused: %w", errors.Join(install.Err, cleanupErr)),
+		)
+	case noReplaceIndeterminate:
+		// Indeterminate deliberately KEEPS the candidate, and this asymmetry with
+		// the refused case above is the whole point. Indeterminate does not mean
+		// the intent failed — classifyNoReplaceCleanupFailure returns it even when
+		// the record IS installed and only the temp cleanup failed.
+		//
+		// Measured by driving this branch and then running the real startup sweep.
+		// Keeping the candidate makes RecoverReplaceIntents resolve the intent as
+		// ReplaceRetryRename, so a transaction whose intent was durably installed
+		// COMPLETES. Removing it makes the same sweep resolve as ReplaceNotCommitted
+		// instead, so that transaction silently ROLLS BACK. Neither outcome wedges
+		// the queue — both resolve. The cost of removing is therefore a discarded
+		// commit the system had already durably decided to make, which is the real
+		// reason to keep it. Do not upgrade this to a wedge; that was measured and
+		// it is not what happens.
+		//
+		// So the candidate can leak here, and nothing collects it. There is no
+		// general orphan-candidate sweep: RecoverReplaceIntents enumerates
+		// .replace-intent files only, so a candidate is cleared only while a
+		// decodable intent still names it. In the sub-case where link failed and
+		// the re-read also errored, the intent may be absent and this candidate
+		// then leaks permanently. That is accepted as cheaper than discarding an
+		// installed commit — but it is a real leak, not a swept one.
+		return replacementFailure(
+			intent,
+			OutcomeCommitIndeterminate,
+			fmt.Errorf("replace intent indeterminate: %w", install.Err),
 		)
 	case noReplaceInstalled:
 		// Continue only after the exact predecessor entry is selected.

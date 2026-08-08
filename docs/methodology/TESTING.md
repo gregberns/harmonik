@@ -216,7 +216,7 @@ All four elements are required for deterministic concurrent-scenario tests. Omit
 
 ## Flake policy — de-flake, quarantine, re-verify, or file-a-bug
 
-> Standing convention owned by **validation-net** (VN11, `hk-s2psr`; folds in `hk-6ra3p` + `hk-3hf9n`). When a test is red or intermittently red, classify it into exactly one of four categories below, then act. The §Coverage enforcement rule "No skipped tests in main" still holds — quarantine is `t.Skip` *under `-short` only*, never a silent disable, and never a delete.
+> Standing convention owned by **validation-net** (VN11, `hk-s2psr`, folding in two earlier flake-policy threads whose ids no longer resolve). When a test is red or intermittently red, classify it into exactly one of four categories below, then act. The §Coverage enforcement rule "No skipped tests in main" still holds — quarantine is `t.Skip` *under `-short` only*, never a silent disable, and never a delete.
 
 The decision tree, in order. Stop at the first branch that matches:
 
@@ -238,9 +238,9 @@ The test is correct and the product is correct; the red came from the *machine*,
 
 The flake is a fixable test-harness defect: shared-state / lock contention, a data race, or an unrealistic timeout. **Prefer fixing over quarantining** — these tests belong in the fast per-bead gate, and the fix removes the flake for good.
 
-- **Shared-state / lock contention** → isolate per-test state. Canonical fix (`hk-1o0cc`): `~/.claude.json` trust-lock contention resolved via per-test config isolation — a `TestMain` that points `HARMONIK_CLAUDE_CONFIG_PATH` at a temp config so concurrent tests don't fight over one global file.
-- **Data race** → remove the race, don't paper over it. Same lane (`hk-1o0cc`): a real data race was removed by dropping `t.Parallel()` on tests that mutate package-level vars the production path reads.
-- **Too-tight timeout** → bump it to a realistic value. Same lane: a `100ms` timeout that lost races on a loaded box was bumped.
+- **Shared-state / lock contention** → isolate per-test state. Canonical fix: `~/.claude.json` trust-lock contention resolved via per-test config isolation — a `TestMain` that points `HARMONIK_CLAUDE_CONFIG_PATH` at a temp config so concurrent tests don't fight over one global file.
+- **Data race** → remove the race, don't paper over it. Same lane: a real data race was removed by dropping `t.Parallel()` on tests that mutate package-level vars the production path reads.
+- **Too-tight timeout** → wait on a milestone, not a duration. Bump the number only when there is nothing to wait on. A duration is a bet against the machine, and the machine wins whenever a neighbouring lane gets busy, so a bigger number buys a quieter failure rather than a fixed one. Where the test can observe the thing it is waiting for — an event written, a queue cleared, a status reached — wait for that and the budget stops mattering. `TestT6_10BeadSequentialDrain` was repaired this way on 2026-08-07: it polled the bead ledger, asserted on the event log, and cancelled the daemon in between, so it was fixed by waiting for the events rather than by widening a window. Same lane, earlier and weaker: a `100ms` timeout that lost races on a loaded box was simply bumped.
 - **Concurrent-scenario non-determinism** → apply the four-element recipe in §Scenario fixture determinism recipe (no-commit guard, merge mutex, phase-aware twin, skip flags) before concluding a scenario test is "inherently flaky."
 - **Action:** land the fix with a `Refs:` to the flake bead. The test stays in `-short` / the per-bead gate.
 
@@ -249,12 +249,54 @@ The flake is a fixable test-harness defect: shared-state / lock contention, a da
 The test is a *legitimate* slow real-daemon E2E (multi-second socket waits, real review loops, strict cross-goroutine event ordering) that is too non-deterministic for a fast merge gate but is still valuable in full CI. Quarantine moves it out of `-short`; it **still runs** in the full CI / Tier-3 lane.
 
 - **Canonical mechanism:** call the shared guard `skipRealDaemonE2EInShort(t)` at the top of the test (defined in `internal/daemon/shortskip_test.go`; 57 call sites across 31 files already use it). It `t.Skip`s only when `testing.Short()`, so the test is out of `make fast` and out of the whole-repo step of `make full`, and it still runs in **`make core`** (which passes no `-short`), in the tagged scenario tier, and in `make test-race-nightly`.
-- **Before you reach for it, know what it costs.** Guarding a test here takes it out of the inner loop, not out of the build. Corrected 2026-08-07 (`hk-od9d4`): this section used to say the guard was a *temporary* shelving with an owning un-shelve bead, `hk-p258q`. That bead never existed, so the shelving became permanent by accident, and for a time `make core` — the gate an assessor sign-off rests on — passed `-short` too and skipped all 45 of them, including the two end-to-end tests that prove a bead goes through the queue. The guard is now a standing decision about the inner loop, and `make core` is what runs the guarded set.
-- **Canonical example:** three real-daemon review-loop bridge tests (e.g. `TestReviewLoopBridge_CHB009_ReviewerAlwaysMintsFresh`) intermittently failed under `-short` and could flake the per-bead gate for `internal/daemon` beads, so they went behind the guard. This example used to cite `hk-6ra3p`. Checked 2026-08-07: **that bead does not exist either.** It is dropped rather than repeated, per the rule in the bullet above. Review-loop mode has since been retired, so the tests it names are gone too.
+- **Before you reach for it, know what it costs.** Guarding a test here takes it out of the inner loop, not out of the build. Corrected 2026-08-07 (`hk-od9d4`): this section used to say the guard was a *temporary* shelving with an owning un-shelve bead, `hk-p258q`. That id resolves to nothing today, so nothing was ever going to un-shelve those tests, and for a time `make core` — the gate an assessor sign-off rests on — passed `-short` too and skipped all 45 of them, including the two end-to-end tests that prove a bead goes through the queue. The guard is now a standing decision about the inner loop, and `make core` is what runs the guarded set.
+- **Canonical example:** three real-daemon review-loop bridge tests (e.g. `TestReviewLoopBridge_CHB009_ReviewerAlwaysMintsFresh`) intermittently failed under `-short` and could flake the per-bead gate for `internal/daemon` beads, so they went behind the guard. This example used to cite an id that resolves to nothing today, so the id is dropped and the description kept. Review-loop mode has since been retired, so the tests it names are gone too.
 - **Hard limits:**
   - Quarantine = move out of `-short` **only**. Never `t.Skip` unconditionally, never delete, never `//nolint`-away the suite.
   - **Never quarantine a fast unit test.** A fast test that flakes has a fixable root cause (category 2) — fix it; do not hide it.
-  - **A guard that names a bead must name one that exists.** Check with `br show <id>` before you write the id, and again if you copy an existing guard's wording. A reference to a bead that was never opened reads like a plan and is not one.
+  - **A guard that names a bead must name one that resolves.** Check with `br show <id>` before you write the id, and again if you copy an existing guard's wording. A skip whose reason is an id that answers nothing reads like a plan and is not one.
+
+    **Search before you call an id dead, and say "does not resolve", not "never existed".** Two things make the fast answer wrong. `br list` shows OPEN issues only — this ledger held 260 open against 3,384 closed on 2026-08-07 — so an id absent from `br list` may simply be closed. And the id may be quoted inside another bead's text rather than being its own record.
+
+    Three ids in this file were checked across open and closed on 2026-08-07 and none resolves: `hk-p258q`, `hk-6ra3p`, `hk-1o0cc`. **They still named real work, and the proof is in git, which is the only part of this that travels:**
+
+    ```
+    71fafcbe0  2026-06-10  test(hk-p258q): fix macOS sun_path overflow in operator-pause socket fixture
+    d61dec994  2026-06-10  test(hk-6ra3p): exclude real-daemon review-loop bridge tests from -short gate
+    43f31068f  2026-06-10  test(hk-1o0cc): de-flake -short reds via ~/.claude.json isolation
+    ```
+
+    Each subject names its own bead, one to one, so the ids were dropped from the ledger rather than invented. Reach for `git log --oneline --all --grep=<id>` before you conclude anything about an id, and note that this evidence is durable where a bead body is not.
+
+### A copied guard drifts from its use — the macOS `sun_path` case
+
+Worth reading in full, because the shape recurs and neither file shows it alone.
+
+A Unix-domain socket path cannot exceed 104 bytes. Three fixtures here guard against that, and the guard was copied between them. Checked in the source on 2026-08-07:
+
+| Guard | Does a caller transform the value after the check? | State |
+| --- | --- | --- |
+| `internal/daemon/socket_test.go` `socketFixtureTempSockPath` | no | sound |
+| `internal/daemon/daemon_test.go` `TestDaemonStart_BindsSocket`, inline | no | sound |
+| `test/scenario/harness_test.go` `scenarioFixtureProjectDir` | **yes** | broken by 8 bytes |
+
+The third one:
+
+- `scenarioFixtureProjectDir` measures the **unresolved** `t.TempDir()` against the 104-byte limit and falls back to a short `/tmp` path when it does not fit.
+- `test/scenario/event_payload_start_v2_t9_test.go` then calls `filepath.EvalSymlinks` on the directory the guard already approved. On macOS that rewrites `/var` to `/private/var` and adds exactly 8 bytes. The socket path is built from the **resolved** result.
+- So the guard approves a path 8 bytes shorter than the one the daemon is handed. It surfaces as `isolated daemon socket did not start` (`hk-sunpath-guard-unresolved-y2gwy`).
+
+It is latent, not live: it fires only when the unresolved path lands in the 8-byte window where the guard passes and the resolved path does not. Deterministic inside that window.
+
+**The copy did not arrive broken.** It went wrong later, when somebody added a transformation *downstream of a check that had already passed*, in a different file from the guard. So when you see a validation helper copied into several fixtures, the question is not "is the helper right" — it is **"does any caller change the value between the check and the use"**. Nobody reading either file on its own would see this one.
+
+That is also why it survived two searches. A reviewer read `internal/daemon/daemon.go`, `internal/lifecycle/daemonpaths.go` and `internal/daemon/socket_test.go`, correctly established that the daemon resolves nothing before binding, and concluded the claim was unproven. **That finding was true.** The resolution happens in the fixture. Verification is not "did somebody check" — it is "did somebody check where the seam is".
+
+    **Expect this, because the ledger is machine-local and gitignored** (see `AGENTS.md` §Issue tracking). An id in a comment or a doc points into a database that does not travel with the repo, so it can be live where it was written and dead everywhere else. So an id is a **breadcrumb, never the explanation**. Write what broke and what the fix has to satisfy in the text itself, and let the id be the extra. A skip whose only justification is an id is one clone away from justifying nothing.
+
+    **And put the ASSERTION TEXT in the title, not just the test name.** One defect here was filed three separate times in ten days for want of it. The original title was *"Load-sensitive flake: TestReconcileOrphanedMarkersFailsafeWakes"*. Note that it already carried the test name and a category — what it lacked was the string a searcher is actually holding, which reads *"orphan marker still present after failsafe wake"*. Nobody searching that message landed on the bead, so it was filed again on 2026-07-30 and again on 2026-08-07, and both re-filings were closed as duplicates. The second re-filing was titled `reconcile-orphan-marker-flake`, which is a category too, so it would have been just as unfindable.
+
+    So the durable handle is the **test name plus the assertion text**, and both go in the title. Ledger ids (`hk-zt68b`, and its duplicates `hk-vw0h8` and `hk-reconcile-orphan-marker-flake-svxbw`) are a convenience, and will travel no further than the three ids above did.
 
 ### 4. File a bug — don't quarantine-and-forget
 
@@ -268,9 +310,9 @@ The flake is the messenger for a **genuine product or infrastructure defect**. T
 | Symptom | Category | Action | Canonical refs |
 |---|---|---|---|
 | ENOSPC / OOM / disk-starvation; green on healthy box | Re-verify | Confirm env health first; do not touch test | `hk-3hf9n` |
-| Shared global file / lock contention | De-flake | Per-test config isolation (`TestMain` + temp path) | `hk-1o0cc` |
-| `-race` data race; package-level var mutated under `t.Parallel()` | De-flake | Remove the race (drop parallel, or guard the var) | `hk-1o0cc` |
-| Too-tight timeout loses on a loaded box | De-flake | Bump to a realistic value | `hk-1o0cc` |
+| Shared global file / lock contention | De-flake | Per-test config isolation (`TestMain` + temp path) | — |
+| `-race` data race; package-level var mutated under `t.Parallel()` | De-flake | Remove the race (drop parallel, or guard the var) | — |
+| Too-tight timeout loses on a loaded box | De-flake | Wait on a milestone, not a duration. Bump the number only when there is nothing to wait on | `hk-fr7ht`, `hk-4f1bs` |
 | Slow real-daemon / socket / review-loop E2E flakes the fast gate | Quarantine | `skipRealDaemonE2EInShort(t)` — out of `-short` only, and still runs in `make core` | `hk-od9d4` |
 | Flake reveals a real product/infra race or daemon bug | File a bug | Tracked bead + repro; test stays | `hk-gq3my`, `hk-i0hor`, `hk-numyh`, `hk-5pwv5` |
 

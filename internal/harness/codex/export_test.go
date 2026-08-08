@@ -58,7 +58,7 @@ var ExportedBuildCodexLaunchSpec = BuildLaunchSpec
 //
 // Bead ref: hk-tu48u.
 func ExportedMaterializeForcedLoginMethod(codexHome string) error {
-	return materializeForcedLoginMethod(codexHome)
+	return materializeForcedLoginMethod(context.Background(), codexHome)
 }
 
 // ExportedAssertChatGPTPlan exposes the fail-closed assertChatGPTPlan for tests

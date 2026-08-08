@@ -30,11 +30,15 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -66,6 +70,163 @@ const codexConfigFileName = "config.toml"
 // fail-closed signal (API-pool billing).
 const codexAuthFileName = "auth.json"
 
+// codexConfigLockName is the advisory-lock sidecar the guard holds while it
+// rewrites config.toml (hk-codex-billing-guard-race-v6dl5).
+//
+// $CODEX_HOME is GLOBAL: one directory shared by every codex process and every
+// guard invocation on the host, as walguard_concurrency_test.go describes for
+// the stale-WAL guard. At --max-concurrent N, N guards can reach
+// materializeForcedLoginMethod at once, each doing a read-modify-write of this
+// one file, and without a lock the last writer silently discards the others'
+// edits.
+//
+// The name is dot-prefixed and harmonik-branded because the directory belongs to
+// codex, not to us: an operator listing ~/.codex can tell at a glance which
+// files are ours.
+const codexConfigLockName = ".harmonik-config.toml.lock"
+
+// codexConfigStagingName is the staging file replaceCodexConfig renames over
+// config.toml. It shares the dot prefix so it is not mistaken for codex
+// configuration.
+//
+// The name is FIXED rather than unique-per-call, and that is deliberate: the
+// caller holds the config lock, so there is never a second writer to collide
+// with, and a staging file stranded by a SIGKILL between write and rename is a
+// single stale file that the next write truncates and reuses. A unique name per
+// call would need a reaper to stop stale files accumulating in the operator's
+// real ~/.codex.
+const codexConfigStagingName = ".harmonik-config.toml.staging"
+
+// codexConfigWriteMu serializes config.toml rewrites WITHIN this process, in
+// front of the cross-process flock.
+//
+// Reason, learned in internal/workspace/claudetrust_wm040b.go (hk-z16): flock is
+// unfair. With --max-concurrent 8, eight guards that all spin on LOCK_EX at once
+// can let the cumulative hold time of seven serial holders exceed the eighth's
+// acquire bound, so the eighth is starved and its launch is refused for a reason
+// that has nothing to do with its work. Queueing in-process first means only one
+// goroutine here ever reaches the flock, which leaves the flock arbitrating what
+// it is actually for: other processes.
+var codexConfigWriteMu sync.Mutex
+
+// errCodexConfigLockTimeout is returned when the guard cannot acquire the config
+// lock inside its bound. It wraps handlercontract.ErrStructural so the dispatch
+// path classifies the refusal as structural — a contended host, retryable — and
+// not as a verdict about the bead. Mirrors workspace.ErrTrustLockTimeout.
+var errCodexConfigLockTimeout = fmt.Errorf(
+	"codex billing guard: %w: config-lock acquire timed out (contended $CODEX_HOME)",
+	handlercontract.ErrStructural)
+
+// codexConfigLockTimeout bounds the wait for the config lock. The guard fails
+// closed when it cannot take the lock, because it cannot then promise the login
+// pin is in place, so this bound decides how long a launch WAITS before it is
+// refused rather than whether it is refused. Mirrors the 10s bound in
+// internal/schedule/store.go.
+const codexConfigLockTimeout = 10 * time.Second
+
+// codexConfigLockRetryInterval is the poll interval of the bounded
+// LOCK_EX|LOCK_NB acquire. Mirrors internal/schedule/store.go.
+const codexConfigLockRetryInterval = 25 * time.Millisecond
+
+// acquireCodexConfigLock takes a bounded advisory exclusive flock on the
+// $CODEX_HOME lock sidecar and returns the closure that releases it. codexHome
+// must already exist.
+//
+// The bounded LOCK_EX|LOCK_NB retry is the idiom already used in
+// internal/schedule/store.go and internal/workspace/claudetrust_wm040b.go: a
+// stuck holder surfaces as a prompt error instead of an indefinite hang. flock
+// is released by the kernel when the holding process dies, so a crashed guard
+// cannot wedge the next launch.
+func acquireCodexConfigLock(ctx context.Context, codexHome string, timeout time.Duration) (func(), error) {
+	lockPath := filepath.Join(codexHome, codexConfigLockName)
+	//nolint:gosec // G304: fixed lockfile name beneath the caller's CODEX_HOME root.
+	fd, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open lock %q: %w", lockPath, err)
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		flockErr := syscall.Flock(int(fd.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if flockErr == nil {
+			break
+		}
+		if !errors.Is(flockErr, syscall.EWOULDBLOCK) {
+			return nil, errors.Join(fmt.Errorf("flock %q: %w", lockPath, flockErr), fd.Close())
+		}
+		if time.Now().After(deadline) {
+			return nil, errors.Join(
+				fmt.Errorf("%w: %s after %s", errCodexConfigLockTimeout, lockPath, timeout),
+				fd.Close())
+		}
+		// Wait on the retry interval and on cancellation together. A plain sleep
+		// would make a cancelled run wait out the whole bound before it noticed.
+		select {
+		case <-ctx.Done():
+			return nil, errors.Join(
+				fmt.Errorf("flock %q: %w", lockPath, ctx.Err()),
+				fd.Close())
+		case <-time.After(codexConfigLockRetryInterval):
+		}
+	}
+	return func() {
+		_ = syscall.Flock(int(fd.Fd()), syscall.LOCK_UN) //nolint:errcheck // unlock error non-actionable; close also drops the advisory lock
+		if closeErr := fd.Close(); closeErr != nil {
+			slog.WarnContext(ctx, "codex billing guard: close config lockfile",
+				"path", lockPath, "error", closeErr.Error())
+		}
+	}, nil
+}
+
+// replaceCodexConfig puts data at cfgPath by writing a staging file in the same
+// directory and renaming it over the target, so a concurrent reader sees either
+// the whole old file or the whole new one and never a half-written one.
+//
+// os.WriteFile truncates the target before it writes. A reader inside that
+// window reads an empty or partial config.toml, and for THIS file that window is
+// a billing decision: a codex child that reads no forced_login_method falls back
+// to API-pool billing, and a peer guard that reads none refuses a launch that
+// was valid. An independent review measured 8047 of 12000 concurrent reads
+// landing inside the window.
+//
+// The staging file is created in codexHome rather than the system temp dir
+// because os.Rename is only atomic within one filesystem.
+//
+// The caller MUST hold the config lock: the staging path is a fixed name, so two
+// unsynchronised writers would stage into the same file.
+func replaceCodexConfig(codexHome, cfgPath string, data []byte) error {
+	tmpPath := filepath.Join(codexHome, codexConfigStagingName)
+	//nolint:gosec // G304: fixed staging filename beneath the caller's CODEX_HOME root.
+	tmp, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return fmt.Errorf("create staging file %q: %w", tmpPath, err)
+	}
+	discard := func(cause error, format string, args ...any) error {
+		_ = os.Remove(tmpPath) //nolint:errcheck // cleanup of a staging file we are already failing on
+		return fmt.Errorf(format+": %w", append(args, cause)...)
+	}
+	if _, werr := tmp.Write(data); werr != nil {
+		return discard(errors.Join(werr, tmp.Close()), "write staging file %q", tmpPath)
+	}
+	// fsync before the rename so a crash cannot leave the renamed file present
+	// but empty, which would be the same unguarded-config hazard by another route.
+	if serr := tmp.Sync(); serr != nil {
+		return discard(errors.Join(serr, tmp.Close()), "fsync staging file %q", tmpPath)
+	}
+	if cerr := tmp.Close(); cerr != nil {
+		return discard(cerr, "close staging file %q", tmpPath)
+	}
+	// O_CREATE only applies the 0600 mode when it CREATES the file, so a staging
+	// file left by an earlier crash would carry whatever mode it already had, and
+	// the rename would carry that mode onto config.toml. State the mode instead.
+	if cerr := os.Chmod(tmpPath, 0o600); cerr != nil {
+		return discard(cerr, "chmod staging file %q", tmpPath)
+	}
+	if rerr := os.Rename(tmpPath, cfgPath); rerr != nil {
+		return discard(rerr, "rename %q over %q", tmpPath, cfgPath)
+	}
+	return nil
+}
+
 // materializeForcedLoginMethod ensures $CODEX_HOME/config.toml carries the
 // top-level line `forced_login_method = "chatgpt"`.
 //
@@ -78,16 +239,62 @@ const codexAuthFileName = "auth.json"
 //   - If it does not declare the key, the line is appended, preserving all other
 //     content.
 //
-// Returns an error only on a filesystem fault (mkdir / read / write). A
-// non-writable CODEX_HOME surfaces here as an error so the launch fails closed
+// An already-pinned config returns on a LOCK-FREE probe: no mutex, no flock, no
+// rewrite. That is the case on every launch after the operator's first, so it is
+// the case that must not queue behind anything. When a rewrite IS needed, the
+// read and the write are one critical section under the $CODEX_HOME config lock
+// and the write lands by rename. Together those give the three properties
+// concurrent dispatch needs: the common case does not contend at all, no guard
+// loses another guard's edit, and no reader ever sees a truncated config.
+//
+// The lock-free probe is safe because every write lands by rename, so a reader
+// sees a whole file or a whole file. It is also ADVISORY: it reports what the
+// config said at the instant it was read, and a non-cooperating writer can
+// unpin the key immediately afterwards. That is why runCodexBillingGuard still
+// re-reads in assertChatGPTPlan rather than trusting this result.
+//
+// Returns an error on a filesystem fault (mkdir / read / write) or on a lock the
+// guard could not take inside codexConfigLockTimeout. A non-writable or
+// contended CODEX_HOME surfaces here as an error so the launch fails closed
 // rather than launching codex against an unguarded config.
-func materializeForcedLoginMethod(codexHome string) error {
+func materializeForcedLoginMethod(ctx context.Context, codexHome string) error {
+	return materializeForcedLoginMethodWithin(ctx, codexHome, codexConfigLockTimeout)
+}
+
+// materializeForcedLoginMethodWithin is materializeForcedLoginMethod with the
+// lock bound as a parameter, so a test can assert the fail-closed contended path
+// without waiting out the production timeout.
+func materializeForcedLoginMethodWithin(ctx context.Context, codexHome string, lockTimeout time.Duration) error {
 	if codexHome == "" {
 		return fmt.Errorf("materializeForcedLoginMethod: codexHome must be non-empty")
 	}
 	if err := os.MkdirAll(codexHome, 0o700); err != nil {
 		return fmt.Errorf("materializeForcedLoginMethod: mkdir %q: %w", codexHome, err)
 	}
+
+	// Fast path: already pinned, nothing to write, so take no lock at all. A probe
+	// ERROR is deliberately not returned here — an absent config.toml is the
+	// ordinary first-launch case, and any other read fault re-surfaces below where
+	// the locked path reads the same file.
+	if pinned, probeErr := configDeclaresChatGPTLogin(codexHome); probeErr == nil && pinned {
+		return nil
+	}
+
+	// A rewrite is needed. Queue in-process first so only one goroutine here
+	// reaches the flock, then re-probe: a predecessor in this process may have
+	// pinned the config while we waited.
+	codexConfigWriteMu.Lock()
+	defer codexConfigWriteMu.Unlock()
+	if pinned, probeErr := configDeclaresChatGPTLogin(codexHome); probeErr == nil && pinned {
+		return nil
+	}
+
+	release, err := acquireCodexConfigLock(ctx, codexHome, lockTimeout)
+	if err != nil {
+		return fmt.Errorf("materializeForcedLoginMethod: %w", err)
+	}
+	defer release()
+
 	cfgPath := filepath.Join(codexHome, codexConfigFileName)
 
 	//nolint:gosec // G304: cfgPath is a fixed config.toml filename beneath the caller's CODEX_HOME root.
@@ -96,36 +303,33 @@ func materializeForcedLoginMethod(codexHome string) error {
 		return fmt.Errorf("materializeForcedLoginMethod: read %q: %w", cfgPath, err)
 	}
 
-	wantLine := fmt.Sprintf("%s = %q", forcedLoginMethodKey, forcedLoginMethodValue)
-
-	if os.IsNotExist(err) || len(existing) == 0 {
-		if werr := os.WriteFile(cfgPath, []byte(wantLine+"\n"), 0o600); werr != nil {
-			return fmt.Errorf("materializeForcedLoginMethod: write %q: %w", cfgPath, werr)
-		}
-		return nil
+	if werr := replaceCodexConfig(codexHome, cfgPath, pinnedConfigContent(existing)); werr != nil {
+		return fmt.Errorf("materializeForcedLoginMethod: %w", werr)
 	}
+	return nil
+}
 
+// pinnedConfigContent returns what config.toml must contain so it declares the
+// chatgpt login pin, given whatever it contains now. An empty or absent file
+// becomes the single pinned line; a file that already declares the key has that
+// one line rewritten and keeps everything else; a file that does not declare it
+// gets the line appended after exactly one newline boundary.
+//
+// Pure: it does no I/O, so the three content rules are testable on their own and
+// the caller stays a straight line of lock-then-read-then-write.
+func pinnedConfigContent(existing []byte) []byte {
+	wantLine := fmt.Sprintf("%s = %q", forcedLoginMethodKey, forcedLoginMethodValue)
+	if len(existing) == 0 {
+		return []byte(wantLine + "\n")
+	}
 	lines := strings.Split(string(existing), "\n")
-	replaced := false
 	for i, line := range lines {
 		if topLevelKeyOf(line) == forcedLoginMethodKey {
 			lines[i] = wantLine
-			replaced = true
-			break
+			return []byte(strings.Join(lines, "\n"))
 		}
 	}
-	if !replaced {
-		// Append; ensure exactly one trailing newline boundary before the key.
-		out := strings.TrimRight(string(existing), "\n") + "\n" + wantLine + "\n"
-		if werr := os.WriteFile(cfgPath, []byte(out), 0o600); werr != nil {
-			return fmt.Errorf("materializeForcedLoginMethod: write %q: %w", cfgPath, werr)
-		}
-		return nil
-	}
-	if werr := os.WriteFile(cfgPath, []byte(strings.Join(lines, "\n")), 0o600); werr != nil {
-		return fmt.Errorf("materializeForcedLoginMethod: write %q: %w", cfgPath, werr)
-	}
-	return nil
+	return []byte(strings.TrimRight(string(existing), "\n") + "\n" + wantLine + "\n")
 }
 
 // topLevelKeyOf returns the bare top-level TOML key declared on a line, or "" if
@@ -301,7 +505,7 @@ func runCodexBillingGuard(
 	runID core.RunID,
 	beadID, codexHome string,
 ) error {
-	if err := materializeForcedLoginMethod(codexHome); err != nil {
+	if err := materializeForcedLoginMethod(ctx, codexHome); err != nil {
 		emitCodexBillingGuard(ctx, bus, runID, beadID, codexHome,
 			core.CodexBillingGuardDenied, "materialize failed: "+err.Error())
 		return fmt.Errorf("codex billing guard: %w", err)

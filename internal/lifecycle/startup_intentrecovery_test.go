@@ -106,7 +106,7 @@ func TestLoadQueueAtStartup_RollsForwardBeforeItLoads(t *testing.T) {
 	// Rewind the committed fixture to the state where the candidate was durable
 	// but the rename had not happened: canonical back to prior, candidate temp
 	// present, intent untouched.
-	committed, err := os.ReadFile(canonicalPath)
+	committed, err := os.ReadFile(canonicalPath) //nolint:gosec // G304: path is t.TempDir-derived
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,7 @@ func TestLoadQueueAtStartup_UnwedgesTheQueueForLaterWrites(t *testing.T) {
 	// Prove the wedge first. A different transaction for the same queue is
 	// refused while the leftover intent is on disk.
 	nextPlan := func(transactionID string) queue.ReplacementPlan {
-		prior, err := os.ReadFile(filepath.Join(projectDir, ".harmonik", "queues", "main.json"))
+		prior, err := os.ReadFile(filepath.Join(projectDir, ".harmonik", "queues", "main.json")) //nolint:gosec // G304: path is t.TempDir-derived
 		if err != nil {
 			t.Fatal(err)
 		}

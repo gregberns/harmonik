@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -93,7 +94,7 @@ func TestRecoverReplaceIntents_DropsIntentWhenRenameAlreadyLanded(t *testing.T) 
 	if !intentRecoveryIntentPresent(t, plan) {
 		t.Fatal("setup did not leave a replace intent on disk")
 	}
-	if got := transactionReadCanonical(t, plan); string(got) != string(plan.CandidateBytes) {
+	if got := transactionReadCanonical(t, plan); !bytes.Equal(got, plan.CandidateBytes) {
 		t.Fatal("setup did not land the candidate as canonical")
 	}
 
@@ -104,7 +105,7 @@ func TestRecoverReplaceIntents_DropsIntentWhenRenameAlreadyLanded(t *testing.T) 
 	if intentRecoveryIntentPresent(t, plan) {
 		t.Fatal("recovery left the intent on disk")
 	}
-	if canonical := transactionReadCanonical(t, plan); string(canonical) != string(plan.CandidateBytes) {
+	if canonical := transactionReadCanonical(t, plan); !bytes.Equal(canonical, plan.CandidateBytes) {
 		t.Fatal("recovery changed the canonical queue file")
 	}
 }
@@ -117,7 +118,7 @@ func TestRecoverReplaceIntents_RetriesRenameWhenCandidateSurvivedTheCrash(t *tes
 	if _, err := os.Stat(candidatePath); err != nil {
 		t.Fatalf("setup did not leave a candidate at the basename the intent pins: %v", err)
 	}
-	if got := transactionReadCanonical(t, plan); string(got) != string(plan.PriorBytes) {
+	if got := transactionReadCanonical(t, plan); !bytes.Equal(got, plan.PriorBytes) {
 		t.Fatal("setup should have left the prior bytes canonical")
 	}
 
@@ -125,7 +126,7 @@ func TestRecoverReplaceIntents_RetriesRenameWhenCandidateSurvivedTheCrash(t *tes
 	if got.Err != nil || got.Action != ReplaceRetryRename {
 		t.Fatalf("want retry_candidate_rename with no error, got action=%q err=%v", got.Action, got.Err)
 	}
-	if canonical := transactionReadCanonical(t, plan); string(canonical) != string(plan.CandidateBytes) {
+	if canonical := transactionReadCanonical(t, plan); !bytes.Equal(canonical, plan.CandidateBytes) {
 		t.Fatal("recovery did not finish the rename")
 	}
 	if _, err := os.Stat(candidatePath); !errors.Is(err, os.ErrNotExist) {
@@ -158,7 +159,7 @@ func TestRecoverReplaceIntents_RollsBackWhenCandidateNeverLanded(t *testing.T) {
 	if got.Err != nil || got.Action != ReplaceNotCommitted {
 		t.Fatalf("want not_committed_cleanup with no error, got action=%q err=%v", got.Action, got.Err)
 	}
-	if canonical := transactionReadCanonical(t, plan); string(canonical) != string(plan.PriorBytes) {
+	if canonical := transactionReadCanonical(t, plan); !bytes.Equal(canonical, plan.PriorBytes) {
 		t.Fatal("rollback did not leave the prior bytes canonical")
 	}
 	if intentRecoveryIntentPresent(t, plan) {
@@ -265,14 +266,14 @@ func TestRecoverReplaceIntents_LeavesACorruptIntentExactlyWhereItWas(t *testing.
 	if got.NormalizedName != plan.NormalizedName {
 		t.Fatalf("refusal did not name the queue: %q", got.NormalizedName)
 	}
-	after, err := os.ReadFile(intentPath)
+	after, err := os.ReadFile(intentPath) //nolint:gosec // G304: path is t.TempDir-derived
 	if err != nil {
 		t.Fatalf("refusal removed the intent: %v", err)
 	}
-	if string(after) != string(corrupt) {
+	if !bytes.Equal(after, corrupt) {
 		t.Fatal("refusal rewrote the intent")
 	}
-	if canonical := transactionReadCanonical(t, plan); string(canonical) != string(plan.PriorBytes) {
+	if canonical := transactionReadCanonical(t, plan); !bytes.Equal(canonical, plan.PriorBytes) {
 		t.Fatal("refusal touched the canonical queue file")
 	}
 }
@@ -359,7 +360,7 @@ func TestRecoverReplaceIntents_UnwedgesTheQueueAfterACrash(t *testing.T) {
 	if !unblocked.Committed() {
 		t.Fatalf("the replacement is still refused after recovery: %v", unblocked.Err)
 	}
-	if canonical := transactionReadCanonical(t, retry); string(canonical) != string(retry.CandidateBytes) {
+	if canonical := transactionReadCanonical(t, retry); !bytes.Equal(canonical, retry.CandidateBytes) {
 		t.Fatal("the unblocked replacement did not land its candidate")
 	}
 }

@@ -183,6 +183,11 @@ func TestHandoffFileScrubKeepsTheCrewsProseAndThePermissionBits(t *testing.T) {
 		"Next: report to the lane.\n"
 
 	path := filepath.Join(t.TempDir(), "HANDOFF.md")
+	// 0o640 is the subject of this test, not an oversight: the assertion below
+	// is that the scrub PRESERVES the permission bits, and a mode gosec is happy
+	// with is also the mode a rewrite would land on by accident. Tightening this
+	// to 0o600 makes the assertion unable to fail.
+	//nolint:gosec // G306: the permissive mode is what this test measures
 	if err := os.WriteFile(path, []byte(before), 0o640); err != nil {
 		t.Fatalf("seed handoff file: %v", err)
 	}
@@ -191,7 +196,7 @@ func TestHandoffFileScrubKeepsTheCrewsProseAndThePermissionBits(t *testing.T) {
 		t.Fatalf("scrub returned an error: %v", err)
 	}
 
-	got, err := os.ReadFile(path)
+	got, err := os.ReadFile(path) //nolint:gosec // G304: path is t.TempDir-derived
 	if err != nil {
 		t.Fatalf("read handoff file after scrub: %v", err)
 	}
@@ -239,7 +244,7 @@ func TestHandoffFileScrubLeavesAFileWithNoMarkerCompletelyAlone(t *testing.T) {
 		t.Fatalf("scrub rewrote a file it changed nothing in and moved the mtime: before %v, after %v",
 			stale.ModTime(), fresh.ModTime())
 	}
-	got, err := os.ReadFile(path)
+	got, err := os.ReadFile(path) //nolint:gosec // G304: path is t.TempDir-derived
 	if err != nil {
 		t.Fatalf("read handoff file after scrub: %v", err)
 	}

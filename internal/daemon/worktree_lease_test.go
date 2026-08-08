@@ -129,7 +129,7 @@ func TestWorktreeLease_ADeadHolderReleasesTheLeaseAndTheWorktreeGoes(t *testing.
 	t.Parallel()
 
 	repo, wtPath := wtLeaseWorktree(t)
-	wtLeaseOverwriteHolder(t, wtPath, wtLeaseNoSuchProcess)
+	wtLeaseOverwriteHolderDead(t, wtPath)
 
 	result, err := workspace.SweepStaleLeaseLocks(t.Context(), repo, workspace.NoWorktreeRootOverride())
 	if err != nil {
@@ -179,7 +179,7 @@ func TestBootSweep_DoesNotRemoveTheWorktreeOfARunThatOutlivedTheDaemon(t *testin
 	defer liveCleanup()
 	// Both leases name a process that is gone, which is what a daemon restart
 	// leaves behind. The registry is the only thing that tells the two runs apart.
-	wtLeaseOverwriteHolder(t, liveWT, wtLeaseNoSuchProcess)
+	wtLeaseOverwriteHolderDead(t, liveWT)
 
 	// The run whose agent went with the daemon. Nothing is working in here.
 	const abandonedRun = "0f0e0d0c-0b0a-0908-0706-05040302aa02"
@@ -188,7 +188,7 @@ func TestBootSweep_DoesNotRemoveTheWorktreeOfARunThatOutlivedTheDaemon(t *testin
 		t.Fatalf("wtLease: create the abandoned run's worktree: %v", err)
 	}
 	defer abandonedCleanup()
-	wtLeaseOverwriteHolder(t, abandonedWT, wtLeaseNoSuchProcess)
+	wtLeaseOverwriteHolderDead(t, abandonedWT)
 
 	liveSession := lifecycle.TmuxSessionName(surviveRecoveryHash, "run-0f0e0d0c0b0a")
 	if writeErr := runpkg.Write(repo, runpkg.Record{
@@ -231,13 +231,19 @@ func TestBootSweep_DoesNotRemoveTheWorktreeOfARunThatOutlivedTheDaemon(t *testin
 	}
 }
 
-// wtLeaseOverwriteHolder rewrites the worktree's lease so it names pid.
+// wtLeaseOverwriteHolderDead rewrites the worktree's lease so it names a pid no
+// process has, which is the state every caller wants: a lease whose holder is
+// gone.
 //
 // The file is replaced rather than edited, because the write path refuses to
 // take a lease a second time — that refusal is what stops two runs claiming one
 // worktree, and it is not what this file is testing.
-func wtLeaseOverwriteHolder(t *testing.T, wtPath string, pid int) {
+//
+// The pid was a parameter until 2026-08-07, and all five call sites passed the
+// same constant. The signature said "any pid" and every use meant "a dead one".
+func wtLeaseOverwriteHolderDead(t *testing.T, wtPath string) {
 	t.Helper()
+	const pid = wtLeaseNoSuchProcess
 	leasePath := workspace.LeaseLockPath(wtPath)
 	existing, readErr := os.ReadFile(leasePath) //nolint:gosec // the path is built from a temp dir by this test
 	if readErr != nil {
@@ -314,7 +320,7 @@ func TestBootSweep_ASessionAnotherPassAlreadySparedStillProtectsItsWorktree(t *t
 	defer liveCleanup()
 	// Both leases name the daemon that took them, and that daemon is gone. The
 	// registry is the only thing that tells the two runs apart.
-	wtLeaseOverwriteHolder(t, liveWT, wtLeaseNoSuchProcess)
+	wtLeaseOverwriteHolderDead(t, liveWT)
 
 	// The run whose agent went with the daemon. Nothing is working in here.
 	const abandonedRun = "0f0e0d0c-0b0a-0908-0706-05040302cc02"
@@ -323,7 +329,7 @@ func TestBootSweep_ASessionAnotherPassAlreadySparedStillProtectsItsWorktree(t *t
 		t.Fatalf("wtLease: create the abandoned run's worktree: %v", err)
 	}
 	defer abandonedCleanup()
-	wtLeaseOverwriteHolder(t, abandonedWT, wtLeaseNoSuchProcess)
+	wtLeaseOverwriteHolderDead(t, abandonedWT)
 
 	liveSession := lifecycle.TmuxSessionName(surviveRecoveryHash, "run-0f0e0d0c0b0a0908")
 	if writeErr := runpkg.Write(repo, runpkg.Record{

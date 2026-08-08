@@ -56,7 +56,7 @@ func engagementProbeStub(t *testing.T, body string) string {
 // will try to write. The profile input carries the four required fields, so a
 // refusal in these tests always comes from the engagement decision and never
 // from profile generation.
-func engagementFixture(t *testing.T, stubBody string) (*daemon.ExportedSrtSpawnConfig, string) {
+func engagementFixture(t *testing.T, stubBody string) (spawn *daemon.ExportedSrtSpawnConfig, attemptCounterPath string) {
 	t.Helper()
 	projectDir := t.TempDir()
 	worktree := filepath.Join(projectDir, ".harmonik", "worktrees", "run-a")
@@ -64,7 +64,7 @@ func engagementFixture(t *testing.T, stubBody string) (*daemon.ExportedSrtSpawnC
 		t.Fatalf("make worktree: %v", err)
 	}
 	runID := strings.NewReplacer("/", "-", " ", "-").Replace(t.Name())
-	spawn := &daemon.ExportedSrtSpawnConfig{
+	spawn = &daemon.ExportedSrtSpawnConfig{
 		SrtBinary: engagementProbeStub(t, stubBody),
 		ProfileInput: daemon.SandboxProfileInput{
 			WorktreePath:   worktree,
@@ -193,7 +193,7 @@ exit 1`
 	if err := daemon.ExportedVerifySandboxEngaged(context.Background(), spawn, canary, nil); err != nil {
 		t.Fatalf("verify = %v, want nil — one transient apply failure must be retried, not treated as fatal", err)
 	}
-	got, readErr := os.ReadFile(counter)
+	got, readErr := os.ReadFile(counter) //nolint:gosec // G304: counter is t.TempDir-derived
 	if readErr != nil {
 		t.Fatalf("read attempt counter: %v", readErr)
 	}

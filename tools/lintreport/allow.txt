@@ -109,7 +109,6 @@ cmd/harmonik/sync_assets_cmd.go	gocognit
 cmd/harmonik/testsupport_daemon_test.go	errcheck
 cmd/harmonik/testsupport_daemon_test.go	gosec
 cmd/harmonik/testsupport_daemon_test.go	noctx
-cmd/harmonik/testsupport_daemon_test.go	unused
 cmd/harmonik/usage_cmd_coverage_test.go	errcheck
 cmd/harmonik/usage_cmd.go	gocognit
 cmd/harmonik/veto_verdict.go	cyclop
@@ -323,7 +322,6 @@ internal/daemon/remote_substrate_b11_test.go	gosec
 internal/daemon/restartbackoff.go	gocritic
 internal/daemon/reviewgateanomaly_hktnmjy.go	nilerr
 internal/daemon/run_session_adoption.go	gocognit
-internal/daemon/run_session_adoption.go	revive
 internal/daemon/runfailed_bead_reset_s20z_test.go	errcheck
 internal/daemon/runfailed_bead_reset_s20z_test.go	revive
 internal/daemon/runinflightreconcile_hkr73qr.go	exhaustive
@@ -336,8 +334,6 @@ internal/daemon/sandboxprofile.go	gocritic
 internal/daemon/sandboxprofile.go	revive
 internal/daemon/scenario_failing_implementer_test.go	errcheck
 internal/daemon/scenario_failing_implementer_test.go	gosec
-internal/daemon/scenario_gate_efficacy_hkv5dyg_test.go	errcheck
-internal/daemon/scenario_gate_efficacy_hkv5dyg_test.go	gosec
 internal/daemon/scenario_happypath_n1_test.go	errcheck
 internal/daemon/scenario_happypath_n1_test.go	gosec
 internal/daemon/scenario_happypath_n1_test.go	unused
@@ -359,7 +355,6 @@ internal/daemon/socket_operatorpause_ry8q1_test.go	gocritic
 internal/daemon/socket_operatorpause_ry8q1_test.go	unparam
 internal/daemon/socket_queue_test.go	copyloopvar
 internal/daemon/socket_queue_test.go	gocritic
-internal/daemon/socketlistenersubsystem_test.go	unparam
 internal/daemon/spendmeter_hkk3f8g.go	nilerr
 internal/daemon/spendmeter_hkk3f8g.go	revive
 internal/daemon/srt_pi_egress_e2e_test.go	errcheck

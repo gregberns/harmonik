@@ -242,7 +242,7 @@ type moduleIndex struct {
 
 // unwiredWriters returns every durable writer that no production path reaches.
 func (m *moduleIndex) unwiredWriters() []*funcNode {
-	var out []*funcNode
+	out := make([]*funcNode, 0, len(m.order))
 	for _, q := range m.order {
 		n := m.nodes[q]
 		if !n.writer || n.skipped || m.live[q] {

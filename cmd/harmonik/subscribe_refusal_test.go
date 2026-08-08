@@ -86,8 +86,19 @@ func captureStd(t *testing.T, fn func()) (stdout, stderr string) {
 
 	outCh := make(chan string, 1)
 	errCh := make(chan string, 1)
-	go func() { b, _ := io.ReadAll(outR); outCh <- string(b) }()
-	go func() { b, _ := io.ReadAll(errR); errCh <- string(b) }()
+	// A read fault here would silently truncate the captured stream, and the
+	// assertions downstream read that truncation as "the command printed
+	// nothing". Append the error to the captured text so it fails loudly instead.
+	drain := func(r io.Reader, ch chan<- string) {
+		b, err := io.ReadAll(r)
+		if err != nil {
+			ch <- string(b) + "\n[capture failed: " + err.Error() + "]"
+			return
+		}
+		ch <- string(b)
+	}
+	go drain(outR, outCh)
+	go drain(errR, errCh)
 
 	defer func() {
 		os.Stdout, os.Stderr = origOut, origErr
@@ -258,7 +269,8 @@ func TestCommsRecvFollow_DaemonRefusalStopsInsteadOfReconnecting(t *testing.T) {
 func TestRunViaDaemon_DaemonRefusalIsNamed(t *testing.T) {
 	d := startFakeDaemon(t, replyOnce(refusalReply()))
 
-	conn, err := net.Dial("unix", d.SockPath)
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(t.Context(), "unix", d.SockPath)
 	if err != nil {
 		t.Fatalf("dial fake daemon: %v", err)
 	}

@@ -217,7 +217,7 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 	// a shutdown. The reaper latches the handle before it cancels precisely so
 	// this can be told (hk-0z5x). A run with no handle cannot have been reaped.
 	daemonStopping := func() bool {
-		return ctx.Err() != nil && !(runHandle != nil && runHandle.Aborted())
+		return ctx.Err() != nil && (runHandle == nil || !runHandle.Aborted())
 	}
 
 	runScope := &runlease.Scope{}

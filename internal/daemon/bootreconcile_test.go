@@ -18,7 +18,7 @@ import (
 // brRunnableFixtureBootState builds the smallest bootState ensureBrRunnable
 // needs — a config and an event bus writing to a JSONL file the test can read
 // back. It returns the state and the path to that file.
-func brRunnableFixtureBootState(t *testing.T) (*bootState, string) {
+func brRunnableFixtureBootState(t *testing.T) (state *bootState, eventsJSONLPath string) {
 	t.Helper()
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 
@@ -57,8 +57,9 @@ func brRunnableFixtureStartupFailures(t *testing.T, eventsPath string) []core.Da
 		t.Fatalf("brRunnableFixtureStartupFailures: read events: %v", err)
 	}
 
-	var found []core.DaemonStartupFailedPayload
-	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	found := make([]core.DaemonStartupFailedPayload, 0, len(lines))
+	for _, line := range lines {
 		if line == "" {
 			continue
 		}

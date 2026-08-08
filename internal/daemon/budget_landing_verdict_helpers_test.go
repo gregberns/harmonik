@@ -64,7 +64,7 @@ func TestReviewerBudget_ABiggerDiffBuysTheReviewerMoreWait(t *testing.T) {
 	// Positive evidence that the scaling is monotone, not one lucky constant.
 	small := daemon.ExportedReviewBudgetForDiff(200, budgetBase, budgetPerKLine, budgetCeiling)
 	large := daemon.ExportedReviewBudgetForDiff(4000, budgetBase, budgetPerKLine, budgetCeiling)
-	if !(small > budgetBase && large > small) {
+	if small <= budgetBase || large <= small {
 		t.Fatalf("budget did not grow with the diff: base=%v small=%v large=%v", budgetBase, small, large)
 	}
 }

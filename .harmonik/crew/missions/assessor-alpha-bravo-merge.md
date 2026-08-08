@@ -12,6 +12,17 @@ spawned_by: operator
 
 # Gate: merge — lanes alpha and bravo, the candidate for `main`
 
+> **Nothing in harmonik is running, and nothing here gets launched.** The assessor is a role an
+> already-running agent takes on by reading `.harmonik/agents/assessor/`. There is no
+> `harmonik start assessor` step — an earlier draft of this file implied one and that was wrong.
+> The frontmatter below is kept only because it is this project's mission schema; the daemon
+> fields in it (`spawned_by`, `report_path`) describe nothing that runs today.
+>
+> **The live copy of this brief is in bravo's own handoff**, `HANDOFF-bravo.md` in
+> `~/github/harmonik-wt/bravo`, because that is the file the agent actually reads and it is
+> gitignored. This tracked copy exists so the content survives that file being lost. If the two
+> disagree, the handoff is the one in use.
+
 You are the **assessor** for **hk-s1cvx**. Run the **merge** gate on an isolated scratch clone you
 own, file findings as `found-by:assessor` beads scoped with `hk-s1cvx`, post a reasoned
 **PASS|BLOCK** to the **operator** over `--topic gate`, and self-terminate.

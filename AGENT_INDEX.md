@@ -207,6 +207,7 @@ Booting into a specific role? Load its skill for the operating contract:
 - [docs/known-workarounds.md](docs/known-workarounds.md) -- Active workaround registry: worktree bugs, harness quirks, spawn-semaphore wedge mitigation
 - [docs/beads-workflow.md](docs/beads-workflow.md) -- Beads/kerf reference: machine-local ledger, `br` + `kerf` command surface, session protocol, commit-message validation, UBS quick reference
 - [docs/scratch-daemon-runbook.md](docs/scratch-daemon-runbook.md) -- Scratch-daemon harness: an on-demand isolated test daemon (init/build/up/cycle/batch/feedback/down) for exercising ANY daemon change without touching the fleet; worked examples + the four-layer safety guarantee
+- [docs/live-twin-testing.md](docs/live-twin-testing.md) -- Driving a real daemon with a fake agent, no model and no money. Why `agent_ready` comes only from the hook relay and never from the twin's stdout, why every shim must translate the argv and carry a sensor, and the two environment variables that must reach the daemon process *(added 2026-08-08 — this recipe had been worked out twice and lost twice, because it only ever lived in a gitignored handoff)*
 
 ## Deep References
 - [AlphaGo-Modeled Orchestration System](refs/AlphaGo-modeled-orch-system.md) -- 800+ line architectural reference document

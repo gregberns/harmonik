@@ -1671,31 +1671,51 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 			// bead. The branch asked is the daemon's configured target branch
 			// (hk-1a7yb), never a literal.
 			autoCloseStaleBlockersOnClaimFailure(ctx, ledger, baseEnv.ProjectDir, baseEnv.TargetBranch, baseEnv.BrTimeoutCfg, ledgerRepair, beadID)
-			// On queue-path: revert the item back to pending so the loop can retry.
+			// On queue-path: give the reservation back so the loop can retry, through
+			// the same durable owner that took it (hk-mk4cl). The raw revert this
+			// replaces logged a failed persist and carried on, which left memory
+			// saying pending and disk saying dispatched with a RunID for a run that
+			// was never claimed and never launched. The next boot reads disk.
+			//
+			// The release also identifies its item by bead and by the run holding
+			// it. The old block located the item by group and item POSITION, so a
+			// wrong position silently reopened a different item for dispatch.
+			//
 			// NQ-B1: target the selected queue by name (capturedQueueName).
-			if queueItemIndex >= 0 && queueStore != nil {
-				lq := queueStore.LockForMutation()
-				liveQ := lq.LockedQueueByName(capturedQueueName)
-				if liveQ != nil {
-					for gi := range liveQ.Groups {
-						if queueGroupIdxFd != nil && liveQ.Groups[gi].GroupIndex != *queueGroupIdxFd {
-							continue
-						}
-						if queueItemIndex < len(liveQ.Groups[gi].Items) {
-							liveQ.Groups[gi].Items[queueItemIndex].Status = queue.ItemStatusPending
-							liveQ.Groups[gi].Items[queueItemIndex].RunID = nil
-							// hk-6pspu: record claim failure reason; do NOT reset Attempts (monotonic).
-							liveQ.Groups[gi].Items[queueItemIndex].LastFailureReason = claimErr.Error()
-						}
-					}
-					lq.LockedSetQueueByName(capturedQueueName, liveQ)
-					// Persist the claim-failure revert (hk-xsutm).
-					if persistErr := queue.Persist(ctx, baseEnv.ProjectDir, liveQ); persistErr != nil {
-						fmt.Fprintf(os.Stderr, "daemon: workloop: Persist claim-revert queueID=%s: %v\n",
-							liveQ.QueueID, persistErr)
-					}
+			if queueItemIndex >= 0 && queueStore != nil && queueGroupIdxFd != nil {
+				release := releaseReservation(ctx, queueStore, baseEnv.ProjectDir, queueReservation{
+					QueueName:  capturedQueueName,
+					GroupIndex: *queueGroupIdxFd,
+					ItemIndex:  queueItemIndex,
+					BeadID:     beadID,
+					RunID:      runID,
+				}, claimErr.Error())
+				// A failed release is not fatal to the loop — refusing to continue
+				// would strand the item the release exists to free — but it is never
+				// silent. Only reservationReleased means THIS call brought the item
+				// back, and a dispatched item is never re-selected, so every other
+				// verdict has to reach stderr or a strand becomes a stall with no
+				// signal.
+				//
+				// What the operator is told about the consequence comes from
+				// releaseOutcomeAdvice, not from a string written here: the verdicts
+				// that reach the default arm do not share a consequence, and the one
+				// message that used to cover them all named the wrong one. A double
+				// release returns reservationRetryLater, and the item it described
+				// as stranded is pending and picked up on the next tick.
+				switch release.Verdict {
+				case reservationReleased:
+					// The item is durably pending again; the loop retries it.
+				case reservationWriteFailed:
+					// The store has quarantined the queue, so the next tick refuses
+					// it; this is the one report that names the repair.
+					reportQueueWriteError(ctx, dispatchGates, capturedQueueName, release)
+				default:
+					fmt.Fprintf(os.Stderr,
+						"daemon: workloop: release claim-revert queue=%q bead=%s run=%s verdict=%s: %v — %s\n",
+						capturedQueueName, beadID, runID, release.Verdict, release.Err,
+						releaseOutcomeAdvice(release.Verdict))
 				}
-				lq.Done()
 			}
 			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {
 				return exitClean()
@@ -2444,7 +2464,10 @@ func extractTmuxAdapterFromSubstrate(sub handler.Substrate) tmuxpkg.Adapter {
 // The goroutine exits without action when the daemon context is cancelled
 // (another daemon shutdown) — the next boot's adoption pass handles it again.
 //
-//nolint:gocognit,cyclop // pre-existing: Seam A moved this code out of workloop.go unchanged
+// The queue revert itself is releaseAdoptedRunItem, which reads that function's
+// doc comment for why it goes through the reservation owner. Moving it out is
+// what dropped this function under the complexity ceiling, so it no longer
+// carries a nolint directive.
 func adoptLiveRunSession(ctx context.Context, ledger beadLedger, env runloop.RunEnv, queueStore *queuewiring.QueueStore, tidGen *core.TransitionIDGenerator, rec runpkg.Record, adapter tmuxpkg.Adapter) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -2479,38 +2502,108 @@ func adoptLiveRunSession(ctx context.Context, ledger beadLedger, env runloop.Run
 	bgCtx := context.Background()
 	runUUID, parseErr := uuid.Parse(rec.RunID)
 	if parseErr != nil {
-		fmt.Fprintf(os.Stderr, "daemon: adoptLiveRunSession: parse runID %q: %v\n", rec.RunID, parseErr)
+		// Both the reopen and the release need the run identity, and this record
+		// does not carry one. Reverting the queue item without it is the bug this
+		// guard prevents: the item names the run that holds it, and a revert that
+		// cannot name a run cannot tell its own item from a newer run's.
+		fmt.Fprintf(os.Stderr,
+			"daemon: adoptLiveRunSession: parse runID %q: %v — bead %s is not reopened and its queue item is not released\n",
+			rec.RunID, parseErr, rec.BeadID)
 	} else {
 		adoptRunID := core.RunID(runUUID)
 		reopenTID, _ := tidGen.Next()                                                                                                                                                //nolint:errcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
 		if reopenErr := ledger.ReopenBead(bgCtx, env.IntentLogDir, env.BrTimeoutCfg, adoptRunID, reopenTID, core.BeadID(rec.BeadID), "run_session_adopted_dead"); reopenErr != nil { //nolint:contextcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
 			fmt.Fprintf(os.Stderr, "daemon: adoptLiveRunSession: ReopenBead %s: %v\n", rec.BeadID, reopenErr)
 		}
-	}
-
-	// Revert the queue item from dispatched → pending so the dispatch loop picks it up.
-	if rec.QueueName != "" && rec.QueueID != "" && rec.GroupIndex >= 0 && rec.ItemIndex >= 0 && queueStore != nil {
-		qname := queue.NormaliseQueueName(rec.QueueName)
-		lq := queueStore.LockForMutation()
-		q := lq.LockedQueueByName(qname)
-		if q != nil && rec.GroupIndex < len(q.Groups) && rec.ItemIndex < len(q.Groups[rec.GroupIndex].Items) {
-			item := &q.Groups[rec.GroupIndex].Items[rec.ItemIndex]
-			if string(item.BeadID) == rec.BeadID && item.Status == queue.ItemStatusDispatched {
-				item.Status = queue.ItemStatusPending
-				item.RunID = nil
-				if persistErr := queue.Persist(bgCtx, env.ProjectDir, q); persistErr != nil { //nolint:contextcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
-					fmt.Fprintf(os.Stderr, "daemon: adoptLiveRunSession: persist queue %q: %v\n", rec.QueueName, persistErr)
-				} else {
-					queueStore.Wake()
-				}
-			}
-		}
-		lq.Done()
+		releaseAdoptedRunItem(bgCtx, queueStore, env.ProjectDir, rec, adoptRunID) //nolint:contextcheck // the daemon context is cancelled by the time this runs; the release must still reach disk
 	}
 
 	// Remove the registry entry now that the session is gone.
 	if env.ProjectDir != "" {
 		_ = runpkg.Remove(env.ProjectDir, rec.RunID) //nolint:errcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
+	}
+}
+
+// releaseAdoptedRunItem gives the dead run's queue item back through the same
+// durable owner that reserved it, and reports every verdict that did not.
+//
+// The revert this replaces took the store mutation lock, changed the live queue
+// pointer in place, and called queue.Persist directly. That was wrong three
+// ways, and each way had already been fixed on the claim-failure release path.
+//
+// It matched the item on bead id and status alone, so it never asked whether the
+// item still belonged to THIS run. An item that was already released and
+// re-dispatched to a newer run was set back to pending underneath that live run,
+// which puts two implementers on one bead — the outcome the reservation exists
+// to prevent. releaseReservation refuses that through errReleaseRunMismatch.
+//
+// It printed a failed persist to stderr and carried on, so memory said pending
+// while disk said dispatched, and the next boot reads disk.
+//
+// It wrote outside the transaction owner. specs/queue-model.md §9.1 QM-059
+// names session adoption as one of the paths that MUST use the QM-001 owner.
+//
+// Bead ref: hk-o85ye, hk-mk4cl.
+func releaseAdoptedRunItem(ctx context.Context, queueStore *queuewiring.QueueStore, projectDir string, rec runpkg.Record, runID core.RunID) {
+	if queueStore == nil || rec.QueueName == "" || rec.QueueID == "" || rec.GroupIndex < 0 || rec.ItemIndex < 0 {
+		return
+	}
+	queueName := queue.NormaliseQueueName(rec.QueueName)
+	release := releaseReservation(ctx, queueStore, projectDir, queueReservation{
+		QueueName:  queueName,
+		GroupIndex: rec.GroupIndex,
+		ItemIndex:  rec.ItemIndex,
+		BeadID:     core.BeadID(rec.BeadID),
+		RunID:      runID,
+	}, "run_session_adopted_dead")
+
+	if report := adoptedReleaseReport(queueName, rec.BeadID, runID, release); report != "" {
+		fmt.Fprintln(os.Stderr, report)
+		return
+	}
+
+	// Only reservationReleased reaches here. This goroutine is not the dispatch
+	// loop, so nothing else nudges that loop out of its poll sleep, and an
+	// OperationAdvance transaction does not wake the store on its own. The raw
+	// revert this replaces woke it by hand for the same reason.
+	queueStore.Wake()
+}
+
+// adoptedReleaseReport returns what stderr must say about a release that did
+// NOT return the item, and an empty string when the release returned it.
+//
+// It is a function rather than a switch inside releaseAdoptedRunItem for the
+// reason releaseOutcomeAdvice gives: this report is the only place a wrong
+// answer reaches a human, and a string assembled inside a switch arm cannot be
+// tested. The old code had no report at all here — a failed persist went to
+// stderr and the goroutine carried on as if the item had come back.
+//
+// Only reservationReleased means the item is back. A dispatched item is never
+// re-selected, so every other verdict has to reach stderr or a strand becomes a
+// stall with no signal. What the operator is told about the consequence comes
+// from releaseOutcomeAdvice, because the verdicts that reach the default arm do
+// not share one.
+func adoptedReleaseReport(queueName, beadID string, runID core.RunID, release reservationResult) string {
+	switch release.Verdict {
+	case reservationReleased:
+		return ""
+
+	case reservationWriteFailed:
+		// The store has quarantined the queue, so every later write to it is
+		// refused. This does not clear by retrying, so name the repair. The
+		// dispatch loop's reportQueueWriteError is not reachable from here: its
+		// dedup map belongs to that single-threaded loop.
+		return fmt.Sprintf(
+			"daemon: adoptLiveRunSession: QUEUE WRITE FAILED releasing queue=%q bead=%s run=%s outcome=%s: %v — "+
+				"queue %q now refuses further writes and the daemon is degraded. Check free disk space and the "+
+				".harmonik/queues directory, then restart the daemon.",
+			queueName, beadID, runID, release.Outcome, release.Err, queueName)
+
+	default:
+		return fmt.Sprintf(
+			"daemon: adoptLiveRunSession: release adopted-dead queue=%q bead=%s run=%s verdict=%s: %v — %s",
+			queueName, beadID, runID, release.Verdict, release.Err,
+			releaseOutcomeAdvice(release.Verdict))
 	}
 }
 

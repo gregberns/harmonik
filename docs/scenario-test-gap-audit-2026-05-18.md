@@ -1,5 +1,23 @@
 # Scenario-test gap audit — 2026-05-18
 
+> **SUPERSEDED. Do not work from this file.** Re-checked on 2026-08-08 against
+> the tree at `work/bravo-reachability`. Two things in it are false:
+>
+> 1. **The beads it says it filed do not exist.** `hk-sc1`, `hk-sc2`, `hk-sc4`
+>    and `hk-sc5` return "issue not found". `hk-sc3` matches only `hk-sc3o4`, an
+>    unrelated closed issue about the orphan sweep. Nothing here is tracked.
+> 2. **Two of its gaps are scoped to symbols the tree no longer has.** `revSpec`
+>    and `lastHandle` appear in zero Go files. A gap described against a symbol
+>    that is gone cannot be actioned as written.
+>
+> The file predates the delete-and-rewrite program, so its line-number citations
+> describe a tree that no longer exists. Its named symbols aged better than its
+> line numbers, which is the general rot pattern here.
+>
+> For current scenario and test-coverage gaps, work from the beads labelled
+> `found-by:testing-campaign` in the local `br` ledger instead. Kept for the
+> reasoning, which is still worth reading.
+
 Source: gap-audit sub-agent, dispatched during the v50 session. Five P0 workflows currently have zero scenario-test coverage. Each names the half-built-system pattern it would have caught at PR time. Filed as beads hk-sc1..hk-sc5 (titles below); IDs assigned at filing time.
 
 ## 1. HandlerPause policy goroutine wired end-to-end

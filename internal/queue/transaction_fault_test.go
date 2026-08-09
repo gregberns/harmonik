@@ -911,3 +911,107 @@ func TestArchiveOperationCouplingRejectsBeforeIO(t *testing.T) {
 		})
 	}
 }
+
+// TestWriteReplacementRefusedRemovesCandidate pins the cleanup half of a refused
+// replacement, and its asymmetry with the indeterminate case above.
+//
+// A refusal means our intent was not installed, so no intent on disk can name
+// this candidate and it must be removed. Without that removal a queue that keeps
+// refusing grows one orphan candidate per attempt, forever, which is what the
+// loop below measures rather than asserts once.
+//
+// It exercises one refused producer, "existing record differs". The read-error
+// and "conflicting record appeared during install" producers reach the same
+// cleanup and are not covered here.
+//
+// Contrast TestWriteReplacementIntentTempUnlinkAfterInstallIsIndeterminate, which
+// pins the opposite rule for the indeterminate case: there the intent may have
+// landed, so the candidate MUST survive for ReplaceRetryRename to promote it.
+// Deleting on both states would satisfy this test and break that one.
+//
+// The absence of the candidate is deliberately NOT the only evidence here. An
+// absent file is equally consistent with a candidate that was never created, so
+// asserting only "it is gone" would pass on a build where the write never
+// happened — the cannot-fail shape recorded in STEP-6-RESOURCE-LEASES.md §9. The
+// ops seam below records the creation and the removal separately, so the test
+// proves the machinery ran and then cleaned up after itself.
+func TestWriteReplacementRefusedRemovesCandidate(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	plan := transactionFixturePlan(t, projectDir)
+	transactionSeedPrior(t, plan)
+
+	// Seed a conflicting intent owned by nobody in this test. durableNoReplace
+	// reads it, finds bytes that differ from ours, and refuses.
+	foreignIntent := []byte(`{"schema_version":1,"normalized_name":"main","note":"not ours"}`)
+	intentPath := replaceIntentPath(projectDir, QueueNameMain)
+	if err := os.MkdirAll(filepath.Dir(intentPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(intentPath, foreignIntent, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	isCandidate := func(path string) bool {
+		return strings.Contains(filepath.Base(path), ".candidate-")
+	}
+	const attempts = 3
+	for attempt := range attempts {
+		var created, removed []string
+		ops := osNamespaceOps()
+		openFile := ops.openFile
+		ops.openFile = func(path string, flags int, mode os.FileMode) (*os.File, error) {
+			f, err := openFile(path, flags, mode)
+			if err == nil && isCandidate(path) {
+				created = append(created, path)
+			}
+			return f, err
+		}
+		remove := ops.remove
+		ops.remove = func(path string) error {
+			err := remove(path)
+			if err == nil && isCandidate(path) {
+				removed = append(removed, path)
+			}
+			return err
+		}
+
+		got := writeReplacement(context.Background(), plan, ops)
+		if got.Outcome != OutcomeCommitIndeterminate {
+			t.Fatalf("attempt %d: outcome = %q, want %q (err=%v)",
+				attempt, got.Outcome, OutcomeCommitIndeterminate, got.Err)
+		}
+		candidatePath := filepath.Join(queuesDir(projectDir), got.Intent.CandidateTempBasename)
+
+		// Positive evidence first: the candidate really was written. Without this
+		// the removal assertion below would also pass on a build that never
+		// created it.
+		if len(created) != 1 || created[0] != candidatePath {
+			t.Fatalf("attempt %d: candidate not created exactly once before the refusal: created=%v want=[%q]",
+				attempt, created, candidatePath)
+		}
+		// Then the removal itself, observed rather than inferred from a stat.
+		if len(removed) != 1 || removed[0] != candidatePath {
+			t.Fatalf("attempt %d: refused replacement did not remove its candidate: removed=%v want=[%q]",
+				attempt, removed, candidatePath)
+		}
+		if _, err := os.Stat(candidatePath); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("attempt %d: candidate %q survived a refused replacement (stat=%v)",
+				attempt, got.Intent.CandidateTempBasename, err)
+		}
+	}
+
+	// The refusal must leave the other transaction's intent and the canonical
+	// queue exactly as they were. Cleaning up our own candidate is the only
+	// write a refused replacement is allowed to make.
+	survivingIntent, err := os.ReadFile(intentPath) //nolint:gosec // path is test-owned t.TempDir data
+	if err != nil {
+		t.Fatalf("foreign intent removed by a refused replacement: %v", err)
+	}
+	if !bytes.Equal(survivingIntent, foreignIntent) {
+		t.Fatal("refused replacement rewrote an intent it does not own")
+	}
+	if canonical := transactionReadCanonical(t, plan); !bytes.Equal(canonical, plan.PriorBytes) {
+		t.Fatal("canonical changed after a refused replacement")
+	}
+}

@@ -44,6 +44,16 @@ var (
 	// errReserveItemNotPending reports that the item is gone, moved, or was
 	// taken by another path between the snapshot and the write.
 	errReserveItemNotPending = errors.New("daemon: reservation: queue item is no longer pending")
+
+	// errReleaseItemNotDispatched reports that the item the caller wants to give
+	// back is not the dispatched item it reserved. Something else already moved
+	// it, so this release has nothing to undo.
+	errReleaseItemNotDispatched = errors.New("daemon: reservation: queue item is not dispatched")
+
+	// errReleaseRunMismatch reports that the item is dispatched to a DIFFERENT
+	// run than the one giving the reservation back. Releasing it would strand
+	// whichever run actually holds it, so the release refuses.
+	errReleaseRunMismatch = errors.New("daemon: reservation: queue item is dispatched to another run")
 )
 
 // queueReservation names the one item a dispatch wants to reserve, and the run
@@ -76,7 +86,70 @@ const (
 	// reservationWriteFailed — the write failed or its result is unknown. The
 	// dispatch MUST be abandoned: no claim, no launch.
 	reservationWriteFailed reservationVerdict = "write_failed"
+
+	// reservationReleased — the item is durably back at pending and no longer
+	// names a run. The next tick may pick it again.
+	reservationReleased reservationVerdict = "released"
+
+	// reservationReleaseContended — the release lost its snapshot race on every
+	// attempt and gave up. The item is still dispatched to a run that is not
+	// going to execute it, and nothing re-selects a dispatched item, so it is
+	// stranded until the boot reconciliation pass sees it.
+	reservationReleaseContended reservationVerdict = "release_contended"
 )
+
+// releaseOutcomeAdvice states what an operator should expect to happen next
+// after a release that did not return the item.
+//
+// It is a function rather than a string built inline in the reporting switch
+// because that report is the only place a wrong answer here reaches a human,
+// and a string assembled inside a switch arm cannot be tested.
+//
+// The distinction it draws is load-bearing, not cosmetic. A contended release
+// really does leave the item dispatched to a run that will never execute it,
+// and nothing re-selects a dispatched item, so the operator waits for boot
+// reconciliation. A retry_later release wrote nothing BECAUSE the item was
+// already not this run's to give back: it had moved, or another run holds it.
+// A double release is the ordinary producer — the first one already returned
+// the item to pending, and a pending item is re-selected on the very next
+// tick. Reporting that as a strand sends an operator hunting a stall that is
+// not there.
+func releaseOutcomeAdvice(verdict reservationVerdict) string {
+	switch verdict {
+	case reservationRetryLater:
+		return "nothing was written because the item is not this run's to release — " +
+			"it already moved or another run holds it, so this path stranded nothing"
+
+	case reservationReleaseContended:
+		return "the item is still dispatched and will not be re-selected until the boot reconciliation pass"
+
+	default:
+		// releaseAttempt does not produce reservationReserved or
+		// reservationItemFailed, and reservationWriteFailed and
+		// reservationReleased are reported by their own arms. An unrecognised
+		// verdict is a code change that did not update this function, so say
+		// the cautious thing rather than promise a recovery.
+		return "the item may still be dispatched and may not be re-selected until the boot reconciliation pass"
+	}
+}
+
+// releaseRetryBudget bounds the release's re-snapshot loop.
+//
+// Transact is optimistic: it refuses a write whose snapshot moved, and raw
+// writers on the per-run completion goroutines bump the generation whenever a
+// run on the same queue finishes. The release MUST NOT simply give up on that
+// refusal. Only a pending item is ever re-selected, so an unreleased item is
+// stranded at dispatched and its group never reaches all-terminal — a stall
+// that reads as a slow daemon rather than an error.
+//
+// The raw revert this replaces could not lose the race, because it held one
+// lock across read-modify-write. It paid for that with a persist whose error it
+// dropped. Re-reading and retrying buys the durability back without giving up
+// the property that made the old code correct.
+//
+// Three is enough: each attempt re-reads the live queue, and losing three times
+// means sustained contention rather than one unlucky interleave.
+const releaseRetryBudget = 3
 
 // reservationResult carries the verdict plus what the caller needs to explain
 // it to an operator.
@@ -174,6 +247,124 @@ func reserveQueueItem(ctx context.Context, queueStore *queuewiring.QueueStore, p
 
 	case result.Outcome == queue.OutcomeRejected:
 		return reservationResult{Verdict: reservationRetryLater, Outcome: result.Outcome, Err: result.Err}
+
+	default:
+		return reservationResult{Verdict: reservationWriteFailed, Outcome: result.Outcome, Err: result.Err}
+	}
+}
+
+// releaseReservation gives a reservation back through the same durable owner
+// that took it. The item returns to pending and stops naming a run, in one
+// write, and the caller is told whether that reached disk.
+//
+// A reservation is an acquire, and every acquire here has a matching release.
+// The release was a raw lock-and-persist whose error was logged and dropped. A
+// dropped error there means memory says pending and disk says dispatched with a
+// RunID for a run that never started, and the next boot reads disk.
+//
+// reason is written to LastFailureReason so an operator can see why the item
+// came back. Attempts is deliberately NOT reset: the budget is monotonic, so a
+// bead that fails to claim forever still reaches the attempt bound (hk-6pspu).
+//
+// The item is identified by bead id through activeQueueItem, and by the run
+// that holds it, not by slice position alone. A release that cannot find its
+// own item writes nothing rather than reopening somebody else's.
+//
+// A failed release is reported, not fatal to the daemon: refusing to release
+// strands the very item the release exists to free. The store quarantines the
+// queue on a failed write regardless, so the next tick refuses it loudly.
+//
+// The caller MUST read the verdict. Only reservationReleased means THIS call
+// put the item back. That is not the same as the item being stranded on every
+// other verdict: reservationRetryLater means the write was refused because the
+// item is not this run's any more, which is what a second release of an
+// already-released item gets, and that item is pending and re-selected on the
+// next tick. reservationReleaseContended is the verdict that really does leave
+// it dispatched, where nothing re-selects it until boot reconciliation.
+// releaseOutcomeAdvice carries that distinction to the operator.
+//
+// Spec ref: specs/queue-model.md §9.1 QM-059 (reservation release owner),
+//
+//	§3.1 QM-001 (atomic-write failure behavior).
+//
+// Bead ref: hk-mk4cl, hk-xsutm, hk-6pspu.
+func releaseReservation(ctx context.Context, queueStore *queuewiring.QueueStore, projectDir string, res queueReservation, reason string) reservationResult {
+	return releaseFrom(ctx, queueStore, projectDir, queueStore.Snapshot(res.QueueName), res, reason)
+}
+
+// releaseFrom runs the release from a caller-supplied first snapshot, re-reading
+// the queue after every attempt that lost the snapshot race.
+//
+// Seeding the first snapshot is what makes the retry testable: a test can hand
+// this a snapshot it has already invalidated and watch the second attempt heal
+// it. Racing a real writer for the window between the read and the write does
+// not reliably reproduce a lost attempt, so a test built that way passes
+// whether the loop retries or not.
+func releaseFrom(ctx context.Context, queueStore *queuewiring.QueueStore, projectDir string, snapshot queuewiring.Snapshot, res queueReservation, reason string) reservationResult {
+	var last reservationResult
+	for attempt := 0; attempt < releaseRetryBudget; attempt++ {
+		if snapshot.Queue == nil {
+			return reservationResult{Verdict: reservationRetryLater, Outcome: queue.OutcomeRejected}
+		}
+		result := releaseAttempt(ctx, queueStore, projectDir, snapshot, res, reason)
+		if result.Verdict != reservationReleaseContended {
+			return result
+		}
+		last = result
+		snapshot = queueStore.Snapshot(res.QueueName)
+	}
+	return last
+}
+
+// releaseAttempt is one optimistic pass of the release against one snapshot.
+// It is separate from the loop so a test can hand it a snapshot that is already
+// stale and pin the contended classification without racing for the window.
+//
+// A reservationReleaseContended verdict is the ONLY one the caller may retry:
+// it means the write was refused because the queue moved, not because the item
+// is not ours.
+func releaseAttempt(ctx context.Context, queueStore *queuewiring.QueueStore, projectDir string, snapshot queuewiring.Snapshot, res queueReservation, reason string) reservationResult {
+	result := queueStore.Transact(ctx, queuewiring.TransactionRequest{
+		Snapshot:      snapshot,
+		ProjectDir:    projectDir,
+		OperationKind: queue.OperationAdvance,
+		Mutate: func(q *queue.Queue) error {
+			item := activeQueueItem(q, res.GroupIndex, res.ItemIndex, res.BeadID)
+			if item == nil || item.Status != queue.ItemStatusDispatched {
+				return errReleaseItemNotDispatched
+			}
+			if item.RunID == nil || *item.RunID != res.RunID.String() {
+				return errReleaseRunMismatch
+			}
+			item.Status = queue.ItemStatusPending
+			item.RunID = nil
+			item.LastFailureReason = reason
+			return nil
+		},
+	})
+
+	switch {
+	case result.Committed():
+		return reservationResult{Verdict: reservationReleased, FailureReason: reason, Outcome: result.Outcome}
+
+	case errors.Is(result.Err, queuewiring.ErrQueueQuarantined):
+		// Same operator problem as the write that shut the queue, and it
+		// reports the same way. See reserveQueueItem for why this is not
+		// retry_later.
+		return reservationResult{Verdict: reservationWriteFailed, Outcome: result.Outcome, Err: result.Err}
+
+	case errors.Is(result.Err, errReleaseItemNotDispatched),
+		errors.Is(result.Err, errReleaseRunMismatch):
+		// The item is not ours to give back — something else already moved it,
+		// or another run holds it. Re-reading would find the same answer, so
+		// this does not consume the retry budget and does not write.
+		return reservationResult{Verdict: reservationRetryLater, Outcome: result.Outcome, Err: result.Err}
+
+	case result.Outcome == queue.OutcomeRejected:
+		// The snapshot moved under us: a raw writer on a completion goroutine
+		// bumped the generation between the read and the write. The item is
+		// still ours and still needs releasing, so the caller re-reads.
+		return reservationResult{Verdict: reservationReleaseContended, Outcome: result.Outcome, Err: result.Err}
 
 	default:
 		return reservationResult{Verdict: reservationWriteFailed, Outcome: result.Outcome, Err: result.Err}

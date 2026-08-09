@@ -167,6 +167,13 @@ These are author-decidable but warrant discipline-author attention before the v0
 - `.beads/` is now in `.gitignore` (added 2026-04-27).
 - Recommended action before v0.4 reload: `rm -rf .beads/`, then re-run with the patched discipline + pilot.
 
+> **DO NOT RUN THAT COMMAND TODAY.** It was safe in April 2026, when `.beads/`
+> held 66 throwaway smoke-load rows and nothing else. `.beads/` now holds the
+> live issue ledger for the whole project. It is machine-local and gitignored,
+> so it is in no clone, on no remote, and in no CI run — deleting it destroys
+> every open issue with no way back. This whole section is a record of one
+> April smoke load. Read it as history, not as a runbook.
+
 ## 6. Process notes
 
 - The smoke load took ~5 minutes of `br` invocations (66 creates + 65 status updates + 56 dep adds = ~190 subprocess calls). Each `br` call is ~30–80 ms; total wall time tractable for the full corpus at ~790 beads (~3 minutes per spec, ~30 minutes for all 10).

@@ -12,9 +12,14 @@ package scenario
 //      qs.SetQueue so appended items reach the workloop.
 //   3. hk-peucr: HandlerAdapter emits queue_submitted / queue_appended events
 //      after persist.
-//   4. hk-xsutm: evaluateGroupAdvanceWithOutcome now calls queue.Persist after
-//      each item completion and CompleteAndUnlink + ClearQueue when all groups
-//      reach complete-success.
+//   4. hk-xsutm: CompleteAndUnlink + ClearQueue when all groups reach
+//      complete-success.
+//
+// Item 4 used to claim the queue.Persist call in evaluateGroupAdvanceWithOutcome
+// as well. That was wrong: this file does not import internal/daemon and cannot
+// reach that function. The pin for that persist is
+// TestWireStaleWatcherReapSeams_ForceReapPersistsGroupAdvance in internal/daemon —
+// do not delete it as redundant. Item 4's CompleteAndUnlink claim is unverified.
 //
 // Helper prefix: queueSetQueueWiring (this file).
 //

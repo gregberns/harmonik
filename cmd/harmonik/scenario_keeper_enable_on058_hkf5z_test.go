@@ -64,19 +64,18 @@ import (
 )
 
 // kfe058MakeScripts creates a fake scripts directory with placeholder keeper scripts.
+//
+// The list comes from the production constant keeperScriptNames, not from a copy
+// written out here. runKeeperEnable refuses to run when any required script is
+// absent, so a hand-copied list makes this test fail the moment the product adds a
+// script. That is what happened with keeper-sessionstart-hook.sh: this test landed
+// with a three-script copy, the SessionStart hook became required three days later,
+// and the fixture kept the old shape. Deriving the fixture removes the second list.
 func kfe058MakeScripts(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	// Must stay in step with the requiredScripts list in runKeeperEnable
-	// (keeper_enable_doctor_cmd.go). This fixture went stale when the
-	// SessionStart hook was added: the untagged sibling test was updated and
-	// this one was not, because no build target compiled it.
-	for _, name := range []string{
-		"keeper-statusline.sh",
-		"keeper-stop-hook.sh",
-		"keeper-precompact-hook.sh",
-		"keeper-sessionstart-hook.sh",
-	} {
+	for _, name := range keeperScriptNames {
+		//nolint:gosec // G306: executable mode is required for shell-script fixtures
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"), 0o755); err != nil {
 			t.Fatalf("kfe058MakeScripts: write %s: %v", name, err)
 		}
@@ -256,19 +255,29 @@ func TestScenario_KeeperEnableOn058_HKF5Z(t *testing.T) {
 	}
 
 	// ── Part D — doctor scope (ON-058a(4)) ──────────────────────────────────────
-	// D1: doctor for project A passes its hook checks.
+	//
+	// Both halves assert on the PER-CHECK marker for the hook check by name, not on
+	// the exit code and not on "some ✗ appears somewhere". The doctor runs a dozen
+	// checks, and a bare temp dir fails most of them for reasons that have nothing
+	// to do with hook scoping — it has no config.yaml, no gauge, and no watcher. An
+	// assertion on the exit code alone is therefore satisfied for free, and so is
+	// "the output contains a ✗". Only "✓ Stop hook" versus "✗ Stop hook" separates a
+	// doctor that honours project scope from one that greenlights on a peer group.
 	var docOut, docErr bytes.Buffer
 	runKeeperDoctor(kfe058Doc(projectA), &docOut, &docErr)
 	docOutStr := docOut.String()
-	if strings.Contains(docOutStr, "✗ Stop hook") {
-		t.Errorf("Part D1: ON-058a(4) VIOLATED: doctor reported Stop hook gap for projectA (should find its own group): %s", docOutStr)
+
+	// D1: doctor for project A finds ITS OWN groups — positive evidence, so the
+	// check cannot pass merely because the marker text changed shape.
+	if !strings.Contains(docOutStr, "✓ Stop hook") {
+		t.Errorf("Part D1: ON-058a(4) VIOLATED: doctor did not greenlight projectA's own Stop hook group: %s", docOutStr)
 	}
-	if strings.Contains(docOutStr, "✗ PreCompact hook") {
-		t.Errorf("Part D1: ON-058a(4) VIOLATED: doctor reported PreCompact gap for projectA (should find its own group): %s", docOutStr)
+	if !strings.Contains(docOutStr, "✓ PreCompact hook") {
+		t.Errorf("Part D1: ON-058a(4) VIOLATED: doctor did not greenlight projectA's own PreCompact hook group: %s", docOutStr)
 	}
 
-	// D2: doctor for an unknown third project must report hook gaps —
-	// it MUST NOT greenlight on project A's or B's groups.
+	// D2: doctor for an unknown third project must report a gap for the hook checks
+	// themselves — it MUST NOT greenlight on project A's or B's groups.
 	projectC := t.TempDir() // never enabled
 	docOut.Reset()
 	docErr.Reset()
@@ -277,7 +286,10 @@ func TestScenario_KeeperEnableOn058_HKF5Z(t *testing.T) {
 	if code == 0 {
 		t.Errorf("Part D2: ON-058a(4) VIOLATED: doctor exited 0 for never-enabled project C — should find hook gaps, not greenlight on peer groups: %s", docOutStr)
 	}
-	if !strings.Contains(docOutStr, "✗ Stop hook") && !strings.Contains(docOutStr, "✗") {
-		t.Errorf("Part D2: ON-058a(4): doctor for project C emitted no ✗ markers (expected hook gaps): %s", docOutStr)
+	if !strings.Contains(docOutStr, "✗ Stop hook") {
+		t.Errorf("Part D2: ON-058a(4) VIOLATED: doctor greenlit project C's Stop hook on a peer project's group: %s", docOutStr)
+	}
+	if !strings.Contains(docOutStr, "✗ PreCompact hook") {
+		t.Errorf("Part D2: ON-058a(4) VIOLATED: doctor greenlit project C's PreCompact hook on a peer project's group: %s", docOutStr)
 	}
 }

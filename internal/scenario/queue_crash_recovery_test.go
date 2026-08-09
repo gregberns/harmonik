@@ -15,11 +15,12 @@ package scenario
 // the Beads ledger; if Beads shows open, the item reverts to pending via
 // QM-001 atomic write and emits queue_item_reconciled{reason: claim_write_lost}.
 // The cross-check completes before the first dispatch-loop tick.
-// NOTE: QM-002a cross-check end-to-end coverage (revert + event ordering + payload
-// + persistence round-trip + no-revert-when-not-open) lives in
-// internal/lifecycle/startup_pl005_qm002_test.go via LoadQueueAtStartup
-// (landed at 9b15f62 for hk-fwpc0 / T31). This file covers the QM-002 persistence
-// foundation and the QM-002a terminal-state invariant only.
+// NOTE: the QM-002a cross-check itself is covered in
+// internal/lifecycle/startup_pl005_qm002_test.go — the revert of a stranded
+// dispatched item, the persist-before-emit order, and the two cases that must
+// NOT revert (a bead the ledger does not report as open, and a ledger that
+// cannot answer at all). This file covers the QM-002 persistence foundation and
+// the QM-002a terminal-state invariant only.
 //
 // Helper prefix: queueCrashRecovery (bead hk-30wgn, implementer-protocol §Helper-prefix).
 //

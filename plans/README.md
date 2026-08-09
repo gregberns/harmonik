@@ -39,9 +39,11 @@ that triggers a pause on handler-fatal outcomes was unit-tested and reviewer-APP
 was never wired into the composition root. A twin-based scenario test — verifying that
 `harmonik run` dispatching a bead that returns `handler_fatal` actually emits
 `handler_paused` and writes `.harmonik/handler-state.json` — would have caught the gap
-at PR time instead of requiring a separate fixup bead (hk-c8k4c). For the canonical
-inventory of all scenario-test gaps found in the 2026-05-18 audit, see
-[`docs/scenario-test-gap-audit-2026-05-18.md`](../docs/scenario-test-gap-audit-2026-05-18.md).
+at PR time instead of requiring a separate fixup bead (hk-c8k4c). The 2026-05-18 audit
+at [`docs/scenario-test-gap-audit-2026-05-18.md`](../docs/scenario-test-gap-audit-2026-05-18.md)
+is **superseded and is no longer a canonical inventory** — its own header says why. It
+names five beads that were never filed, and two of its gaps are scoped to symbols the tree
+no longer has. For current gaps, read the beads labelled `found-by:testing-campaign`.
 
 ## What's done
 - bullet, with code SHA or bead ID where relevant

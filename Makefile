@@ -1100,6 +1100,13 @@ full:  ## THE merge decision: everything in fast over EVERY package, plus the li
 	$(MAKE) gate-test-compile
 	$(call RUN_TESTS_AND_REPORT,make full,./...,-short)
 	$(MAKE) lint-allow
+	# test-subprocess is the ONLY test that boots the real binary as a process:
+	# it waits for the socket, submits through the real CLI, and asserts a
+	# terminal event. Everything else calls daemon.Start in-process, so a
+	# regression in the boot path a real operator takes had nothing standing in
+	# front of it. It runs in about 11 seconds against a scenario tier that costs
+	# 8 minutes, and the tag keeps it out of the default build.
+	$(MAKE) test-subprocess
 	$(MAKE) test-scenario
 	$(MAKE) module-hygiene
 

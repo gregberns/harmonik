@@ -13,6 +13,33 @@ Read the mutation column as the acceptance test for the test. A test nobody can
 make fail is not coverage, and this repo has already deleted 681 files that
 were.
 
+## Scope — read this before picking a section
+
+**Added 2026-08-09, after a session spent three test files in the wrong
+subsystem.** This inventory was written before the core set was applied to it,
+so it ranks sections by cost of regression and says nothing about whether the
+code is in scope at all.
+
+The core set, from the delete-and-rewrite charter §3, is:
+
+> config → event bus → queue → bead-ledger adapter → worktrees → harness
+> registry + one substrate → work loop → merge
+
+Named as outside it: comms, crew, captain, keeper, dashboard, live-state,
+subscribe, the sentinel, and the socket listener. Against that line:
+
+| Section | In the core set? |
+|---|---|
+| 1. Queue transaction and replacement protocol | Yes — queue |
+| 2. Reservation, release and claim paths | Yes — queue + work loop |
+| 3. Daemon lifecycle and the missing crash tier | **No** — daemon process supervision |
+| 4. Operator CLI | **No** — the CLI is a client over the socket listener, and the keeper rows are keeper |
+| 5. Multi-harness dispatch | Yes — harness registry + substrate |
+
+Sections 3 and 4 are not wrong about the gaps they name. They are coverage for
+subsystems the rewrite may not keep, so they cost more than they return until
+the core is done. Work 1, 2 and 5.
+
 ## How to use it
 
 Work top-down inside a section. The sections are ordered by how much a silent
@@ -61,7 +88,7 @@ with a non-blocking `default:`, never a sleep.
 | `TestReleaseReservation_RefusesAnItemInANonActiveGroupWithTheSameIndex` and `..._InADifferentGroupIndex` | The release identifies its item by all four of group status, group index, item index and bead id. **Two of `activeQueueItem`'s four guards can be deleted today with the whole suite green** — they cover for each other in every fixture. | Delete the `GroupStatusActive` guard, or the `GroupIndex` guard. Needs a fixture with decoys carrying the same bead at the same item index. |
 | `TestReleaseFrom_ExhaustsTheRetryBudgetAndReportsContention` | After the budget is spent the release stops, reports contention, and leaves the item dispatched rather than reporting a false success. `releaseRetryBudget` appears in zero tests. **Needs a one-word seam:** `const` → `var`, so a test can set it to 1. | Change `return last` to return retry-later, or make the loop unbounded. |
 | `TestReserveQueueItem_CrossQueueDuplicateDoesNotChargeAnAttempt` | Losing a cross-queue race does not consume the item's attempt budget — the item did not cause the failure. | Add `item.Attempts++` to `failQueueItem`'s mutate. |
-| `TestWorkLoop_DispatchHaltAfterTheReservationDoesNotLeaveTheItemDispatched` | Every exit between the reservation commit and the claim either releases the item or records it. Three early returns sit in that window and none releases. Red today. | After a fix, move the release below the `dispatchCtx.Err()` early return. |
+| ~~`TestWorkLoop_DispatchHaltAfterTheReservationDoesNotLeaveTheItemDispatched`~~ **WRITTEN 2026-08-09, and this row was wrong** | Every exit between the reservation commit and the claim either releases the item or records it. This row said three early returns leave the item dispatched, and marked it red today. Driven against the tree, two of the three are safe: both reachable exits leave through `exitClean`, which calls `drainCancelledQueue` and archives the whole active queue. Those two are now pinned in `internal/daemon/workloop_reservationwindow_test.go`. Only the claim-TransitionID exit is a real defect — it returns an error directly, skips the drain, and strands the item; filed as a bug for the fixing lane. | Delete the `drainCancelledQueue` call from `exitClean` — both written tests go red with the stranded-item message. |
 
 **Cannot be fixed by a test — decide instead:**
 `TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency` asserts `peak > 4`, but the

@@ -8,10 +8,10 @@ requirement-prefix: RSM
 status: draft
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.5.0
+version: 0.5.1
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-08-05
+last-updated: 2026-08-09
 depends-on:
   - replay-substrate
   - event-model
@@ -217,20 +217,24 @@ process, AND the run is ending because the daemon is stopping. Survive wins over
 when both apply. Only a surviving run leaves its bead in progress for a later boot to adopt; every
 other disposition settles the bead by the run's own outcome.
 
-> **Survive is what a run ASKS for. The system does not deliver it today, and it fails twice.**
+> **Survive is what a run ASKS for. The system delivers part of it. It used to fail twice, and one
+> of the two failures is fixed.**
 >
-> The first failure is inside the daemon's own process. The completion wait kills the agent session
-> whenever it finds the run context already cancelled, on the path a tmux-hosted independent session
-> takes. It names no gate. So the session is already dead before the daemon exits.
+> The failure that remains is inside the daemon's own process. A graph node's launch reads no exit
+> facts at all, so it decides reclaim and kills the agent session when it finds the run context
+> cancelled. The session is dead before the daemon exits.
 >
-> The second failure is at the next boot. The orphan sweep kills every tmux session carrying the
-> project prefix that is not in its exclusion set, with no liveness test, and it runs before the
-> pass that looks for a surviving run.
+> The failure that is FIXED was at the next boot. The orphan sweep killed every tmux session
+> carrying the project prefix that was not in its exclusion set, with no liveness test, and it ran
+> before the pass that looks for a surviving run. The boot now builds that exclusion from the run
+> registry — a record naming a session whose pane is alive — before the kill pass, and it holds such
+> a run's worktree out of both worktree reclaim steps. A run that outlives the daemon is therefore
+> discoverable and adoptable at the next boot, and its worktree is intact.
 >
-> The bead recovers either way, because adoption then classifies the run as dead and resets it.
-> Nothing in this spec or in the code MUST be written as if the agent is still there at the next
-> boot. Making survival real needs BOTH failures fixed, and the second needs a way to tell a live
-> surviving session from a genuine orphan. That is separate work.
+> What a run keeps today is its RECORD and its WORKTREE, not its agent. The bead recovers either
+> way, because adoption classifies the run as dead and resets it. Nothing in this spec or in the
+> code MUST be written as if the agent is still there at the next boot until the remaining failure
+> is fixed, which means giving a graph node's launch the run's exit facts.
 
 **RSM-038.** Leases MUST be held in a scope that gives them back in the reverse of the order they
 were taken. Per-launch resources MUST be held in a scope nested inside the run's scope: a graph run
@@ -573,6 +577,7 @@ subsumed path, which passes no flag).
 
 | Date | Version | Author | Change |
 |------|---------|--------|--------|
+| 2026-08-09 | 0.5.1 | agent (lane alpha, branch consolidation) | **§4a's survival note said the system fails twice. The boot-sweep half is fixed in the tree, so the note was wrong. No obligation changed.** The run-session registry had six readers and no writer, so nothing on disk named a surviving session and the boot sweep killed every project-prefixed session it did not exclude. The write is restored, the boot now excludes a session the registry names whose pane is alive, and it holds such a run's worktree out of both the force-removal and the age prune — see `internal/daemon/orphansweep.go` `probeRunRegistrySessions` and `worktreesNotHeldByALiveRun`. So a run that outlives the daemon keeps its RECORD and its WORKTREE and is adoptable at the next boot. The other half stands: a graph node's launch is given no exit facts, decides reclaim, and kills the agent session before the daemon exits, so the AGENT still does not survive. The blockquote under RSM-037 now says which half is which and names what closing the rest needs. RSM-036, RSM-037 and RSM-038 are unchanged, and the disposition table is unchanged. **Provenance:** this correction was written on branch `work/alpha-sat32` on 2026-08-05 and never merged — the trimmed variant of the same commit landed instead and dropped it, so the spec described the code wrongly for four days. |
 | 2026-08-05 | 0.5.0 | agent (spec repair, hk-6lt60) | **The shutdown-drain edge now requires the pre-merge synchronize it used to forbid, and the appended Amendment A2 is retired.** §7 RSM-021 described the edge as having "no pre-merge-sync". The shipped release path breaks that MUST: `internal/runloop` `drainMergeHook` calls `PreMergeSync` before it merges and routes a synchronize failure to the drain reopen edge. This is the change the kerf work `queue-dogfood-readiness` authorized and never landed — its changelog of record reads "Replaces the conflicting no-sync shutdown clause with synchronized close-or-reopen behavior". The replacement is the approved draft's wording, minus one clause. **One clause is deliberately NOT carried over:** the draft also makes the reopen result `ReopenBead` then `run_failed` on every failure path, and the shipped drain does that on one of the four. A close failure reopens and emits `run_failed`, pinned by `internal/daemon/dot_shutdown_drain_test.go` `TestDotShutdownDrain_CloseFailureReopensThenFails`. A missing tip, a synchronize failure and a merge failure reach `internal/runexec` `drainReopen`, which emits no run terminal. Extending the terminal to those three changes observable behavior and belongs with the code — card T5b owns it, and an OPEN note in RSM-021 records it. **Amendment A2 is retired and the label is not reusable.** It came from the second, superseded changelog table, it replaced nothing, it gated the only shutdown terminal spine on the EM-053a record that names no storage medium and has no production writer, it cited a selection matrix no document defines, and it sat after §14 outside every numbered section. An obligation is removed and another is added, so this is a minor bump by the rule this table stated at 0.4.0. Refs: hk-6lt60, hk-7bfqe. |
 | 2026-08-04 | 0.4.0 | agent (spec lane a-spec) | **The escaped-worktree guard is withdrawn from the spec, because the code was deleted. An obligation is removed, so this is a minor bump and not a pointer repair.** The guard failed a run when the main checkout held uncommitted files. Commits `8ba6bfb57` and `d6c12a669` deleted it, its event type, its emitter, its state-machine case, its vocabulary constant, the two `runmerge` helpers behind it, and the two tests that read as coverage. The measured reason is stronger than the one the record carried: the guard did not run only in a legacy mode, it ran NOWHERE. At the base commit the emitter had zero call sites, the dirty-tree helper had zero production call sites, and the escape-detected event had a consumer case and no producer. The tests asserted that the escape event fired zero times, which nothing could make false. **RSM-008** loses its escaped-worktree clause and its merge-critical-section exclusion, keeps the no-commit guard clause, and gains a DECISION note plus a new negative MUST: no run is failed for a dirty main checkout, and the check is not restored without a new decision recorded in the rule. The OPEN note raised on 2026-07-30 is closed — the decision taken is a third option that the note's two options did not contain. **RSM-018** loses its first sentence, the read-only tree-quiescent slot the deleted check needed. The remote base-sync + worktree-add exclusion is unchanged. **RSM-032** drops the escape-detected event from its applies-to list. **RSM-033** drops the escaped-worktree guard from the list of event-classified failure reasons. **RSM-034** drops the escaped-worktree reopen and the escaped-worktree prefix. The deleted Go identifiers are named nowhere normative after this pass. **What this costs is stated in RSM-008 rather than hidden:** the failure the guard was built for (`hk-6zylj`) has no detector now, and the guard's own false-failure mode (`hk-yru`) is what any rebuild must answer first. **Recorded and deliberately NOT settled here:** nothing outside tests produces the single-shot dispatch terminals, so the surviving `Guarding` state is unreached as well. That needs its own measurement. Companion: [execution-model.md] v0.10.7 and [process-lifecycle.md] v0.7.6. No requirement IDs added, renumbered, or retired. |
 | 2026-08-02 | 0.3.2 | agent (kerf finalize, queue-dogfood-readiness) | **Amendment A2 added, and it should not have been.** The finalize appended "Amendment A2 — durable shutdown handoff" after the revision-history table and bumped the version with no row here. The row is written at 0.5.0 so the table is complete. The finalize took every target from the second, superseded changelog table, and the authorized replacement of the RSM-021 no-sync clause was lost rather than landed. Refs: hk-6lt60. |

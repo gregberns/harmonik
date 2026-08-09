@@ -38,6 +38,7 @@ import (
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	runpkg "github.com/gregberns/harmonik/internal/run"
+	"github.com/gregberns/harmonik/internal/runloop"
 )
 
 // surviveRecoveryHash is the project hash every session name in this file is
@@ -456,13 +457,19 @@ func TestRunSessionAdoption_ARecordWithNoSessionNameIsTreatedAsDead(t *testing.T
 // ─────────────────────────────────────────────────────────────────────────────
 
 // TestRunRegistry_ARecordIsReadableByNameAndCarriesTheSessionName states the
-// contract the two passes above consume, and that the bounded session
-// constructors now lean on: a late-arriving run session is discoverable because
-// its name is written down before the spawn.
+// storage contract the passes above consume: a record written under a run id is
+// readable back by that id, and it carries the session name.
+//
+// It is a round trip through the store and NOTHING MORE. It says nothing about
+// when the record is written, and in particular it does not show that the write
+// happens before the spawn — the earlier wording claimed that and was wrong.
+// TestRunRegistry_TheRecordIsOnDiskAndNamesTheSessionBeforeTheAgentIsLaunched,
+// in run_registry_has_no_writer_test.go, is the test that observes the ordering,
+// and it takes the observation from inside the spawn call.
 //
 // The session name is the only field either adoption pass uses to decide
 // anything. A record written without it is adopted as dead no matter what is
-// running, which is the case pinned above.
+// running.
 func TestRunRegistry_ARecordIsReadableByNameAndCarriesTheSessionName(t *testing.T) {
 	t.Parallel()
 
@@ -493,5 +500,83 @@ func TestRunRegistry_ARecordIsReadableByNameAndCarriesTheSessionName(t *testing.
 	path := filepath.Join(projectDir, ".harmonik", "runs", surviveRecoveryRunID+".json")
 	if _, statErr := os.Stat(path); statErr != nil {
 		t.Errorf("no record at %s: %v — a later boot enumerates this directory and would find nothing", path, statErr)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The live half: what finally settles a run that outlived the daemon
+// ─────────────────────────────────────────────────────────────────────────────
+
+// surviveRecoveryFadingAdapter lists the run's session until it is asked once,
+// then stops. That is a session whose agent finishes shortly after the new
+// daemon adopted it.
+type surviveRecoveryFadingAdapter struct {
+	noopTmuxAdapter
+	mu    sync.Mutex
+	name  string
+	asked int
+}
+
+var _ ltmux.Adapter = (*surviveRecoveryFadingAdapter)(nil)
+
+func (a *surviveRecoveryFadingAdapter) ListSessions(context.Context) ([]string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.asked++
+	if a.asked == 1 {
+		return []string{a.name}, nil
+	}
+	return nil, nil
+}
+
+// TestRunSessionAdoption_TheLiveMonitorGivesTheBeadBackWhenTheAgentFinallyExits
+// covers the pass that is now the ONLY thing that settles a surviving run.
+//
+// Every other route deliberately leaves such a run alone. The boot sweep exempts
+// its tmux session, the dead-session pass skips it because the session is live,
+// and the resume reconcile skips its bead because the registry says an agent has
+// it. That is correct, and it means this monitor is the last one holding the
+// bead. If it stopped working the bead would sit in progress for ever with every
+// guard reporting success.
+//
+// The first poll finds the session and the monitor keeps waiting, so the reopen
+// below is the monitor deciding the agent has gone rather than the monitor
+// firing at anything it is handed.
+func TestRunSessionAdoption_TheLiveMonitorGivesTheBeadBackWhenTheAgentFinallyExits(t *testing.T) {
+	t.Parallel()
+
+	runSession := surviveRecoveryRunSessionName(t)
+	projectDir := surviveRecoveryProject(t, runpkg.Record{
+		SchemaVersion: 1,
+		RunID:         surviveRecoveryRunID,
+		BeadID:        "hk-survive-recovery",
+		SessionName:   runSession,
+	})
+
+	ledger := &surviveRunLedger{}
+	adapter := &surviveRecoveryFadingAdapter{name: runSession}
+
+	adoptLiveRunSession(t.Context(), ledger,
+		runloop.RunEnv{ProjectDir: projectDir, IntentLogDir: t.TempDir()},
+		nil, core.NewTransitionIDGenerator(),
+		runpkg.Record{
+			SchemaVersion: 1,
+			RunID:         surviveRecoveryRunID,
+			BeadID:        "hk-survive-recovery",
+			SessionName:   runSession,
+		}, adapter)
+
+	reopens, _ := ledger.beadSettled()
+	if len(reopens) != 1 || reopens[0] != "run_session_adopted_dead" {
+		t.Fatalf("the monitor reopened the bead %d time(s) with reasons %v, want exactly one "+
+			"\"run_session_adopted_dead\".\n"+
+			"Nothing else gives this bead back. The boot sweep, the dead-session pass and the "+
+			"resume reconcile all step over a bead whose run is live, on purpose.", len(reopens), reopens)
+	}
+	if _, err := runpkg.Load(projectDir, surviveRecoveryRunID); !errors.Is(err, runpkg.ErrNotFound) {
+		t.Errorf("the run record is still on disk after the monitor settled the run "+
+			"(Load err = %v, want ErrNotFound).\n"+
+			"A record left behind keeps the next boot exempting a session that is gone, and the "+
+			"bead is reopened again on every boot after this one.", err)
 	}
 }

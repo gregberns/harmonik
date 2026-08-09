@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -209,6 +210,79 @@ func TestReleaseReservation_RefusesAnItemThatIsNotDispatched(t *testing.T) {
 	released := releaseReservation(context.Background(), store, projectDir, releaseTarget(beadID, newReservationRunID(t)), "claim_failed")
 	if released.Verdict != reservationRetryLater {
 		t.Errorf("verdict = %q; want %q", released.Verdict, reservationRetryLater)
+	}
+}
+
+// A double release is the ordinary producer of reservationRetryLater on this
+// path, and it is where the operator report used to be false. The first release
+// returns the item to pending. The second finds an item that is no longer
+// dispatched, writes nothing, and reports retry_later — at which point the item
+// is PENDING and the next tick re-selects it.
+//
+// The three assertions are one story and are worth nothing apart: the verdict,
+// the state on disk that the verdict describes, and the sentence an operator is
+// given about that state. Pinning the verdict alone is what let the wrong
+// sentence ship — TestReleaseReservation_RefusesAnItemThatIsNotDispatched
+// already pinned the verdict, and the report still said the opposite.
+func TestReleaseReservation_SecondReleaseLeavesTheItemPendingAndSaysSo(t *testing.T) {
+	const beadID = core.BeadID("hk-release-double")
+	projectDir, store, runID := reserveForRelease(t, beadID)
+
+	first := releaseReservation(context.Background(), store, projectDir, releaseTarget(beadID, runID), "claim_failed")
+	if first.Verdict != reservationReleased {
+		t.Fatalf("setup: first release verdict = %q; want %q", first.Verdict, reservationReleased)
+	}
+
+	second := releaseReservation(context.Background(), store, projectDir, releaseTarget(beadID, runID), "claim_failed")
+	if second.Verdict != reservationRetryLater {
+		t.Fatalf("second release verdict = %q; want %q", second.Verdict, reservationRetryLater)
+	}
+
+	target, _, _ := loadReleasedItem(t, projectDir)
+	if target.Status != queue.ItemStatusPending {
+		t.Fatalf("persisted status = %q; want %q — the premise of this test is that the item is "+
+			"already back, so a report calling it stranded is false", target.Status, queue.ItemStatusPending)
+	}
+	if target.RunID != nil {
+		t.Errorf("persisted RunID = %q; want nil — a released item names no run", *target.RunID)
+	}
+
+	// The operator sentence must not contradict the state two lines above.
+	advice := releaseOutcomeAdvice(second.Verdict)
+	if strings.Contains(advice, "still dispatched") {
+		t.Errorf("advice for %q says %q — the item is pending on disk and the next tick re-selects it, "+
+			"so this sends the operator looking for a strand that does not exist", second.Verdict, advice)
+	}
+	if strings.Contains(advice, "boot reconciliation") {
+		t.Errorf("advice for %q says %q — nothing here waits for boot reconciliation", second.Verdict, advice)
+	}
+}
+
+// The contended verdict is the one that DOES strand the item, and it must keep
+// saying so. Without this, the fix above could be "achieved" by softening every
+// message until none of them warns about anything.
+func TestReleaseOutcomeAdvice_ContendedStillWarnsAboutTheStrand(t *testing.T) {
+	advice := releaseOutcomeAdvice(reservationReleaseContended)
+	if !strings.Contains(advice, "still dispatched") {
+		t.Errorf("advice for %q = %q; a contended release leaves the item dispatched to a run that "+
+			"will never execute it, and the operator has to be told", reservationReleaseContended, advice)
+	}
+	if !strings.Contains(advice, "boot reconciliation") {
+		t.Errorf("advice for %q = %q; boot reconciliation is the only thing that clears this, and it "+
+			"is the only actionable part of the message", reservationReleaseContended, advice)
+	}
+}
+
+// An unrecognised verdict means somebody added one and did not come here. The
+// safe answer is the cautious one: never tell an operator an item recovered
+// when this function does not know that it did.
+func TestReleaseOutcomeAdvice_UnknownVerdictDoesNotPromiseRecovery(t *testing.T) {
+	advice := releaseOutcomeAdvice(reservationVerdict("verdict_added_after_this_test_was_written"))
+	if strings.Contains(advice, "stranded nothing") {
+		t.Errorf("advice for an unknown verdict = %q; it must not claim the item is fine", advice)
+	}
+	if advice == "" {
+		t.Error("advice for an unknown verdict is empty; the report would then say nothing at all")
 	}
 }
 

@@ -3,6 +3,7 @@ package daemon_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -89,7 +90,10 @@ func TestReservationWriteFailure_NeverClaimsAndNeverLaunches(t *testing.T) {
 		// the reservation it claims to check.
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Comfortably longer than waitFor's own 20 s deadline, so a starved loop
+	// reports as a named timeout on the condition it missed rather than as a
+	// cancelled context with no explanation.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	loopDone := make(chan struct{})
@@ -98,9 +102,51 @@ func TestReservationWriteFailure_NeverClaimsAndNeverLaunches(t *testing.T) {
 		daemon.ExportedRunWorkLoop(ctx, deps) //nolint:errcheck,gosec // G104: background loop; returns on ctx cancel
 	}()
 
-	// Several poll ticks, so a loop that retries the reservation gets the
-	// chance to claim on a later attempt if the abort is not wired.
-	time.Sleep(1200 * time.Millisecond)
+	// Anchor on the work the assertions describe, then force further iterations.
+	//
+	// This replaces a 1200 ms sleep described as "several poll ticks".
+	// workloopPollInterval is 2 s, so 1200 ms was less than ONE tick: the loop
+	// was still inside its first post-failure sleep when the assertions ran, and
+	// every negative assertion below passed because nothing had been given time
+	// to happen. A test whose negative assertions cannot fail is not a weak
+	// test, it is not a test.
+	//
+	// The event is the positive anchor. It is emitted only after the loop has
+	// selected the item, minted a RunID, attempted the reservation and taken the
+	// write-failed branch — so once it exists, one full claim opportunity has
+	// demonstrably come and gone without a claim.
+	waitFor(t, "the reservation write to fail and be reported", func() bool {
+		return len(collectEventsByType(bus, string(core.EventTypeInfrastructureUnavailable))) > 0
+	})
+
+	// Further iterations are driven, not waited for. workloopSleep returns as
+	// soon as the queue-submit wake channel fires, so waking the store steps the
+	// loop immediately instead of paying 2 s of wall clock per tick. Waiting for
+	// the buffered wake to drain is what makes the step observable: the channel
+	// empties only when the loop has taken the signal.
+	//
+	// Five iterations, because they are what make the once-per-queue report
+	// bound below observable. Every tick re-selects the item and is refused
+	// again at the quarantine check, so reportQueueWriteError is reached six
+	// times in all and its dedup map suppresses five. Under the sleep this
+	// replaces only tick 1 ran, and "exactly one event" was satisfied by there
+	// having been only one chance to emit.
+	//
+	// The per-tick claim check is a cheap positive control on the loop rather
+	// than a search: nothing varies across ticks 2 to 6, because the quarantine
+	// is sticky and each tick takes the identical branch.
+	wakeC := qs.WakeCh()
+	for tick := range 5 {
+		qs.Wake()
+		waitFor(t, fmt.Sprintf("the work loop to take wake %d of 5", tick+1), func() bool {
+			return len(wakeC) == 0
+		})
+		if claims := ledger.claimCalls.Load(); claims != 0 {
+			t.Fatalf("ClaimBead called %d time(s) by iteration %d — a retry after a failed "+
+				"reservation write must not claim the bead", claims, tick+1)
+		}
+	}
+
 	got := qs.Queue()
 	cancel()
 	select {
@@ -125,8 +171,10 @@ func TestReservationWriteFailure_NeverClaimsAndNeverLaunches(t *testing.T) {
 		t.Errorf("item carries run_id %v; no run was started", *item.RunID)
 	}
 
-	// QM-001 requires the failure to be loud, and requires it once rather than
-	// on every one of those ticks.
+	// QM-001 requires the failure to be loud. It states three MUSTs and no
+	// count, so the once-per-queue bound below is not QM-001 — it is the flood
+	// control reportQueueWriteError documents for itself, and it is load-bearing
+	// here because the loop really does reach that reporter on every tick.
 	var infra []stubEmittedEvent
 	var degradedCount int
 	for _, evt := range bus.allEvents() {

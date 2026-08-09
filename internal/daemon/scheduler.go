@@ -1692,9 +1692,17 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 				}, claimErr.Error())
 				// A failed release is not fatal to the loop — refusing to continue
 				// would strand the item the release exists to free — but it is never
-				// silent. Only reservationReleased means the item came back; a
-				// dispatched item is never re-selected, so every other verdict has to
-				// reach stderr or it becomes a stall with no signal.
+				// silent. Only reservationReleased means THIS call brought the item
+				// back, and a dispatched item is never re-selected, so every other
+				// verdict has to reach stderr or a strand becomes a stall with no
+				// signal.
+				//
+				// What the operator is told about the consequence comes from
+				// releaseOutcomeAdvice, not from a string written here: the verdicts
+				// that reach the default arm do not share a consequence, and the one
+				// message that used to cover them all named the wrong one. A double
+				// release returns reservationRetryLater, and the item it described
+				// as stranded is pending and picked up on the next tick.
 				switch release.Verdict {
 				case reservationReleased:
 					// The item is durably pending again; the loop retries it.
@@ -1704,9 +1712,9 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 					reportQueueWriteError(ctx, dispatchGates, capturedQueueName, release)
 				default:
 					fmt.Fprintf(os.Stderr,
-						"daemon: workloop: release claim-revert queue=%q bead=%s run=%s verdict=%s: %v — "+
-							"the item is still dispatched and will not be re-selected until the boot reconciliation pass\n",
-						capturedQueueName, beadID, runID, release.Verdict, release.Err)
+						"daemon: workloop: release claim-revert queue=%q bead=%s run=%s verdict=%s: %v — %s\n",
+						capturedQueueName, beadID, runID, release.Verdict, release.Err,
+						releaseOutcomeAdvice(release.Verdict))
 				}
 			}
 			if sleepErr := workloopSleep(dispatchCtx, workloopPollInterval, queueSurface.submitWakeC); sleepErr != nil {

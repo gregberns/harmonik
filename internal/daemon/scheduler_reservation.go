@@ -98,6 +98,41 @@ const (
 	reservationReleaseContended reservationVerdict = "release_contended"
 )
 
+// releaseOutcomeAdvice states what an operator should expect to happen next
+// after a release that did not return the item.
+//
+// It is a function rather than a string built inline in the reporting switch
+// because that report is the only place a wrong answer here reaches a human,
+// and a string assembled inside a switch arm cannot be tested.
+//
+// The distinction it draws is load-bearing, not cosmetic. A contended release
+// really does leave the item dispatched to a run that will never execute it,
+// and nothing re-selects a dispatched item, so the operator waits for boot
+// reconciliation. A retry_later release wrote nothing BECAUSE the item was
+// already not this run's to give back: it had moved, or another run holds it.
+// A double release is the ordinary producer — the first one already returned
+// the item to pending, and a pending item is re-selected on the very next
+// tick. Reporting that as a strand sends an operator hunting a stall that is
+// not there.
+func releaseOutcomeAdvice(verdict reservationVerdict) string {
+	switch verdict {
+	case reservationRetryLater:
+		return "nothing was written because the item is not this run's to release — " +
+			"it already moved or another run holds it, so this path stranded nothing"
+
+	case reservationReleaseContended:
+		return "the item is still dispatched and will not be re-selected until the boot reconciliation pass"
+
+	default:
+		// releaseAttempt does not produce reservationReserved or
+		// reservationItemFailed, and reservationWriteFailed and
+		// reservationReleased are reported by their own arms. An unrecognised
+		// verdict is a code change that did not update this function, so say
+		// the cautious thing rather than promise a recovery.
+		return "the item may still be dispatched and may not be re-selected until the boot reconciliation pass"
+	}
+}
+
 // releaseRetryBudget bounds the release's re-snapshot loop.
 //
 // Transact is optimistic: it refuses a write whose snapshot moved, and raw
@@ -239,9 +274,14 @@ func reserveQueueItem(ctx context.Context, queueStore *queuewiring.QueueStore, p
 // strands the very item the release exists to free. The store quarantines the
 // queue on a failed write regardless, so the next tick refuses it loudly.
 //
-// The caller MUST read the verdict. Only reservationReleased means the item is
-// back; every other verdict leaves it dispatched, and a dispatched item is
-// never re-selected.
+// The caller MUST read the verdict. Only reservationReleased means THIS call
+// put the item back. That is not the same as the item being stranded on every
+// other verdict: reservationRetryLater means the write was refused because the
+// item is not this run's any more, which is what a second release of an
+// already-released item gets, and that item is pending and re-selected on the
+// next tick. reservationReleaseContended is the verdict that really does leave
+// it dispatched, where nothing re-selects it until boot reconciliation.
+// releaseOutcomeAdvice carries that distinction to the operator.
 //
 // Spec ref: specs/queue-model.md §9.1 QM-059 (reservation release owner),
 //

@@ -26,7 +26,7 @@
           "model": null,
           "no_leak_models": [
             "claude-opus-4-8",
-            "ornith"
+            "nemotron"
           ]
         },
         "terminal": "pass",
@@ -61,7 +61,7 @@
           "model": null,
           "no_leak_models": [
             "claude-opus-4-8",
-            "ornith"
+            "nemotron"
           ]
         },
         "terminal": "pass",
@@ -100,7 +100,7 @@
         },
         "model_selected": {
           "harness": "pi",
-          "model": "ornith",
+          "model": "nemotron",
           "no_leak_models": [
             "claude-opus-4-8"
           ]
@@ -128,7 +128,7 @@
       "//3": "workflow.dot is provisioned to review-loop.dot (unpinned reviewer => inherits",
       "//4": "the implementer's pi/ornith harness => same-model). gap6 asserts the ordered",
       "//5": "round-trip (REQUEST_CHANGES -> implementer re-dispatch -> APPROVE -> close) AND",
-      "//6": "that every model_selected == ornith (no claude leak). Run via EXTRA_CELLS.",
+      "//6": "that every model_selected == nemotron (no claude leak). Run via EXTRA_CELLS.",
       "cell": "pi-dot:local",
       "harness": "pi",
       "substrate": "local",
@@ -140,7 +140,7 @@
         },
         "model_selected": {
           "harness": "pi",
-          "model": "ornith",
+          "model": "nemotron",
           "no_leak_models": [
             "claude-opus-4-8"
           ]
@@ -182,7 +182,7 @@
         },
         "model_selected": {
           "harness": "pi",
-          "model": "ornith",
+          "model": "nemotron",
           "no_leak_models": [
             "claude-opus-4-8"
           ]
@@ -219,7 +219,7 @@
           "harness": "claude-code",
           "model": "claude-opus-4-8",
           "no_leak_models": [
-            "ornith"
+            "nemotron"
           ]
         },
         "terminal": "pass",
@@ -257,7 +257,7 @@
           "harness": "claude-code",
           "model": "claude-opus-4-8",
           "no_leak_models": [
-            "ornith"
+            "nemotron"
           ]
         },
         "terminal": "pass",

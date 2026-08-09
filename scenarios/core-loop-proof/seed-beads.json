@@ -27,7 +27,7 @@
       "body": "Append a single dated line to docs/core-loop-proof-seed.txt and commit. No other change. Fixture bead for the pi harness family (single workflow mode).",
       "labels": ["codename:quality-system", "core-loop-seed", "harness:pi", "workflow:single"],
       "harness": "pi",
-      "model_pin": "ornith",
+      "model_pin": "nemotron",
       "target_branch": "core-loop-proof-integ"
     },
     {
@@ -41,7 +41,7 @@
       "//dot5": "`git reset --hard HEAD` restores it, so overriding that tracked file cannot hold.",
       "labels": ["codename:quality-system", "core-loop-seed", "harness:pi", "workflow:dot", "dot:review-loop"],
       "harness": "pi",
-      "model_pin": "ornith",
+      "model_pin": "nemotron",
       "target_branch": "core-loop-proof-dot-integ"
     },
     {

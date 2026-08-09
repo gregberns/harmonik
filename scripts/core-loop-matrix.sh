@@ -169,9 +169,38 @@ fi
 # with detail "pi endpoint wedged/no response" rather than letting the daemon spend minutes
 # discovering the wedge as a run_failed. Always-on for pi (no --no-preflight escape hatch):
 # a green pi cell MUST be backed by a live model, and catching the wedge here is the point.
-# Endpoint + key default to the overlay's harnesses.pi values; override via PI_BASE_URL /
-# PI_KEY_FILE. If the vLLM is wedged: restart it on the dgx box.
-PI_BASE_URL="${PI_BASE_URL:-http://127.0.0.1:8551/v1}"
+# Endpoint + model + key are READ FROM the overlay's harnesses.pi block, never copied
+# into this file. Both used to be literals here, and both went stale: cde2f54e0 moved the
+# endpoint 8551 -> 8553 in the overlay and left this probe on 8551, so for twelve days the
+# preflight probed a port nothing served and reported a healthy model as "wedged". A probe
+# that does not read the same values the harness reads tests nothing.
+# Override via PI_BASE_URL / PI_MODEL / PI_KEY_FILE. If the vLLM really is wedged: restart
+# it on the dgx box.
+PI_OVERLAY="${PI_OVERLAY:-$REPO_ROOT/scripts/scratch-config-overlay.yaml}"
+# overlay_pi_value <key> — the value of harnesses.pi.<key> from the overlay, or empty.
+# Scoped to the `pi:` block so a `model:`/`base_url:` under another harness cannot answer.
+overlay_pi_value() {
+    [ -f "$PI_OVERLAY" ] || return 0
+    awk -v want="$1" '
+        /^  pi:[[:space:]]*$/        { inpi = 1; next }
+        inpi && /^  [a-zA-Z_]+:/     { inpi = 0 }
+        inpi && $1 == want ":"       { }
+        inpi {
+            line = $0
+            sub(/[[:space:]]*#.*$/, "", line)          # strip trailing comment
+            if (match(line, "^[[:space:]]+" want ":")) {
+                sub("^[[:space:]]+" want ":[[:space:]]*", "", line)
+                gsub(/^["\x27]|["\x27]$/, "", line)     # strip quotes
+                gsub(/[[:space:]]+$/, "", line)
+                print line; exit
+            }
+        }
+    ' "$PI_OVERLAY"
+}
+PI_BASE_URL="${PI_BASE_URL:-$(overlay_pi_value base_url)}"
+PI_BASE_URL="${PI_BASE_URL:-http://127.0.0.1:8553/v1}"
+PI_MODEL="${PI_MODEL:-$(overlay_pi_value model)}"
+PI_MODEL="${PI_MODEL:-nemotron}"
 PI_KEY_FILE="${PI_KEY_FILE:-$HOME/.config/harmonik/ornith.key}"
 pi_preflight() {
     command -v curl >/dev/null 2>&1 || { log "preflight: curl missing — cannot probe pi endpoint"; return 1; }
@@ -179,7 +208,7 @@ pi_preflight() {
     [ -f "$PI_KEY_FILE" ] && key="$(tr -d '[:space:]' < "$PI_KEY_FILE" 2>/dev/null)"
     body="$(curl -sS -m 12 -X POST "$PI_BASE_URL/completions" \
         -H "Authorization: Bearer $key" -H "Content-Type: application/json" \
-        -d '{"model":"ornith","prompt":"ping","max_tokens":16}' 2>/dev/null)" || return 1
+        -d "{\"model\":\"$PI_MODEL\",\"prompt\":\"ping\",\"max_tokens\":16}" 2>/dev/null)" || return 1
     [ -n "$body" ] || return 1
     printf '%s' "$body" \
         | jq -e '((.choices[0].text // .choices[0].message.content // "") | tostring | length) > 0' \

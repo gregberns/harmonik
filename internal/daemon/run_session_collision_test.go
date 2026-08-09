@@ -21,12 +21,19 @@ package daemon
 import (
 	"context"
 	"errors"
+	"os/exec"
 	"sync"
 	"testing"
+
+	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	runpkg "github.com/gregberns/harmonik/internal/run"
+	"github.com/gregberns/harmonik/internal/runlease"
+	"github.com/gregberns/harmonik/internal/runloop"
+	"github.com/gregberns/harmonik/internal/substrate"
 )
 
 // sessionCollideRunID is the run every launch below belongs to. Both nodes of a
@@ -175,3 +182,190 @@ func (a *w4cFixtureAdapter) newWindowCopy() []tmux.NewWindowIn {
 // mismatch would make the assertion above compare two names neither of which is
 // production's.
 var _ = core.ProjectHash("abcdef012345")
+
+// ─────────────────────────────────────────────────────────────────────────────
+// One fact, read at both ends
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestSetUpRunSession_ARunWithItsOwnCommandRunnerRecordsNothing pins the
+// agreement between the two halves of the decision.
+//
+// The run writes the record; the LAUNCH creates the session the record names.
+// They are hundreds of lines apart and each has its own reason to ask "is this
+// run local". The launch asks whether it has a command runner. So the run has to
+// ask the same question and not an equivalent-looking one, or it writes a record
+// naming a session no launch will ever create — a record pointing at nothing,
+// which the adoption pass reads as a dead run and acts on.
+//
+// The pair below is the whole claim: the same call, the same substrate, the same
+// project, differing only in whether a runner exists.
+func TestSetUpRunSession_ARunWithItsOwnCommandRunnerRecordsNothing(t *testing.T) {
+	t.Parallel()
+
+	runID := core.RunID(uuid.MustParse(sessionCollideRunID))
+
+	withRunner := sessionCollideSetUp(t, runID, true)
+	if withRunner.took {
+		t.Error("a run whose agents execute through a command runner took a tmux session on " +
+			"this host.\n" +
+			"Its agents run somewhere this tmux server does not reach, so the session would be " +
+			"empty and the record would name it anyway.")
+	}
+	if withRunner.recorded {
+		t.Error("a run whose agents execute through a command runner wrote a registry record.\n" +
+			"The launch takes the run's session only when it has NO runner, so this record names " +
+			"a session that is never created. The next boot finds the session missing, reads the " +
+			"run as dead and resets a bead that is being worked.")
+	}
+	if withRunner.sessionID != "" {
+		t.Errorf("the run's session id was set to %q for a run with a command runner",
+			withRunner.sessionID)
+	}
+
+	local := sessionCollideSetUp(t, runID, false)
+	if !local.took || !local.recorded {
+		t.Fatalf("a local run took no session (took=%v recorded=%v).\n"+
+			"Both checks above are claims that something did NOT happen, and they are free in a "+
+			"fixture where nothing happens either way.", local.took, local.recorded)
+	}
+}
+
+// TestBeadRunOne_ARunWithACommandRunnerWritesNoRecord is the same claim as the
+// test above, made one layer up, where the defect actually was.
+//
+// The test above drives setUpRunSession directly and passes the bool itself, so
+// it pins that function's contract and nothing else. The bug was never in that
+// contract — the guard body is unchanged. The bug was the CALLER handing it the
+// wrong fact: beadRunOne asked "is there a remote bead context" where the launch
+// asks "is there a command runner", and those two differ in exactly one case —
+// no remote context AND a runner set. Only a test that drives beadRunOne can see
+// which fact the caller passed, so only a test at this layer fails when it is
+// the wrong one.
+//
+// This is the mirror of
+// TestRunRegistry_TheRecordIsOnDiskAndNamesTheSessionBeforeTheAgentIsLaunched,
+// which drives the same fixture with the same options and asserts the record IS
+// written. That test is this one's positive control: it is what says the fixture
+// can write a record at all, so "no record" here is a refusal and not an empty
+// run. The two differ in one field — this one gives the run a command runner.
+func TestBeadRunOne_ARunWithACommandRunnerWritesNoRecord(t *testing.T) {
+	t.Parallel()
+
+	// The registry is observed from the RUNNER, not from the spawn hook the
+	// sibling tests use, and that is forced rather than chosen. A run with a
+	// command runner never reaches tmux at all: its launch takes the local branch
+	// only when it has no runner, and the remote branch needs a worker session
+	// name a local run does not have, so neither fires and no session or window is
+	// ever requested. The spawn hook therefore never runs, and an assertion hung
+	// on it would hold for free in exactly the case under test.
+	//
+	// Every runner call is a point the run reached, so checking the registry on
+	// each one asks "was a record on disk at any moment the run was executing".
+	// The record is written before the cascade and given back by the run scope at
+	// exit, so this is inside its whole lifetime.
+	var mu sync.Mutex
+	var projectDir string
+	var recordSeen bool
+	var trustCalls int
+
+	runner := &tmux.RecordingRunner{
+		CmdFunc: func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			mu.Lock()
+			if name == "python3" {
+				trustCalls++
+			}
+			if projectDir != "" {
+				if recs, err := runpkg.List(projectDir); err == nil && len(recs) > 0 {
+					recordSeen = true
+				}
+			}
+			mu.Unlock()
+
+			// This neutralises all three HOME-mutating programs on the launch
+			// path, not just one: EnsureWorktreeTrustVia, EnsureClaudeThemeVia and
+			// PrepareIsolatedClaudeConfigDirVia, all called from
+			// internal/harness/claude/launchspec.go. Each takes a pure-Go branch
+			// when the runner is nil, but with one set each spawns `python3 -` and
+			// upserts into the REAL ~/.claude.json — the operator's own Claude Code
+			// config, outside any t.TempDir(). Left to run, the trust call also
+			// wedged: the run sat in CombinedOutput for nine minutes and took the
+			// package to its timeout. `true` keeps this test off the operator's
+			// machine state and bounded in time. All three are inside
+			// BuildLaunchSpec and so strictly downstream of the record decision, so
+			// nothing the test asserts is masked. The leak itself is hk-85pqo.
+			if name == "python3" {
+				return exec.CommandContext(ctx, "true")
+			}
+			// Everything else stays real. The run has to get far enough for the
+			// assertions to be about a refusal rather than about an empty run.
+			return exec.CommandContext(ctx, name, args...)
+		},
+	}
+
+	out := surviveRunDriveWith(t, surviveRunOpts{
+		ownSession:   true,
+		realWorktree: true,
+		runner:       runner,
+		seedProject: func(dir string) {
+			mu.Lock()
+			projectDir = dir
+			mu.Unlock()
+		},
+	})
+
+	mu.Lock()
+	sawTrust, sawRecord := trustCalls > 0, recordSeen
+	mu.Unlock()
+
+	// Those python3 programs are all run from claude.BuildLaunchSpec, inside the
+	// cascade, which is strictly downstream of the record decision on BOTH the
+	// fixed and the unfixed layout. Seeing one is how this test states that the
+	// run got PAST that decision — without it, "no record" could mean the run
+	// ended before anything was decided.
+	if !sawTrust {
+		t.Fatal("the run never reached the launch-spec build, so it never got past the point " +
+			"where the record is decided. The assertion below would hold for free.")
+	}
+
+	if sawRecord {
+		t.Error("a run with a command runner wrote a registry record.\n" +
+			"The launch takes the run's own session only when it has NO runner, so no session " +
+			"by that name is ever created. The record outlives the run pointing at nothing, and " +
+			"the next boot's adoption pass reads a session it cannot find as a dead run — it " +
+			"resets the bead and re-dispatches it under an agent that is still working it.\n" +
+			"This is what the caller passing `rbc != nil` rather than `dotRunner != nil` does: " +
+			"with no remote context but a runner set the two disagree, and the record is written " +
+			"on the answer the launch will not act on.")
+	}
+
+	if len(out.adapter.sessions()) != 0 {
+		t.Errorf("a run with a command runner took tmux sessions %v on this host.\n"+
+			"Its agents execute through the runner, somewhere this tmux server does not reach, "+
+			"so the session would stand empty.", out.adapter.sessions())
+	}
+}
+
+// sessionCollideSetUpResult is what one drive of setUpRunSession left behind.
+type sessionCollideSetUpResult struct {
+	took      bool
+	recorded  bool
+	sessionID string
+}
+
+// sessionCollideSetUp drives the real setUpRunSession over a substrate that can
+// create sessions, and reports what it did.
+func sessionCollideSetUp(t *testing.T, runID core.RunID, hasRunner bool) sessionCollideSetUpResult {
+	t.Helper()
+	env := runloop.RunEnv{ProjectDir: t.TempDir(), QueueItemIndex: -1}
+	handles := runloop.SharedHandles{Substrate: w4cFixtureSubstrate(t, &w4cFixtureAdapter{})}
+	ports := runloop.RunPorts{Clock: substrate.SystemClock{}}
+
+	took := setUpRunSession(&env, ports, handles, &runlease.Scope{}, hasRunner, runID,
+		core.BeadID("hk-one-fact"))
+	_, loadErr := runpkg.Load(env.ProjectDir, runID.String())
+	return sessionCollideSetUpResult{
+		took:      took,
+		recorded:  loadErr == nil,
+		sessionID: env.RunSessionID,
+	}
+}

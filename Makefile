@@ -563,7 +563,7 @@ capture-claude-fixtures:  ## Capture real-Claude twin-parity fixtures (e2e_real_
 # (distinct from capture-claude-fixtures, the separate PERIODIC live re-capture).
 .PHONY: test-twin-parity-claude
 test-twin-parity-claude:  ## Routine Claude twin-parity gate (twin-vs-reference-capture; zero-token, deterministic)
-	scripts/go-test-must-match.sh go test -count=1 -run 'ClaudeParity' ./internal/twinparity/...
+	scripts/go-test-must-match.sh go test -v -count=1 -run 'ClaudeParity|TwinParityCorpus' ./internal/twinparity/...
 
 # test-pi-live: the REAL-BOX-GATED pi oracle (WS3-pi / pi-A). Drives a real
 # `pi --mode json` single-turn, asserts the terminal NDJSON sequence
@@ -584,7 +584,7 @@ test-pi-live:  ## Real-pi oracle gate (PI_LIVE=1 required; pi provider auth; wri
 # pi needed (distinct from test-pi-live, the separate REAL-BOX re-capture).
 .PHONY: test-twin-parity-pi
 test-twin-parity-pi:  ## Routine pi twin-parity gate (twin-vs-reference-capture; zero-token, deterministic)
-	scripts/go-test-must-match.sh go test -count=1 -run 'PiParity' ./internal/twinparity/...
+	scripts/go-test-must-match.sh go test -v -count=1 -run 'PiParity|TwinParityCorpus' ./internal/twinparity/...
 
 # ---------------------------------------------------------------------------
 # Keeper replay test taxonomy (T10; session-restart-substrate)

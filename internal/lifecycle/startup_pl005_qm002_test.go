@@ -42,7 +42,7 @@ import (
 // that the lost release means will never execute.
 const (
 	bootRevertBeadID core.BeadID = "hk-stranded"
-	bootRevertRunID              = "0190b3c4-7001-7000-8000-00000000a001"
+	bootRevertRunID  string      = "0190b3c4-7001-7000-8000-00000000a001"
 )
 
 // bootRevertLedger answers the cross-check with one fixed verdict for every

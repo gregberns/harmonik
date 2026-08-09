@@ -640,6 +640,11 @@ func TestSurviveShutdown_TheHeartbeatStopsEvenForARunThatKeepsItsSession(t *test
 	sub := &surviveGateSubstrate{session: sess}
 	wt := t.TempDir()
 
+	// Every heartbeat goroutine already running belongs to some other test in
+	// this package. Record them, so the one this launch starts can be told apart
+	// from all of them and waited on by itself.
+	heartbeatsBefore := surviveGateHeartbeatGoroutines(t)
+
 	in := agentLaunchInput{
 		Env: runloop.RunEnv{
 			ProjectDir:              wt,
@@ -670,8 +675,9 @@ func TestSurviveShutdown_TheHeartbeatStopsEvenForARunThatKeepsItsSession(t *test
 	if got := sub.spawnCount(); got != 1 {
 		t.Fatalf("substrate spawns = %d, want 1 — nothing launched, so no heartbeat was ever started", got)
 	}
-	if !surviveGateHeartbeatIsRunning(t) {
-		t.Fatal("no heartbeat goroutine was running before Cleanup, so its absence afterwards proves nothing")
+	mine := surviveGateNewHeartbeatGoroutines(t, heartbeatsBefore)
+	if len(mine) == 0 {
+		t.Fatal("this launch started no heartbeat goroutine of its own, so its absence afterwards proves nothing")
 	}
 	// A live context runs to the ready timeout, and that kill is ungated by
 	// design, so a kill has already reached the session. What matters is that
@@ -687,41 +693,96 @@ func TestSurviveShutdown_TheHeartbeatStopsEvenForARunThatKeepsItsSession(t *test
 
 	// The goroutine returns as soon as the channel closes, but it does not do so
 	// on this goroutine. Poll rather than read once.
+	//
+	// The wait is for THIS launch's goroutines and no others. Waiting for the
+	// package to hold no heartbeat at all cannot work: the predicate is answered
+	// by a scan of every goroutine in the process, so one overlapping test that
+	// legitimately holds a heartbeat keeps it true until the deadline, and the
+	// test fails having observed nothing. That failure is not a slow box and a
+	// longer deadline does not cure it.
+	//
 	// The deadline is generous and the poll is slow on purpose. The happy path
 	// takes microseconds, so a long deadline costs nothing, while a short one
 	// turns a loaded box into a red build — runtime.Stack stops the world, and
 	// this package runs its tests in parallel.
 	deadline := time.Now().Add(30 * time.Second)
-	for surviveGateHeartbeatIsRunning(t) {
+	for {
+		still := surviveGateHeartbeatGoroutines(t)
+		alive := false
+		for id := range mine {
+			if still[id] {
+				alive = true
+				break
+			}
+		}
+		if !alive {
+			return
+		}
 		if time.Now().After(deadline) {
-			t.Fatal("the CHB-019 heartbeat goroutine is still running after Cleanup.\n" +
+			t.Fatal("the CHB-019 heartbeat goroutine this launch started is still running after Cleanup.\n" +
 				"Stopping it is a STEP, not a give-back: it belongs to this process, and a surviving agent does not hold it. Gating it on the disposition leaks the goroutine on exactly the path the disposition is for.")
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 }
 
-// surviveGateHeartbeatIsRunning reports whether any goroutine is inside
-// handler.RunHeartbeatLoop.
+// surviveGateHeartbeatGoroutines returns the id of every goroutine currently
+// inside handler.RunHeartbeatLoop.
 //
 // It names the one function under test rather than counting goroutines, so
-// unrelated work in a parallel package cannot make the FALSE answer wrong: a
-// goroutine that is not a heartbeat loop is never mistaken for one.
+// unrelated work in a parallel package is never mistaken for a heartbeat.
 //
-// The scan covers every goroutine in the process, so the TRUE answer is weaker.
-// Another test's heartbeat loop satisfies it. That only affects the pre-check
-// guard above, which can pass for the wrong reason. The assertion after Cleanup
-// keeps its bite either way, and the mutation run shows it: gate the stop on the
-// disposition and this test is the only one that turns red.
-func surviveGateHeartbeatIsRunning(t *testing.T) bool {
+// It returns the ids rather than a yes-or-no answer, and that is the whole
+// point. The scan covers every goroutine in the PROCESS, so "a heartbeat is
+// running" is a fact about the package and not about the caller. A test that
+// waits for that to become false waits on every other test as well, and one
+// overlapping heartbeat holds it true until the deadline. Identifying the
+// goroutines lets a caller snapshot the ones it did not start, take the
+// difference, and wait for its own.
+//
+// Goroutine ids are read from the dump's own headers. The runtime allocates
+// them monotonically and does not reuse them, so an id in a later scan is the
+// same goroutine it was in an earlier one.
+func surviveGateHeartbeatGoroutines(t *testing.T) map[string]bool {
 	t.Helper()
 
 	buf := make([]byte, 1<<20)
+	var dump string
 	for {
 		n := runtime.Stack(buf, true)
 		if n < len(buf) {
-			return strings.Contains(string(buf[:n]), "handler.RunHeartbeatLoop")
+			dump = string(buf[:n])
+			break
 		}
 		buf = make([]byte, 2*len(buf))
 	}
+
+	ids := make(map[string]bool)
+	for _, block := range strings.Split(dump, "\n\ngoroutine ") {
+		if !strings.Contains(block, "handler.RunHeartbeatLoop") {
+			continue
+		}
+		// The first block keeps the "goroutine " prefix the split consumed from
+		// the rest; both then start with the id followed by a space.
+		header := strings.TrimPrefix(block, "goroutine ")
+		id, _, found := strings.Cut(header, " ")
+		if found && id != "" {
+			ids[id] = true
+		}
+	}
+	return ids
+}
+
+// surviveGateNewHeartbeatGoroutines returns the heartbeat goroutines running
+// now that were not running when before was taken.
+func surviveGateNewHeartbeatGoroutines(t *testing.T, before map[string]bool) map[string]bool {
+	t.Helper()
+
+	mine := make(map[string]bool)
+	for id := range surviveGateHeartbeatGoroutines(t) {
+		if !before[id] {
+			mine[id] = true
+		}
+	}
+	return mine
 }

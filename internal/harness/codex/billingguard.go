@@ -268,7 +268,7 @@ func materializeForcedLoginMethodWithin(ctx context.Context, codexHome string, l
 	if codexHome == "" {
 		return fmt.Errorf("materializeForcedLoginMethod: codexHome must be non-empty")
 	}
-	if err := os.MkdirAll(codexHome, 0o700); err != nil {
+	if err := os.MkdirAll(codexHome, 0o700); err != nil { //dirmode:allow not a .harmonik state dir: $CODEX_HOME holds codex's own login credentials, 0o700 by design (never widen to core.HarmonikDirMode)
 		return fmt.Errorf("materializeForcedLoginMethod: mkdir %q: %w", codexHome, err)
 	}
 

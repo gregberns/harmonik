@@ -25,29 +25,37 @@ pre-commit/pre-push/commit-msg hook. The underlying scripts
 (`scripts/validate-commit-msg.sh`, `scripts/secret-scan.sh`) remain callable
 directly.
 
-## The three-tier check gauntlet
+## The check targets
+
+> **Superseded 2026-08-08.** This section used to list four targets —
+> `check-fast`, `check-short`, `check` and `check-full`. **None of the four
+> exists.** The `Makefile` has no target by any of those names, so every command
+> in the old table failed. The canonical description lives in
+> [`docs/foundation/project-level/quality-checks.md`](docs/foundation/project-level/quality-checks.md)
+> §"Two gate targets"; this table is a summary of it. Read the `Makefile` before
+> you name a target here.
 
 | Target | When to run | What it does |
 |---|---|---|
-| `make check-fast` | During authoring / after each commit | gofumpt + gci diff, go vet, go build, golangci-lint `--new-from-rev=HEAD~1`, go test -short on changed packages (<15s target) |
-| `make check-short` | Before push (the CI Tier-2 merge gate) | fmt-check + golangci-lint `--new-from-rev=origin/main` + go test -short -race |
-| `make check` | Whole-repo audit (see caveat) | Full golangci-lint, go test -race, go mod tidy check, coverage gate, govulncheck (~3–5 min) |
-| `make check-full` | Heavy suites | Everything in `check` + integration + scenario + crash test suites (~10–15 min) |
+| `make fast` | While you work | Format check (gofumpt + gci), `go build ./...`, `go vet ./...`, the tagged vet, the freeze greps, `golangci-lint --new-from-rev=HEAD~1`, a compile of every test file, and `go test -short` over `FAST_PKGS` |
+| `make core` | The hard gate — "does the build work" | `gate-static` plus the core package set (the `CHARTER.md` §3 pipeline: config, branching, event bus, queue, bead-ledger adapter, worktrees, harness registry, work loop, merge) |
+| `make full` | The merge decision, and what CI runs | Everything in `fast` over EVERY package, the whole-tree lint allow list, the scenario tier, and module hygiene (`go mod tidy` diff, `tools/forbid-import`, `govulncheck`) |
 
-Run `check-fast` after each commit (via `/check`) and `check-short` before pushing.
-(These were formerly wired as pre-commit / pre-push git hooks; hooks are now
-retired and the checks run via the agent-driven validation command instead.)
+Run `make fast` while you work (via `/check`). Run `make full` before anyone
+accepts the work — it is the merge decision. `make fast` is not a merge verdict:
+it tests a chosen subset, so it can be green while the tree is red.
 
-> **Caveat on bare `make check` / `make check-full`.** Their lint step is a
-> *full* `golangci-lint run` (no `--new-from-rev`), which reports ~2k pre-existing
-> legacy findings and exits non-zero by design (see `Makefile` §"LINT IS A
-> MERGE-TIME GATE"). Treat that as a legacy-debt trend view, not a pass/fail gate —
-> judge a change with the `--new-from-rev` gates above. The `-race` / coverage /
-> `govulncheck` steps in `check` are still worth running on their own merits.
+These were formerly wired as pre-commit / pre-push git hooks. Hooks are retired
+and the checks run through the agent-driven validation command instead.
+
+> **No fail-open.** `make full` does no package scoping, no retry, and no
+> fail-open. A timeout, an out-of-memory kill, a compile failure, or an exit code
+> nothing recognises all BLOCK. `scripts/gate-fails-closed-test.sh` holds that
+> property and runs inside both targets.
 
 ## Declared-done ritual (agents)
 
-Agents MUST run `make check-full` before declaring any work complete. The local invocation of the reviewer skill is:
+Agents MUST run `make full` before declaring any work complete. The local invocation of the reviewer skill is:
 
 ```sh
 make agent-review

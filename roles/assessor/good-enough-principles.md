@@ -72,14 +72,32 @@ never what a log says it contains.
 
 ### 2.5 MG — merge-gate green (CI parity; the acceptance gate is the superset)
 
-The assessor MUST run the **full CI merge gate** — `make check-short` (gofumpt+gci
-`fmt-check`, `go vet ./...`, `go build ./...`, `golangci-lint run
---new-from-rev=origin/main`, and `go test -short -race` with the proven-green
-`-count=1 -p=1 -parallel=1 -timeout=20m` knobs) — on the pinned commit in the isolated
-scratch clone, and **it MUST pass**. A **PASS is impossible while any `check-short`
-check is red.** A behaviorally-green branch that fails the CI merge gate is
-**not** shippable — it is a false-green; this is the exact failure that shipped a
-lint-failing branch to PR #31.
+**There is no `make check-short`.** This section named it as a hard MUST until
+2026-08-08, and the `Makefile` has never held that target. An assessor who
+followed this section could not run the gate at all
+(`hk-assessor-principles-still-mandate-dead-target-m6etp`). Do not re-add it.
+Read the `Makefile` before you name a target here.
+
+The assessor MUST run **two** targets on the pinned commit in the isolated
+scratch clone. They answer different questions and both belong in the evidence.
+
+- **`make core` — the HARD gate.** It runs `gate-static` (the script self-tests,
+  `fmt-check`, `go build ./...`, `go vet ./...`, the tagged vet, the freeze
+  greps, the reachability gate, and changed-line lint) and then the `CORE_PKGS`
+  set. **A red `core` is a BLOCK.** This is what "the build works" means for
+  this sign-off.
+- **`make full` — the merge decision, and what CI runs.** It adds every
+  remaining package, the whole-tree lint allow list, the scenario tier and
+  module hygiene. Run it and report each failure. A red `full` beside a green
+  `core` is a real answer, not a contradiction. Out-of-core failures are not a
+  BLOCK on their own — weigh them as evidence and escalate them to the admiral.
+
+Read the NOT RUN section of both test reports. A disabled test is an unproven
+claim, not a pass.
+
+A behaviorally-green branch that fails the hard gate is **not** shippable — it
+is a false-green. This is the exact failure that shipped a lint-failing branch
+to PR #31.
 
 **The acceptance gate is the SUPERSET, not a peer of CI.** CI cannot run
 everything — no real-daemon E2E, no forced-LOCAL real-agent LT, no long suites — so
@@ -92,7 +110,7 @@ Two operating notes:
 
 - **Assess the merge RESULT, not the branch in isolation, where feasible.** CI
   gates the PR **merge commit** (branch merged onto `origin/main`), not the branch
-  tip. When the target is reachable, the assessor runs `check-short` against the
+  tip. When the target is reachable, the assessor runs both targets against the
   merge result so a clean branch that breaks *after* merge (semantic conflict,
   drifted `origin/main`) is caught here, not at CI.
 - **Branch-introduced vs pre-existing (honest bar under legacy debt).** The lint

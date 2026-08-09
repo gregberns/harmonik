@@ -285,6 +285,22 @@ assert_pinned() {
 # package directory whether or not git tracks it, so an untracked
 # internal/daemon/zz_patch.go is in the binary. The second sweep adds .go files
 # that .gitignore hides, which the first cannot see and Go compiles regardless.
+#
+# review-loop.dot is excluded because THIS HARNESS writes it, exactly as the
+# entries above name what `init` writes. scripts/core-loop-seed.sh copies it to
+# the scratch root so the dot cell's `dot:review-loop` label resolves, and it is
+# deliberately untracked there (the comment in that script explains why a tracked
+# file cannot serve: `git reset --hard HEAD` restores it mid-run). Without this
+# entry the REQUIRED `make core-loop-lt` leg dirtied the very tree it pins, every
+# run stamped `+local-edits`, and the assessor contract says no result from such a
+# binary is an audit of that commit — so the gate could never return a usable
+# result (hk-assessor-lt-gate-dirties-its-own-tree-0jz5y).
+#
+# This exclusion does NOT open a hole, because the file is DERIVED. Its source,
+# specs/examples/review-loop.dot, is tracked and stays inside this same sweep, so
+# an edit to the workflow this gate runs is still caught — it is caught at the
+# source instead of at the copy. Excluding a path whose content is covered
+# elsewhere is different from excluding a build input, and only the first is safe.
 local_edits() {
     local scratch="$1" tracked ignored
     # NOT `2>/dev/null` on this one. Empty output from here means "no local
@@ -297,7 +313,8 @@ local_edits() {
             ':(exclude).harmonik' \
             ':(exclude).claude/skills' \
             ':(exclude)AGENTS.md' ':(exclude)AGENT_INDEX.md' ':(exclude)STATUS.md' \
-            ':(exclude)CLAUDE.md' ':(exclude)HANDOFF.md' 2>&1)"; then
+            ':(exclude)CLAUDE.md' ':(exclude)HANDOFF.md' \
+            ':(exclude)review-loop.dot' 2>&1)"; then
         die "cannot read the working tree of $scratch: ${tracked%%$'\n'*}
   An unanswered check here would read as 'no local edits' and stamp a bare commit, so it stops instead."
     fi
@@ -664,10 +681,15 @@ cmd_build() {
     local commit_hash stamp
     commit_hash="$(assert_pinned "$scratch")"
     # What this binary may honestly be called. Equal to commit_hash for a clean
-    # tree; suffixed when the tree carries edits that Go will compile in.
+    # tree; suffixed when the tree differs from the commit it is pinned to.
     stamp="$(build_stamp "$scratch" "$commit_hash")"
     if [ "$stamp" != "$commit_hash" ]; then
-        echo "[scratch-daemon] WARNING: this tree carries local edits to code that Go compiles:" >&2
+        # Say what was actually measured. This line used to read "local edits to
+        # code that Go compiles", which described an allowlist of build inputs
+        # that local_edits deliberately does NOT use — it sweeps everything git
+        # sees, minus what this harness itself writes. A reader who took the old
+        # wording literally went looking for a Go change that was not there.
+        echo "[scratch-daemon] WARNING: this tree differs from the commit it is pinned to. Any file below can change what the binary does or how it behaves:" >&2
         local_edits "$scratch" >&2
         echo "[scratch-daemon] WARNING: the binary will be labelled '$stamp'. It is NOT $commit_hash, and no result from it is an audit of that commit." >&2
     fi

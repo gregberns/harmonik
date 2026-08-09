@@ -493,6 +493,30 @@ $SD build "$S6E" >"$ROOT/build-embed.out" 2>&1
 assert_eq "${COMMIT_C}+local-edits" "$(cat "$S6E/.harmonik/bin/built-revision" 2>/dev/null)" \
     "LOCAL EDITS: an embedded .dot asset is labelled — the file type an allowlist missed"
 
+# review-loop.dot at the scratch ROOT is provisioned by scripts/core-loop-seed.sh,
+# the same category as the files init writes. Before this exclusion existed the
+# REQUIRED `make core-loop-lt` leg dirtied the tree it had just pinned, so every
+# run of that gate stamped +local-edits and the assessor contract voided its own
+# result (hk-assessor-lt-gate-dirties-its-own-tree-0jz5y).
+S6F="$ROOT/s-reviewloop"
+run_init "$S6F" --source "$SRC" --rev candidate
+printf 'digraph { impl -> review }\n' >"$S6F/review-loop.dot"
+$SD build "$S6F" >"$ROOT/build-reviewloop.out" 2>&1
+assert_eq "$COMMIT_C" "$(cat "$S6F/.harmonik/bin/built-revision" 2>/dev/null)" \
+    "LOCAL EDITS: the seed-provisioned review-loop.dot is NOT labelled, so the live-verify gate can return a usable result"
+
+# The exclusion above is only safe because that file is DERIVED. Its tracked
+# source must stay inside the sweep, or an edit to the workflow this gate runs
+# would ride in unlabelled. This is the case that proves the hole is not open:
+# same file name, one directory deeper, and it MUST still be labelled.
+S6G="$ROOT/s-reviewloop-src"
+run_init "$S6G" --source "$SRC" --rev candidate
+mkdir -p "$S6G/specs/examples"
+printf 'digraph { impl -> review }\n' >"$S6G/specs/examples/review-loop.dot"
+$SD build "$S6G" >"$ROOT/build-reviewloop-src.out" 2>&1
+assert_eq "${COMMIT_C}+local-edits" "$(cat "$S6G/.harmonik/bin/built-revision" 2>/dev/null)" \
+    "LOCAL EDITS: the SOURCE specs/examples/review-loop.dot is still labelled — the root exclusion is scoped to the derived copy only"
+
 # ---------------------------------------------------------------------------
 # UNREACHABLE SOURCE — when the source cannot be reached, the revision must not
 # be resolved against refs a previous run left behind.

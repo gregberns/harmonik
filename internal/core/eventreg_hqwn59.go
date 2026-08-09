@@ -26,8 +26,8 @@ package core
 // Bead refs: hk-hqwn.59.1 through hk-hqwn.59.78, hk-yslws, hk-gjyks.
 
 func init() {
-	mustRegister("liveness_halt", func() EventPayload { return &LivenessHaltPayload{} })
-	mustRegister("stale_open_bead_detected", func() EventPayload { return &StaleOpenBeadDetectedPayload{} })
+	mustRegister(EventTypeLivenessHalt, func() EventPayload { return &LivenessHaltPayload{} })
+	mustRegister(EventTypeStaleOpenBeadDetected, func() EventPayload { return &StaleOpenBeadDetectedPayload{} })
 	registerRunLifecycle()
 	registerControlPoints()
 	registerAgentEvents()
@@ -70,43 +70,43 @@ func init() {
 //   - epic_completed (§8.13 hk-w6y70):         O (ordinary — observational; at-most-once per epic)
 //   - working_tree_refresh_failed (EM-054):    O (ordinary — informational; merge already durable)
 func registerRunLifecycle() {
-	mustRegisterAtVersion("run_started", func() EventPayload { return &RunStartedPayload{} }, 2)
-	mustRegister("run_completed", func() EventPayload { return &RunCompletedPayload{} })
-	mustRegister("run_failed", func() EventPayload { return &RunFailedPayload{} })
-	mustRegister("state_entered", func() EventPayload { return &StateEnteredPayload{} })
-	mustRegister("state_exited", func() EventPayload { return &StateExitedPayload{} })
-	mustRegister("transition_event", func() EventPayload { return &TransitionEventPayload{} })
-	mustRegister("checkpoint_written", func() EventPayload { return &CheckpointWrittenPayload{} })
-	mustRegister("outcome_emitted", func() EventPayload { return &OutcomeEmittedPayload{} })
-	mustRegister("sub_workflow_entered", func() EventPayload { return &SubWorkflowEnteredPayload{} })
-	mustRegister("sub_workflow_exited", func() EventPayload { return &SubWorkflowExitedPayload{} })
-	mustRegister("node_dispatch_requested", func() EventPayload { return &NodeDispatchRequestedPayload{} })
+	mustRegisterAtVersion(EventTypeRunStarted, func() EventPayload { return &RunStartedPayload{} }, 2)
+	mustRegister(EventTypeRunCompleted, func() EventPayload { return &RunCompletedPayload{} })
+	mustRegister(EventTypeRunFailed, func() EventPayload { return &RunFailedPayload{} })
+	mustRegister(EventTypeStateEntered, func() EventPayload { return &StateEnteredPayload{} })
+	mustRegister(EventTypeStateExited, func() EventPayload { return &StateExitedPayload{} })
+	mustRegister(EventTypeTransitionEvent, func() EventPayload { return &TransitionEventPayload{} })
+	mustRegister(EventTypeCheckpointWritten, func() EventPayload { return &CheckpointWrittenPayload{} })
+	mustRegister(EventTypeOutcomeEmitted, func() EventPayload { return &OutcomeEmittedPayload{} })
+	mustRegister(EventTypeSubWorkflowEntered, func() EventPayload { return &SubWorkflowEnteredPayload{} })
+	mustRegister(EventTypeSubWorkflowExited, func() EventPayload { return &SubWorkflowExitedPayload{} })
+	mustRegister(EventTypeNodeDispatchRequested, func() EventPayload { return &NodeDispatchRequestedPayload{} })
 	// node_dispatch_decided: emitted by the DOT-mode cascade engine after EM-041
 	// edge selection resolves the next node (or determines terminal state / failure).
 	// Durability class: O. Bead ref: hk-bf85t (T-IMPL-008).
-	mustRegister("node_dispatch_decided", func() EventPayload { return &NodeDispatchDecidedPayload{} })
-	mustRegister("bead_closed", func() EventPayload { return &BeadClosedPayload{} })
+	mustRegister(EventTypeNodeDispatchDecided, func() EventPayload { return &NodeDispatchDecidedPayload{} })
+	mustRegister(EventTypeBeadClosed, func() EventPayload { return &BeadClosedPayload{} })
 	// epic_completed (hk-w6y70): emitted at most once per parent epic after the
 	// last child closes. Durability class: O (ordinary — observational).
-	mustRegister("epic_completed", func() EventPayload { return &EpicCompletedPayload{} })
-	mustRegister("working_tree_refresh_failed", func() EventPayload { return &WorkingTreeRefreshFailedPayload{} })
+	mustRegister(EventTypeEpicCompleted, func() EventPayload { return &EpicCompletedPayload{} })
+	mustRegister(EventTypeWorkingTreeRefreshFailed, func() EventPayload { return &WorkingTreeRefreshFailedPayload{} })
 	// working_tree_local_edits_overwritten (hk-7qmpp): emitted when the EM-054
 	// post-merge refresh overwrites an uncommitted local edit on a path the
 	// merged commit itself changed. Names the paths and the recovery patch so
 	// the overwrite is never silent. Durability class: O.
-	mustRegister("working_tree_local_edits_overwritten", func() EventPayload {
+	mustRegister(EventTypeWorkingTreeLocalEditsOverwritten, func() EventPayload {
 		return &WorkingTreeLocalEditsOverwrittenPayload{}
 	})
 	// implementer_phase_complete (hk-cd8yu): emitted immediately after the
 	// implementer session ends (normal exit, noChange-timeout kill, or context
 	// cancellation) and before any reviewer phase begins. Closes the diagnostic
 	// gap between run_started and reviewer_launched. Durability class: F.
-	mustRegister("implementer_phase_complete", func() EventPayload { return &ImplementerPhaseCompletePayload{} })
+	mustRegister(EventTypeImplementerPhaseComplete, func() EventPayload { return &ImplementerPhaseCompletePayload{} })
 	// merge_build_failed (hk-o68j3): emitted when go build+vet fails on the
 	// freshly fast-forwarded merged tree inside lockedMergeRunBranchToMain,
 	// before the push. update-ref is rolled back; caller reopens the bead.
 	// Durability class: F.
-	mustRegister("merge_build_failed", func() EventPayload { return &MergeBuildFailedPayload{} })
+	mustRegister(EventTypeMergeBuildFailed, func() EventPayload { return &MergeBuildFailedPayload{} })
 }
 
 // registerControlPoints registers all §8.2 control-point-lifecycle event payload constructors.
@@ -127,24 +127,24 @@ func registerRunLifecycle() {
 //   - gate_definition_drift (§8.2.13):               F (fsync-boundary — Cat 6 escalation landmark)
 //   - gate_redefined_under_cat_6 (§8.2.14):          F (fsync-boundary — re-evaluation lifecycle boundary)
 func registerControlPoints() {
-	mustRegister("hook_fired", func() EventPayload { return &HookFiredPayload{} })
-	mustRegister("hook_failed", func() EventPayload { return &HookFailedPayload{} })
-	mustRegister("hook_verdict_persisted", func() EventPayload { return &HookVerdictPersistedPayload{} })
-	mustRegister("gate_allowed", func() EventPayload { return &GateAllowedPayload{} })
-	mustRegister("gate_denied", func() EventPayload { return &GateDeniedPayload{} })
-	mustRegister("gate_escalated", func() EventPayload { return &GateEscalatedPayload{} })
-	mustRegister("guard_reordered", func() EventPayload { return &GuardReorderedPayload{} })
-	mustRegister("guard_failed", func() EventPayload { return &GuardFailedPayload{} })
-	mustRegister("control_points_registered", func() EventPayload { return &ControlPointsRegisteredPayload{} })
-	mustRegister("control_points_registration_started", func() EventPayload { return &ControlPointsRegistrationStartedPayload{} })
-	mustRegister("verdict_envelope_mismatch", func() EventPayload { return &VerdictEnvelopeMismatchPayload{} })
-	mustRegister("policy_expression_exceeded_cost", func() EventPayload { return &PolicyExpressionExceededCostPayload{} })
+	mustRegister(EventTypeHookFired, func() EventPayload { return &HookFiredPayload{} })
+	mustRegister(EventTypeHookFailed, func() EventPayload { return &HookFailedPayload{} })
+	mustRegister(EventTypeHookVerdictPersisted, func() EventPayload { return &HookVerdictPersistedPayload{} })
+	mustRegister(EventTypeGateAllowed, func() EventPayload { return &GateAllowedPayload{} })
+	mustRegister(EventTypeGateDenied, func() EventPayload { return &GateDeniedPayload{} })
+	mustRegister(EventTypeGateEscalated, func() EventPayload { return &GateEscalatedPayload{} })
+	mustRegister(EventTypeGuardReordered, func() EventPayload { return &GuardReorderedPayload{} })
+	mustRegister(EventTypeGuardFailed, func() EventPayload { return &GuardFailedPayload{} })
+	mustRegister(EventTypeControlPointsRegistered, func() EventPayload { return &ControlPointsRegisteredPayload{} })
+	mustRegister(EventTypeControlPointsRegistrationStarted, func() EventPayload { return &ControlPointsRegistrationStartedPayload{} })
+	mustRegister(EventTypeVerdictEnvelopeMismatch, func() EventPayload { return &VerdictEnvelopeMismatchPayload{} })
+	mustRegister(EventTypePolicyExpressionExceededCost, func() EventPayload { return &PolicyExpressionExceededCostPayload{} })
 	// gate_definition_drift (§8.2.13, hk-u3q6o): F-class; emitted when a
 	// mechanism-tagged Gate's envelope inputs drift at replay time (CP-038a).
-	mustRegister("gate_definition_drift", func() EventPayload { return &GateDefinitionDriftPayload{} })
+	mustRegister(EventTypeGateDefinitionDrift, func() EventPayload { return &GateDefinitionDriftPayload{} })
 	// gate_redefined_under_cat_6 (§8.2.14, hk-u3q6o): F-class; emitted when
 	// Cat 6 authorizes Gate re-evaluation under a drifted definition (CP-038a).
-	mustRegister("gate_redefined_under_cat_6", func() EventPayload { return &GateRedefinedUnderCat6Payload{} })
+	mustRegister(EventTypeGateRedefinedUnderCat6, func() EventPayload { return &GateRedefinedUnderCat6Payload{} })
 }
 
 // registerAgentEvents registers all §8.3 agent/handler-lifecycle event payload constructors,
@@ -169,74 +169,74 @@ func registerControlPoints() {
 //   - agent_message (agent-comms §1.1):     F (fsync-boundary — durable directed/broadcast messaging; no silent drops G2)
 //   - agent_presence (agent-comms §1.2):    O (ordinary — presence beat; TTL projection handles crash gaps)
 func registerAgentEvents() {
-	mustRegister("agent_started", func() EventPayload { return &AgentStartedPayload{} })
-	mustRegister("agent_ready", func() EventPayload { return &AgentReadyPayload{} })
-	mustRegister("agent_output_chunk", func() EventPayload { return &AgentOutputChunkPayload{} })
-	mustRegister("agent_completed", func() EventPayload { return &AgentCompletedPayload{} })
-	mustRegister("agent_failed", func() EventPayload { return &AgentFailedPayload{} })
-	mustRegister("agent_heartbeat", func() EventPayload { return &AgentHeartbeatPayload{} })
-	mustRegister("agent_rate_limit_status", func() EventPayload { return &AgentRateLimitStatusPayload{} })
-	mustRegister("session_log_location", func() EventPayload { return &SessionLogLocationPayload{} })
-	mustRegister("skills_provisioned", func() EventPayload { return &SkillsProvisionedPayload{} })
-	mustRegister("handler_capabilities", func() EventPayload { return &HandlerCapabilitiesPayload{} })
-	mustRegister("agent_warning_silent_hang", func() EventPayload { return &AgentWarningSilentHangPayload{} })
-	mustRegister("agent_resumed_after_warning", func() EventPayload { return &AgentResumedAfterWarningPayload{} })
-	mustRegister("agent_soft_terminating", func() EventPayload { return &AgentSoftTerminatingPayload{} })
-	mustRegister("agent_hard_terminating", func() EventPayload { return &AgentHardTerminatingPayload{} })
-	mustRegister("launch_initiated", func() EventPayload { return &LaunchInitiatedPayload{} })
+	mustRegister(EventTypeAgentStarted, func() EventPayload { return &AgentStartedPayload{} })
+	mustRegister(EventTypeAgentReady, func() EventPayload { return &AgentReadyPayload{} })
+	mustRegister(EventTypeAgentOutputChunk, func() EventPayload { return &AgentOutputChunkPayload{} })
+	mustRegister(EventTypeAgentCompleted, func() EventPayload { return &AgentCompletedPayload{} })
+	mustRegister(EventTypeAgentFailed, func() EventPayload { return &AgentFailedPayload{} })
+	mustRegister(EventTypeAgentHeartbeat, func() EventPayload { return &AgentHeartbeatPayload{} })
+	mustRegister(EventTypeAgentRateLimitStatus, func() EventPayload { return &AgentRateLimitStatusPayload{} })
+	mustRegister(EventTypeSessionLogLocation, func() EventPayload { return &SessionLogLocationPayload{} })
+	mustRegister(EventTypeSkillsProvisioned, func() EventPayload { return &SkillsProvisionedPayload{} })
+	mustRegister(EventTypeHandlerCapabilities, func() EventPayload { return &HandlerCapabilitiesPayload{} })
+	mustRegister(EventTypeAgentWarningSilentHang, func() EventPayload { return &AgentWarningSilentHangPayload{} })
+	mustRegister(EventTypeAgentResumedAfterWarning, func() EventPayload { return &AgentResumedAfterWarningPayload{} })
+	mustRegister(EventTypeAgentSoftTerminating, func() EventPayload { return &AgentSoftTerminatingPayload{} })
+	mustRegister(EventTypeAgentHardTerminating, func() EventPayload { return &AgentHardTerminatingPayload{} })
+	mustRegister(EventTypeLaunchInitiated, func() EventPayload { return &LaunchInitiatedPayload{} })
 	// agent_ready_timeout (hk-5cox8): emitted by the daemon workloop when HC-056
 	// fires — no agent_ready arrived within the timeout window. Durability class: O.
-	mustRegister("agent_ready_timeout", func() EventPayload { return &AgentReadyTimeoutPayload{} })
+	mustRegister(EventTypeAgentReadyTimeout, func() EventPayload { return &AgentReadyTimeoutPayload{} })
 	// post_agent_ready_hang (hk-a2okh): emitted when an implementer becomes ready
 	// but makes no observable progress within the hang-detection timeout. Durability class: O.
-	mustRegister("post_agent_ready_hang", func() EventPayload { return &PostAgentReadyHangPayload{} })
+	mustRegister(EventTypePostAgentReadyHang, func() EventPayload { return &PostAgentReadyHangPayload{} })
 	// lifecycle_transition (§8.3.14, hk-xrygh): emitted by the watcher and
 	// workloop on every LifecycleState machine transition per HC-064..HC-067.
 	// Durability class: O.
-	mustRegister("lifecycle_transition", func() EventPayload { return &LifecycleTransitionPayload{} })
+	mustRegister(EventTypeLifecycleTransition, func() EventPayload { return &LifecycleTransitionPayload{} })
 	// pasteinject_failed (hk-fra5l): emitted by the daemon when paste-inject
 	// cannot deliver the kick-off message to the tmux pane. Durability class: O.
-	mustRegister("pasteinject_failed", func() EventPayload { return &PasteInjectFailedPayload{} })
+	mustRegister(EventTypePasteInjectFailed, func() EventPayload { return &PasteInjectFailedPayload{} })
 	// launch_stall_detected (hk-fra5l): emitted by the stale watcher when
 	// run_started fires but launch_initiated is absent for >30 s. Durability class: O.
-	mustRegister("launch_stall_detected", func() EventPayload { return &LaunchStallDetectedPayload{} })
+	mustRegister(EventTypeLaunchStallDetected, func() EventPayload { return &LaunchStallDetectedPayload{} })
 	// agent_ready_stall_detected (hk-1s1or): emitted by the stale watcher when
 	// launch_initiated fires but agent_ready is absent for >agentReadyStallThreshold
 	// (a few minutes) — the launch_initiated → agent_ready blind spot. Durability class: O.
-	mustRegister("agent_ready_stall_detected", func() EventPayload { return &AgentReadyStallDetectedPayload{} })
+	mustRegister(EventTypeAgentReadyStallDetected, func() EventPayload { return &AgentReadyStallDetectedPayload{} })
 	// spawn_cap_blocked (hk-4l7zs): emitted by the daemon when SpawnWindow cannot
 	// acquire a spawn-semaphore slot within the bounded acquire timeout — the
 	// observable signature of a slot leak. Durability class: O.
-	mustRegister("spawn_cap_blocked", func() EventPayload { return &SpawnCapBlockedPayload{} })
+	mustRegister(EventTypeSpawnCapBlocked, func() EventPayload { return &SpawnCapBlockedPayload{} })
 	// implementer_budget_exceeded (hk-9vp51): emitted by pasteInjectQuitOnCommit
 	// when an implementer session is force-killed for exhausting its commit
 	// budget (hard ceiling reached, or progress went stale). Durability class: O.
-	mustRegister("implementer_budget_exceeded", func() EventPayload { return &ImplementerBudgetExceededPayload{} })
+	mustRegister(EventTypeImplementerBudgetExceeded, func() EventPayload { return &ImplementerBudgetExceededPayload{} })
 	// implementer_no_work_suspected (hk-368i4): emitted when a process-exit
 	// implementer produced no commit and a clean worktree AND ran for less than
 	// the no-work duration floor — the independent detector for the silent
 	// implementer failure hk-jcrzn exposed. Durability class: O.
-	mustRegister("implementer_no_work_suspected", func() EventPayload { return &ImplementerNoWorkSuspectedPayload{} })
+	mustRegister(EventTypeImplementerNoWorkSuspected, func() EventPayload { return &ImplementerNoWorkSuspectedPayload{} })
 	// reviewer_budget_exceeded (hk-da3rr): emitted by the builtin review-loop
 	// and the DOT reviewer-node path when pasteInjectQuitOnReviewFile
 	// force-kills a reviewer session that exhausted its diff-scaled verdict
 	// budget. Durability class: O.
-	mustRegister("reviewer_budget_exceeded", func() EventPayload { return &ReviewerBudgetExceededPayload{} })
+	mustRegister(EventTypeReviewerBudgetExceeded, func() EventPayload { return &ReviewerBudgetExceededPayload{} })
 	// tmux_new_window_timeout (hk-r1rup): emitted by the daemon when
 	// tmuxSubstrate.SpawnWindow's underlying `tmux new-window` shell call hangs
 	// past the bounded new-window timeout — the observable signature of a hung
 	// tmux invocation (the no-spawn wedge). Durability class: O.
-	mustRegister("tmux_new_window_timeout", func() EventPayload { return &TmuxNewWindowTimeoutPayload{} })
+	mustRegister(EventTypeTmuxNewWindowTimeout, func() EventPayload { return &TmuxNewWindowTimeoutPayload{} })
 	// codex_billing_guard (hk-tu48u, C3/T11): emitted by the codex launch path's
 	// positive billing guard at each observable step (materialize
 	// forced_login_method=chatgpt, pre-flight assert allowed, pre-flight assert
 	// denied = fail-closed). Durability class: O.
-	mustRegister("codex_billing_guard", func() EventPayload { return &CodexBillingGuardPayload{} })
+	mustRegister(EventTypeCodexBillingGuard, func() EventPayload { return &CodexBillingGuardPayload{} })
 	// pi_billing_guard (hk-l1bkp, PI-040/042/043): emitted by the Pi launch
 	// path's fail-closed billing guard (inverted from codex: Pi refuses if the
 	// configured provider key is ABSENT). PI-042 on-disk credential check also
 	// fires each launch. Durability class: O.
-	mustRegister("pi_billing_guard", func() EventPayload { return &PiBillingGuardPayload{} })
+	mustRegister(EventTypePiBillingGuard, func() EventPayload { return &PiBillingGuardPayload{} })
 	// agent_message (hk-djqc9, agent-comms spec §1.1): directed/broadcast message
 	// between agents. Durability class: F (fsync-boundary — durable delivery G2).
 	mustRegister("agent_message", func() EventPayload { return &AgentMessagePayload{} })
@@ -247,17 +247,17 @@ func registerAgentEvents() {
 	// record which harness (agent_type) was chosen and which tier resolved it.
 	// Closes the observability gap where silent claude-code fallback was invisible.
 	// Durability class: O.
-	mustRegister("harness_selected", func() EventPayload { return &HarnessSelectedPayload{} })
+	mustRegister(EventTypeHarnessSelected, func() EventPayload { return &HarnessSelectedPayload{} })
 	// model_selected (hk-eval-prog-model-on-log-bh2o7): emitted by routedLaunchSpecBuilder
 	// and pinnedHarnessLaunchSpecBuilder after harness selection, recording the effective
 	// model string keyed on run_id. Enables trustworthy cross-model run records without
 	// config snapshots. Durability class: O.
-	mustRegister("model_selected", func() EventPayload { return &ModelSelectedPayload{} })
+	mustRegister(EventTypeModelSelected, func() EventPayload { return &ModelSelectedPayload{} })
 	// provider_selected (hk-8ziid.2): emitted by the claim-time Pi profile
 	// resolver alongside RunHandle.SetResolvedProvider, recording the resolved
 	// Pi provider string keyed on run_id. Enables per-provider slot-accounting
 	// audit without reading the run handle directly. Durability class: O.
-	mustRegister("provider_selected", func() EventPayload { return &ProviderSelectedPayload{} })
+	mustRegister(EventTypeProviderSelected, func() EventPayload { return &ProviderSelectedPayload{} })
 }
 
 // registerBudgetEvents registers all §8.4 budget-lifecycle event payload constructors.
@@ -267,9 +267,9 @@ func registerAgentEvents() {
 //   - budget_accrual (§8.4.2):    L (lossy-tail-ok — per-chunk accrual)
 //   - budget_exhausted (§8.4.3):  O (ordinary — budget lifecycle)
 func registerBudgetEvents() {
-	mustRegister("budget_warning", func() EventPayload { return &BudgetWarningPayload{} })
-	mustRegister("budget_accrual", func() EventPayload { return &BudgetAccrualPayload{} })
-	mustRegister("budget_exhausted", func() EventPayload { return &BudgetExhaustedEventPayload{} })
+	mustRegister(EventTypeBudgetWarning, func() EventPayload { return &BudgetWarningPayload{} })
+	mustRegister(EventTypeBudgetAccrual, func() EventPayload { return &BudgetAccrualPayload{} })
+	mustRegister(EventTypeBudgetExhausted, func() EventPayload { return &BudgetExhaustedEventPayload{} })
 }
 
 // registerWorkspaceEvents registers all §8.5 workspace-lifecycle event payload constructors.
@@ -282,12 +282,12 @@ func registerBudgetEvents() {
 //   - workspace_interrupted (§8.5.5):     O (ordinary — reconciliation and audit input)
 //   - merge_conflict_escalation (§8.5.6): O (ordinary — operator-observability and audit)
 func registerWorkspaceEvents() {
-	mustRegister("workspace_created", func() EventPayload { return &WorkspaceCreatedPayload{} })
-	mustRegister("workspace_leased", func() EventPayload { return &WorkspaceLeasedPayload{} })
-	mustRegister("workspace_merge_status", func() EventPayload { return &WorkspaceMergeStatusPayload{} })
-	mustRegister("workspace_discarded", func() EventPayload { return &WorkspaceDiscardedPayload{} })
-	mustRegister("workspace_interrupted", func() EventPayload { return &WorkspaceInterruptedPayload{} })
-	mustRegister("merge_conflict_escalation", func() EventPayload { return &MergeConflictEscalationPayload{} })
+	mustRegister(EventTypeWorkspaceCreated, func() EventPayload { return &WorkspaceCreatedPayload{} })
+	mustRegister(EventTypeWorkspaceLeased, func() EventPayload { return &WorkspaceLeasedPayload{} })
+	mustRegister(EventTypeWorkspaceMergeStatus, func() EventPayload { return &WorkspaceMergeStatusPayload{} })
+	mustRegister(EventTypeWorkspaceDiscarded, func() EventPayload { return &WorkspaceDiscardedPayload{} })
+	mustRegister(EventTypeWorkspaceInterrupted, func() EventPayload { return &WorkspaceInterruptedPayload{} })
+	mustRegister(EventTypeMergeConflictEscalation, func() EventPayload { return &MergeConflictEscalationPayload{} })
 }
 
 // registerReconciliationEvents registers all §8.6 reconciliation-lifecycle event payload constructors.
@@ -309,22 +309,22 @@ func registerWorkspaceEvents() {
 //   - reconciliation_verdict_execution_retry (§8.6.13)
 //   - bead_terminal_transition_recovered (§8.6.14) — deferred per OQ-BI-008; type reserved
 func registerReconciliationEvents() {
-	mustRegister("reconciliation_started", func() EventPayload { return &ReconciliationStartedPayload{} })
-	mustRegister("reconciliation_completed", func() EventPayload { return &ReconciliationCompletedPayload{} })
-	mustRegister("reconciliation_category_assigned", func() EventPayload { return &ReconciliationCategoryAssignedPayload{} })
-	mustRegister("reconciliation_verdict_emitted", func() EventPayload { return &ReconciliationVerdictEmittedPayload{} })
-	mustRegister("reconciliation_verdict_executed", func() EventPayload { return &VerdictExecutedPayload{} })
-	mustRegister("reconciliation_verdict_malformed", func() EventPayload { return &MalformedVerdictPayload{} })
-	mustRegister("reconciliation_budget_exhausted", func() EventPayload { return &BudgetExhaustedPayload{} })
-	mustRegister("reconciliation_verdict_stale", func() EventPayload { return &StaleVerdictPayload{} })
-	mustRegister("store_divergence_detected", func() EventPayload { return &StoreDivergenceDetectedPayload{} })
-	mustRegister("operator_escalation_required", func() EventPayload { return &OperatorEscalationRequiredPayload{} })
-	mustRegister("divergence_inconclusive", func() EventPayload { return &DivergenceInconclusivePayload{} })
-	mustRegister("reconciliation_dispatch_deduplicated", func() EventPayload { return &ReconciliationDispatchDeduplicatedPayload{} })
-	mustRegister("reconciliation_detector_panic", func() EventPayload { return &ReconciliationDetectorPanicPayload{} })
-	mustRegister("reconciliation_verdict_execution_retry", func() EventPayload { return &ReconciliationVerdictExecutionRetryPayload{} })
-	mustRegister("bead_terminal_transition_recovered", func() EventPayload { return &BeadTerminalTransitionRecoveredPayload{} })
-	mustRegister("reconciliation_mismatch_observed", func() EventPayload { return &ReconciliationMismatchObservedPayload{} })
+	mustRegister(EventTypeReconciliationStarted, func() EventPayload { return &ReconciliationStartedPayload{} })
+	mustRegister(EventTypeReconciliationCompleted, func() EventPayload { return &ReconciliationCompletedPayload{} })
+	mustRegister(EventTypeReconciliationCategoryAssigned, func() EventPayload { return &ReconciliationCategoryAssignedPayload{} })
+	mustRegister(EventTypeReconciliationVerdictEmitted, func() EventPayload { return &ReconciliationVerdictEmittedPayload{} })
+	mustRegister(EventTypeReconciliationVerdictExecuted, func() EventPayload { return &VerdictExecutedPayload{} })
+	mustRegister(EventTypeReconciliationVerdictMalformed, func() EventPayload { return &MalformedVerdictPayload{} })
+	mustRegister(EventTypeReconciliationBudgetExhausted, func() EventPayload { return &BudgetExhaustedPayload{} })
+	mustRegister(EventTypeReconciliationVerdictStale, func() EventPayload { return &StaleVerdictPayload{} })
+	mustRegister(EventTypeStoreDivergenceDetected, func() EventPayload { return &StoreDivergenceDetectedPayload{} })
+	mustRegister(EventTypeOperatorEscalationRequired, func() EventPayload { return &OperatorEscalationRequiredPayload{} })
+	mustRegister(EventTypeDivergenceInconclusive, func() EventPayload { return &DivergenceInconclusivePayload{} })
+	mustRegister(EventTypeReconciliationDispatchDeduplicated, func() EventPayload { return &ReconciliationDispatchDeduplicatedPayload{} })
+	mustRegister(EventTypeReconciliationDetectorPanic, func() EventPayload { return &ReconciliationDetectorPanicPayload{} })
+	mustRegister(EventTypeReconciliationVerdictExecutionRetry, func() EventPayload { return &ReconciliationVerdictExecutionRetryPayload{} })
+	mustRegister(EventTypeBeadTerminalTransitionRecovered, func() EventPayload { return &BeadTerminalTransitionRecoveredPayload{} })
+	mustRegister(EventTypeReconciliationMismatchObserved, func() EventPayload { return &ReconciliationMismatchObservedPayload{} })
 }
 
 // registerDaemonLifecycleEvents registers all §8.7 operator-control and daemon
@@ -351,37 +351,37 @@ func registerReconciliationEvents() {
 //   - daemon_config (§8.7.18):                    O (ordinary, resolved-config audit)
 //   - disk_low (§8.7.19, hk-sxlb):               O (ordinary, disk-watermark self-healing signal)
 func registerDaemonLifecycleEvents() {
-	mustRegister("daemon_started", func() EventPayload { return &DaemonStartedPayload{} })
-	mustRegister("daemon_ready", func() EventPayload { return &DaemonReadyPayload{} })
-	mustRegister("daemon_shutdown", func() EventPayload { return &DaemonShutdownPayload{} })
-	mustRegister("daemon_startup_failed", func() EventPayload { return &DaemonStartupFailedPayload{} })
-	mustRegister("daemon_degraded", func() EventPayload { return &DaemonDegradedPayload{} })
-	mustRegister("operator_pause_status", func() EventPayload { return &OperatorPauseStatusPayload{} })
-	mustRegister("operator_resuming", func() EventPayload { return &OperatorResumingPayload{} })
-	mustRegister("operator_stopped", func() EventPayload { return &OperatorStoppedPayload{} })
-	mustRegister("operator_upgrading", func() EventPayload { return &OperatorUpgradingPayload{} })
-	mustRegister("operator_upgrade_completed", func() EventPayload { return &OperatorUpgradeCompletedPayload{} })
-	mustRegister("operator_upgrade_rejected", func() EventPayload { return &OperatorUpgradeRejectedPayload{} })
-	mustRegister("operator_command_rejected", func() EventPayload { return &OperatorCommandRejectedPayload{} })
-	mustRegister("dispatch_deferred", func() EventPayload { return &DispatchDeferredPayload{} })
-	mustRegister("daemon_orphan_sweep_completed", func() EventPayload { return &DaemonOrphanSweepCompletedPayload{} })
-	mustRegister("infrastructure_unavailable", func() EventPayload { return &InfrastructureUnavailablePayload{} })
-	mustRegister("operator_command_failed", func() EventPayload { return &OperatorCommandFailedPayload{} })
-	mustRegister("operator_escalation_cleared", func() EventPayload { return &OperatorEscalationClearedPayload{} })
-	mustRegister("daemon_config", func() EventPayload { return &DaemonConfigPayload{} })
+	mustRegister(EventTypeDaemonStarted, func() EventPayload { return &DaemonStartedPayload{} })
+	mustRegister(EventTypeDaemonReady, func() EventPayload { return &DaemonReadyPayload{} })
+	mustRegister(EventTypeDaemonShutdown, func() EventPayload { return &DaemonShutdownPayload{} })
+	mustRegister(EventTypeDaemonStartupFailed, func() EventPayload { return &DaemonStartupFailedPayload{} })
+	mustRegister(EventTypeDaemonDegraded, func() EventPayload { return &DaemonDegradedPayload{} })
+	mustRegister(EventTypeOperatorPauseStatus, func() EventPayload { return &OperatorPauseStatusPayload{} })
+	mustRegister(EventTypeOperatorResuming, func() EventPayload { return &OperatorResumingPayload{} })
+	mustRegister(EventTypeOperatorStopped, func() EventPayload { return &OperatorStoppedPayload{} })
+	mustRegister(EventTypeOperatorUpgrading, func() EventPayload { return &OperatorUpgradingPayload{} })
+	mustRegister(EventTypeOperatorUpgradeCompleted, func() EventPayload { return &OperatorUpgradeCompletedPayload{} })
+	mustRegister(EventTypeOperatorUpgradeRejected, func() EventPayload { return &OperatorUpgradeRejectedPayload{} })
+	mustRegister(EventTypeOperatorCommandRejected, func() EventPayload { return &OperatorCommandRejectedPayload{} })
+	mustRegister(EventTypeDispatchDeferred, func() EventPayload { return &DispatchDeferredPayload{} })
+	mustRegister(EventTypeDaemonOrphanSweepCompleted, func() EventPayload { return &DaemonOrphanSweepCompletedPayload{} })
+	mustRegister(EventTypeInfrastructureUnavailable, func() EventPayload { return &InfrastructureUnavailablePayload{} })
+	mustRegister(EventTypeOperatorCommandFailed, func() EventPayload { return &OperatorCommandFailedPayload{} })
+	mustRegister(EventTypeOperatorEscalationCleared, func() EventPayload { return &OperatorEscalationClearedPayload{} })
+	mustRegister(EventTypeDaemonConfig, func() EventPayload { return &DaemonConfigPayload{} })
 	// disk_low (§8.7.19, hk-sxlb): emitted when available disk falls below the
 	// configured watermark; daemon pauses dispatch and attempts go clean -cache.
-	mustRegister("disk_low", func() EventPayload { return &DiskLowPayload{} })
+	mustRegister(EventTypeDiskLow, func() EventPayload { return &DiskLowPayload{} })
 	// supervisor_revival (§8.7.20, hk-rnkuy): emitted at daemon startup when the
 	// prior daemon session ended without a daemon_shutdown event — i.e., the daemon
 	// was killed by SIGKILL, OOM, or panic. Fills the logmine gap that previously
 	// required stderr correlation to detect unexplained daemon deaths. Durability: O.
-	mustRegister("supervisor_revival", func() EventPayload { return &SupervisorRevivalPayload{} })
+	mustRegister(EventTypeSupervisorRevival, func() EventPayload { return &SupervisorRevivalPayload{} })
 	// dashboard_stale / dashboard_refreshed (§8.7.21-22, hk-xg6rw): forcing gate
 	// — while dashboard.json is stale past dashboard.max_staleness, the daemon
 	// staffs no new work on captain-curated queues. Durability: O.
-	mustRegister("dashboard_stale", func() EventPayload { return &DashboardStalePayload{} })
-	mustRegister("dashboard_refreshed", func() EventPayload { return &DashboardRefreshedPayload{} })
+	mustRegister(EventTypeDashboardStale, func() EventPayload { return &DashboardStalePayload{} })
+	mustRegister(EventTypeDashboardRefreshed, func() EventPayload { return &DashboardRefreshedPayload{} })
 }
 
 // registerBusEvents registers all §8.8 observability and bus-internal event
@@ -395,15 +395,15 @@ func registerDaemonLifecycleEvents() {
 //     fallback when reservation slot is exhausted per EV-011a)
 //   - redaction_failed (§8.8.5):     O (ordinary, bus-internal; ON-022 fail-closed redactor)
 func registerBusEvents() {
-	mustRegister("metric", func() EventPayload { return &MetricPayload{} })
-	mustRegister("consumer_failed", func() EventPayload { return &ConsumerFailedPayload{} })
-	mustRegister("dead_letter_enqueued", func() EventPayload { return &DeadLetterEnqueuedPayload{} })
-	mustRegister("bus_overflow", func() EventPayload { return &BusOverflowPayload{} })
-	mustRegister("redaction_failed", func() EventPayload { return &RedactionFailedPayload{} })
+	mustRegister(EventTypeMetric, func() EventPayload { return &MetricPayload{} })
+	mustRegister(EventTypeConsumerFailed, func() EventPayload { return &ConsumerFailedPayload{} })
+	mustRegister(EventTypeDeadLetterEnqueued, func() EventPayload { return &DeadLetterEnqueuedPayload{} })
+	mustRegister(EventTypeBusOverflow, func() EventPayload { return &BusOverflowPayload{} })
+	mustRegister(EventTypeRedactionFailed, func() EventPayload { return &RedactionFailedPayload{} })
 	// bead_claim_skipped (BI-013c): emitted by the pre-claim status re-read guard
 	// when the bead's status is not open between dispatcher selection and claim write.
 	// Durability class: O.
-	mustRegister("bead_claim_skipped", func() EventPayload { return &BeadClaimSkippedPayload{} })
+	mustRegister(EventTypeBeadClaimSkipped, func() EventPayload { return &BeadClaimSkippedPayload{} })
 }
 
 // registerReviewLoopEvents registers all §8.1a review-loop cycle and §8.8.6
@@ -419,22 +419,22 @@ func registerBusEvents() {
 //   - bead_label_conflict        (§8.8.6):  O (ordinary — claim-path observational evidence)
 //   - review_bypassed            (hk-81n9r): O (ordinary — audit event when workflow:single gates single mode)
 func registerReviewLoopEvents() {
-	mustRegister("implementer_resumed", func() EventPayload { return &ImplementerResumedPayload{} })
-	mustRegister("reviewer_launched", func() EventPayload { return &ReviewerLaunchedPayload{} })
-	mustRegister("reviewer_verdict", func() EventPayload { return &ReviewerVerdictPayload{} })
-	mustRegister("iteration_cap_hit", func() EventPayload { return &IterationCapHitPayload{} })
-	mustRegister("no_progress_detected", func() EventPayload { return &NoProgressDetectedPayload{} })
-	mustRegister("review_loop_cycle_complete", func() EventPayload { return &ReviewLoopCycleCompletePayload{} })
-	mustRegister("bead_label_conflict", func() EventPayload { return &BeadLabelConflictPayload{} })
+	mustRegister(EventTypeImplementerResumed, func() EventPayload { return &ImplementerResumedPayload{} })
+	mustRegister(EventTypeReviewerLaunched, func() EventPayload { return &ReviewerLaunchedPayload{} })
+	mustRegister(EventTypeReviewerVerdict, func() EventPayload { return &ReviewerVerdictPayload{} })
+	mustRegister(EventTypeIterationCapHit, func() EventPayload { return &IterationCapHitPayload{} })
+	mustRegister(EventTypeNoProgressDetected, func() EventPayload { return &NoProgressDetectedPayload{} })
+	mustRegister(EventTypeReviewLoopCycleComplete, func() EventPayload { return &ReviewLoopCycleCompletePayload{} })
+	mustRegister(EventTypeBeadLabelConflict, func() EventPayload { return &BeadLabelConflictPayload{} })
 	// review_bypassed (hk-81n9r): emitted when a bead's workflow:single label
 	// resolves at tier-1, gating single-mode dispatch behind an observable audit event.
 	// Durability class: O.
-	mustRegister("review_bypassed", func() EventPayload { return &ReviewBypassedPayload{} })
+	mustRegister(EventTypeReviewBypassed, func() EventPayload { return &ReviewBypassedPayload{} })
 	// review_fixup_stalled (hk-m1wqp): emitted when a REQUEST_CHANGES fix-up run
 	// advances HEAD by zero commits; carries the reviewer flags from the prior
 	// REQUEST_CHANGES verdict so triage sees the specific flag the implementer
 	// failed to address. Durability class: O.
-	mustRegister("review_fixup_stalled", func() EventPayload { return &ReviewFixupStalledPayload{} })
+	mustRegister(EventTypeReviewFixupStalled, func() EventPayload { return &ReviewFixupStalledPayload{} })
 }
 
 // registerQueueEvents registers all §8.10 queue lifecycle event payload
@@ -449,13 +449,13 @@ func registerReviewLoopEvents() {
 //   - queue_item_deferred_for_ledger_dep (§8.10.6): O (ordinary — reconstructible from ledger state + queue.json)
 //   - queue_item_reconciled              (§8.10.7): F (fsync-boundary — correction MUST be durable before re-dispatch per §8.10.7)
 func registerQueueEvents() {
-	mustRegister("queue_submitted", func() EventPayload { return &QueueSubmittedPayload{} })
-	mustRegister("queue_group_started", func() EventPayload { return &QueueGroupStartedPayload{} })
-	mustRegister("queue_group_completed", func() EventPayload { return &QueueGroupCompletedPayload{} })
-	mustRegister("queue_paused", func() EventPayload { return &QueuePausedPayload{} })
-	mustRegister("queue_appended", func() EventPayload { return &QueueAppendedPayload{} })
-	mustRegister("queue_item_deferred_for_ledger_dep", func() EventPayload { return &QueueItemDeferredForLedgerDepPayload{} })
-	mustRegister("queue_item_reconciled", func() EventPayload { return &QueueItemReconciledPayload{} })
+	mustRegister(EventTypeQueueSubmitted, func() EventPayload { return &QueueSubmittedPayload{} })
+	mustRegister(EventTypeQueueGroupStarted, func() EventPayload { return &QueueGroupStartedPayload{} })
+	mustRegister(EventTypeQueueGroupCompleted, func() EventPayload { return &QueueGroupCompletedPayload{} })
+	mustRegister(EventTypeQueuePaused, func() EventPayload { return &QueuePausedPayload{} })
+	mustRegister(EventTypeQueueAppended, func() EventPayload { return &QueueAppendedPayload{} })
+	mustRegister(EventTypeQueueItemDeferredForLedgerDep, func() EventPayload { return &QueueItemDeferredForLedgerDepPayload{} })
+	mustRegister(EventTypeQueueItemReconciled, func() EventPayload { return &QueueItemReconciledPayload{} })
 }
 
 // registerHandlerPauseEvents registers all §8.11 handler-pause lifecycle event
@@ -466,9 +466,9 @@ func registerQueueEvents() {
 //   - handler_resumed                   (§8.11.2): F (fsync-boundary — resume action durable before dispatcher proceeds)
 //   - queue_item_held_for_handler_pause (§8.11.3): O (ordinary — reconstructible from handler-state.json + queue.json)
 func registerHandlerPauseEvents() {
-	mustRegister("handler_paused", func() EventPayload { return &HandlerPausedPayload{} })
-	mustRegister("handler_resumed", func() EventPayload { return &HandlerResumedPayload{} })
-	mustRegister("queue_item_held_for_handler_pause", func() EventPayload { return &QueueItemHeldForHandlerPausePayload{} })
+	mustRegister(EventTypeHandlerPaused, func() EventPayload { return &HandlerPausedPayload{} })
+	mustRegister(EventTypeHandlerResumed, func() EventPayload { return &HandlerResumedPayload{} })
+	mustRegister(EventTypeQueueItemHeldForHandlerPause, func() EventPayload { return &QueueItemHeldForHandlerPausePayload{} })
 }
 
 // registerGateDispatchEvents registers the §8.2a gate-node dispatch event
@@ -477,13 +477,13 @@ func registerHandlerPauseEvents() {
 // Durability classes per §8.2a:
 //   - gate_decision_recorded: O (ordinary — observability and audit)
 func registerGateDispatchEvents() {
-	mustRegister("gate_decision_recorded", func() EventPayload { return &GateDecisionRecordedPayload{} })
+	mustRegister(EventTypeGateDecisionRecorded, func() EventPayload { return &GateDecisionRecordedPayload{} })
 }
 
 // registerWorkflowLoaderEvents registers the workflow-loader event payload
 // constructors (hk-zqr6f, CP-057 skills_ref resolution).
 func registerWorkflowLoaderEvents() {
-	mustRegister("skills_resolved", func() EventPayload { return &SkillsResolvedPayload{} })
+	mustRegister(EventTypeSkillsResolved, func() EventPayload { return &SkillsResolvedPayload{} })
 }
 
 // registerKeeperEvents registers §8.16 session-keeper event payload constructors
@@ -499,38 +499,38 @@ func registerWorkflowLoaderEvents() {
 //   - session_keeper_cycle_recovered     (§8.16.7): O (ordinary — observability)
 //   - session_keeper_precompact_blocked  (§8.16.8): O (ordinary — observability)
 func registerKeeperEvents() {
-	mustRegister("session_keeper_warn", func() EventPayload { return &SessionKeeperWarnPayload{} })
-	mustRegister("session_keeper_no_gauge", func() EventPayload { return &SessionKeeperNoGaugePayload{} })
-	mustRegister("session_keeper_handoff_started", func() EventPayload { return &SessionKeeperHandoffStartedPayload{} })
-	mustRegister("session_keeper_cycle_complete", func() EventPayload { return &SessionKeeperCycleCompletePayload{} })
-	mustRegister("session_keeper_cycle_aborted", func() EventPayload { return &SessionKeeperCycleAbortedPayload{} })
-	mustRegister("session_keeper_clear_unconfirmed", func() EventPayload { return &SessionKeeperClearUnconfirmedPayload{} })
-	mustRegister("session_keeper_cycle_recovered", func() EventPayload { return &SessionKeeperCycleRecoveredPayload{} })
+	mustRegister(EventTypeSessionKeeperWarn, func() EventPayload { return &SessionKeeperWarnPayload{} })
+	mustRegister(EventTypeSessionKeeperNoGauge, func() EventPayload { return &SessionKeeperNoGaugePayload{} })
+	mustRegister(EventTypeSessionKeeperHandoffStarted, func() EventPayload { return &SessionKeeperHandoffStartedPayload{} })
+	mustRegister(EventTypeSessionKeeperCycleComplete, func() EventPayload { return &SessionKeeperCycleCompletePayload{} })
+	mustRegister(EventTypeSessionKeeperCycleAborted, func() EventPayload { return &SessionKeeperCycleAbortedPayload{} })
+	mustRegister(EventTypeSessionKeeperClearUnconfirmed, func() EventPayload { return &SessionKeeperClearUnconfirmedPayload{} })
+	mustRegister(EventTypeSessionKeeperCycleRecovered, func() EventPayload { return &SessionKeeperCycleRecoveredPayload{} })
 	// hk-aalsm: PreCompact backstop hook.
-	mustRegister("session_keeper_precompact_blocked", func() EventPayload { return &SessionKeeperPrecompactBlockedPayload{} })
+	mustRegister(EventTypeSessionKeeperPrecompactBlocked, func() EventPayload { return &SessionKeeperPrecompactBlockedPayload{} })
 	// hk-3w2: supervised respawn path.
-	mustRegister("session_keeper_respawn_attempted", func() EventPayload { return &SessionKeeperRespawnAttemptedPayload{} })
+	mustRegister(EventTypeSessionKeeperRespawnAttempted, func() EventPayload { return &SessionKeeperRespawnAttemptedPayload{} })
 	// hk-6qf: operator-attached guard (warn-only suppression).
-	mustRegister("session_keeper_operator_attached", func() EventPayload { return &SessionKeeperOperatorAttachedPayload{} })
+	mustRegister(EventTypeSessionKeeperOperatorAttached, func() EventPayload { return &SessionKeeperOperatorAttachedPayload{} })
 	// hk-wjzf, ON-059: captain-initiated restart-now gate/freshness suppression.
-	mustRegister("session_keeper_restart_now_blocked", func() EventPayload { return &SessionKeeperRestartNowBlockedPayload{} })
+	mustRegister(EventTypeSessionKeeperRestartNowBlocked, func() EventPayload { return &SessionKeeperRestartNowBlockedPayload{} })
 	// SK-030: successful agent-run restart-now, nonce carried for audit.
-	mustRegister("session_keeper_restart_now", func() EventPayload { return &SessionKeeperRestartNowPayload{} })
+	mustRegister(EventTypeSessionKeeperRestartNow, func() EventPayload { return &SessionKeeperRestartNowPayload{} })
 	// hk-34ac: blind-keeper alarm (continuous foreign_session > 5 min).
-	mustRegister("session_keeper_blind", func() EventPayload { return &SessionKeeperBlindPayload{} })
+	mustRegister(EventTypeSessionKeeperBlind, func() EventPayload { return &SessionKeeperBlindPayload{} })
 	// hk-34ac: SID-independent hard-ceiling failsafe (tokens >= 280K).
-	mustRegister("session_keeper_hard_ceiling", func() EventPayload { return &SessionKeeperHardCeilingPayload{} })
+	mustRegister(EventTypeSessionKeeperHardCeiling, func() EventPayload { return &SessionKeeperHardCeilingPayload{} })
 	// hk-ee81: idle crew below idle-restart floor (advisory to captain).
-	mustRegister("session_keeper_idle_crew", func() EventPayload { return &SessionKeeperIdleCrewPayload{} })
+	mustRegister(EventTypeSessionKeeperIdleCrew, func() EventPayload { return &SessionKeeperIdleCrewPayload{} })
 	// hk-4pnv: keeper refused to start because threshold config / flags failed the
 	// fail-loud precedence resolver (bad value or band inversion).
 	mustRegister("session_keeper_config_rejected", func() EventPayload { return &SessionKeeperConfigRejectedPayload{} })
 	// hk-qgfme: crew keeper watcher dead post-spawn — flock not acquired within flock_acquire_grace.
-	mustRegister("session_keeper_watcher_dead", func() EventPayload { return &SessionKeeperWatcherDeadPayload{} })
+	mustRegister(EventTypeSessionKeeperWatcherDead, func() EventPayload { return &SessionKeeperWatcherDeadPayload{} })
 	// hk-wqdc: live-pane recovery attempt after a cleared pane is detected.
-	mustRegister("session_keeper_live_pane_recover", func() EventPayload { return &SessionKeeperLivePaneRecoverPayload{} })
+	mustRegister(EventTypeSessionKeeperLivePaneRecover, func() EventPayload { return &SessionKeeperLivePaneRecoverPayload{} })
 	// hk-wqdc: ack timeout when keeper sent a clear but received no confirmation.
-	mustRegister("session_keeper_ack_timeout", func() EventPayload { return &SessionKeeperAckTimeoutPayload{} })
+	mustRegister(EventTypeSessionKeeperAckTimeout, func() EventPayload { return &SessionKeeperAckTimeoutPayload{} })
 }
 
 // registerKeeperInteriorEvents registers §8.20 session-keeper interior cycle
@@ -545,10 +545,10 @@ func registerKeeperEvents() {
 //   - session_keeper_clear_sent      (§8.20.3): O (ordinary — observability)
 //   - session_keeper_new_session_up  (§8.20.4): O (ordinary — observability)
 func registerKeeperInteriorEvents() {
-	mustRegister("session_keeper_handoff_written", func() EventPayload { return &SessionKeeperHandoffWrittenPayload{} })
-	mustRegister("session_keeper_model_done", func() EventPayload { return &SessionKeeperModelDonePayload{} })
-	mustRegister("session_keeper_clear_sent", func() EventPayload { return &SessionKeeperClearSentPayload{} })
-	mustRegister("session_keeper_new_session_up", func() EventPayload { return &SessionKeeperNewSessionUpPayload{} })
+	mustRegister(EventTypeSessionKeeperHandoffWritten, func() EventPayload { return &SessionKeeperHandoffWrittenPayload{} })
+	mustRegister(EventTypeSessionKeeperModelDone, func() EventPayload { return &SessionKeeperModelDonePayload{} })
+	mustRegister(EventTypeSessionKeeperClearSent, func() EventPayload { return &SessionKeeperClearSentPayload{} })
+	mustRegister(EventTypeSessionKeeperNewSessionUp, func() EventPayload { return &SessionKeeperNewSessionUpPayload{} })
 }
 
 // registerAgentInputEvents registers §8.21 agent-input acceptance event
@@ -575,11 +575,11 @@ func registerAgentInputEvents() {
 //   - review_gate_anomaly (§8.17.1): O (ordinary — observability alarm; reconstructible
 //     from bead_closed + reviewer_verdict sequence in the JSONL log)
 func registerAlarmEvents() {
-	mustRegister("review_gate_anomaly", func() EventPayload { return &ReviewGateAnomalyPayload{} })
+	mustRegister(EventTypeReviewGateAnomaly, func() EventPayload { return &ReviewGateAnomalyPayload{} })
 
 	// §8.19 Stall-sentinel Layer A detection (hk-l087e).
 	// Durability class: O (ordinary — reconstructible from a fresh Snapshot).
-	mustRegister("stall_detected", func() EventPayload { return &StallDetectedPayload{} })
+	mustRegister(EventTypeStallDetected, func() EventPayload { return &StallDetectedPayload{} })
 }
 
 // registerHITLDecisionEvents registers the §8.14 hitl-decisions event payload
@@ -598,9 +598,9 @@ func registerAlarmEvents() {
 // Distinct from the §8.12 decision_required / decision_acknowledged
 // daemon-escalation family.
 func registerHITLDecisionEvents() {
-	mustRegister("decision_needed", func() EventPayload { return &DecisionNeededPayload{} })
-	mustRegister("decision_resolved", func() EventPayload { return &DecisionResolvedPayload{} })
-	mustRegister("decision_withdrawn", func() EventPayload { return &DecisionWithdrawnPayload{} })
+	mustRegister(EventTypeDecisionNeeded, func() EventPayload { return &DecisionNeededPayload{} })
+	mustRegister(EventTypeDecisionResolved, func() EventPayload { return &DecisionResolvedPayload{} })
+	mustRegister(EventTypeDecisionWithdrawn, func() EventPayload { return &DecisionWithdrawnPayload{} })
 }
 
 // registerDecisionRequiredEvents registers the §8.12 decision-required
@@ -615,8 +615,8 @@ func registerHITLDecisionEvents() {
 //
 // DISTINCT from the §8.14 hitl-decisions family (registerHITLDecisionEvents).
 func registerDecisionRequiredEvents() {
-	mustRegister("decision_required", func() EventPayload { return &DecisionRequiredPayload{} })
-	mustRegister("decision_acknowledged", func() EventPayload { return &DecisionAcknowledgedPayload{} })
+	mustRegister(EventTypeDecisionRequired, func() EventPayload { return &DecisionRequiredPayload{} })
+	mustRegister(EventTypeDecisionAcknowledged, func() EventPayload { return &DecisionAcknowledgedPayload{} })
 }
 
 // registerBeadLedgerEvents registers the §8.15 bead-ledger merge lifecycle
@@ -634,11 +634,11 @@ func registerDecisionRequiredEvents() {
 //   - orphaned_child_bead (§8.15.3):        O (ordinary — informational; bead closed
 //     or escalated immediately after emission per reconciliation/spec.md §8.BL1)
 func registerBeadLedgerEvents() {
-	mustRegister("bead_sync_failed", func() EventPayload { return &BeadSyncFailedPayload{} })
-	mustRegister("bead_ledger_recovered", func() EventPayload { return &BeadLedgerRecoveredPayload{} })
-	mustRegister("bead_ledger_corrupt", func() EventPayload { return &BeadLedgerCorruptPayload{} })
-	mustRegister("bead_ledger_conflict_audit", func() EventPayload { return &BeadLedgerConflictAuditPayload{} })
-	mustRegister("orphaned_child_bead", func() EventPayload { return &OrphanedChildBeadPayload{} })
+	mustRegister(EventTypeBeadSyncFailed, func() EventPayload { return &BeadSyncFailedPayload{} })
+	mustRegister(EventTypeBeadLedgerRecovered, func() EventPayload { return &BeadLedgerRecoveredPayload{} })
+	mustRegister(EventTypeBeadLedgerCorrupt, func() EventPayload { return &BeadLedgerCorruptPayload{} })
+	mustRegister(EventTypeBeadLedgerConflictAudit, func() EventPayload { return &BeadLedgerConflictAuditPayload{} })
+	mustRegister(EventTypeOrphanedChildBead, func() EventPayload { return &OrphanedChildBeadPayload{} })
 }
 
 // mustRegister calls RegisterEventType and panics on error.
@@ -650,14 +650,14 @@ func registerBeadLedgerEvents() {
 //
 // This helper is intentionally unexported and limited to init() callers; it
 // MUST NOT be called after startup completes.
-func mustRegister(typeName string, ctor func() EventPayload) {
-	if err := RegisterEventType(typeName, ctor); err != nil {
-		panic("core: mustRegister: " + typeName + ": " + err.Error())
+func mustRegister(typeName EventType, ctor func() EventPayload) {
+	if err := RegisterEventType(string(typeName), ctor); err != nil {
+		panic("core: mustRegister: " + string(typeName) + ": " + err.Error())
 	}
 }
 
-func mustRegisterAtVersion(typeName string, ctor func() EventPayload, version int) {
-	if err := RegisterEventTypeAtVersion(typeName, ctor, version); err != nil {
-		panic("core: mustRegisterAtVersion: " + typeName + ": " + err.Error())
+func mustRegisterAtVersion(typeName EventType, ctor func() EventPayload, version int) {
+	if err := RegisterEventTypeAtVersion(string(typeName), ctor, version); err != nil {
+		panic("core: mustRegisterAtVersion: " + string(typeName) + ": " + err.Error())
 	}
 }

@@ -25,7 +25,7 @@ type RunStartedReadPayload struct {
 // strict RunStartedPayload decoder. The version-1 branch is private to this
 // read boundary and never supplies a value to a writer.
 func DecodeRunStartedForRead(e Event) (RunStartedReadPayload, error) {
-	entry, ok := LookupPayloadCompatEntry(string(EventTypeRunStarted))
+	entry, ok := LookupPayloadCompatEntry(EventTypeRunStarted)
 	if !ok {
 		return RunStartedReadPayload{}, fmt.Errorf("run_started compatibility is not registered")
 	}

@@ -324,9 +324,9 @@ func runEnvWithDispatch(base runloop.RunEnv,
 //
 // TIDGen and EmittedEpics/EmittedEpicsMu are shared by reference like every
 // other handle here (RT18.9): the bundle and the outer-loop KEEP sites that
-// still read deps.tidGen dereference the SAME *core.TransitionIDGenerator, so
-// monotonicity (EM-018a) is preserved.
-func newSharedHandles(runRegistry *RunRegistry, localInFlight *atomic.Int32, agentSpawnSem chan struct{}, workerRegistry *workers.Registry, queueStore *queuewiring.QueueStore, projectDir string, harnessRegistry *handlercontract.HarnessRegistry, adapterRegistry *handlercontract.AdapterRegistry, hookStore hookStoreIface, substratePort, reviewerSubstrate handler.Substrate, tidGen *core.TransitionIDGenerator, emittedEpics map[core.BeadID]struct{}, emittedEpicsMu *sync.Mutex, adapter beadLedger, runner tmuxpkg.CommandRunner, worktreeFactory func(context.Context, string, string, string) (string, func(), error), worktreeCreateMu *sync.Mutex) runloop.SharedHandles {
+// still read deps.tidGen call the SAME TransitionIDSource, so monotonicity
+// (EM-018a) is preserved.
+func newSharedHandles(runRegistry *RunRegistry, localInFlight *atomic.Int32, agentSpawnSem chan struct{}, workerRegistry *workers.Registry, queueStore *queuewiring.QueueStore, projectDir string, harnessRegistry *handlercontract.HarnessRegistry, adapterRegistry *handlercontract.AdapterRegistry, hookStore hookStoreIface, substratePort, reviewerSubstrate handler.Substrate, tidGen runloop.TransitionIDSource, emittedEpics map[core.BeadID]struct{}, emittedEpicsMu *sync.Mutex, adapter beadLedger, runner tmuxpkg.CommandRunner, worktreeFactory func(context.Context, string, string, string) (string, func(), error), worktreeCreateMu *sync.Mutex) runloop.SharedHandles {
 	return runloop.SharedHandles{
 		RunRegistry: daemonRunRegistry{reg: runRegistry}, LocalInFlight: localInFlight,
 		AgentSpawnSem: agentSpawnSem, Workers: workerRegistry, Budget: newBudgetPort(queueStore, projectDir),

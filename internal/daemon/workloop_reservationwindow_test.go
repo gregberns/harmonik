@@ -24,21 +24,30 @@ package daemon_test
 // rather than stranding. Those two paths are pinned below so the protection
 // stays honest — it is load-bearing, and nothing was asserting it.
 //
-// The third exit is real and is NOT covered here: the claim TransitionID
-// generation failure returns an error directly instead of through exitClean, so
-// it skips the drain and leaves exactly the stranded item described above. It
-// has no test because it has no seam — TransitionIDGenerator.Next fails only
-// when UUIDv7 generation fails, and nothing lets a test induce that. Writing a
-// test that cannot be made red would be worse than recording the hole here.
+// The third exit WAS real: the claim TransitionID generation failure returned
+// an error directly instead of draining, so it skipped the drain and left
+// exactly the stranded item described above. It had no test because it had no
+// seam — TransitionIDGenerator.Next fails only when the UUIDv7 draw fails, and
+// nothing let a test induce that.
+//
+// Both halves are now closed. runloop.TransitionIDSource is the seam, so a test
+// can hand the loop a generator that refuses; scheduler.go routes the failure
+// through exitFatal, which drains on the way out and still returns the error.
+// The third test below drives it.
 //
 // Mutation that must turn these red: delete the drainCancelledQueue call from
-// exitClean in scheduler.go. Both tests below fail; that call is the only thing
-// keeping either exit safe.
+// exitClean in scheduler.go. All three tests below fail; that call is the only
+// thing keeping any of these exits safe. For the third alone, the narrower
+// mutation is to put back the bare `return fmt.Errorf(...)` at the claim-TID
+// failure in scheduler.go.
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -136,6 +145,17 @@ func assertNoStrandedDispatchedItem(t *testing.T, projectDir string) {
 // family this file is about, and the family that skips the drain.
 func runLoopToExit(t *testing.T, run func() error) {
 	t.Helper()
+	if err := runLoopCapturingExit(t, run); err != nil {
+		t.Fatalf("work loop exited via a direct error return, which skips the queue drain: %v", err)
+	}
+}
+
+// runLoopCapturingExit runs the work loop to completion and hands back whatever
+// it returned. The claim-TID case below needs the error rather than a failure:
+// a fatal error there is CORRECT and must still propagate, and the claim under
+// test is that it propagates AND drains, not that it stops happening.
+func runLoopCapturingExit(t *testing.T, run func() error) error {
+	t.Helper()
 	done := make(chan struct{})
 	var err error
 	go func() {
@@ -147,9 +167,20 @@ func runLoopToExit(t *testing.T, run func() error) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("work loop did not exit within 30s")
 	}
-	if err != nil {
-		t.Fatalf("work loop exited via a direct error return, which skips the queue drain: %v", err)
-	}
+	return err
+}
+
+// refusingTIDSource is a TransitionID source that never issues one. It stands in
+// for a UUIDv7 draw that fails — the only way the real generator can fail, and a
+// thing no test can make the real generator do.
+type refusingTIDSource struct {
+	calls atomic.Int32
+	err   error
+}
+
+func (s *refusingTIDSource) Next() (core.TransitionID, error) {
+	s.calls.Add(1)
+	return core.TransitionID{}, s.err
 }
 
 // TestWorkLoop_DispatchHaltAfterTheReservationDoesNotLeaveTheItemDispatched
@@ -231,6 +262,76 @@ func TestWorkLoop_DispatchHaltAfterTheReservationDoesNotLeaveTheItemDispatched(t
 			assertNoStrandedDispatchedItem(t, projectDir)
 		})
 	}
+}
+
+// TestWorkLoop_AClaimTransitionIDFailureDoesNotStrandTheReservedItem drives the
+// third exit — the one that used to strand. The loop reserves the item, asks for
+// a TransitionID to stamp the claim with, and is refused.
+//
+// Two things must both hold, and they pull in opposite directions, which is why
+// they are asserted together:
+//
+//   - The error propagates. A refused TransitionID is a real fault and the loop
+//     must not swallow it and carry on.
+//   - The queue is drained anyway. The item was already committed to disk as
+//     dispatched before the refusal, so an exit that only reports the error
+//     leaves it owned by a run that never started.
+//
+// The failing source is the point of the seam: the real generator refuses only
+// on a UUIDv7 fault, so without an injectable source this exit is unreachable
+// from a test and the fix for it is unverifiable in exactly the way the bug was.
+func TestWorkLoop_AClaimTransitionIDFailureDoesNotStrandTheReservedItem(t *testing.T) {
+	skipRealDaemonE2EInShort(t)
+	t.Parallel()
+
+	projectDir, _ := workloopFixtureProjectDir(t)
+	workloopFixtureGitRepo(t, projectDir)
+
+	const beadID = core.BeadID("reservation-window-bead-003")
+	q := reservationWindowQueue(t, beadID)
+	if err := queue.Persist(context.Background(), projectDir, q); err != nil {
+		t.Fatalf("persist queue: %v", err)
+	}
+	qs := daemon.ExportedNewQueueStore()
+	qs.SetQueue(q)
+
+	refused := errors.New("uuid: no entropy available")
+	tidGen := &refusingTIDSource{err: refused}
+
+	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
+		BrAdapter:        &stubBeadLedger{labels: workloopFixtureSingleLabels},
+		Bus:              &stubEventCollector{},
+		ProjectDir:       projectDir,
+		HandlerBinary:    "/bin/sh",
+		HandlerArgs:      []string{"-c", "exit 0"},
+		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
+		AdapterRegistry2: NewEmptySealedAdapterRegistryForTest(t),
+		QueueStore:       qs,
+		TIDGen:           tidGen,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err := runLoopCapturingExit(t, func() error { return daemon.ExportedRunWorkLoop(ctx, deps) })
+
+	// Positive evidence that the loop reached the window at all. Without this the
+	// two assertions below are satisfied for free by a loop that never dispatched.
+	if got := tidGen.calls.Load(); got == 0 {
+		t.Fatal("the loop never asked for a TransitionID, so it never reached the claim; this test proved nothing")
+	}
+
+	if err == nil {
+		t.Fatal("the loop exited nil after the TransitionID source refused; a refused TransitionID is a fault and must propagate")
+	}
+	if !errors.Is(err, refused) {
+		t.Errorf("the loop exited with %v, which does not wrap the refusal it was given; the cause is lost", err)
+	}
+	if !strings.Contains(err.Error(), "claim TransitionID") {
+		t.Errorf("the exit error %q does not name the claim TransitionID step, so an operator cannot tell which generation failed", err)
+	}
+
+	assertNoStrandedDispatchedItem(t, projectDir)
 }
 
 // TestWorkLoop_AnActiveQueueIsNeverLeftLiveOnDiskAfterExit states the property

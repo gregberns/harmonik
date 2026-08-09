@@ -665,6 +665,24 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 		return nil
 	}
 
+	// exitFatal ends the loop on an error the loop cannot continue past, and it
+	// does the same cleanup exitClean does on the way out. Draining is not a
+	// courtesy here: between reserveQueueItem and the bead claim, an item is
+	// already committed to disk as DISPATCHED with a RunID. A return that skips
+	// the drain leaves that item in a live queue owned by a run that never
+	// started, and nothing repairs it — a dispatched item is never re-selected,
+	// the boot provenance pass reads it as a live owner, and the reconcile pass
+	// only repairs beads the ledger holds in_progress, which this one is not
+	// because the claim is exactly what did not happen.
+	//
+	// So any error return from inside the reservation window belongs here rather
+	// than at a bare `return err`. The error still propagates; only the strand is
+	// removed.
+	exitFatal := func(err error) error {
+		_ = exitClean() //nolint:errcheck // exitClean is documented to return nil; the fatal error is the one that matters
+		return err
+	}
+
 	// hk-bk33: gate post-boot re-dispatch on spawn-substrate readiness.
 	// When a restart-backoff was applied and the substrate exposes a readiness
 	// probe, daemon.Start starts a goroutine that probes the substrate and closes
@@ -1559,8 +1577,11 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 
 		claimTID, tidErr := handles.TIDGen.Next()
 		if tidErr != nil {
-			wg.Wait()
-			return fmt.Errorf("daemon: workloop: generate claim TransitionID: %w", tidErr)
+			// exitFatal, not a bare return: on the queue path the item above is
+			// already durably stamped dispatched, so leaving without the drain
+			// strands it forever. exitFatal waits for in-flight goroutines the
+			// same way the bare wg.Wait() here used to.
+			return exitFatal(fmt.Errorf("daemon: workloop: generate claim TransitionID: %w", tidErr))
 		}
 
 		if queueItemIndex < 0 {
@@ -2468,7 +2489,7 @@ func extractTmuxAdapterFromSubstrate(sub handler.Substrate) tmuxpkg.Adapter {
 // doc comment for why it goes through the reservation owner. Moving it out is
 // what dropped this function under the complexity ceiling, so it no longer
 // carries a nolint directive.
-func adoptLiveRunSession(ctx context.Context, ledger beadLedger, env runloop.RunEnv, queueStore *queuewiring.QueueStore, tidGen *core.TransitionIDGenerator, rec runpkg.Record, adapter tmuxpkg.Adapter) {
+func adoptLiveRunSession(ctx context.Context, ledger beadLedger, env runloop.RunEnv, queueStore *queuewiring.QueueStore, tidGen runloop.TransitionIDSource, rec runpkg.Record, adapter tmuxpkg.Adapter) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 

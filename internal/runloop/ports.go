@@ -320,6 +320,21 @@ type QueueWorkflowInput struct {
 	Ref  string
 }
 
+// TransitionIDSource issues the strictly-monotonic TransitionID values a run
+// stamps its transitions with (EM-018a). It is the whole of what the run path
+// needs from *core.TransitionIDGenerator, so it is declared here rather than
+// depended on concretely: generation is a source of fresh values like a clock
+// or a random number, and a caller that reaches the concrete generator cannot
+// be tested against the one thing that generator can do wrong.
+//
+// Next fails only when the underlying UUIDv7 draw fails. That is rare and it is
+// not benign — the dispatch path can be holding a durable queue reservation at
+// the moment it happens, so the failure has to be reachable from a test. This
+// interface is what makes it reachable.
+type TransitionIDSource interface {
+	Next() (core.TransitionID, error)
+}
+
 // SharedHandles is the cross-goroutine state shared by reference (ports-design
 // §3): the run registry, the local-in-flight counter, the agent-spawn semaphore,
 // the worker registry, the review-loop-failure budget port, and the harness/
@@ -342,11 +357,11 @@ type SharedHandles struct {
 	Substrate         handler.Substrate
 	ReviewerSubstrate handler.Substrate
 
-	// TIDGen is the single shared TransitionID generator, shared by reference so
+	// TIDGen is the single shared TransitionID source, shared by reference so
 	// beadRunOne's monotonicity guarantee (EM-018a) holds — the bundle and the
-	// outer-loop KEEP sites (runWorkLoop, adoptLiveRunSession) dereference the
-	// SAME *core.TransitionIDGenerator (RT18.9).
-	TIDGen *core.TransitionIDGenerator
+	// outer-loop KEEP sites (runWorkLoop, adoptLiveRunSession) call the SAME
+	// source (RT18.9). Production always wires *core.TransitionIDGenerator.
+	TIDGen TransitionIDSource
 
 	// EmittedEpics / EmittedEpicsMu are the epic_completed dedupe set and its
 	// guard, shared by reference so maybeEmitEpicCompleted sees every prior run's

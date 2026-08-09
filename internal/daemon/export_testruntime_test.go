@@ -190,6 +190,16 @@ type TestRuntimeParams struct {
 	// Bead ref: hk-45ude.
 	QueueStore *queuewiring.QueueStore
 
+	// TIDGen, when non-nil, replaces the real TransitionID generator the work
+	// loop stamps its claims and transitions with. When nil a fresh real one is
+	// used, which is what every test that does not care about it wants.
+	//
+	// Supply one only to make generation FAIL. The dispatch path holds a durable
+	// queue reservation while it asks for a claim TransitionID, so what happens
+	// on a failure there decides whether a queue item is stranded — and the real
+	// generator cannot be made to fail, because it fails only on a UUIDv7 fault.
+	TIDGen runloop.TransitionIDSource
+
 	// QueueLedger, when non-nil, is the queue.BeadLedger seam the dispatch loop
 	// uses to re-evaluate deferred-for-ledger-dep items on every tick (§2.8).
 	// Tests that exercise ledger-dep deferral/un-deferral inject a fake here.
@@ -432,9 +442,16 @@ func ExportedTestRuntime(p TestRuntimeParams) testRuntime {
 		submitWakeC = p.QueueStore.WakeCh()
 	}
 
+	// TIDGen: default to a real generator, so only a test that wants generation
+	// to fail has to say anything about it.
+	var tidGen runloop.TransitionIDSource = core.NewTransitionIDGenerator()
+	if p.TIDGen != nil {
+		tidGen = p.TIDGen
+	}
+
 	env := runloop.RunEnv{ProjectDir: p.ProjectDir, TargetBranch: bootconfig.ResolveTargetBranch(p.TargetBranch), BrPath: p.BrPath, ProtectBranches: p.ProtectBranches, AllowedRepos: p.AllowedRepos, WorkflowModeDefault: wmd, DefaultHarness: p.DefaultHarness, ProjectCfg: p.ProjectCfg, HandlerBinary: binary, HandlerArgs: p.HandlerArgs, IntentLogDir: p.IntentLogDir, AgentReadyTimeout: p.AgentReadyTimeout, RemoteAgentReadyTimeout: p.RemoteAgentReadyTimeout, BrTimeoutCfg: brcli.TimeoutConfig{}}
 	ports := newStaticRunPorts(p.BrAdapter, p.Bus, env.IntentLogDir, env.BrTimeoutCfg, env.ProjectDir, true, mergeQ, p.CPRegistry, nil)
-	handles := newSharedHandles(reg, new(atomic.Int32), agentSpawnSem, p.WorkerRegistry, p.QueueStore, env.ProjectDir, p.HarnessRegistry, p.AdapterRegistry2, hookStore, p.Substrate, nil, core.NewTransitionIDGenerator(), make(map[core.BeadID]struct{}), &sync.Mutex{}, p.BrAdapter, p.Runner, wtf, worktreeCreateMu)
+	handles := newSharedHandles(reg, new(atomic.Int32), agentSpawnSem, p.WorkerRegistry, p.QueueStore, env.ProjectDir, p.HarnessRegistry, p.AdapterRegistry2, hookStore, p.Substrate, nil, tidGen, make(map[core.BeadID]struct{}), &sync.Mutex{}, p.BrAdapter, p.Runner, wtf, worktreeCreateMu)
 	return testRuntime{env: env, ports: ports, handles: handles, ledger: p.BrAdapter, queueStore: p.QueueStore, runRegistry: reg, substratePort: p.Substrate, mergeQueue: mergeQ, launchBuilder: lsb, capacity: newCapacityPort(maxConcurrent, p.ConcurrencyCtrl), queueSurface: newQueueSurfacePort(submitWakeC, p.QueueLedger), dispatchGates: newDispatchGatesPort(p.Bus, p.HandlerPauseController, p.OperatorPauseCtrl, p.DecisionBlocker), noAutoPull: p.NoAutoPull}
 }
 

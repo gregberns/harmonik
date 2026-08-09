@@ -285,10 +285,17 @@ timer yourself (use `--reason=refresh` so the heartbeat is not persisted).
 harmonik comms who [--json] [--project DIR]
 ```
 
-Lists agents online within the ~120s staleness window. Read-only; emits
-nothing, advances no cursor.
+Lists agents online within the ~120s staleness window, and agents that have gone
+stale but not yet offline. Read-only; emits nothing, advances no cursor.
 
-- `--json` — NDJSON, one `{"agent": "name", "last_seen": "RFC3339"}` per line.
+- `--json` — NDJSON, one
+  `{"agent": "name", "last_seen": "RFC3339", "status": "online"|"stale"}` per
+  line. **`status` is part of the contract, not optional.** An agent past the
+  120s window but inside the offline cutoff is reported with `status: "stale"`
+  rather than dropped, so a consumer that ignores the field treats a stale agent
+  as a healthy one. `scripts/ops-monitor-check.sh` depends on it. Agents that are
+  fully offline — past the stale cutoff, or with a `leave` beat — are omitted
+  from the output entirely.
 
 ```bash
 harmonik comms who

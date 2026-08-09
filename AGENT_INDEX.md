@@ -183,6 +183,7 @@ Most recent entries:
 - **Roadmap, landed features, milestone log:** [ROADMAP.md](ROADMAP.md)
 - **Lane→crew registry (captain-tier, STALE):** [`.harmonik/context/captain-lanes.md`](.harmonik/context/captain-lanes.md). **Corrected 2026-07-30:** this entry used to call the file "live". Its current-truth block is dated 2026-07-22 and describes a dispatching fleet. The daemon is down and the active program is delete-and-rewrite. Only a captain loads it.
 - **The active program's live working document:** [plans/2026-07-27-delete-and-rewrite/NEXT_STEPS.md](plans/2026-07-27-delete-and-rewrite/NEXT_STEPS.md)
+- **Branches still holding work, and what is in them:** [docs/parked-branches-2026-08-09.md](docs/parked-branches-2026-08-09.md). Read it before deleting a branch. Two of the listed branches hold deliberately injected faults and must never be merged; the file names them and says which line each breaks.
 
 ## Agent Skills (operating contracts)
 Booting into a specific role? Load its skill for the operating contract:

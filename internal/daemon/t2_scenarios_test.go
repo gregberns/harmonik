@@ -129,6 +129,74 @@ func t2ScopedTwin(t *testing.T, name string) (binPath, marker string) {
 	return binPath, marker
 }
 
+// t2OrphanReapBudget is how long this test's own twin may still be visible
+// after the work loop has finished tearing down.
+//
+// loopexit_test.go removed the second stopwatches that tests put on teardown
+// they were not named for. This one stays, under the same rule: T2-S6's SUBJECT
+// is orphan cleanup, so the bound is the claim rather than a stopwatch on top of
+// one. A leaked hang twin never exits by itself, so the budget only has to
+// outlast process death on a loaded box — the passing path returns the moment
+// pgrep comes back empty and pays none of it.
+const t2OrphanReapBudget = 10 * time.Second
+
+// t2TwinPIDs returns the pids of THIS test's own twin, as pgrep prints them, or
+// "" when no such process is running. The pattern is the per-test marker in the
+// twin's argv, never the shared twin name — see t2ScopedTwin. That marker is
+// built from t.Name() and the pid, so it is test-internal and not user input.
+func t2TwinPIDs(ctx context.Context, marker string) string {
+	out, err := exec.CommandContext(ctx, "pgrep", "-f", marker).Output()
+	if err != nil {
+		// pgrep exits 1 when nothing matches, which is the common case here.
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// t2AwaitTwinAlive blocks until this test's twin is really running, and fails
+// the test if it never starts.
+//
+// A caller cannot use run_started for this. That event is emitted BEFORE the
+// handler process is executed, so a probe placed right after it reliably finds
+// nothing. Both callers below did exactly that: T2-S6 guarded its orphan-leak
+// assertion on the result and so never ran it, and T2-S2 sent its SIGKILL to a
+// process that did not exist yet (hk-3xwsj).
+func t2AwaitTwinAlive(ctx context.Context, t *testing.T, marker string) string {
+	t.Helper()
+	for {
+		if pids := t2TwinPIDs(ctx, marker); pids != "" {
+			return pids
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("%s never started, so this test's subject was never produced", marker)
+			return ""
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+}
+
+// t2AwaitTwinGone blocks until this test's twin is gone, and returns the pids
+// still present when t2OrphanReapBudget runs out. "" means cleanly reaped.
+func t2AwaitTwinGone(t *testing.T, marker string) string {
+	t.Helper()
+	// context.Background(), not the run context: this runs AFTER that context
+	// has been cancelled, which is the whole point of the check.
+	deadline := time.NewTimer(t2OrphanReapBudget)
+	defer deadline.Stop()
+	for {
+		pids := t2TwinPIDs(context.Background(), marker)
+		if pids == "" {
+			return ""
+		}
+		select {
+		case <-deadline.C:
+			return pids
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // T2-S1: Twin exits non-zero
 // ─────────────────────────────────────────────────────────────────────────────
@@ -256,29 +324,21 @@ func TestT2_SIGKILLDuringRun(t *testing.T) {
 		daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	// Wait for run_started event indicating the hang twin is running.
-
-	for {
-		types := collector.eventTypes()
-		for _, et := range types {
-			if et == string(core.EventTypeRunStarted) {
-				goto launched
-			}
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatalf("T2-S2: run_started never fired; events=%v", collector.eventTypes())
-		case <-time.After(50 * time.Millisecond):
-		}
-	}
-launched:
-	t.Log("T2-S2: run_started seen; SIGKILLing hang twin via pkill")
+	// Wait until the twin is really running. run_started is NOT that signal: it
+	// is emitted before the handler is executed, so the pkill this replaces fired
+	// at a process that did not exist yet and killed nothing. The test still
+	// passed, because the twin then died on its own — see hk-3xwsj and the
+	// comment in test/twins/hang/main.go. Wait for the process itself.
+	twinPIDs := t2AwaitTwinAlive(ctx, t, twinMarker)
+	t.Logf("T2-S2: twin running as %s; SIGKILLing it via pkill", twinPIDs)
 
 	// Kill this test's OWN twin. The pattern is the per-test marker in the
 	// twin's argv, never the shared "twin-hang" name — see t2ScopedTwin.
 	//nolint:gosec // G204: twinMarker is built from t.Name() and the pid — test-internal, not user input
 	killCmd := exec.CommandContext(context.Background(), "pkill", "-SIGKILL", "-f", twinMarker)
-	_ = killCmd.Run() // ignore error if no process found
+	if killErr := killCmd.Run(); killErr != nil {
+		t.Fatalf("T2-S2: pkill did not kill the twin (%s): %v — the SIGKILL under test never happened", twinPIDs, killErr)
+	}
 
 	// Now wait for the loop to detect the kill and reopen the bead.
 	for len(ledger.reopenedIDs()) == 0 && len(ledger.closedIDs()) == 0 {
@@ -589,28 +649,24 @@ func TestT2_ProcessGroupCleanup(t *testing.T) {
 		}
 	}
 
-	// Check that THIS test's twin is running. Matching the shared "twin-hang"
-	// name also counted a sibling's twin, so the orphan-leak assertion below
-	// could fire on a process this test never started.
-	//nolint:gosec // G204: twinMarker is test-internal; see t2ScopedTwin
-	checkCmd := exec.CommandContext(context.Background(), "pgrep", "-f", twinMarker)
-	pids, _ := checkCmd.Output()
-	t.Logf("T2-S6: twin PIDs before cancel: %s", strings.TrimSpace(string(pids)))
-	hangRunning := len(strings.TrimSpace(string(pids))) > 0
+	// Wait until THIS test's twin is really running. run_started fires before
+	// the handler is executed, so the probe this replaces ran too early, found
+	// nothing every time, and skipped the assertion below (hk-3xwsj). Matching
+	// the per-test marker rather than the shared "twin-hang" name also keeps a
+	// sibling's twin out of the count.
+	beforePIDs := t2AwaitTwinAlive(ctx, t, twinMarker)
+	t.Logf("T2-S6: twin PIDs before cancel: %s", beforePIDs)
 
 	// Cancel context (simulates SIGINT/SIGTERM to the daemon).
 	cancel()
 	awaitLoopTeardown(t, waitDone, "T2-S6 work loop")
 
-	// After loop exit, check whether twin-hang is still running.
-	time.Sleep(500 * time.Millisecond) // give OS time to reap
-	//nolint:gosec // G204: twinMarker is test-internal; see t2ScopedTwin
-	checkCmd2 := exec.CommandContext(context.Background(), "pgrep", "-f", twinMarker)
-	pids2, _ := checkCmd2.Output()
-	afterPIDs := strings.TrimSpace(string(pids2))
-	t.Logf("T2-S6: twin PIDs after cancel: %q (was running before: %v)", afterPIDs, hangRunning)
+	// After loop exit, the twin must go away. A leaked hang twin stays forever,
+	// so waiting out the budget costs nothing when the cleanup works.
+	afterPIDs := t2AwaitTwinGone(t, twinMarker)
+	t.Logf("T2-S6: twin PIDs after cancel: %q (was running before: %s)", afterPIDs, beforePIDs)
 
-	if hangRunning && afterPIDs != "" {
+	if afterPIDs != "" {
 		t.Errorf("T2-S6 FINDING: twin process(es) still alive after context cancellation: %s — orphan leak", afterPIDs)
 		// Cleanup for the test run — this test's own twin only.
 		//nolint:gosec // G204: twinMarker is test-internal; see t2ScopedTwin

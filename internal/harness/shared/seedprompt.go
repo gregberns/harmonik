@@ -32,9 +32,9 @@ import "fmt"
 // fixes). It degrades gracefully when the feedback file is absent.
 //
 // The first %d is the prior iteration number; the second %s is the bead ID.
-const implementerResumeSeedTemplate = `You are resuming a task you already worked on in a prior turn. A reviewer examined your prior work and requested changes, so you have been re-dispatched to address them.
+const implementerResumeSeedTemplate = `You are resuming a task you already worked on in a prior turn. The workflow routed the work back to you.
 
-FIRST read .harmonik/reviewer-feedback.iter-%d.md in your worktree — it contains the prior reviewer's verdict, flags, and notes. Address EVERY point it raises. (If that file is not present, re-read .harmonik/agent-task.md and make sure your prior changes were actually committed.)
+FIRST read .harmonik/reviewer-feedback.iter-%d.md in your worktree — it says WHAT routed the work back, and its first line says WHO produced it. It is a reviewer's verdict, flags and notes only when it says so; otherwise the daemon wrote it because the commit gate went red or because your prior pass produced no commit. Address EVERY point it raises. (If that file is not present, re-read .harmonik/agent-task.md and make sure your prior changes were actually committed.)
 
 Then commit ALL your changes in a single NEW git commit. The commit message MUST include the line "Refs: %s" on its own line in the commit body — this trailer is required; without it the system cannot detect that your work is complete. You MUST produce a new commit: if HEAD does not advance, the workflow will loop back to you again.`
 

@@ -79,6 +79,27 @@ const (
 	ReviewVerdictBlock          = "BLOCK"
 )
 
+// VerdictCameFromAReviewer reports whether a verdict string is one a REVIEWER
+// can produce. Schema v1 closes that set to the three constants above, so
+// anything else was written by the daemon — today GATE_FAIL (the commit gate
+// went red) and NO_COMMIT (HEAD did not advance), both delivered through the
+// same reviewer-feedback file the implementer-resume reads.
+//
+// It exists so that a document cannot claim a review that did not happen
+// (hk-2f3v4). The observed harm is specific: a codex implementer read
+// `verdict: GATE_FAIL` under a "Reviewer feedback" heading, concluded a reviewer
+// had asked for the change, and spent three passes acting on that. Deriving the
+// answer from the verdict rather than from a caller-supplied flag means a new
+// daemon-produced feedback path cannot forget to declare itself.
+func VerdictCameFromAReviewer(verdict string) bool {
+	switch verdict {
+	case ReviewVerdictApprove, ReviewVerdictRequestChanges, ReviewVerdictBlock:
+		return true
+	default:
+		return false
+	}
+}
+
 // ErrMalformed is returned by ReadReviewVerdict when the verdict file at
 // ${workspace_path}/.harmonik/review.json is present but fails schema
 // validation. Callers that need to distinguish malformed from absent files

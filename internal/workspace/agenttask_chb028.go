@@ -485,7 +485,15 @@ func WriteReviewerFeedback(payload ReviewerFeedbackPayload) error {
 func buildReviewerFeedbackContent(p ReviewerFeedbackPayload) string {
 	var sb strings.Builder
 
-	sb.WriteString(fmt.Sprintf("# Reviewer feedback — iteration %d\n\n", p.PriorIteration))
+	if VerdictCameFromAReviewer(p.Verdict) {
+		sb.WriteString(fmt.Sprintf("# Reviewer feedback — iteration %d\n\n", p.PriorIteration))
+	} else {
+		sb.WriteString(fmt.Sprintf("# Workflow feedback — iteration %d\n\n", p.PriorIteration))
+		sb.WriteString("NO REVIEWER READ YOUR CHANGE. The harmonik daemon wrote this file because the\n")
+		sb.WriteString("workflow routed the work back to you. It uses the reviewer-feedback name only\n")
+		sb.WriteString("because that is the name your resume instruction reads. Nobody has judged the\n")
+		sb.WriteString("change itself yet.\n\n")
+	}
 	sb.WriteString(fmt.Sprintf("verdict: %s\n\n", p.Verdict))
 
 	sb.WriteString("flags:\n\n")

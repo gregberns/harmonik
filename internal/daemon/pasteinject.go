@@ -1648,8 +1648,9 @@ func pasteInjectImplementerResume(ctx context.Context, clk substrate.ClockPort, 
 		msg = fmt.Sprintf(
 			"Please read .harmonik/agent-task.md and begin.\n\n"+
 				"Before continuing, also read .harmonik/reviewer-feedback.iter-%d.md in your worktree."+
-				" It contains the prior reviewer's verdict, flags, and notes for iteration %d."+
-				" Address every flag marked REQUEST_CHANGES before proceeding.\n",
+				" It says what routed iteration %d back to you, and its first line says who produced it —"+
+				" a reviewer, or the daemon because the commit gate went red or no commit landed."+
+				" Address every point it raises before proceeding.\n",
 			priorIter, priorIter,
 		)
 	} else {

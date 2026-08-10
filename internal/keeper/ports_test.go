@@ -63,7 +63,7 @@ func TestHandoffAdapterScrubsOnlyKeeperNonces(t *testing.T) {
 	if err := (fnHandoff{cfg: &cfg}).ScrubNonce(); err != nil {
 		t.Fatalf("ScrubNonce: %v", err)
 	}
-	got, err := os.ReadFile(path)
+	got, err := os.ReadFile(path) //nolint:gosec // path is fixed inside this test's private temporary directory
 	if err != nil {
 		t.Fatal(err)
 	}

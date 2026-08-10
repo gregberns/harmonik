@@ -13,6 +13,7 @@ package lifecycle
 // the note on queue.RecoverReplaceIntents.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -233,5 +234,33 @@ func TestLoadQueueAtStartup_UnwedgesTheQueueForLaterWrites(t *testing.T) {
 	unblocked := queue.WriteReplacement(context.Background(), nextPlan("0190b3c4-9001-7000-8000-0000000000f6"))
 	if !unblocked.Committed() {
 		t.Fatalf("the queue is still wedged after startup: %v", unblocked.Err)
+	}
+}
+
+func TestLoadQueueAtStartupRefusesUnresolvedReplaceIntent(t *testing.T) {
+	projectDir := t.TempDir()
+	queuesDir := filepath.Join(projectDir, ".harmonik", "queues")
+	if err := os.MkdirAll(queuesDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	intentPath := filepath.Join(queuesDir, "main.replace-intent")
+	corrupt := []byte(`{"operation_kind":"completion"}`)
+	if err := os.WriteFile(intentPath, corrupt, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := LoadQueueAtStartup(
+		context.Background(),
+		projectDir,
+		emptyBeadLedger{},
+		nil,
+		slog.New(slog.DiscardHandler),
+	)
+	if err == nil || loaded != nil {
+		t.Fatalf("startup result = (%+v, %v), want fail closed", loaded, err)
+	}
+	got, readErr := os.ReadFile(intentPath) //nolint:gosec // path is under t.TempDir
+	if readErr != nil || !bytes.Equal(got, corrupt) {
+		t.Fatalf("startup changed refused intent = %q, err=%v", got, readErr)
 	}
 }

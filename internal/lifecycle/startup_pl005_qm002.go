@@ -169,7 +169,9 @@ func LoadQueueAtStartup(
 	// for its queue, which the QueueStore reads as an indeterminate commit and
 	// quarantines on — so an unresolved intent wedges that queue for every later
 	// boot as well.
-	recoverReplaceIntents(ctx, projectDir, logger)
+	if err := recoverReplaceIntents(ctx, projectDir, logger); err != nil {
+		return nil, err
+	}
 
 	names, err := queue.EnumerateQueueNames(projectDir)
 	if err != nil {
@@ -196,19 +198,17 @@ func LoadQueueAtStartup(
 // recoverReplaceIntents resolves every leftover durable replace intent and logs
 // the outcome of each one.
 //
-// It never fails startup. An intent the sweep cannot resolve leaves its queue
-// exactly as it was found, which is the same state the daemon booted into
-// before this pass existed — so the worst case is the old behaviour plus a log
-// line naming the queue. A refusal is logged at error level because it means a
-// queue is wedged and needs a person.
-func recoverReplaceIntents(ctx context.Context, projectDir string, logger *slog.Logger) {
+// Any unresolved intent fails startup closed. Starting while a final receipt
+// or canonical fact is unresolved would let the daemon reuse an owned name.
+func recoverReplaceIntents(ctx context.Context, projectDir string, logger *slog.Logger) error {
 	recoveries, err := queue.RecoverReplaceIntents(projectDir)
 	if err != nil {
 		logger.WarnContext(ctx, "queue: replace-intent recovery could not read the queues directory",
 			"error", err,
 		)
-		return
+		return fmt.Errorf("lifecycle: read replace intents: %w", err)
 	}
+	unresolved := make([]error, 0, len(recoveries))
 	for _, r := range recoveries {
 		if r.Resolved() {
 			logger.InfoContext(ctx, "queue: resolved a replace intent left by an earlier crash",
@@ -222,7 +222,12 @@ func recoverReplaceIntents(ctx context.Context, projectDir string, logger *slog.
 			"intent_path", filepath.Join(projectDir, ".harmonik", "queues", r.NormalizedName+".replace-intent"),
 			"error", r.Err,
 		)
+		unresolved = append(unresolved, fmt.Errorf("queue %q replace intent: %w", r.NormalizedName, r.Err))
 	}
+	if len(unresolved) > 0 {
+		return fmt.Errorf("lifecycle: unresolved replace intents: %w", errors.Join(unresolved...))
+	}
+	return nil
 }
 
 // loadOneQueueAtStartup loads a single named queue file and runs QM-002a +

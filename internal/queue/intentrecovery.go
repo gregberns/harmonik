@@ -25,6 +25,7 @@ package queue
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -64,9 +65,21 @@ type ReplaceIntentRecovery struct {
 	// nothing on disk was changed and Err says why.
 	Action ReplaceRecoveryAction
 
-	// Err is non-nil when the intent could not be resolved. The intent file is
-	// left exactly as it was found, so the next boot sees the same facts.
+	// Completion is set only for a completion-bound intent. It reports the
+	// reloaded durable phase and whether C11 must install a release marker.
+	Completion *CompletionIntentRecovery
+
+	// Err is non-nil when the intent could not be resolved. Plain replacements
+	// preserve their input facts. Completion recovery can stop after a later
+	// durable phase, which Completion reports for the next startup attempt.
 	Err error
+}
+
+// CompletionIntentRecovery reports the durable C09 result for one final
+// completion transaction.
+type CompletionIntentRecovery struct {
+	Phase                CompletionPhase
+	ReleaseMarkerPending bool
 }
 
 // Resolved reports whether the intent was finished or rolled back. A false
@@ -160,8 +173,124 @@ func recoverOneIntentFile(projectDir, basename string, ops namespaceOps) (Replac
 		action, recoverErr := recoverFailedReplaceIntent(projectDir, intent, intentBytes, ops)
 		return ReplaceIntentRecovery{NormalizedName: intent.NormalizedName, Action: action, Err: recoverErr}, true
 	}
+	if intent.CompletionReceiptBinding != nil {
+		action, phase, recoverErr := recoverCompletionReplaceIntent(projectDir, intent, intentBytes, ops)
+		return ReplaceIntentRecovery{
+			NormalizedName: intent.NormalizedName,
+			Action:         action,
+			Completion: &CompletionIntentRecovery{
+				Phase: phase,
+				ReleaseMarkerPending: recoverErr == nil &&
+					(action == ReplacePromoteCanonical || action == ReplaceRetryRename),
+			},
+			Err: recoverErr,
+		}, true
+	}
 	action, recoverErr := recoverReplaceIntent(projectDir, intent, intentBytes, ops)
 	return ReplaceIntentRecovery{NormalizedName: intent.NormalizedName, Action: action, Err: recoverErr}, true
+}
+
+func completionRecoveryPhase(projectDir string, intent ReplaceIntentV1, ops namespaceOps) CompletionPhase {
+	facts, err := loadCompletionRecoveryFacts(projectDir, intent, ops)
+	if err != nil {
+		return CompletionPhaseCommitIndeterminate
+	}
+	canonicalCandidate := facts.canonicalPresent && digestHex(facts.canonical) == intent.CandidateSHA256
+	if facts.receiptExact && (canonicalCandidate || (!facts.canonicalPresent && !facts.candidatePresent)) {
+		return CompletionPhaseReceiptDurable
+	}
+	if canonicalCandidate && !facts.receiptPresent {
+		return CompletionPhaseCanonicalCommitted
+	}
+	if !facts.receiptPresent && priorMatches(intent.PriorState, facts.canonical, facts.canonicalPresent) {
+		return CompletionPhaseNotCommitted
+	}
+	return CompletionPhaseCommitIndeterminate
+}
+
+// recoverCompletionReplaceIntent converges one exact QM-053 transaction. A
+// restart does not retry the final observation. It installs only the bound
+// receipt, then makes canonical and intent absence durable.
+func recoverCompletionReplaceIntent(
+	projectDir string,
+	intent ReplaceIntentV1,
+	intentBytes []byte,
+	ops namespaceOps,
+) (ReplaceRecoveryAction, CompletionPhase, error) {
+	durableIntent, present, err := readOptional(replaceIntentPath(projectDir, intent.NormalizedName), ops)
+	if err != nil {
+		return ReplaceRefuse, CompletionPhaseCommitIndeterminate, fmt.Errorf("read durable completion intent: %w", err)
+	}
+	if !present || !bytes.Equal(durableIntent, intentBytes) {
+		return ReplaceRefuse, CompletionPhaseRejected, errors.New("durable completion intent differs")
+	}
+	action, err := classifyCompletionIntent(projectDir, intent, ops)
+	if err != nil {
+		return action, completionRecoveryPhase(projectDir, intent, ops), err
+	}
+	switch action {
+	case ReplaceRetryRename:
+		if err := retryCompletionRename(projectDir, intent, ops); err != nil {
+			return ReplaceRefuse, CompletionPhaseCommitIndeterminate, err
+		}
+		fallthrough
+	case ReplacePromoteCanonical:
+		phase, finishErr := finishRecoveredCompletion(projectDir, intent, ops)
+		if finishErr != nil {
+			return ReplaceRefuse, phase, finishErr
+		}
+		return action, phase, nil
+	case ReplaceNotCommitted:
+		if err := discardCandidate(projectDir, intent, ops); err != nil {
+			return ReplaceRefuse, CompletionPhaseNotCommitted, err
+		}
+		return ReplaceNotCommitted, CompletionPhaseNotCommitted, nil
+	default:
+		return ReplaceRefuse, CompletionPhaseRejected, errors.New("unsupported completion recovery action")
+	}
+}
+
+func retryCompletionRename(projectDir string, intent ReplaceIntentV1, ops namespaceOps) error {
+	qDir := queuesDir(projectDir)
+	if err := ops.rename(
+		filepath.Join(qDir, intent.CandidateTempBasename),
+		filepath.Join(qDir, intent.CanonicalBasename),
+	); err != nil {
+		return fmt.Errorf("retry completion rename: %w", err)
+	}
+	if err := syncDirectory(qDir, ops); err != nil {
+		return fmt.Errorf("sync completion canonical: %w", err)
+	}
+	return nil
+}
+
+func finishRecoveredCompletion(
+	projectDir string,
+	intent ReplaceIntentV1,
+	ops namespaceOps,
+) (CompletionPhase, error) {
+	receiptBytes, err := base64.StdEncoding.DecodeString(intent.CompletionReceiptBinding.CanonicalBytesBase64)
+	if err != nil {
+		return CompletionPhaseCanonicalCommitted, fmt.Errorf("decode completion receipt binding: %w", err)
+	}
+	receipt, err := DecodeCompletionReceipt(receiptBytes)
+	if err != nil {
+		return CompletionPhaseCanonicalCommitted, fmt.Errorf("decode completion receipt: %w", err)
+	}
+	if err := writeCompletionReceipt(
+		projectDir, intent.QueueID, intent.TransactionID, intent.CompletionReceiptBinding, ops,
+	); err != nil {
+		return CompletionPhaseCanonicalCommitted, fmt.Errorf("write completion receipt: %w", err)
+	}
+	if err := cleanupCompletedCanonical(
+		projectDir, intent.NormalizedName, intent.QueueID, receipt.CompletedQueueSHA256, ops,
+	); err != nil {
+		return CompletionPhaseReceiptDurable, fmt.Errorf("cleanup completed canonical: %w", err)
+	}
+	if err := cleanupReplaceIntent(projectDir, intent.NormalizedName, ops); err != nil {
+		return CompletionPhaseReceiptDurable, fmt.Errorf("cleanup completion intent: %w", err)
+	}
+	return CompletionPhaseCleaned, nil
 }
 
 // recoverReplaceIntent completes a plain replace transaction after a restart.

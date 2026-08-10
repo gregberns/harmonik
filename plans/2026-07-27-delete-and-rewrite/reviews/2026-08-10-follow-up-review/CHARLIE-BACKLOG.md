@@ -10,14 +10,29 @@ Charlie must deliberately break each new claim test before accepting it.
 Updated: 2026-08-10
 
 - Owner: Charlie.
-- Active slice: C08 is complete. C09 is next.
+- Active slice: C09 is complete. C10 is next.
 - Start revision: `b49210d67` on `work/alpha-integration-merge`.
 - State: C01 through C04 are complete and independently approved.
 - Implementation commit: `de0a6ca3`.
 - Integration reconciliation commit: `b0cac51a`.
 - Stop gate: C05 through C07 received independent approval before C08.
 - Coordination note: the queue RPC overlap retained both the active-run status work and the event-intent path.
-- Later tasks: C09 through C31 remain unstarted.
+- Later tasks: C10 through C31 remain unstarted.
+
+### C09 evidence
+
+- Startup routes completion intents through a receipt-aware recovery path.
+- Recovery reuses the exact bound receipt. It never retries the final observation.
+- Exact precommit facts roll back. Exact committed facts finish receipt installation and cleanup.
+- Third states refuse and preserve canonical, candidate, receipt, and intent bytes.
+- The result reports only a proven durable phase. It hands a markerless receipt to C11.
+- An unresolved intent now fails startup closed before queue loading.
+- The process-stop table covers every completion intent boundary and replay.
+- Intent removal and intent parent-sync cuts do not report cleanup as durable.
+- Focused queue, lifecycle, and queue-store tests pass with `-count=1`.
+- Repository compilation, `go vet ./...`, and the pinned changed-line lint pass.
+- Removing the completion-specific startup route fails the public recovery test.
+- Independent reviewer verdict: `APPROVE` after two blocking correction rounds.
 
 ### C08 evidence
 

@@ -1272,6 +1272,9 @@ func classifyReplaceIntent(projectDir string, intent ReplaceIntentV1, ops namesp
 	if intent.FailedRecoveryReceiptBinding != nil {
 		return classifyFailedRecoveryIntent(projectDir, intent, ops)
 	}
+	if intent.CompletionReceiptBinding != nil {
+		return classifyCompletionIntent(projectDir, intent, ops)
+	}
 	qDir := queuesDir(projectDir)
 	canonical, canonicalPresent, err := readOptional(filepath.Join(qDir, intent.CanonicalBasename), ops)
 	if err != nil {
@@ -1294,6 +1297,90 @@ func classifyReplaceIntent(projectDir string, intent ReplaceIntentV1, ops namesp
 	default:
 		return ReplaceRefuse, errors.New("replace intent facts are corrupt, mismatched, or third-state")
 	}
+}
+
+func classifyCompletionIntent(
+	projectDir string,
+	intent ReplaceIntentV1,
+	ops namespaceOps,
+) (ReplaceRecoveryAction, error) {
+	facts, err := loadCompletionRecoveryFacts(projectDir, intent, ops)
+	if err != nil {
+		return ReplaceRefuse, err
+	}
+	switch {
+	case facts.canPromoteCanonical(intent):
+		return ReplacePromoteCanonical, nil
+	case facts.canFinishCleanup():
+		return ReplacePromoteCanonical, nil
+	case facts.canRetryRename(intent):
+		return ReplaceRetryRename, nil
+	case facts.canRollBack(intent):
+		return ReplaceNotCommitted, nil
+	default:
+		return ReplaceRefuse, errors.New("completion intent facts are corrupt, mismatched, or third-state")
+	}
+}
+
+type completionRecoveryFacts struct {
+	canonical        []byte
+	canonicalPresent bool
+	candidate        []byte
+	candidatePresent bool
+	receiptPresent   bool
+	receiptExact     bool
+}
+
+func loadCompletionRecoveryFacts(
+	projectDir string,
+	intent ReplaceIntentV1,
+	ops namespaceOps,
+) (completionRecoveryFacts, error) {
+	qDir := queuesDir(projectDir)
+	canonical, canonicalPresent, err := readOptional(filepath.Join(qDir, intent.CanonicalBasename), ops)
+	if err != nil {
+		return completionRecoveryFacts{}, err
+	}
+	candidate, candidatePresent, err := readOptional(filepath.Join(qDir, intent.CandidateTempBasename), ops)
+	if err != nil {
+		return completionRecoveryFacts{}, err
+	}
+	binding := intent.CompletionReceiptBinding
+	receipt, receiptPresent, err := readOptional(filepath.Join(completionReceiptsDir(projectDir), binding.Basename), ops)
+	if err != nil {
+		return completionRecoveryFacts{}, err
+	}
+	expectedReceipt, err := base64.StdEncoding.DecodeString(binding.CanonicalBytesBase64)
+	if err != nil {
+		return completionRecoveryFacts{}, err
+	}
+	return completionRecoveryFacts{
+		canonical:        canonical,
+		canonicalPresent: canonicalPresent,
+		candidate:        candidate,
+		candidatePresent: candidatePresent,
+		receiptPresent:   receiptPresent,
+		receiptExact:     receiptPresent && bytes.Equal(receipt, expectedReceipt),
+	}, nil
+}
+
+func (f completionRecoveryFacts) canPromoteCanonical(intent ReplaceIntentV1) bool {
+	return f.canonicalPresent && digestHex(f.canonical) == intent.CandidateSHA256 && !f.candidatePresent &&
+		(!f.receiptPresent || f.receiptExact)
+}
+
+func (f completionRecoveryFacts) canFinishCleanup() bool {
+	return !f.canonicalPresent && !f.candidatePresent && f.receiptExact
+}
+
+func (f completionRecoveryFacts) canRetryRename(intent ReplaceIntentV1) bool {
+	return f.candidatePresent && digestHex(f.candidate) == intent.CandidateSHA256 &&
+		priorMatches(intent.PriorState, f.canonical, f.canonicalPresent) && !f.receiptPresent
+}
+
+func (f completionRecoveryFacts) canRollBack(intent ReplaceIntentV1) bool {
+	return !f.candidatePresent &&
+		priorMatches(intent.PriorState, f.canonical, f.canonicalPresent) && !f.receiptPresent
 }
 
 func classifyFailedRecoveryIntent(

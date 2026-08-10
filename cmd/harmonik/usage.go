@@ -57,8 +57,8 @@ SUBCOMMANDS
   comms            Agent-to-agent messaging bus (send/recv/who/log/join/leave)
   crew             Captain & crew session management (start/stop/list)
   reconcile        Close in_progress beads whose implementation has merged
-  confirm-verdict  Confirm a pending reconciliation verdict (daemon must be running)
-  veto-verdict     Veto a pending reconciliation verdict (daemon must be running)
+  confirm-verdict  NOT CONNECTED — nothing parks a reconciliation verdict, so this always exits 16
+  veto-verdict     NOT CONNECTED — nothing parks a reconciliation verdict, so this always exits 16
   graph            Workflow graph utilities (validate, etc.)
   promote          Cherry-pick banked SHA(s) to target with build gate + push, or open a PR (--pr)
   release          Release ledger management (ledger, certify, yank)

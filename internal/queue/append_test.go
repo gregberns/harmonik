@@ -35,6 +35,8 @@ import (
 
 const appendFixtureQueueID = "0190b3c4-8f12-7c4e-9a82-2bf0d4ee0099"
 
+var appendFixtureAcceptedAt = time.Date(2026, 5, 16, 11, 12, 13, 456000000, time.FixedZone("test", -7*60*60))
+
 // appendFixtureFakeLedger is a minimal BeadLedger fake for append tests.
 // All IDs listed in statuses are returned with their mapped status;
 // unknown IDs return BeadStatusNotFound.
@@ -132,7 +134,7 @@ func TestAppendItemsQM040WaveReject(t *testing.T) {
 	}
 
 	ledger := appendFixtureOpenLedger("hk-new01")
-	_, _, err := queue.AppendItems(context.Background(), q, 0, []string{"hk-new01"}, ledger)
+	_, _, err := queue.AppendItems(context.Background(), q, 0, []string{"hk-new01"}, ledger, appendFixtureAcceptedAt)
 	if err == nil {
 		t.Fatal("expected validation error for wave group, got nil")
 	}
@@ -163,7 +165,7 @@ func TestAppendItemsQM041TailAppend(t *testing.T) {
 
 	ledger := appendFixtureOpenLedger("hk-new01", "hk-new02")
 	result, events, err := queue.AppendItems(context.Background(), q, 0,
-		[]string{"hk-new01", "hk-new02"}, ledger)
+		[]string{"hk-new01", "hk-new02"}, ledger, appendFixtureAcceptedAt)
 	if err != nil {
 		t.Fatalf("AppendItems returned unexpected error: %v", err)
 	}
@@ -196,6 +198,8 @@ func TestAppendItemsQM041TailAppend(t *testing.T) {
 		}
 		if item.AppendedAt == nil {
 			t.Errorf("items[%d].AppendedAt must not be nil for appended item", i+1)
+		} else if want := appendFixtureAcceptedAt.UTC(); !item.AppendedAt.Equal(want) || item.AppendedAt.Location() != time.UTC {
+			t.Errorf("items[%d].AppendedAt = %v, want exact UTC time %v", i+1, item.AppendedAt, want)
 		}
 	}
 
@@ -222,7 +226,7 @@ func TestAppendItemsQM042EventEmitted(t *testing.T) {
 
 	ledger := appendFixtureOpenLedger("hk-new01", "hk-new02")
 	_, events, err := queue.AppendItems(context.Background(), q, 0,
-		[]string{"hk-new01", "hk-new02"}, ledger)
+		[]string{"hk-new01", "hk-new02"}, ledger, appendFixtureAcceptedAt)
 	if err != nil {
 		t.Fatalf("AppendItems error: %v", err)
 	}
@@ -250,8 +254,8 @@ func TestAppendItemsQM042EventEmitted(t *testing.T) {
 	if payload.AppendedBeadIDs[0] != "hk-new01" || payload.AppendedBeadIDs[1] != "hk-new02" {
 		t.Errorf("payload.AppendedBeadIDs = %v, want [hk-new01 hk-new02]", payload.AppendedBeadIDs)
 	}
-	if payload.AppendedAt == "" {
-		t.Error("payload.AppendedAt must not be empty")
+	if want := appendFixtureAcceptedAt.UTC().Format(time.RFC3339Nano); payload.AppendedAt != want {
+		t.Errorf("payload.AppendedAt = %q, want %q", payload.AppendedAt, want)
 	}
 	if !payload.Valid() {
 		t.Error("payload.Valid() = false, want true")
@@ -289,7 +293,7 @@ func TestAppendItemsQM042DeferredEventsAfterAppended(t *testing.T) {
 	}
 
 	_, events, err := queue.AppendItems(context.Background(), q, 0,
-		[]string{"hk-blocked"}, ledger)
+		[]string{"hk-blocked"}, ledger, appendFixtureAcceptedAt)
 	if err != nil {
 		t.Fatalf("AppendItems error: %v", err)
 	}
@@ -348,7 +352,7 @@ func TestAppendItemsQM043ActiveInFlightSafe(t *testing.T) {
 
 	ledger := appendFixtureOpenLedger("hk-new01")
 	result, events, err := queue.AppendItems(context.Background(), q, 0,
-		[]string{"hk-new01"}, ledger)
+		[]string{"hk-new01"}, ledger, appendFixtureAcceptedAt)
 	if err != nil {
 		t.Fatalf("AppendItems unexpectedly failed for active stream: %v", err)
 	}
@@ -403,7 +407,7 @@ func TestAppendItemsQM044TerminalGroupReject(t *testing.T) {
 
 			ledger := appendFixtureOpenLedger("hk-new01")
 			_, _, err := queue.AppendItems(context.Background(), q, 0,
-				[]string{"hk-new01"}, ledger)
+				[]string{"hk-new01"}, ledger, appendFixtureAcceptedAt)
 			if err == nil {
 				t.Fatalf("expected rejection for terminal group status %q, got nil", gs)
 			}
@@ -427,7 +431,7 @@ func TestAppendItemsNilQueue(t *testing.T) {
 	t.Parallel()
 
 	ledger := appendFixtureOpenLedger()
-	_, _, err := queue.AppendItems(context.Background(), nil, 0, []string{"hk-x"}, ledger)
+	_, _, err := queue.AppendItems(context.Background(), nil, 0, []string{"hk-x"}, ledger, appendFixtureAcceptedAt)
 	if !errors.Is(err, queue.ErrAppendQueueNil) {
 		t.Errorf("err = %v, want ErrAppendQueueNil", err)
 	}
@@ -440,7 +444,7 @@ func TestAppendItemsEmptyBeadIDs(t *testing.T) {
 
 	q := appendFixtureStreamQueue(queue.GroupStatusActive, nil)
 	ledger := appendFixtureOpenLedger()
-	_, _, err := queue.AppendItems(context.Background(), q, 0, []string{}, ledger)
+	_, _, err := queue.AppendItems(context.Background(), q, 0, []string{}, ledger, appendFixtureAcceptedAt)
 	if !errors.Is(err, queue.ErrAppendEmptyBeadIDs) {
 		t.Errorf("err = %v, want ErrAppendEmptyBeadIDs", err)
 	}

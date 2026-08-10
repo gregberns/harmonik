@@ -18,6 +18,7 @@ var errorsAllReasons = []queue.QueueValidationReason{
 	queue.ReasonDuplicateBeadID,
 	queue.ReasonQueueTooLarge,
 	queue.ReasonHandlerPaused,
+	queue.ReasonQueueNameInvalid,
 }
 
 // errorsExpectedCodes is the normative code-to-reason table per QM-029b.
@@ -32,6 +33,7 @@ var errorsExpectedCodes = map[queue.QueueValidationReason]int{
 	queue.ReasonDuplicateBeadID:       queue.ErrorCodeDuplicateBeadID,
 	queue.ReasonQueueTooLarge:         queue.ErrorCodeQueueTooLarge,
 	queue.ReasonHandlerPaused:         queue.ErrorCodeHandlerPaused,
+	queue.ReasonQueueNameInvalid:      queue.ErrorCodeQueueNameInvalid,
 }
 
 // errorsExpectedMessages is the normative message-to-reason table per QM-029b.
@@ -46,6 +48,7 @@ var errorsExpectedMessages = map[queue.QueueValidationReason]string{
 	queue.ReasonDuplicateBeadID:       "duplicate_bead_id",
 	queue.ReasonQueueTooLarge:         "queue_too_large",
 	queue.ReasonHandlerPaused:         "handler_paused",
+	queue.ReasonQueueNameInvalid:      "queue_name_invalid",
 }
 
 // TestErrorCodeConstantsNormativeMapping verifies that each constant value
@@ -114,17 +117,11 @@ func TestJSONRPCErrorExhaustive(t *testing.T) {
 }
 
 // TestJSONRPCErrorStableRange verifies that all allocated codes fall within
-// the -32010..-32018 range reserved for queue-model per PL-003a and that
-// -32019 is not used.
-//
-// Note: -32018 was allocated to ReasonHandlerPaused (QM-052a) per the
-// handler-pause spec amendment (hk-siuo2). -32019 remains reserved.
+// the -32010..-32019 range reserved for queue-model per PL-003a.
 //
 // Spec ref: queue-model.md §6.11a QM-029b; process-lifecycle.md §4.4 PL-003a.
 func TestJSONRPCErrorStableRange(t *testing.T) {
 	t.Parallel()
-
-	reserved := map[int]bool{-32019: true}
 
 	for _, reason := range errorsAllReasons {
 		t.Run(string(reason), func(t *testing.T) {
@@ -132,11 +129,8 @@ func TestJSONRPCErrorStableRange(t *testing.T) {
 
 			code, _ := queue.JSONRPCError(reason)
 
-			if code < -32018 || code > -32010 {
-				t.Errorf("JSONRPCError(%q) code %d is outside the reserved range [-32018, -32010]", reason, code)
-			}
-			if reserved[code] {
-				t.Errorf("JSONRPCError(%q) code %d collides with a reserved slot", reason, code)
+			if code < -32019 || code > -32010 {
+				t.Errorf("JSONRPCError(%q) code %d is outside the reserved range [-32019, -32010]", reason, code)
 			}
 		})
 	}

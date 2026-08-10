@@ -45,7 +45,18 @@ Required trailers when applicable: `Refs: <bead-id>` or `Refs: <kerf-codename>` 
 - `Reviewed-By: agent-reviewer` (presence-only marker; names the reviewer skill that ran).
 - `Review-Verdict: {"verdict": "APPROVE|REQUEST_CHANGES", "flags": [...], "notes": "..."}` — a structured JSON trailer emitted by `agent-reviewer`. JSON schema versioned via `schema_version` field inside the object. `flags[]` is a list of issue tags (e.g., `spec-divergence`, `missing-tests`, `unwanted-abstraction`); `notes` is free text for human consumption.
 
-The JSON trailer is schema-validated by `scripts/validate-commit-msg.sh` (run via the agent-driven `/check` flow, no longer a git hook); an unparseable JSON trailer fails validation. Prevents prompt-injection that would pass a free-text verdict.
+The JSON trailer is schema-validated by `scripts/validate-commit-msg.sh` (run via the agent-driven `/check` flow, no longer a git hook); an unparseable JSON trailer fails validation. Prevents prompt-injection that would pass a free-text verdict. `schema_version`, `verdict` and `notes` are all required, and `notes` must not be empty — the same three the Go reader in `internal/workspace` requires of a verdict file.
+
+**When no reviewer could be reached.** `AGENTS.md` (the `git commit -F` rule) says a commit whose reviewer could not be reached records that fact and lands anyway, and that such a trailer carries no verdict of `APPROVE`. The shape that records it:
+
+```
+Reviewed-By: none — no reviewer was reached for this commit
+Review-Verdict: {"schema_version": 1, "verdict": "NOT_REVIEWED", "flags": ["no-reviewer-reached"], "notes": "<what was verified instead, and by whom>"}
+```
+
+`NOT_REVIEWED` is a verdict value the validator accepts. Say the absence in words: a `verdict` of `null` is refused, because it cannot be told apart from a trailer that was truncated.
+
+**An approval is held to more than the other verdicts**, so that the honest form is always the cheaper thing to write. For `APPROVE` (and the config-reviewer's `CLEAN`), the validator also requires that `Reviewed-By:` names a reviewer skill this repo has — `agent-reviewer` or `agent-config-reviewer`, with an optional qualifier in parentheses such as `agent-reviewer (codex harness)` — that the value does not say "self", and that the JSON carries the `flags` key. This proves the name is a real reviewer. It cannot prove that reviewer ran, and no shell script reading a commit message ever could.
 
 Trivial commits (typo, whitespace, obvious one-line fix) MAY omit these trailers. `BLOCK` verdicts never land in commits — the agent fixes first.
 
@@ -136,7 +147,7 @@ The `agent-reviewer` checks:
 - **Unwanted-abstraction detection** — "did you add an abstraction the user didn't ask for?" (per CLAUDE.md).
 - **Bead / codename match** — "does the diff match the bead or kerf codename it claims to implement?"
 
-Reviewer emits a structured JSON verdict in the `Review-Verdict:` trailer. Three `verdict` enum values: `APPROVE`, `REQUEST_CHANGES`, `BLOCK`. `BLOCK` verdicts are never committed (agent fixes before committing). `REQUEST_CHANGES` verdicts may be committed WITH the trailer + a rationale in the commit body; `flags` array names the specific issues. `APPROVE` verdicts commit normally.
+Reviewer emits a structured JSON verdict in the `Review-Verdict:` trailer. Three `verdict` enum values: `APPROVE`, `REQUEST_CHANGES`, `BLOCK`. `BLOCK` verdicts are never committed (agent fixes before committing). `REQUEST_CHANGES` verdicts may be committed WITH the trailer + a rationale in the commit body; `flags` array names the specific issues. `APPROVE` verdicts commit normally. A fourth value, `NOT_REVIEWED`, is not a reviewer output at all — it is what the author writes when no reviewer could be reached, per §Commit conventions above.
 
 **Trivial commits** (typo, whitespace, one-line obvious fix) MAY skip `agent-reviewer`; they still run `make full`.
 

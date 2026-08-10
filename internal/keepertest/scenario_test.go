@@ -8,7 +8,7 @@ import (
 )
 
 func productionLikePolicy() keeper.CyclePolicy {
-	p := keeper.DefaultCyclePolicy()
+	p := keeper.CyclePolicyFromConfig(keeper.CyclerConfig{})
 	p.BootGracePeriod = keeper.DefaultBootGracePeriod
 	p.MaxBootGraceTotal = 2 * p.BootGracePeriod
 	p.OperatorTurnLookback = 5 * time.Minute

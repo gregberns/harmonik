@@ -635,7 +635,39 @@ func HandleQueueStatus(
 		if findErr != nil {
 			return QueueStatusResponse{}, findErr
 		}
-		return QueueStatusResponse{Queue: q, ActiveRuns: activeRuns}, nil
+		if q != nil {
+			return QueueStatusResponse{Queue: q, ActiveRuns: activeRuns}, nil
+		}
+		receipt, found, receiptErr := ReadCompletionReceiptForStatus(projectDir, req.QueueID, "")
+		if receiptErr != nil {
+			return QueueStatusResponse{}, &RPCError{
+				Code: -32099, Message: "identity_integrity_error",
+				Detail: map[string]any{"error": receiptErr.Error()},
+			}
+		}
+		if !found || req.WatchedGroupIndex != nil && receipt.FinalGroupIndex < *req.WatchedGroupIndex {
+			return QueueStatusResponse{ActiveRuns: activeRuns}, nil
+		}
+		completedAt, parseErr := time.Parse(time.RFC3339Nano, receipt.CompletedAt)
+		if parseErr != nil {
+			return QueueStatusResponse{}, &RPCError{
+				Code: -32099, Message: "identity_integrity_error",
+				Detail: map[string]any{"error": parseErr.Error()},
+			}
+		}
+		finalIndex := receipt.FinalGroupIndex
+		successCount := receipt.SuccessCount
+		failCount := receipt.FailCount
+		return QueueStatusResponse{
+			Completed:           true,
+			FinalStatus:         GroupStatus(receipt.FinalStatus),
+			FinalGroupIndex:     &finalIndex,
+			SuccessCount:        &successCount,
+			FailCount:           &failCount,
+			CompletedAt:         &completedAt,
+			CompletionReceiptID: receipt.ReceiptID,
+			ActiveRuns:          activeRuns,
+		}, nil
 
 	default:
 		// Backward-compatible default: load the "main" queue.

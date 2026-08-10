@@ -10,14 +10,27 @@ Charlie must deliberately break each new claim test before accepting it.
 Updated: 2026-08-10
 
 - Owner: Charlie.
-- Active slice: C09 is complete. C10 is next.
+- Active slice: C10 is complete. C11 is next.
 - Start revision: `b49210d67` on `work/alpha-integration-merge`.
 - State: C01 through C04 are complete and independently approved.
 - Implementation commit: `de0a6ca3`.
 - Integration reconciliation commit: `b0cac51a`.
 - Stop gate: C05 through C07 received independent approval before C08.
 - Coordination note: the queue RPC overlap retained both the active-run status work and the event-intent path.
-- Later tasks: C10 through C31 remain unstarted.
+- Later tasks: C11 through C31 remain unstarted.
+
+### C10 evidence
+
+- Status returns an exact live queue before it considers a receipt.
+- An absent live queue can return exact completion facts from one receipt.
+- A watched group above the final receipt group does not report completion.
+- Invalid IDs, corrupt receipts, ambiguous receipts, symlinks, directories, and FIFOs fail closed.
+- Repeated status reads create no files and change no receipt data.
+- The text client reports the receipt ID, final status, counts, and completion time.
+- Focused queue, queue CLI, queue-store, and lifecycle tests pass with `-count=1`.
+- Repository compilation, `go vet ./...`, and the diff check pass.
+- A mutation that bypassed receipt lookup made the receipt-backed status test fail.
+- Independent reviewer verdict: `APPROVE` after one blocking correction round.
 
 ### C09 evidence
 

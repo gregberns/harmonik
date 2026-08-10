@@ -40,12 +40,6 @@ type CyclePolicy struct {
 	PostAnswerGrace      time.Duration
 }
 
-// DefaultCyclePolicy returns the keeper library defaults. Production-only
-// values remain disabled until the command layer resolves project config.
-func DefaultCyclePolicy() CyclePolicy {
-	return CyclePolicyFromConfig(CyclerConfig{})
-}
-
 // CyclePolicyFromConfig resolves a copy of cfg and projects only policy fields.
 // Command wiring calls this after it applies project configuration.
 func CyclePolicyFromConfig(cfg CyclerConfig) CyclePolicy {

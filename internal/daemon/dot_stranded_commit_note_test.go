@@ -1,7 +1,7 @@
 package daemon
 
-// dot_stranded_commit_hk2vx1n_test.go — a red gate that bounces a real commit
-// must not be reported as "the implementer landed nothing" (hk-2vx1n).
+// dot_stranded_commit_note_test.go — a red gate that bounces a real commit
+// must not be reported as "the implementer landed nothing".
 //
 // Measured live on 2026-08-10 at b49210d6 and recorded on hk-rqxz3: a codex
 // implementer made a real change, committed it, and exited 0. `make full` ran

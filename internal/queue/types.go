@@ -506,6 +506,10 @@ type QueueStatusRequest struct {
 	// daemon enumerates all active queues and returns the one whose queue_id
 	// matches. Returns {queue: null} when no match is found.
 	QueueID string `json:"queue_id,omitempty"`
+
+	// WatchedGroupIndex asks whether a receipt proves completion through this
+	// group. Zero is a valid watched index.
+	WatchedGroupIndex *int `json:"watched_group_index,omitempty"`
 }
 
 // QueueStatusResponse is the response payload for queue-status
@@ -516,6 +520,17 @@ type QueueStatusRequest struct {
 type QueueStatusResponse struct {
 	// Queue is the full Queue envelope, or nil when no queue is active.
 	Queue *Queue `json:"queue"`
+
+	// Completed is true only when an exact completion receipt answers the
+	// request after the live queue is absent.
+	Completed bool `json:"completed"`
+
+	FinalStatus         GroupStatus `json:"final_status,omitempty"`
+	FinalGroupIndex     *int        `json:"final_group_index,omitempty"`
+	SuccessCount        *int        `json:"success_count,omitempty"`
+	FailCount           *int        `json:"fail_count,omitempty"`
+	CompletedAt         *time.Time  `json:"completed_at,omitempty"`
+	CompletionReceiptID string      `json:"completion_receipt_id,omitempty"`
 
 	// MaxConcurrent is the current daemon-wide dispatch ceiling. Zero when
 	// the daemon did not wire a ConcurrencyController (legacy/test callers).

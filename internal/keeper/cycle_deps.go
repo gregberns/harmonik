@@ -194,20 +194,6 @@ type legacyJournalStore struct{ port HandoffPort }
 func (a legacyJournalStore) Write(j *CycleJournal) error  { return a.port.WriteJournal(j) }
 func (a legacyJournalStore) Read() (*CycleJournal, error) { return a.port.ReadJournal() }
 
-type legacyActivityProbe struct{ port GaugePort }
-
-func (a legacyActivityProbe) IdleMarkerModTime() (time.Time, bool) {
-	return a.port.IdleMarkerModTime()
-}
-
-func (a legacyActivityProbe) LastUserTurn(string) (time.Time, bool) {
-	return time.Time{}, false
-}
-
-func (a legacyActivityProbe) LastAssistantTurn(sid string) (time.Time, bool) {
-	return a.port.LastAssistantTurn(sid)
-}
-
 func configFromPolicyAndEnv(p CyclePolicy, env CycleEnv) CyclerConfig {
 	return CyclerConfig{
 		AgentName: env.AgentName, ProjectDir: env.ProjectDir, TmuxTarget: env.TmuxTarget,
@@ -230,29 +216,6 @@ type narrowGaugeAdapter struct {
 	deps   CycleDeps
 	policy CyclePolicy
 	target string
-}
-
-func (a narrowGaugeAdapter) ReadGauge() (*CtxFile, time.Time, error) {
-	return a.deps.Context.ReadGauge()
-}
-
-func (a narrowGaugeAdapter) SetManagedSession(sid string) error {
-	return a.deps.Context.SetManagedSession(sid)
-}
-
-func (a narrowGaugeAdapter) ClearPrecompactTrigger() error {
-	return a.deps.Context.ClearPrecompactTrigger()
-}
-
-func (a narrowGaugeAdapter) IdleMarkerModTime() (time.Time, bool) {
-	return a.deps.Activity.IdleMarkerModTime()
-}
-
-func (a narrowGaugeAdapter) LastAssistantTurn(sid string) (time.Time, bool) {
-	if sid == "" {
-		return time.Time{}, false
-	}
-	return a.deps.Activity.LastAssistantTurn(sid)
 }
 
 func (a narrowGaugeAdapter) Snapshot(sid string) GateSnapshot {

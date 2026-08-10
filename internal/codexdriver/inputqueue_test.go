@@ -20,6 +20,16 @@ type fakeInputPort struct {
 	gate    chan struct{} // received-from once per SubmitInput; nil ⇒ never blocks
 	started chan struct{} // non-blocking signal at the top of each SubmitInput; nil ⇒ off
 
+	// started MUST be buffered (cap 1) by every test that reads it. The send
+	// below is non-blocking, and a non-blocking send on an UNBUFFERED channel
+	// succeeds only when a receiver is already parked. A test that enqueues and
+	// then walks to its own receive loses that race whenever the drainer gets
+	// there first: the default arm fires, the signal is gone for good, and the
+	// test waits out its whole timeout for something that already happened.
+	// That was a real 1-in-1500 flake in this file (hk-qje3l), in a package
+	// whose flakes have failed a live commit gate and thrown away good work.
+	// One space in the buffer removes the race without changing any timing.
+
 	mu    sync.Mutex
 	order []string
 	err   error
@@ -94,7 +104,7 @@ func TestBoundedInputQueue_FIFODelivery_HK160YB(t *testing.T) {
 // rather than parking an unbounded goroutine.
 func TestBoundedInputQueue_CapEnforced_HK160YB(t *testing.T) {
 	gate := make(chan struct{})
-	started := make(chan struct{})
+	started := make(chan struct{}, 1)
 	port := &fakeInputPort{gate: gate, started: started}
 	const capacity = 2
 	q := codexdriver.NewBoundedInputQueue(port, capacity)
@@ -189,7 +199,7 @@ func TestBoundedInputQueue_EnqueueAfterClose_HK160YB(t *testing.T) {
 // drainer has processed them.
 func TestBoundedInputQueue_CloseDrainsBuffered_HK160YB(t *testing.T) {
 	gate := make(chan struct{})
-	started := make(chan struct{})
+	started := make(chan struct{}, 1)
 	port := &fakeInputPort{gate: gate, started: started}
 	q := codexdriver.NewBoundedInputQueue(port, 8)
 

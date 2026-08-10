@@ -75,11 +75,16 @@ except BaseException:
 
 // runTrustUpsert runs a trust-upsert python program against a private HOME with
 // worktreePath as argv[1]. env holds extra environment entries (e.g. HK_TEST_SLEEP).
+//
+// CLAUDE_CONFIG_HOME is cleared because the program consults it before ~: these
+// tests are about the HOME-expanding shape, so the config path must be
+// home/.claude.json and nothing else. hermetic.Main also clears it, but a test
+// that reads the config at a path it chose should say so itself.
 func runTrustUpsert(t *testing.T, home, program, worktreePath string, env ...string) error {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "python3", "-", worktreePath)
 	cmd.Stdin = bytes.NewReader([]byte(program))
-	cmd.Env = append(os.Environ(), "HOME="+home)
+	cmd.Env = append(os.Environ(), "HOME="+home, "CLAUDE_CONFIG_HOME=")
 	cmd.Env = append(cmd.Env, env...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -197,7 +202,10 @@ func TestWorkerTrustUpsert_ConcurrentAllKeysSurvive(t *testing.T) {
 		wg.Add(1)
 		go func(idx int, p string) {
 			defer wg.Done()
-			errs[idx] = runTrustUpsert(t, home, workerTrustUpsertProgram, p, "HK_TEST_SLEEP=0")
+			// Nothing to send across: this test is about the HOME-expanding
+			// production shape, so it hands the program "" and redirects HOME.
+			// runTrustUpsert clears CLAUDE_CONFIG_HOME so ~ is what gets used.
+			errs[idx] = runTrustUpsert(t, home, workerTrustUpsertProgram("", defaultTrustLockTimeout), p, "HK_TEST_SLEEP=0")
 		}(i, paths[i])
 	}
 	wg.Wait()

@@ -97,12 +97,23 @@ const trustWriteRetryBackoff = 200 * time.Millisecond
 // that is what makes the access properly synchronized under -race.
 var trustPostWriteHook func(cfgPath string)
 
-// ErrTrustLockTimeout is returned when ensureWorktreeTrustAt cannot acquire the
-// exclusive write lock within defaultTrustLockTimeout (hk-bfvby). It wraps
+// ErrTrustLockTimeout is returned when a writer of the shared Claude config
+// cannot acquire the exclusive write lock within its budget (hk-bfvby). It wraps
 // handlercontract.ErrStructural so the daemon dispatch path classifies the
 // launch failure as structural (reopen-the-bead) rather than hanging. The
-// already-trusted fast path NEVER returns this error — it takes no write lock.
-var ErrTrustLockTimeout = fmt.Errorf("workspace: EnsureWorktreeTrust: %w: write-lock acquire timed out (contended ~/.claude.json)", handlercontract.ErrStructural)
+// already-trusted / already-set fast paths NEVER return it — they take no write
+// lock.
+//
+// Every writer of that file returns it, not one: EnsureWorktreeTrust,
+// EnsureClaudeTheme and PruneWorktreeTrust in process, and EnsureWorktreeTrustVia
+// and EnsureClaudeThemeVia when the worker program exits with
+// workerConfigLockTimeoutExit. So the text names no function.
+//
+// It names no file either. The config path is what the environment configures it
+// to be (claudeGlobalConfigPath), so a fixed "~/.claude.json" in the text is
+// wrong whenever an override is in force. The remote callers append the worker's
+// own message, which names the exact config file and lock file it waited on.
+var ErrTrustLockTimeout = fmt.Errorf("workspace: %w: write-lock acquire timed out on the Claude config", handlercontract.ErrStructural)
 
 // trustWriteMu serializes in-process write operations on the global trust config
 // (hk-z16). At -c8 all 8 implementers start simultaneously with NEW worktree
@@ -131,8 +142,9 @@ var trustWriteMu sync.Mutex
 var claudeGlobalConfigPath = defaultClaudeGlobalConfigPath
 
 func defaultClaudeGlobalConfigPath() string {
-	// 1. Full-path override for test isolation.
-	if p := os.Getenv("HARMONIK_CLAUDE_CONFIG_PATH"); p != "" {
+	// 1. Full-path override for test isolation. This is also the ONLY step that
+	//    crosses the wire to a worker — see claudeConfigPathForWorker.
+	if p := claudeConfigPathForWorker(); p != "" {
 		return p
 	}
 	// 2. Directory override (Claude Code's own convention).
@@ -146,6 +158,35 @@ func defaultClaudeGlobalConfigPath() string {
 		panic(fmt.Sprintf("workspace: claudeGlobalConfigPath: UserHomeDir: %v", err))
 	}
 	return filepath.Join(home, ".claude.json")
+}
+
+// claudeConfigPathForWorker returns the config path this process may send to a
+// worker program, or "" to tell the worker to resolve its own. It is step 1 of
+// defaultClaudeGlobalConfigPath and nothing else.
+//
+// # Why only step 1 crosses the wire
+//
+// A remote run writes the config ON THE WORKER. The three precedence steps do
+// not all mean the same thing there:
+//
+//   - HARMONIK_CLAUDE_CONFIG_PATH is harmonik's own seam, and its documented
+//     purpose is test isolation. internal/testhelpers/hermetic sets it, and every
+//     setter of it runs the program on the same box it set it on. Sending it is
+//     what closes hk-g8d5x: before this, the worker program ignored it and locked
+//     and rewrote the operator's REAL ~/.claude.json.
+//   - CLAUDE_CONFIG_HOME is Claude Code's own variable, and it describes the box
+//     it is set on. The claude process that later READS the file we write is the
+//     WORKER's, and it reads the WORKER's CLAUDE_CONFIG_HOME. Sending box A's
+//     value would write a file the worker's claude never opens — and, when the
+//     directory does not exist on the worker, would kill the launch outright.
+//     docs/live-twin-testing.md requires exporting this variable to the daemon,
+//     so a run with it set is normal, not hypothetical.
+//   - ~ must be expanded by whoever owns the home directory, which is the worker.
+//
+// So the worker program applies the SAME precedence list, and it evaluates steps
+// 2 and 3 in its own environment. See workerConfigProgramPrelude.
+func claudeConfigPathForWorker() string {
+	return os.Getenv("HARMONIK_CLAUDE_CONFIG_PATH")
 }
 
 // DefaultClaudeProjectsDir returns the directory where Claude Code keeps its

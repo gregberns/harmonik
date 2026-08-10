@@ -72,6 +72,32 @@ check "codex gap4 v2 no-review pass"        "$TD/codex-local-dispatch-v2-pass.nd
 check "codex gap4 v2 wrong review_policy fail" "$TD/codex-local-dispatch-v2-pass.ndjson" "$V2POL" gap4 fail
 check "codex gap4 v2 wrong selection source fail" "$TD/codex-local-dispatch-v2-pass.ndjson" "$V2SRC" gap4 fail
 
+# gap4 workflow_id VALUE. The selection source fixes the graph, so the cell can name it:
+# legacy_single_label always loads the embedded no-review-bead graph.
+V2WID='{"schema_version":1,"seed_bead":"hk-clp-codex","expect":{"dispatch":{"workflow_mode":"dot","workflow_id":"no-review-bead","workflow_id_present":true}},"gaps":["gap4"]}'
+V2WIDX='{"schema_version":1,"seed_bead":"hk-clp-codex","expect":{"dispatch":{"workflow_mode":"dot","workflow_id":"standard-bead"}},"gaps":["gap4"]}'
+check "codex gap4 v2 workflow_id match pass" "$TD/codex-local-dispatch-v2-pass.ndjson" "$V2WID"  gap4 pass
+check "codex gap4 v2 wrong workflow_id fail" "$TD/codex-local-dispatch-v2-pass.ndjson" "$V2WIDX" gap4 fail
+
+# workflow_id_present on its own. Every cell now asserts it true, because a run_started
+# record with an empty descriptor cannot be emitted (core.RunStartedPayload.Valid).
+V2PRES='{"schema_version":1,"seed_bead":"hk-clp-codex","expect":{"dispatch":{"workflow_mode":"dot","workflow_id_present":true}},"gaps":["gap4"]}'
+check "codex gap4 v2 workflow_id present pass" "$TD/codex-local-dispatch-v2-pass.ndjson"  "$V2PRES" gap4 pass
+check "codex gap4 v2 empty workflow_id fail"   "$TD/codex-local-dispatch-v2-nowid.ndjson" "$V2PRES" gap4 fail
+
+# gap4 dispatched-node containment. node_dispatch_requested carries run_id only, so the
+# set is scoped by joining on the seed bead's run_started.run_id. The v2 fixture dispatches
+# implement + close on THIS run and reviewer on a SIBLING run; the sibling must not count.
+V2NODES='{"schema_version":1,"seed_bead":"hk-clp-codex","expect":{"dispatch":{"workflow_mode":"dot","nodes":{"required":["implement"],"forbidden":["review","reviewer"]}}},"gaps":["gap4"]}'
+V2NODEMISS='{"schema_version":1,"seed_bead":"hk-clp-codex","expect":{"dispatch":{"workflow_mode":"dot","nodes":{"required":["start"]}}},"gaps":["gap4"]}'
+V2NODEBAN='{"schema_version":1,"seed_bead":"hk-clp-codex","expect":{"dispatch":{"workflow_mode":"dot","nodes":{"forbidden":["close"]}}},"gaps":["gap4"]}'
+check "codex gap4 v2 node set pass (sibling run ignored)" "$TD/codex-local-dispatch-v2-pass.ndjson" "$V2NODES"    gap4 pass
+check "codex gap4 v2 missing required node fail"          "$TD/codex-local-dispatch-v2-pass.ndjson" "$V2NODEMISS" gap4 fail
+check "codex gap4 v2 forbidden node dispatched fail"      "$TD/codex-local-dispatch-v2-pass.ndjson" "$V2NODEBAN"  gap4 fail
+# A stream with NO node_dispatch_requested at all cannot satisfy a required-node claim.
+NONODES='{"schema_version":1,"seed_bead":"hk-clp-codex","expect":{"dispatch":{"workflow_mode":"single","nodes":{"required":["implement"]}}},"gaps":["gap4"]}'
+check "codex gap4 no node events at all fail" "$TD/codex-local-dispatch-pass.ndjson" "$NONODES" gap4 fail
+
 # gap3 — provider comms through the sandbox (T6). Spec carries expect.provider.
 PROV='{"schema_version":1,"seed_bead":"hk-clp-codex","expect":{"provider":{"enabled":true}},"gaps":["gap3"]}'
 check "codex gap3 real commit pass"    "$TD/codex-provider-commit.ndjson"         "$PROV" gap3 pass

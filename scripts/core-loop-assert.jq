@@ -137,20 +137,38 @@ def assert_gap3:
 # the dispatched run with every field intact.
 # Cross-event: model/harness fidelity is gap1's job; gap4 owns the run_started dispatch
 # fields. spec.expect.dispatch.workflow_mode = the resolved mode, which a version-2
-# run_started record always reports as "dot"; .workflow_id_present = require the
-# workflow ref to have resolved to a real (non-zero) workflow_id.
+# run_started record always reports as "dot"; .workflow_id = the exact graph the cell
+# resolves; .workflow_id_present = require a real (non-zero) workflow_id at all.
 #
 # workflow_mode alone no longer distinguishes a no-review run from a reviewed one —
 # the daemon runs both as DOT graphs, so the mode names the engine. review_policy and
 # workflow_selection_source carry that distinction instead, and gap4 asserts them when
 # the cell declares them. Both are REQUIRED on a version-2 run_started record
-# (event-model.md §8.1.1). Refs: hk-oeqn9, hk-gap4-workflow-mode-drift-7xwat.
+# (event-model.md §8.1.1).
+#
+# spec.expect.dispatch.nodes is the CONTAINMENT check on the dispatched node set:
+# .required lists node ids the run must dispatch, .forbidden lists node ids it must
+# never dispatch. node_dispatch_requested carries run_id and NOT bead_id
+# (event-model.md §8.1.11), so the set is scoped by joining on the seed bead's own
+# run_started.run_id — a sibling run's nodes must not answer for this cell. The check
+# is containment and not equality on purpose: revisit counts and the terminal node the
+# run ends on are routing outcomes, so an equality set would go red on a legal path.
+#
+# Refs: hk-oeqn9, hk-gap4-workflow-mode-drift-7xwat.
 def assert_gap4:
   ($spec.expect.dispatch // {}) as $ed
   | (of_type("run_started") | map(pl) | map(select((.bead_id // null) == $spec.seed_bead))) as $rs
   | (($rs[-1].workflow_id // "") | tostring) as $wid
+  | (($rs[-1].run_id // "") | tostring) as $rid
+  | ([ of_type("node_dispatch_requested")[] | pl
+       | select((($rid == "") | not) and (((.run_id // "") | tostring) == $rid))
+       | ((.node_id // "") | tostring) | select(. != "") ] | unique) as $nodes
+  | ($ed.nodes.required  // []) as $needNodes
+  | ($ed.nodes.forbidden // []) as $banNodes
+  | ($needNodes | map(select(. as $n | ($nodes | index($n)) == null))) as $missingNodes
+  | ($banNodes  | map(select(. as $n | ($nodes | index($n)) != null))) as $bannedNodes
   | if ($ed == {})
-    then result("gap4"; "pending"; "no expect.dispatch in spec — add {workflow_mode, review_policy, workflow_selection_source, workflow_id_present} to assert gap4")
+    then result("gap4"; "pending"; "no expect.dispatch in spec — add {workflow_mode, workflow_id, review_policy, workflow_selection_source, workflow_id_present, nodes} to assert gap4")
     elif ($rs | length) == 0
     then result("gap4"; "fail"; "no run_started event for seed bead \($spec.seed_bead)")
     elif ($ed.workflow_mode != null and ($rs[-1].workflow_mode != $ed.workflow_mode))
@@ -159,9 +177,19 @@ def assert_gap4:
     then result("gap4"; "fail"; "run_started.review_policy=\($rs[-1].review_policy) != expected \($ed.review_policy) — the run took the wrong review path")
     elif ($ed.workflow_selection_source != null and ($rs[-1].workflow_selection_source != $ed.workflow_selection_source))
     then result("gap4"; "fail"; "run_started.workflow_selection_source=\($rs[-1].workflow_selection_source) != expected \($ed.workflow_selection_source) — the resolver chose the graph for the wrong reason")
+    elif ($ed.workflow_id != null and ($wid != ($ed.workflow_id | tostring)))
+    then result("gap4"; "fail"; "run_started.workflow_id=\($wid) != expected \($ed.workflow_id) — the resolver selected a different graph")
     elif ($ed.workflow_id_present == true and ($wid == "" or ($wid | test("^0+(-0+)*$"))))
     then result("gap4"; "fail"; "run_started.workflow_id is absent/zero (\($wid)) — workflow_ref did not resolve at dispatch")
-    else result("gap4"; "pass"; "workflow_mode=\($rs[-1].workflow_mode) review_policy=\($rs[-1].review_policy) source=\($rs[-1].workflow_selection_source) workflow_id=\($wid)")
+    elif ((($needNodes | length) + ($banNodes | length)) > 0 and ($rid == ""))
+    then result("gap4"; "fail"; "run_started for \($spec.seed_bead) carries no run_id — the dispatched node set cannot be scoped to this run")
+    elif (($needNodes | length) > 0 and ($nodes | length) == 0)
+    then result("gap4"; "fail"; "no node_dispatch_requested event for run \($rid) — the run dispatched no node, so required node(s) \($needNodes | join(",")) are absent")
+    elif ($missingNodes | length) > 0
+    then result("gap4"; "fail"; "run \($rid) never dispatched required node(s) \($missingNodes | join(",")) — dispatched set was [\($nodes | join(","))] (wrong graph resolved?)")
+    elif ($bannedNodes | length) > 0
+    then result("gap4"; "fail"; "run \($rid) dispatched forbidden node(s) \($bannedNodes | join(",")) — the selected graph declares none (a reviewer ran on a no_review run?)")
+    else result("gap4"; "pass"; "workflow_mode=\($rs[-1].workflow_mode) review_policy=\($rs[-1].review_policy) source=\($rs[-1].workflow_selection_source) workflow_id=\($wid) nodes=[\($nodes | join(","))]")
     end;
 # --- gap5 — claude worktree startup → agent_ready (C8/PR-19) (T8, hk-4vwlx) --
 # A real git-worktree claude launch must reach agent_ready past the folder-trust /

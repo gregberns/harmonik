@@ -2,6 +2,7 @@ package runmerge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -43,6 +44,51 @@ func TestEmitWorkingTreeRefreshFailed_UsesCorePayloadWireShape(t *testing.T) {
 	const want = `{"run_id":"018f1e2a-0000-7000-8000-000000000001","bead_id":"hk-refresh","error":"reset failed"}`
 	if got := string(emitter.payload); got != want {
 		t.Errorf("payload = %s, want %s", got, want)
+	}
+}
+
+// TestEmitWorkspaceMergeStatusMerged_RefusesPayloadItsOwnValidRejects covers
+// both directions of the emit guard (hk-3kw4a), the same shape the
+// session_log_location guard is tested to. A merge event that names an empty
+// target branch or an empty landing commit answers the question it exists to
+// answer with a lie, so the emit path asks the payload first and drops it.
+func TestEmitWorkspaceMergeStatusMerged_RefusesPayloadItsOwnValidRejects(t *testing.T) {
+	t.Parallel()
+	runID := core.RunID(uuid.MustParse("018f1e2a-0000-7000-8000-000000000003"))
+
+	for _, tc := range []struct {
+		name                string
+		source, target, tip string
+		wantEmit            bool
+	}{
+		{name: "complete", source: "run/abc", target: "main", tip: "deadbeef", wantEmit: true},
+		{name: "empty target branch", source: "run/abc", target: "", tip: "deadbeef"},
+		{name: "empty landing commit", source: "run/abc", target: "main", tip: ""},
+		{name: "empty source branch", source: "", target: "main", tip: "deadbeef"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			emitter := &eventPayloadCapture{}
+			emitWorkspaceMergeStatusMerged(context.Background(), emitter, runID, tc.source, tc.target, tc.tip)
+
+			emitted := emitter.eventType == core.EventTypeWorkspaceMergeStatus
+			if emitted != tc.wantEmit {
+				t.Fatalf("emitted = %v, want %v (payload: %s)", emitted, tc.wantEmit, emitter.payload)
+			}
+			if !tc.wantEmit {
+				return
+			}
+			var pl core.WorkspaceMergeStatusPayload
+			if err := json.Unmarshal(emitter.payload, &pl); err != nil {
+				t.Fatalf("payload does not decode: %v\n%s", err, emitter.payload)
+			}
+			if !pl.Valid() {
+				t.Errorf("emitted payload fails its own Valid(): %s", emitter.payload)
+			}
+			if pl.MergeCommitHash == nil || *pl.MergeCommitHash != tc.tip {
+				t.Errorf("merge_commit_hash = %v, want %q", pl.MergeCommitHash, tc.tip)
+			}
+		})
 	}
 }
 

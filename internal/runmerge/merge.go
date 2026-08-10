@@ -260,6 +260,19 @@ func RunBranchToTarget(ctx context.Context, submit Submit, projectDir string, ru
 		// the domain on conflict, not from holding the lock across the push.
 		pushOut, pushErr := gitPushOrigin(ctx, projectDir, targetBranch)
 		if pushErr == nil {
+			// The landing is durable on origin as of this line, so say so
+			// (hk-3kw4a). This is the merge path's only positive signal: without
+			// it the terminal outcome_emitted{approved} reads the same for a
+			// merge that advanced the target and one that short-circuited as
+			// no-change, and the question "did this run's work land" has to be
+			// answered by reading git and guessing the branch.
+			//
+			// Placed AFTER the push so the event never claims a landing that is
+			// only local, and BEFORE the Phase-C finalize because that step is
+			// best-effort (EM-054 is non-fatal) and must not gate the record of
+			// a merge that already happened.
+			emitWorkspaceMergeStatusMerged(ctx, bus, runID, runBranch, targetBranch, runTip)
+
 			// Phase C (INSIDE the domain): refresh the project working tree
 			// (scoped to the merged commit's own paths, RSM-016/¶1, EM-054 as
 			// amended by hk-7qmpp) and reconcile the ledger.

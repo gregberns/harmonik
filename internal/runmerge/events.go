@@ -134,6 +134,66 @@ func emitMergeBuildFailed(ctx context.Context, bus handlercontract.EventEmitter,
 	}
 }
 
+// mergeStatusChangedAtLayout is RFC 3339 carrying the millisecond resolution
+// that event-model.md §8.9(h) requires of a paired-phase changed_at field. Same
+// layout as the operator_pause_status emitter in internal/daemon.
+const mergeStatusChangedAtLayout = "2006-01-02T15:04:05.000Z07:00"
+
+// emitWorkspaceMergeStatusMerged says out loud that the run branch landed: onto
+// which branch, and at which commit.
+//
+// Until this call existed the merge path emitted NOTHING on success. The only
+// terminal signal was outcome_emitted{approved}, and that payload is identical
+// whether the target branch advanced or the run short-circuited as no-change.
+// So the event stream could not answer "did this run's work land", and the way
+// to answer it was to read git by hand. Somebody did, read the wrong branch,
+// and filed a P1 blocker against a run that had merged correctly.
+//
+// The event type is not new. workspace_merge_status has been specified since
+// event-model.md §8.5.3, registered in core, and classified fsync-durable by
+// the bus. Nothing ever emitted it.
+//
+// workspace_id is derived from run_id per workspace-model.md §4.1 WM-004
+// (workspace_id = "ws-" + run_id, so the UUID part IS the run_id), the same
+// derivation workspace.BuildConflictEscalationPayload uses.
+//
+// Only the status=merged half of the paired-phase lifecycle is emitted here.
+// This path holds no merge-pending workspace state to transition into, and the
+// merge retries, so a per-attempt pending would break the emit-on-transition-
+// only rule of §8.9(h). One emission per landing, never two.
+//
+// Spec ref: specs/event-model.md §8.5.3, §8.9(h); specs/workspace-model.md
+// §4.5 WM-021. Bead: hk-3kw4a.
+func emitWorkspaceMergeStatusMerged(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, sourceBranch, targetBranch, mergeCommit string) {
+	pl := core.WorkspaceMergeStatusPayload{
+		WorkspaceID:     core.WorkspaceID(runID),
+		RunID:           runID,
+		Status:          core.WorkspaceMergeStatusMerged,
+		SourceBranch:    sourceBranch,
+		TargetBranch:    targetBranch,
+		MergeCommitHash: &mergeCommit,
+		ChangedAt:       time.Now().UTC().Format(mergeStatusChangedAtLayout),
+	}
+	// The payload owns its validity rule and this path asks before it emits,
+	// matching runlaunch.EmitPreExecMessage. An event that announces a landing
+	// at an empty commit is worse than a missing one, because a consumer would
+	// believe it.
+	if !pl.Valid() {
+		reportEmitFailure(core.EventTypeWorkspaceMergeStatus, fmt.Errorf(
+			"refusing to emit a payload its own Valid() rejects: run %s source %q target %q commit %q",
+			runID.String(), sourceBranch, targetBranch, mergeCommit))
+		return
+	}
+	b, err := json.Marshal(pl)
+	if err != nil {
+		reportEmitFailure(core.EventTypeWorkspaceMergeStatus, fmt.Errorf("marshal payload: %w", err))
+		return
+	}
+	if emitErr := bus.EmitWithRunID(ctx, runID, core.EventTypeWorkspaceMergeStatus, b); emitErr != nil {
+		reportEmitFailure(core.EventTypeWorkspaceMergeStatus, emitErr)
+	}
+}
+
 // emitBeadSyncFailed emits a bead_sync_failed event when `br sync --import-only`
 // fails after a merge touching .beads/issues.jsonl (BL-MRG-004). The merge is
 // already durable; this event flags that the SQLite DB is out of sync with the

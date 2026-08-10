@@ -1610,9 +1610,13 @@ func dispatchDotAgenticNode(
 		return core.Outcome{}, errors.New(postExit.CancelReason)
 	}
 
-	// Capture the claude_session_id for implementer-resume back-edges.
+	// Capture the session id an implementer-resume back-edge must target.
 	if !isReviewer && *claudeSessionID == "" {
-		*claudeSessionID = artifacts.ClaudeSessionID
+		*claudeSessionID = dotResolveResumeSessionID(
+			launch.CapturedSessionID,
+			artifacts.ClaudeSessionID,
+			launch.Harness != nil && launch.Harness.SessionIDPolicy() == handlercontract.SessionIDCaptured,
+		)
 	}
 
 	if isReviewer {

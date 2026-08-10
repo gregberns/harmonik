@@ -284,6 +284,18 @@ type agentLaunchResult struct {
 	// co-locate a post-mortem stderr capture there.
 	PiCaptureDir string
 
+	// CapturedSessionID is the session identifier the HARNESS itself reported on
+	// its stdout — a codex thread_id, a pi session id. It is empty for a claude
+	// launch (no interceptor is wired) and for a SessionIDCaptured harness that
+	// exited before it announced one.
+	//
+	// It exists because a back-edge resume has to target it and nothing else. The
+	// interceptor already captured this value; it went into a channel with no
+	// reader, so the cascade resumed with the minted TRACKING uuid instead and
+	// codex answered "no rollout found for thread id …"
+	// (hk-codex-resume-wrong-threadid-5rmtc).
+	CapturedSessionID string
+
 	Dispatch runexec.DispatchState
 
 	// Cleanup stops the CHB-019 heartbeat and then closes the launch's scope,
@@ -512,6 +524,9 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 	// Launch has started the child and its stdout is flowing.
 	var sess handler.Session
 	var emitCapturedSpawnProof func()
+	// capturedSessionIDCh stays nil for a launch with no interceptor (claude), so
+	// the drain below is a no-op there.
+	var capturedSessionIDCh chan string
 	if sessionIDCaptured {
 		// The tmux substrate returns Stdout()==nil, so StdoutWrapper would never
 		// be called and the session-id capture would silently no-op. Force the
@@ -554,8 +569,11 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 		}
 
 		capturedH := res.Harness
-		capturedSessionIDCh := make(chan string, 1) // buffered; no site reads it back
-		agentEndCb := func() {                      //nolint:contextcheck // PI-014 backstop kill fires from the stdout interceptor goroutine, which outlives any request ctx
+		// Buffered so the interceptor callback never blocks. Drained into
+		// res.CapturedSessionID after the completion wait below, which is what a
+		// back-edge resume reads (hk-codex-resume-wrong-threadid-5rmtc).
+		capturedSessionIDCh = make(chan string, 1)
+		agentEndCb := func() { //nolint:contextcheck // PI-014 backstop kill fires from the stdout interceptor goroutine, which outlives any request ctx
 			// PI-014: pi's process exit is unreliable, so agent_end is the
 			// event-driven kill backstop.
 			if sess != nil {
@@ -1073,6 +1091,16 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 
 	res.SocketOutcome, res.Exit = runloop.WaitWithSocketGrace(ctx, ports.Clock, handles.HookStore, watcher, sess,
 		runID.String(), artifacts.ClaudeSessionID)
+
+	// Drain what the harness reported about itself. The child has exited by now,
+	// so the interceptor has already seen every byte of its stdout. A non-blocking
+	// read: a harness that never announced an id leaves this empty, which the
+	// caller reads as "no resume target", not as a value to invent.
+	select {
+	case id := <-capturedSessionIDCh:
+		res.CapturedSessionID = id
+	default:
+	}
 
 	// Substrate path: completion is signalled through the hook store, not a
 	// watcher, so nothing has killed the window yet. The same disposition read

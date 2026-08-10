@@ -1129,6 +1129,40 @@ func writeGateLog(path string, combined []byte) {
 	}
 }
 
+// dotResolveResumeSessionID picks the session identifier that an
+// implementer-resume back-edge must target, in priority order:
+//
+//  1. capturedID — what the harness itself reported on its stdout (a codex
+//     thread_id from thread.started, a pi session id). Always preferred: for a
+//     SessionIDCaptured harness it is the ONLY value that harness accepts on a
+//     resume.
+//  2. mintedID — shared.LaunchArtifacts.ClaudeSessionID. For claude this is the
+//     live `--session-id` value, so it is a valid `--resume` target. For codex
+//     and pi it is a harmonik-internal TRACKING uuid the harness never saw.
+//  3. "" — a SessionIDCaptured harness that reported no id. The caller then
+//     leaves the prior-session pointer nil and the back-edge launches a FRESH
+//     turn, which the harness accepts.
+//
+// # Why rule 3 exists (hk-codex-resume-wrong-threadid-5rmtc)
+//
+// The cascade used to carry mintedID forward unconditionally. On a codex run
+// that meant the second pass ran `codex exec resume <tracking-uuid>`, codex
+// answered "no rollout found for thread id <uuid> (code -32600)", and the run
+// died in about 3.5 seconds. This is the mainline path, not an edge case: a bead
+// with no workflow label gets the project default graph, which has a commit
+// gate, so a second pass is normal. A fresh turn re-reads agent-task.md and the
+// reviewer feedback, so it loses the harness-side conversation but keeps the
+// work.
+func dotResolveResumeSessionID(capturedID, mintedID string, sessionIDCaptured bool) string {
+	if capturedID != "" {
+		return capturedID
+	}
+	if sessionIDCaptured {
+		return ""
+	}
+	return mintedID
+}
+
 // readAutoStatusMarkerOrReport reads the deny-side auto-status marker. An
 // unreadable marker reads as "absent", so a deny-side FAIL would pass the C2
 // check unseen — report the read failure instead of treating it as clean.

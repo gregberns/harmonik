@@ -852,7 +852,7 @@ func (c *WatcherConfig) applyDefaults() {
 // belowWarnThreshold reports whether the gauge reading is below the warn
 // threshold. Uses the absolute-token gate ONLY when both Tokens and WindowSize
 // are present; otherwise falls back to Pct vs WarnPct. This is byte-for-byte the
-// cycler's CyclerConfig.belowWarnThreshold gate (cycle.go) — the two MUST agree,
+// cycler's CyclePolicy.belowWarnThreshold gate (cycle.go) — the two MUST agree,
 // or warn and cycle decide on different bases (the F45 Tokens-vs-Pct split-brain:
 // the watcher previously fabricated a FallbackWindowSize for the pct-ceil cap when
 // WindowSize==0, so on a large-window session reporting tokens-but-no-window it
@@ -865,7 +865,7 @@ func (c *WatcherConfig) belowWarnThreshold(cf *CtxFile) bool {
 		// we must not warn below the configured warn_pct. On a 1M-context (Opus)
 		// session the abs gate resolves to min(200k,700k)=200k = ~20% of the
 		// window, so without the pct guard, warn fires at pct=20 instead of 80.
-		// Refs: hk-lbo9w. Byte-identical logic with CyclerConfig.belowWarnThreshold.
+		// Refs: hk-lbo9w. Byte-identical logic with CyclePolicy.belowWarnThreshold.
 		return cf.Pct < c.WarnPct || cf.Tokens < minAbsOrPctCeil(c.WarnAbsTokens, c.WarnPctCeil, cf.WindowSize)
 	}
 	return cf.Pct < c.WarnPct

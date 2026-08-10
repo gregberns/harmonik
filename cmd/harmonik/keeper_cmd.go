@@ -51,39 +51,10 @@ type keeperBuildParams struct {
 // behaviour change) so the config-driven-threshold resolution + construction is
 // testable end-to-end without the lock/doctor/signal machinery. Refs: hk-yy57.
 func buildKeeperConfigs(resolved ResolvedKeeperConfig, p keeperBuildParams) (keeper.CyclerConfig, keeper.WatcherConfig) {
-	// hk-4gtu: BootGrace is fed at the Cycler construction site (never via
-	// applyDefaults). When neither flag nor config set it, use DefaultBootGracePeriod
-	// (5m); when set, honor the configured value VERBATIM including the 0 = disabled
-	// sentinel.
-	resolvedBootGrace := keeper.DefaultBootGracePeriod
-	if resolved.BootGraceSet {
-		resolvedBootGrace = resolved.BootGrace
-	}
-
-	cyclerCfg := keeper.CyclerConfig{
-		AgentName:            p.AgentName,
-		ProjectDir:           p.ProjectDir,
-		TmuxTarget:           p.ResolvedTmux,
-		ActPct:               float64(p.ActPctRaw),
-		ActAbsTokens:         resolved.ActAbsTokens,
-		WarnAbsTokens:        resolved.WarnAbsTokens,
-		ForceActAbsTokens:    resolved.ForceActAbsTokens,
-		ActPctCeil:           resolved.ActPctCeil,
-		WarnPctCeil:          resolved.WarnPctCeil,
-		IdleRestartAbsTokens: resolved.IdleRestartAbsTokens,
-		HandoffTimeout:       resolved.HandoffTimeout,
-		ClearSettle:          resolved.ClearSettle,
-		PollInterval:         resolved.CyclerPollInterval,
-		ForceRetryInterval:   resolved.ForceRetryInterval,
-		IdleRestartCooldown:  resolved.IdleRestartCooldown,
-		MaxHandoffTimeouts:   resolved.MaxHandoffTimeouts,
-		HoldTTL:              resolved.HoldTTL,
-		SendEscapeFn:         keeper.SendEscapeKey,
-		BootGracePeriod:      resolvedBootGrace,
-		ForceRestartFn:       keeperForceRestartFn(p.ForceRestart, p.ProjectDir, p.RespawnCmd),
-		OperatorTurnLookback: resolved.OperatorTurnLookback,
-		PostAnswerGrace:      resolved.PostAnswerGrace,
-	}
+	cyclePolicy, cycleEnv := buildCyclePolicy(resolved, p)
+	cyclerCfg := keeper.LegacyCyclerConfig(cyclePolicy, cycleEnv)
+	cyclerCfg.SendEscapeFn = keeper.SendEscapeKey
+	cyclerCfg.ForceRestartFn = keeperForceRestartFn(p.ForceRestart, p.ProjectDir, p.RespawnCmd)
 
 	watcherCfg := keeper.WatcherConfig{
 		AgentName:            p.AgentName,
@@ -112,22 +83,12 @@ func buildKeeperConfigs(resolved ResolvedKeeperConfig, p keeperBuildParams) (kee
 		HardCeilingMode:      resolved.HardCeilingMode,
 		HardCeilingRestartFn: keeperHardCeilingRestartFn(
 			resolved.HardCeilingMode, p.ResolvedTmux, p.ProjectDir, p.RespawnCmd),
-		WarnCooldown:  resolved.WarnCooldown,
-		LiveRecoverFn: keeperLiveRecoverFn(p.WarnOnly, p.ProjectDir, p.RespawnCmd),
-		// hk-vs4u: warn-text + self_service flow through the resolver (config>default).
-		// DefaultWarnText = lighter advisory; ActionableWarnText = the R3 self-service
-		// restart handshake (selectWarnText picks between them). crews_enabled is
-		// resolved UNSET→TRUE in ResolveKeeperConfig.
-		DefaultWarnText:    resolved.DefaultWarnText,
-		ActionableWarnText: resolved.ActionableWarnText,
-		// K2 leader defer-message / K7 crew-message body overrides (config surface,
-		// T2). Carried to the watcher; T3 fills/validates the leader slots and
-		// wires selection. crew text stays inert until K7 activation.
-		LeaderDeferText: resolved.LeaderDeferText,
-		CrewDeferText:   resolved.CrewDeferText,
-		// SK-034 (T4): mtime-gated per-tick re-read of keeper.warn_messages so
-		// wording edits apply with no keeper bounce, strictly scoped away from
-		// thresholds. Injected here because keeper may not import daemon (depguard).
+		WarnCooldown:                    resolved.WarnCooldown,
+		LiveRecoverFn:                   keeperLiveRecoverFn(p.WarnOnly, p.ProjectDir, p.RespawnCmd),
+		DefaultWarnText:                 resolved.DefaultWarnText,
+		ActionableWarnText:              resolved.ActionableWarnText,
+		LeaderDeferText:                 resolved.LeaderDeferText,
+		CrewDeferText:                   resolved.CrewDeferText,
 		ReloadWarnMessagesFn:            keeperReloadWarnMessagesFn(p.ProjectDir),
 		SelfServiceEnabled:              resolved.SelfServiceEnabled,
 		SelfServiceCrewsEnabled:         resolved.SelfServiceCrewsEnabled,
@@ -139,6 +100,41 @@ func buildKeeperConfigs(resolved ResolvedKeeperConfig, p keeperBuildParams) (kee
 		OperatorWarnFn:                  keeperOperatorWarnFn(p.ProjectDir, p.AgentName),
 	}
 	return cyclerCfg, watcherCfg
+}
+
+// buildCyclePolicy converts fully resolved command configuration into the
+// policy and resource identity values used by the cycle core.
+func buildCyclePolicy(resolved ResolvedKeeperConfig, p keeperBuildParams) (keeper.CyclePolicy, keeper.CycleEnv) {
+	// hk-4gtu: BootGrace is fed at the Cycler construction site (never via
+	// applyDefaults). When neither flag nor config set it, use DefaultBootGracePeriod
+	// (5m); when set, honor the configured value VERBATIM including the 0 = disabled
+	// sentinel.
+	resolvedBootGrace := keeper.DefaultBootGracePeriod
+	if resolved.BootGraceSet {
+		resolvedBootGrace = resolved.BootGrace
+	}
+
+	policy := keeper.CyclePolicy{
+		ActPct:               float64(p.ActPctRaw),
+		ActAbsTokens:         resolved.ActAbsTokens,
+		WarnAbsTokens:        resolved.WarnAbsTokens,
+		ForceActAbsTokens:    resolved.ForceActAbsTokens,
+		ActPctCeil:           resolved.ActPctCeil,
+		WarnPctCeil:          resolved.WarnPctCeil,
+		IdleRestartAbsTokens: resolved.IdleRestartAbsTokens,
+		HandoffTimeout:       resolved.HandoffTimeout,
+		ClearSettle:          resolved.ClearSettle,
+		PollInterval:         resolved.CyclerPollInterval,
+		ForceRetryInterval:   resolved.ForceRetryInterval,
+		IdleRestartCooldown:  resolved.IdleRestartCooldown,
+		MaxHandoffTimeouts:   resolved.MaxHandoffTimeouts,
+		HoldTTL:              resolved.HoldTTL,
+		BootGracePeriod:      resolvedBootGrace,
+		OperatorTurnLookback: resolved.OperatorTurnLookback,
+		PostAnswerGrace:      resolved.PostAnswerGrace,
+	}
+	env := keeper.CycleEnv{AgentName: p.AgentName, ProjectDir: p.ProjectDir, TmuxTarget: p.ResolvedTmux}
+	return policy, env
 }
 
 // runKeeperSubcommand implements `harmonik keeper`.

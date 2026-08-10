@@ -224,7 +224,7 @@ func TestZJ1Y_ActionableWarn_LowConfigWarn_NamesVerbatimRestartNowCommand(t *tes
 		Staleness:     120 * time.Second,
 		WarnAbsTokens: zj1yLowWarnTokens, // ← the LOW configured threshold under test
 		// WarnPct is the pct<WarnPct NECESSARY-condition gate shared byte-for-byte
-		// with CyclerConfig.belowWarnThreshold (hk-lbo9w/F45): it exists to stop a
+		// with CyclePolicy.belowWarnThreshold (hk-lbo9w/F45): it exists to stop a
 		// default 200k abs threshold from firing prematurely on a huge (e.g. 1M)
 		// context window, and is NOT derived from WarnAbsTokens — config.yaml has no
 		// warn_pct knob (only warn_pct_ceil, a different field). A LOW abs config

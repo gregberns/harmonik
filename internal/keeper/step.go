@@ -224,18 +224,27 @@ func (s CycleState) clone() CycleState { return s }
 // NOT safe for concurrent use; like the pre-rebuild Cycler it is owned by the
 // single watcher/shell goroutine.
 type Cycle struct {
-	cfg   *CyclerConfig // policy scalars + pure threshold math ONLY (no fn-field calls)
-	state CycleState
+	policy *CyclePolicy
+	env    *CycleEnv
+	state  CycleState
 }
 
 // NewCycle constructs the reactor over the (defaulted) CyclerConfig scalars.
 func NewCycle(cfg *CyclerConfig) *Cycle {
-	return &Cycle{cfg: cfg, state: CycleState{Phase: PhaseIdle}}
+	policy := cyclePolicyFromConfig(*cfg)
+	env := cycleEnvFromConfig(*cfg)
+	return NewCycleWithPolicy(policy, env)
+}
+
+// NewCycleWithPolicy constructs the pure reactor from policy and resource identity.
+func NewCycleWithPolicy(policy CyclePolicy, env CycleEnv) *Cycle {
+	return &Cycle{policy: &policy, env: &env, state: CycleState{Phase: PhaseIdle}}
 }
 
 // Step advances the machine: pure state transition + action emission.
 func (m *Cycle) Step(ev Event) []Action {
-	next, actions := stepCycle(m.cfg, m.state, ev)
+	cfg := m.stepConfig()
+	next, actions := stepCycle(&cfg, m.state, ev)
 	m.state = next
 	return actions
 }
@@ -261,8 +270,18 @@ func (m *Cycle) Run(ctx context.Context, src substrate.EventSource[Event], eff s
 // fire-aligned exactly as pre-rebuild (the generator was only invoked inside
 // runCycle). Pure: runs the same total transition on a state copy.
 func (m *Cycle) peekFires(ev Event) bool {
-	next, _ := stepCycle(m.cfg, m.state.clone(), ev)
+	cfg := m.stepConfig()
+	next, _ := stepCycle(&cfg, m.state.clone(), ev)
 	return next.Phase != PhaseIdle
+}
+
+type cycleStepConfig struct {
+	CyclePolicy
+	CycleEnv
+}
+
+func (m *Cycle) stepConfig() cycleStepConfig {
+	return cycleStepConfig{CyclePolicy: *m.policy, CycleEnv: *m.env}
 }
 
 // failOpen rolls the machine back to Idle after the shell failed to execute
@@ -280,7 +299,7 @@ func (m *Cycle) failOpen() {
 
 // stepCycle is the total pure transition function:
 // (cfg, state, event) → (state', actions).
-func stepCycle(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action) {
+func stepCycle(cfg *cycleStepConfig, s CycleState, ev Event) (CycleState, []Action) {
 	switch s.Phase {
 	case PhaseIdle:
 		switch ev.Kind {
@@ -308,7 +327,7 @@ func stepCycle(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action)
 }
 
 // stepAwaitingHandoff handles the AwaitingHandoff phase (design §3c rows).
-func stepAwaitingHandoff(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action) {
+func stepAwaitingHandoff(cfg *cycleStepConfig, s CycleState, ev Event) (CycleState, []Action) {
 	switch ev.Kind {
 	case EvNonceObserved:
 		// Nonce confirmed → journal "confirmed", emit handoff_written
@@ -359,7 +378,7 @@ func stepAwaitingHandoff(cfg *CyclerConfig, s CycleState, ev Event) (CycleState,
 
 // stepParkForOperator ends a cycle without treating an operator turn as an
 // agent failure. The handoff stays intact for the next cycle.
-func stepParkForOperator(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action) {
+func stepParkForOperator(cfg *cycleStepConfig, s CycleState, ev Event) (CycleState, []Action) {
 	s.Reason = "operator_turn_recent"
 	s.Phase = PhaseIdle
 	s.LastTerminal = "parked"
@@ -371,7 +390,7 @@ func stepParkForOperator(cfg *CyclerConfig, s CycleState, ev Event) (CycleState,
 }
 
 // stepAwaitModelDone handles the AwaitModelDone phase (T8, SK-014).
-func stepAwaitModelDone(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action) {
+func stepAwaitModelDone(cfg *cycleStepConfig, s CycleState, ev Event) (CycleState, []Action) {
 	switch ev.Kind {
 	case EvModelDone:
 		// The real model-done signal ("idle_marker" primary,
@@ -392,7 +411,7 @@ func stepAwaitModelDone(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, 
 }
 
 // stepClearing handles the Clearing phase (hk-vdqe2 hard gate).
-func stepClearing(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action) {
+func stepClearing(cfg *cycleStepConfig, s CycleState, ev Event) (CycleState, []Action) {
 	switch ev.Kind {
 	case EvSessionChanged:
 		if ev.NewSID == "" || ev.NewSID == s.PrevSID {
@@ -426,7 +445,7 @@ func stepClearing(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Acti
 // retries are exhausted; the shell fires TimerClearBackstop instead when the
 // wall-clock backstop has also elapsed (matching the pre-rebuild deadline
 // check at each settle-window end).
-func stepClearSettleExpired(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action) {
+func stepClearSettleExpired(cfg *cycleStepConfig, s CycleState, ev Event) (CycleState, []Action) {
 	if s.ClearAttempt >= cfg.ClearConfirmRetries {
 		return stepClearUnconfirmed(cfg, s, ev)
 	}
@@ -470,7 +489,7 @@ func stepClearSettleExpired(cfg *CyclerConfig, s CycleState, ev Event) (CycleSta
 // observable state). Gate order preserved exactly.
 //
 //nolint:cyclop // stepIdleGaugeTick is at/over the threshold after branch edits; splitting mid-release is riskier than the marginal complexity
-func stepIdleGaugeTick(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action) {
+func stepIdleGaugeTick(cfg *cycleStepConfig, s CycleState, ev Event) (CycleState, []Action) {
 	cf := ev.CF
 	snap := ev.Gates
 
@@ -538,14 +557,14 @@ func stepIdleGaugeTick(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, [
 
 // gateOperatorTurnHolds is the Gate 5d predicate: a recent inbound operator
 // user turn within the lookback window (hk-74iyd).
-func gateOperatorTurnHolds(cfg *CyclerConfig, snap GateSnapshot, at time.Time, sid string) bool {
+func gateOperatorTurnHolds(cfg *cycleStepConfig, snap GateSnapshot, at time.Time, sid string) bool {
 	return cfg.OperatorTurnLookback > 0 && sid != "" && !snap.LastUserTurnAt.IsZero() &&
 		at.Sub(snap.LastUserTurnAt) <= cfg.OperatorTurnLookback
 }
 
 // gatePostAnswerGraceHolds is the Gate 5e predicate: within the post-answer
 // grace window after the last assistant turn (hk-74iyd).
-func gatePostAnswerGraceHolds(cfg *CyclerConfig, snap GateSnapshot, at time.Time, sid string) bool {
+func gatePostAnswerGraceHolds(cfg *cycleStepConfig, snap GateSnapshot, at time.Time, sid string) bool {
 	return cfg.PostAnswerGrace > 0 && sid != "" && !snap.LastAssistantTurnAt.IsZero() &&
 		at.Sub(snap.LastAssistantTurnAt) <= cfg.PostAnswerGrace
 }
@@ -554,7 +573,7 @@ func gatePostAnswerGraceHolds(cfg *CyclerConfig, snap GateSnapshot, at time.Time
 // GaugeTick and Precompact entries (§3f: a "clean" short-circuit would change
 // observable state): the re-arm observation, then the same-SID escape hatch
 // (hk-uxu) gated on the last fire having COMPLETED (hk-vpnp / Bug 3a).
-func applyAntiLoopPrelude(cfg *CyclerConfig, s CycleState, cf *CtxFile) CycleState {
+func applyAntiLoopPrelude(cfg *cycleStepConfig, s CycleState, cf *CtxFile) CycleState {
 	// Prelude: re-arm observation.
 	if s.LastFiredSID != "" && cf.SessionID != s.LastFiredSID && cfg.belowWarnThreshold(cf) {
 		s.SeenLowPctAfterLastFire = true
@@ -572,7 +591,7 @@ func applyAntiLoopPrelude(cfg *CyclerConfig, s CycleState, cf *CtxFile) CycleSta
 // trackBootGraceSID is the boot-grace SID-tracking prelude (hk-4f8, hk-ibb,
 // hk-hz9): stamp CurrentSessionIDSince on a genuinely-new session id and
 // maintain the grace-burst window anchor.
-func trackBootGraceSID(cfg *CyclerConfig, s CycleState, at time.Time, sid string) CycleState {
+func trackBootGraceSID(cfg *cycleStepConfig, s CycleState, at time.Time, sid string) CycleState {
 	if sid == s.CurrentSessionID {
 		return s
 	}
@@ -601,7 +620,7 @@ func trackBootGraceSID(cfg *CyclerConfig, s CycleState, at time.Time, sid string
 // back. Force-path exempt (hk-ibb fix 1; a nil cf is NOT exempt — the
 // precompact entry's pre-rebuild check); the total ceiling (fix 2) overrides
 // the hold.
-func bootGraceHolds(cfg *CyclerConfig, s CycleState, at time.Time, cf *CtxFile) bool {
+func bootGraceHolds(cfg *cycleStepConfig, s CycleState, at time.Time, cf *CtxFile) bool {
 	if cfg.BootGracePeriod <= 0 || s.CurrentSessionIDSince.IsZero() {
 		return false
 	}
@@ -621,7 +640,7 @@ func bootGraceHolds(cfg *CyclerConfig, s CycleState, at time.Time, cf *CtxFile) 
 // suppression + the force-retry exceptions (hk-qoz, hk-hz9 fix 2). true means
 // the entry is suppressed; false falls through (including the forced-clear
 // retry paths).
-func gateAntiLoopSuppresses(cfg *CyclerConfig, s CycleState, at time.Time, cf *CtxFile) bool {
+func gateAntiLoopSuppresses(cfg *cycleStepConfig, s CycleState, at time.Time, cf *CtxFile) bool {
 	if s.LastFiredSID == "" {
 		return false
 	}
@@ -647,7 +666,7 @@ func gateAntiLoopSuppresses(cfg *CyclerConfig, s CycleState, at time.Time, cf *C
 // whichever gate fires (bounded-fallback contract), and every decision emits
 // session_keeper_precompact_blocked with the action taken — including the
 // empty-SID "hold_dispatch_skip" quirk (design §3c Idle rows / cycle.go:1349).
-func stepIdlePrecompact(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action) {
+func stepIdlePrecompact(cfg *cycleStepConfig, s CycleState, ev Event) (CycleState, []Action) {
 	cf := ev.CF
 	sessionID := ""
 	if cf != nil {
@@ -714,7 +733,7 @@ func stepIdlePrecompact(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, 
 
 // stepIdleRestartTick is the RunForIdle entry ladder (hk-ee81): restart idle
 // crews with large (≥ IdleRestartAbsTokens) context below the act threshold.
-func stepIdleRestartTick(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action) {
+func stepIdleRestartTick(cfg *cycleStepConfig, s CycleState, ev Event) (CycleState, []Action) {
 	cf := ev.CF
 	if cf == nil {
 		return s, nil
@@ -770,7 +789,7 @@ func stepIdleRestartTick(cfg *CyclerConfig, s CycleState, ev Event) (CycleState,
 // cycle.go RecoverFromCrash) fed as the CrashJournal event. It is a one-shot
 // fast-forward/close-out: no anti-loop update, no managed rebind, no drive
 // loop — exactly the pre-rebuild matrix.
-func stepIdleCrashJournal(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action) {
+func stepIdleCrashJournal(cfg *cycleStepConfig, s CycleState, ev Event) (CycleState, []Action) {
 	j := ev.Journal
 	if j == nil {
 		return s, nil
@@ -821,7 +840,7 @@ func stepIdleCrashJournal(cfg *CyclerConfig, s CycleState, ev Event) (CycleState
 // cycle id was minted by the shell (ev.CycleID); the handoff content sample
 // rides on the event for the pure stale-nonce truncate decision (hk-vpnp
 // Bug 3b: truncate ONLY a stale keeper nonce; preserve a genuine handoff).
-func stepStartCycle(cfg *CyclerConfig, s CycleState, ev Event, cf *CtxFile) (CycleState, []Action) {
+func stepStartCycle(cfg *cycleStepConfig, s CycleState, ev Event, cf *CtxFile) (CycleState, []Action) {
 	// Forced-attempt stamp BEFORE injection so Gate 6 rate-limits retries
 	// whether this cycle completes or aborts (hk-qoz).
 	if cfg.aboveForceThreshold(cf) {
@@ -875,7 +894,7 @@ func stepStartCycle(cfg *CyclerConfig, s CycleState, ev Event, cf *CtxFile) (Cyc
 // stepAbort is the AwaitingHandoff handoff_timeout edge with NO fresh handoff
 // — the ONLY path that never sends /clear (SK §8.2). NEVER /clear an
 // unconfirmed handoff (hk-vpnp Bug 3).
-func stepAbort(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action) {
+func stepAbort(cfg *cycleStepConfig, s CycleState, ev Event) (CycleState, []Action) {
 	actions := []Action{
 		journalAbortedAction(&s, ev.At),
 		emitCycleAbortedAction(cfg, s.CycleID, s.EntryCF.SessionID, "handoff_timeout"),
@@ -922,7 +941,7 @@ func stepAbort(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action)
 // model_done{source[, degraded]} (SK-012), set HARMONIK_AGENT, inject /clear
 // + emit clear_sent{attempt:1}, journal "cleared", cancel the model-done
 // bound, and arm the settle + backstop timers (hk-vdqe2 hard gate).
-func stepEnterClearing(cfg *CyclerConfig, s CycleState, ev Event, source string, degraded bool) (CycleState, []Action) {
+func stepEnterClearing(cfg *cycleStepConfig, s CycleState, ev Event, source string, degraded bool) (CycleState, []Action) {
 	s.Phase = PhaseClearing
 	s.ClearAttempt = 1
 	// SR4 (SK-014 / SK-INV-002): record the model-done signal BEFORE any
@@ -971,7 +990,7 @@ func injectClearAction(s *CycleState) (Action, bool) {
 // clear_unconfirmed, clear the managed binding, then fall through to the
 // brief. NOT a terminal by itself — the brief still fires and the cycle still
 // records cycle_complete (SK §8.3).
-func stepClearUnconfirmed(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action) {
+func stepClearUnconfirmed(cfg *cycleStepConfig, s CycleState, ev Event) (CycleState, []Action) {
 	actions := []Action{
 		emitClearUnconfirmedAction(cfg, s.CycleID, s.EntryCF.SessionID),
 		{Kind: ActSetManagedSession, SID: ""},
@@ -985,7 +1004,7 @@ func stepClearUnconfirmed(cfg *CyclerConfig, s CycleState, ev Event) (CycleState
 // the brief, journal resumed + complete, emit cycle_complete (and
 // cycle_recovered on the hk-fi78d recovery path), run the anti-loop
 // bookkeeping, and return to Idle with the Complete terminal.
-func stepBriefing(cfg *CyclerConfig, s CycleState, ev Event, newSID string, actions []Action) (CycleState, []Action) {
+func stepBriefing(cfg *cycleStepConfig, s CycleState, ev Event, newSID string, actions []Action) (CycleState, []Action) {
 	s.Phase = PhaseBriefing // transient; lands at Idle below
 	if cfg.TmuxTarget != "" {
 		actions = append(actions, Action{Kind: ActInjectBrief})
@@ -1076,7 +1095,7 @@ func mustMarshalPayload(v any) []byte {
 	return raw
 }
 
-func emitHandoffStartedAction(cfg *CyclerConfig, cycleID, sessionID string) Action {
+func emitHandoffStartedAction(cfg *cycleStepConfig, cycleID, sessionID string) Action {
 	raw := mustMarshalPayload(core.SessionKeeperHandoffStartedPayload{
 		AgentName: cfg.AgentName,
 		CycleID:   cycleID,
@@ -1085,7 +1104,7 @@ func emitHandoffStartedAction(cfg *CyclerConfig, cycleID, sessionID string) Acti
 	return Action{Kind: ActEmit, Type: core.EventTypeSessionKeeperHandoffStarted, Payload: raw}
 }
 
-func emitCycleCompleteAction(cfg *CyclerConfig, cycleID, prevSID, newSID string) Action {
+func emitCycleCompleteAction(cfg *cycleStepConfig, cycleID, prevSID, newSID string) Action {
 	raw := mustMarshalPayload(core.SessionKeeperCycleCompletePayload{
 		AgentName:     cfg.AgentName,
 		CycleID:       cycleID,
@@ -1095,7 +1114,7 @@ func emitCycleCompleteAction(cfg *CyclerConfig, cycleID, prevSID, newSID string)
 	return Action{Kind: ActEmit, Type: core.EventTypeSessionKeeperCycleComplete, Payload: raw}
 }
 
-func emitCycleAbortedAction(cfg *CyclerConfig, cycleID, sessionID, reason string) Action {
+func emitCycleAbortedAction(cfg *cycleStepConfig, cycleID, sessionID, reason string) Action {
 	raw := mustMarshalPayload(core.SessionKeeperCycleAbortedPayload{
 		AgentName: cfg.AgentName,
 		CycleID:   cycleID,
@@ -1105,7 +1124,7 @@ func emitCycleAbortedAction(cfg *CyclerConfig, cycleID, sessionID, reason string
 	return Action{Kind: ActEmit, Type: core.EventTypeSessionKeeperCycleAborted, Payload: raw}
 }
 
-func emitCycleParkedAction(cfg *CyclerConfig, cycleID, sessionID, reason string) Action {
+func emitCycleParkedAction(cfg *cycleStepConfig, cycleID, sessionID, reason string) Action {
 	raw := mustMarshalPayload(core.SessionKeeperCycleParkedPayload{
 		AgentName: cfg.AgentName,
 		CycleID:   cycleID,
@@ -1115,7 +1134,7 @@ func emitCycleParkedAction(cfg *CyclerConfig, cycleID, sessionID, reason string)
 	return Action{Kind: ActEmit, Type: core.EventTypeSessionKeeperCycleParked, Payload: raw}
 }
 
-func emitClearUnconfirmedAction(cfg *CyclerConfig, cycleID, sessionID string) Action {
+func emitClearUnconfirmedAction(cfg *cycleStepConfig, cycleID, sessionID string) Action {
 	raw := mustMarshalPayload(core.SessionKeeperClearUnconfirmedPayload{
 		AgentName: cfg.AgentName,
 		CycleID:   cycleID,
@@ -1124,7 +1143,7 @@ func emitClearUnconfirmedAction(cfg *CyclerConfig, cycleID, sessionID string) Ac
 	return Action{Kind: ActEmit, Type: core.EventTypeSessionKeeperClearUnconfirmed, Payload: raw}
 }
 
-func emitCycleRecoveredAction(cfg *CyclerConfig, cycleID, phaseAtCrash string) Action {
+func emitCycleRecoveredAction(cfg *cycleStepConfig, cycleID, phaseAtCrash string) Action {
 	raw := mustMarshalPayload(core.SessionKeeperCycleRecoveredPayload{
 		AgentName:    cfg.AgentName,
 		CycleID:      cycleID,
@@ -1141,7 +1160,7 @@ func emitCycleRecoveredAction(cfg *CyclerConfig, cycleID, phaseAtCrash string) A
 // nonce path the confirmed nonce marker is carried for audit; on the
 // hk-fi78d freshness-recovery edge recovered:true + the sampled handoff
 // mtime (RFC3339) are carried instead (00b R1 union shape).
-func emitHandoffWrittenAction(cfg *CyclerConfig, cycleID, sessionID string, recovered bool, handoffMtime time.Time) Action {
+func emitHandoffWrittenAction(cfg *cycleStepConfig, cycleID, sessionID string, recovered bool, handoffMtime time.Time) Action {
 	p := core.SessionKeeperHandoffWrittenPayload{
 		AgentName: cfg.AgentName,
 		CycleID:   cycleID,
@@ -1160,7 +1179,7 @@ func emitHandoffWrittenAction(cfg *CyclerConfig, cycleID, sessionID string, reco
 // emitModelDoneAction builds session_keeper_model_done. Source is REQUIRED
 // ("idle_marker" | "transcript_turn" | "timeout"); degraded is true only on
 // the model_done_timeout fail-open path (omitempty per 00b R2).
-func emitModelDoneAction(cfg *CyclerConfig, cycleID, sessionID, source string, degraded bool) Action {
+func emitModelDoneAction(cfg *cycleStepConfig, cycleID, sessionID, source string, degraded bool) Action {
 	raw := mustMarshalPayload(core.SessionKeeperModelDonePayload{
 		AgentName: cfg.AgentName,
 		CycleID:   cycleID,
@@ -1173,7 +1192,7 @@ func emitModelDoneAction(cfg *CyclerConfig, cycleID, sessionID, source string, d
 
 // emitClearSentAction builds session_keeper_clear_sent (attempt is 1-based;
 // defensive re-injects increment it).
-func emitClearSentAction(cfg *CyclerConfig, cycleID, sessionID string, attempt int) Action {
+func emitClearSentAction(cfg *cycleStepConfig, cycleID, sessionID string, attempt int) Action {
 	raw := mustMarshalPayload(core.SessionKeeperClearSentPayload{
 		AgentName: cfg.AgentName,
 		CycleID:   cycleID,
@@ -1186,7 +1205,7 @@ func emitClearSentAction(cfg *CyclerConfig, cycleID, sessionID string, attempt i
 // emitNewSessionUpAction builds session_keeper_new_session_up (prev/new both
 // REQUIRED and distinct — the pure SessionChanged guard already enforces the
 // != check, matching the payload's Valid()).
-func emitNewSessionUpAction(cfg *CyclerConfig, cycleID, prevSID, newSID string) Action {
+func emitNewSessionUpAction(cfg *cycleStepConfig, cycleID, prevSID, newSID string) Action {
 	raw := mustMarshalPayload(core.SessionKeeperNewSessionUpPayload{
 		AgentName:     cfg.AgentName,
 		CycleID:       cycleID,
@@ -1196,7 +1215,7 @@ func emitNewSessionUpAction(cfg *CyclerConfig, cycleID, prevSID, newSID string) 
 	return Action{Kind: ActEmit, Type: core.EventTypeSessionKeeperNewSessionUp, Payload: raw}
 }
 
-func emitPrecompactBlockedAction(cfg *CyclerConfig, sessionID, action string) Action {
+func emitPrecompactBlockedAction(cfg *cycleStepConfig, sessionID, action string) Action {
 	raw := mustMarshalPayload(core.SessionKeeperPrecompactBlockedPayload{
 		AgentName: cfg.AgentName,
 		SessionID: sessionID,

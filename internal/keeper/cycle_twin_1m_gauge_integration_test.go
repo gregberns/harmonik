@@ -12,7 +12,7 @@ package keeper_test
 //
 // Claude Code `[1m]` (1-million-token) models OMIT the context_window_size field
 // from their statusLine JSON. The keeper's absolute-token gate
-// (CyclerConfig.belowActThreshold / actThreshold) is only used when BOTH
+// (CyclePolicy.belowActThreshold / CyclePolicy.actThreshold) is only used when BOTH
 // CtxFile.Tokens > 0 AND CtxFile.WindowSize > 0; otherwise it falls back to the
 // pct field. A `[1m]` session reports tokens but NOT a window, so without an
 // inference the .ctx would carry window_size=0, and:

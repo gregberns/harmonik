@@ -339,25 +339,26 @@ type CyclerConfig struct {
 }
 
 func (c *CyclerConfig) applyDefaults() {
+	defaults := DefaultCyclePolicy()
 	// Threshold defaults are sourced from thresholds.go (the single source of
 	// truth shared with WatcherConfig.applyDefaults). Refs: hk-bpkv.
 	if c.ActAbsTokens <= 0 {
-		c.ActAbsTokens = defaultActAbsTokens
+		c.ActAbsTokens = defaults.ActAbsTokens
 	}
 	if c.ActPctCeil <= 0 {
-		c.ActPctCeil = defaultActPctCeil
+		c.ActPctCeil = defaults.ActPctCeil
 	}
 	if c.WarnAbsTokens <= 0 {
-		c.WarnAbsTokens = defaultWarnAbsTokens
+		c.WarnAbsTokens = defaults.WarnAbsTokens
 	}
 	if c.WarnPctCeil <= 0 {
-		c.WarnPctCeil = defaultWarnPctCeil
+		c.WarnPctCeil = defaults.WarnPctCeil
 	}
 	if c.ActPct <= 0 {
-		c.ActPct = defaultActPct
+		c.ActPct = defaults.ActPct
 	}
 	if c.WarnPct <= 0 {
-		c.WarnPct = defaultWarnPct
+		c.WarnPct = defaults.WarnPct
 	}
 	// ForceAct thresholds are derived from their corresponding act thresholds so
 	// that a custom --act-pct/--act-abs-tokens never creates a dead zone where
@@ -476,58 +477,6 @@ func (c *CyclerConfig) applyDefaults() {
 	if c.IdleRestartCooldown <= 0 {
 		c.IdleRestartCooldown = DefaultIdleRestartCooldown
 	}
-}
-
-// actThreshold returns the effective absolute-token cycle threshold for the
-// given windowSize. It returns min(ActAbsTokens, int64(ActPctCeil * windowSize))
-// when windowSize > 0, ensuring the gate fires early enough on both 200k and 1M
-// windows. When windowSize == 0 (old .ctx without window data) returns ActAbsTokens
-// so callers can still apply it as a hard cap if they have a token count.
-func (c *CyclerConfig) actThreshold(windowSize int64) int64 {
-	return minAbsOrPctCeil(c.ActAbsTokens, c.ActPctCeil, windowSize)
-}
-
-// warnThreshold returns the effective absolute-token warn/re-arm threshold for
-// the given windowSize, using the same min(abs, pct*window) formula as actThreshold.
-func (c *CyclerConfig) warnThreshold(windowSize int64) int64 {
-	return minAbsOrPctCeil(c.WarnAbsTokens, c.WarnPctCeil, windowSize)
-}
-
-// belowActThreshold reports whether cf is below the cycle-trigger threshold.
-// Uses absolute tokens when both Tokens and WindowSize are available; otherwise
-// falls back to Pct vs ActPct (backwards compat for old .ctx files).
-func (c *CyclerConfig) belowActThreshold(cf *CtxFile) bool {
-	if cf.Tokens > 0 && cf.WindowSize > 0 {
-		return cf.Tokens < c.actThreshold(cf.WindowSize)
-	}
-	return cf.Pct < c.ActPct
-}
-
-// belowWarnThreshold reports whether cf is below the warn/re-arm threshold.
-// Uses absolute tokens when available, otherwise falls back to Pct vs WarnPct.
-// pct<WarnPct is a NECESSARY condition — see WatcherConfig.belowWarnThreshold
-// (watcher.go) for the rationale. Byte-identical logic. Refs: hk-lbo9w.
-func (c *CyclerConfig) belowWarnThreshold(cf *CtxFile) bool {
-	if cf.Tokens > 0 && cf.WindowSize > 0 {
-		return cf.Pct < c.WarnPct || cf.Tokens < c.warnThreshold(cf.WindowSize)
-	}
-	return cf.Pct < c.WarnPct
-}
-
-// forceActThreshold returns the effective absolute-token forced-clear threshold
-// using the same min(abs, pct*window) formula as actThreshold.
-func (c *CyclerConfig) forceActThreshold(windowSize int64) int64 {
-	return minAbsOrPctCeil(c.ForceActAbsTokens, c.ForceActPctCeil, windowSize)
-}
-
-// aboveForceThreshold reports whether cf is at or above the hard forced-clear
-// threshold. Uses absolute tokens when available; falls back to ForceActPct.
-// Refs: hk-0uu.
-func (c *CyclerConfig) aboveForceThreshold(cf *CtxFile) bool {
-	if cf.Tokens > 0 && cf.WindowSize > 0 {
-		return cf.Tokens >= c.forceActThreshold(cf.WindowSize)
-	}
-	return cf.Pct >= c.ForceActPct
 }
 
 // newCycleIDGen returns a closure that generates collision-resistant cycle IDs.

@@ -44,13 +44,9 @@ func writeStaleCtx(t *testing.T, projectDir, agent string, cf keeper.CtxFile, ag
 	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	raw, err := json.Marshal(cf)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
 	path := filepath.Join(keeperDir, agent+".ctx")
-	if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
-		t.Fatalf("write ctx: %v", err)
+	if err := keeper.WriteCtxFile(projectDir, agent, &cf); err != nil {
+		t.Fatalf("WriteCtxFile: %v", err)
 	}
 	old := time.Now().Add(-age)
 	if err := os.Chtimes(path, old, old); err != nil {

@@ -892,6 +892,32 @@ func runKeeperDoctor(cfg doctorConfig, stdout, stderr io.Writer) int {
 	// + `harmonik captain respawn` fully replaced it; there is no longer an
 	// embedded script to compare a deployed copy against.
 
+	// 10. Last cycle outcome. This is diagnostic state, not a health gate. A
+	// parked cycle must name the reason so an operator can distinguish a safe
+	// deferral from a handoff failure.
+	{
+		cyclePath := filepath.Join(cfg.projectDir, ".harmonik", "keeper", cfg.agentName+".cycle")
+		// #nosec G304 -- projectDir and agentName passed the command boundary checks.
+		raw, readCycleErr := os.ReadFile(cyclePath)
+		switch {
+		case errors.Is(readCycleErr, os.ErrNotExist):
+			check("last-cycle", true, "no cycle recorded")
+		case readCycleErr != nil:
+			check("last-cycle", false, fmt.Sprintf("cannot read %s: %v", cyclePath, readCycleErr))
+		default:
+			var journal keeper.CycleJournal
+			if unmarshalErr := json.Unmarshal(raw, &journal); unmarshalErr != nil {
+				check("last-cycle", false, fmt.Sprintf("invalid cycle journal %s: %v", cyclePath, unmarshalErr))
+			} else {
+				msg := fmt.Sprintf("phase=%s cycle_id=%s", journal.Phase, journal.CycleID)
+				if journal.Reason != "" {
+					msg += " reason=" + journal.Reason
+				}
+				check("last-cycle", true, msg)
+			}
+		}
+	}
+
 	// Print results.
 	allOK := true
 	for _, r := range results {

@@ -196,7 +196,7 @@ func TestScenario_LateHandoff300sFakeClock_Aborts_qji8g(t *testing.T) {
 // The handoff nonce is ALWAYS present, so the ONLY thing withholding /clear is the
 // re-check. Validates T8 (SK-035); companion to the operatorActiveSince unit in
 // scenario_delivery_qji8g_test.go.
-func TestScenario_OperatorAttachesMidWait_HoldsClear_qji8g(t *testing.T) {
+func TestScenario_ClientActivityMidWait_DoesNotHideHandoff_qji8g(t *testing.T) {
 	t.Parallel()
 
 	const (
@@ -228,16 +228,20 @@ func TestScenario_OperatorAttachesMidWait_HoldsClear_qji8g(t *testing.T) {
 	if len(texts) == 0 {
 		t.Fatal("cycle did not open — expected the /session-handoff inject before the wait")
 	}
+	clearSeen := false
 	for _, tx := range texts {
 		if strings.Contains(tx, "/clear") {
-			t.Fatalf("/clear injected over a mid-wait operator attach (SK-035 violated): %v", texts)
+			clearSeen = true
 		}
 	}
-	if evts := em.EventsOfType(core.EventTypeSessionKeeperCycleComplete); len(evts) != 0 {
-		t.Errorf("cycle_complete emitted despite a held /clear; want 0 (aborted), got %d", len(evts))
+	if !clearSeen {
+		t.Fatalf("written handoff was hidden by client activity: %v", texts)
 	}
-	if probes < 2 {
-		t.Errorf("operator-attached re-check not consulted during the wait (probes=%d)", probes)
+	if evts := em.EventsOfType(core.EventTypeSessionKeeperCycleComplete); len(evts) != 1 {
+		t.Errorf("cycle_complete count = %d; want 1", len(evts))
+	}
+	if probes != 1 {
+		t.Errorf("tmux client probe count = %d; want entry probe only", probes)
 	}
 }
 

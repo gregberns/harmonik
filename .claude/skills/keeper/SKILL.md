@@ -413,7 +413,8 @@ flight; a hold defers it while an *operator* is in the loop.
 | **FORCE-ACT** (≥240k / `--act-pct` 95) | runs the cycle **unconditionally** (bypasses CrispIdle) | **Nothing** — the safety net for a never-idle session. | **Nothing** — same safety net; always fires regardless of restart-now status. |
 | **HARD-CEILING** (≥280k, SID-independent) | forces handoff+restart regardless of session_id binding (`thresholds.go` `HardCeilingAbsTokens`, hk-34ac) | **Nothing** — last-resort backstop against a mis-bound keeper. | **Nothing** — same backstop. |
 | **captain restart-now** | `RunOnDemand`: bypasses CrispIdle gate, runs cycle immediately on next tick | — | Captain writes handoff + nonce, then calls `harmonik keeper restart-now --agent captain`. |
-| **operator attached** | act-path goes **warn-only**: destructive injection suppressed so keeper never races human keystrokes; warn/gauge continue; cycle resumes once operator detaches | nothing (`cycle.go` `CyclerConfig.OperatorAttachedFn`, hk-6qf) | nothing |
+| **operator attached at cycle entry** | act-path goes **warn-only**: cycle injection is not started while a tmux client is active | nothing (`cycle.go` `CyclerConfig.OperatorAttachedFn`, hk-6qf) | nothing |
+| **operator turn during handoff wait** | the keeper still reads the handoff on every tick. A real user transcript turn parks the cycle before `/clear`. Client activity alone does not hide a written handoff | nothing | nothing |
 
 **The keeper band is UNCHANGED.** `restart-now` bypasses only the act-pct idle gate;
 it does NOT widen warn or act thresholds. All other safety gates (nonce-confirmed
@@ -476,6 +477,10 @@ running. A fresh gauge file does NOT mean a keeper is active.
 (flag-only, hk-nbft). The `live-watcher` check uses `LiveKeeperPresent` (flock
 probe) to distinguish a running keeper from a stale corpse lockfile — it is the
 authoritative liveness signal, not gauge mtime.
+
+`keeper doctor` also reports the last cycle phase and reason from
+`.harmonik/keeper/<agent>.cycle`. A parked cycle reports
+`phase=parked reason=operator_turn_recent`.
 
 **`.managed` present with no watcher is a DEADLOCK, not a degraded mode** (hk-220lv).
 A live captain once sat at a typed-but-unsent `/clear` waiting for a restart cycle

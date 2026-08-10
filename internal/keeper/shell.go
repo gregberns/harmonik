@@ -304,42 +304,43 @@ func (c *Cycler) pollOnce(ctx context.Context) {
 	}
 }
 
-// pollAwaitingHandoff is the AwaitingHandoff detection tick: handoff-timeout
-// expiry (with the freshness sample) first, else the nonce-echo read.
+// pollAwaitingHandoff observes the handoff on every tick. A recent real user
+// turn can park pane injection, but it never suppresses the file read.
 func (c *Cycler) pollAwaitingHandoff(ctx context.Context, st CycleState, at time.Time) {
-	// T8 (SK-035): in-cycle operator-attached TOCTOU re-check. Gate-7 samples
-	// operator-attached ONCE at cycle entry (ports.go:190); it is NOT re-checked
-	// across the up-to-300s handoff wait, so an operator who starts typing AFTER
-	// entry would be clobbered when the wait resolves into the destructive /clear.
-	// Re-sample it here each wait tick and gate BOTH edges that reach /clear:
-	// the nonce-confirm (below) and the handoff-timeout freshness recovery
-	// (hk-fi78d, sampleHandoffFreshness). Scoped to the pane path (TmuxTarget set);
-	// the comms path writes no pane so it is harmless there. Emits nothing (Gate-7's
-	// operator_attached emission is a deliberate NO-OP, logmine TA3/F55). No
-	// threshold/timing constant changes (NG1).
-	attached := c.cfg.TmuxTarget != "" && c.cfg.OperatorAttachedFn(c.cfg.TmuxTarget)
+	content, readErr := c.handoff.ReadHandoff()
+	nonceSeen := readErr == nil && strings.Contains(content, nonceMarker(st.CycleID))
+	operatorTurn := c.recentOperatorTurn(st.PrevSID, at)
+	if nonceSeen {
+		if operatorTurn {
+			c.parkForOperator(ctx, st, at)
+			return
+		}
+		_ = c.feed(ctx, Event{Kind: EvNonceObserved, CycleID: st.CycleID, At: at}) //nolint:errcheck // a failed poll event leaves the cycle safe
+		return
+	}
 	if dl, ok := c.timers[TimerHandoffTimeout]; ok && !at.Before(dl) {
 		delete(c.timers, TimerHandoffTimeout)
-		// While an operator is attached, SKIP the freshness recovery so the timeout
-		// aborts warn-only (→ stepAbort, never /clear) rather than /clear over the
-		// operator via the recovered edge. The timeout still fires, so the wait is
-		// bounded (it does not hold forever).
-		if !attached {
-			c.sampleHandoffFreshness(ctx, st, at)
+		if _, fresh := c.observeHandoffFreshness(); fresh && operatorTurn {
+			c.parkForOperator(ctx, st, at)
+			return
 		}
+		c.sampleHandoffFreshness(ctx, st, at)
 		_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerHandoffTimeout, CycleID: st.CycleID, At: at}) //nolint:errcheck // non-fatal; a poll-fed event fails the cycle open, never the poll tick
-		return
 	}
-	// While attached, HOLD the nonce-confirm (the sole gate to /clear) — we never
-	// /clear over the operator's in-flight turn. The wait continues; on the next
-	// tick after they detach the nonce is read and the cycle proceeds.
-	if attached {
-		return
+}
+
+func (c *Cycler) recentOperatorTurn(sessionID string, at time.Time) bool {
+	if c.cfg.OperatorTurnLookback <= 0 || sessionID == "" {
+		return false
 	}
-	content, err := c.handoff.ReadHandoff()
-	if err == nil && strings.Contains(content, nonceMarker(st.CycleID)) {
-		_ = c.feed(ctx, Event{Kind: EvNonceObserved, CycleID: st.CycleID, At: at}) //nolint:errcheck // non-fatal; a poll-fed event fails the cycle open, never the poll tick
-	}
+	turnAt, ok := c.cfg.recentTurnFn()(c.cfg.resolvedTranscriptDir(), sessionID, "user")
+	return ok && !turnAt.After(at) && at.Sub(turnAt) <= c.cfg.OperatorTurnLookback
+}
+
+func (c *Cycler) parkForOperator(ctx context.Context, st CycleState, at time.Time) {
+	slog.WarnContext(ctx, "keeper: cycle parked because a recent operator turn arrived during handoff wait",
+		"agent", c.cfg.AgentName, "cycle_id", st.CycleID, "session_id", st.PrevSID)
+	_ = c.feed(ctx, Event{Kind: EvOperatorTurnRecent, CycleID: st.CycleID, At: at}) //nolint:errcheck // a failed poll event leaves the cycle safe
 }
 
 // pollAwaitModelDone is the AwaitModelDone detection tick (T8, SK-014).
@@ -463,13 +464,21 @@ func (c *Cycler) fireOnCancel(ctx context.Context) {
 // anchor and reads as not-fresh → the cycle aborts and never /clears over an
 // unwritten handoff (SK-INV-001). Pinned by
 // TestCycler_EmptyTarget_ScrubbedStaleHandoff_StillAborts.
-func (c *Cycler) sampleHandoffFreshness(ctx context.Context, st CycleState, at time.Time) {
+func (c *Cycler) observeHandoffFreshness() (time.Time, bool) {
 	content, err := c.handoff.ReadHandoff()
 	if err != nil || strings.TrimSpace(content) == "" {
-		return
+		return time.Time{}, false
 	}
 	mt, ok := c.handoff.HandoffModTime()
 	if !ok || mt.Before(c.handoffInjectedAt) {
+		return time.Time{}, false
+	}
+	return mt, true
+}
+
+func (c *Cycler) sampleHandoffFreshness(ctx context.Context, st CycleState, at time.Time) {
+	mt, ok := c.observeHandoffFreshness()
+	if !ok {
 		return
 	}
 	slog.WarnContext(ctx, "keeper: nonce echo timed out but a fresh handoff was written — recovering (proceeding with /clear + brief)",

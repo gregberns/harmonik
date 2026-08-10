@@ -102,6 +102,15 @@ type SessionKeeperCycleAbortedPayload struct {
 	Reason string `json:"reason"`
 }
 
+// SessionKeeperCycleParkedPayload records a cycle that kept its handoff and
+// deferred pane injection for a recent operator turn.
+type SessionKeeperCycleParkedPayload struct {
+	AgentName string `json:"agent_name"`
+	CycleID   string `json:"cycle_id"`
+	SessionID string `json:"session_id,omitempty"`
+	Reason    string `json:"reason"`
+}
+
 // SessionKeeperClearUnconfirmedPayload is the payload for
 // session_keeper_clear_unconfirmed (event-model.md §8.16.6).
 //

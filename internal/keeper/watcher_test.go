@@ -101,17 +101,13 @@ func writeCtxFile(t *testing.T, projectDir, agent string, pct float64, sessionID
 	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	data, err := json.Marshal(keeper.CtxFile{
+	cf := keeper.CtxFile{
 		Pct:       pct,
 		SessionID: sessionID,
 		Ts:        time.Now().UTC().Format(time.RFC3339),
-	})
-	if err != nil {
-		t.Fatalf("json.Marshal CtxFile: %v", err)
 	}
-	path := filepath.Join(keeperDir, agent+".ctx")
-	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
-		t.Fatalf("WriteFile ctx: %v", err)
+	if err := keeper.WriteCtxFile(projectDir, agent, &cf); err != nil {
+		t.Fatalf("WriteCtxFile: %v", err)
 	}
 }
 
@@ -124,19 +120,15 @@ func writeCtxFileTokens(t *testing.T, projectDir, agent string, pct float64, tok
 	if err := os.MkdirAll(keeperDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	data, err := json.Marshal(keeper.CtxFile{
+	cf := keeper.CtxFile{
 		Pct:        pct,
 		Tokens:     tokens,
 		WindowSize: windowSize,
 		SessionID:  sessionID,
 		Ts:         time.Now().UTC().Format(time.RFC3339),
-	})
-	if err != nil {
-		t.Fatalf("json.Marshal CtxFile: %v", err)
 	}
-	path := filepath.Join(keeperDir, agent+".ctx")
-	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
-		t.Fatalf("WriteFile ctx: %v", err)
+	if err := keeper.WriteCtxFile(projectDir, agent, &cf); err != nil {
+		t.Fatalf("WriteCtxFile: %v", err)
 	}
 }
 

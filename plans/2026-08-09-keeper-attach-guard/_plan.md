@@ -7,7 +7,7 @@ and make the reason visible when the keeper does decide to wait.
 
 ## Status
 
-not-started
+implemented; live smoke pending
 
 ## Done means...
 

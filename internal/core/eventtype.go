@@ -999,6 +999,10 @@ const (
 	// Refs: hk-22i70.
 	EventTypeSessionKeeperCycleAborted EventType = "session_keeper_cycle_aborted"
 
+	// EventTypeSessionKeeperCycleParked records a safe deferral after a real
+	// operator turn. It is not an agent timeout.
+	EventTypeSessionKeeperCycleParked EventType = "session_keeper_cycle_parked"
+
 	// EventTypeSessionKeeperClearUnconfirmed is the session_keeper_clear_unconfirmed
 	// event type. Emitted (best-effort) when the post-/clear settle wait elapses
 	// without observing a new session_id in the gauge. The cycle continues — this

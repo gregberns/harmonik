@@ -504,6 +504,7 @@ func registerKeeperEvents() {
 	mustRegister(EventTypeSessionKeeperHandoffStarted, func() EventPayload { return &SessionKeeperHandoffStartedPayload{} })
 	mustRegister(EventTypeSessionKeeperCycleComplete, func() EventPayload { return &SessionKeeperCycleCompletePayload{} })
 	mustRegister(EventTypeSessionKeeperCycleAborted, func() EventPayload { return &SessionKeeperCycleAbortedPayload{} })
+	mustRegister(EventTypeSessionKeeperCycleParked, func() EventPayload { return &SessionKeeperCycleParkedPayload{} })
 	mustRegister(EventTypeSessionKeeperClearUnconfirmed, func() EventPayload { return &SessionKeeperClearUnconfirmedPayload{} })
 	mustRegister(EventTypeSessionKeeperCycleRecovered, func() EventPayload { return &SessionKeeperCycleRecoveredPayload{} })
 	// hk-aalsm: PreCompact backstop hook.

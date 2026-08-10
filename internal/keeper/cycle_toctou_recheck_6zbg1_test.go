@@ -1,12 +1,7 @@
 package keeper_test
 
-// cycle_toctou_recheck_6zbg1_test.go — T8 (hk-keeper-delivery-toctou-recheck-6zbg1)
-// acceptance for SK-035: the in-cycle operator-attached TOCTOU re-check. An
-// operator who becomes attached AFTER cycle entry but DURING the handoff wait is
-// respected — the nonce-confirm (the sole gate to the destructive /clear) is held,
-// so /clear never fires over the operator's in-flight turn — whereas the single
-// entry-time Gate-7 sample would have missed it. Reuses the newAttachTestCycler
-// harness (cycle_operator_attached_test.go).
+// A client-activity change during the handoff wait must not hide a handoff that
+// is already on disk. Real operator turns use the transcript gate instead.
 
 import (
 	"context"
@@ -18,13 +13,7 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
-// TestCycler_OperatorAttachesDuringWait_HoldsClear — a mid-wait attach holds the
-// /clear. attachFn returns false on the FIRST probe (cycle-entry Gate-7, so the
-// cycle opens and injects /session-handoff) and true thereafter (the handoff-wait
-// polls), so the nonce is never confirmed and the cycle aborts on the handoff
-// timeout WITHOUT a /clear. The handoff (nonce) is ALWAYS present, so the only
-// thing withholding /clear is the re-check (SK-035).
-func TestCycler_OperatorAttachesDuringWait_HoldsClear(t *testing.T) {
+func TestCycler_ClientActivityDuringWait_DoesNotHideWrittenHandoff(t *testing.T) {
 	t.Parallel()
 
 	const (
@@ -59,18 +48,19 @@ func TestCycler_OperatorAttachesDuringWait_HoldsClear(t *testing.T) {
 	if len(texts) == 0 {
 		t.Fatalf("cycle did not open — expected the /session-handoff inject before the wait")
 	}
-	// The re-check HELD the /clear: no destructive reset over the operator.
+	clearSeen := false
 	for _, tx := range texts {
 		if strings.Contains(tx, "/clear") {
-			t.Fatalf("/clear was injected over a mid-wait operator attach (SK-035 violated): %v", texts)
+			clearSeen = true
 		}
 	}
-	// The cycle did NOT complete (it aborted on the handoff timeout, warn-only).
-	if evts := em.EventsOfType(core.EventTypeSessionKeeperCycleComplete); len(evts) != 0 {
-		t.Errorf("cycle_complete emitted despite a held /clear; want 0 (aborted), got %d", len(evts))
+	if !clearSeen {
+		t.Fatalf("written handoff was hidden by client activity: %v", texts)
 	}
-	// The re-check was actually consulted during the wait (probes beyond entry).
-	if probes < 2 {
-		t.Errorf("operator-attached re-check not consulted during the wait (probes=%d)", probes)
+	if evts := em.EventsOfType(core.EventTypeSessionKeeperCycleComplete); len(evts) != 1 {
+		t.Errorf("cycle_complete count = %d; want 1", len(evts))
+	}
+	if probes != 1 {
+		t.Errorf("tmux client probe count = %d; want entry probe only", probes)
 	}
 }

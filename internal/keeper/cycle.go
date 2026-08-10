@@ -82,7 +82,8 @@ func shellSafeByte(b byte) bool {
 // Written atomically to .harmonik/keeper/<agent>.cycle before any injection.
 //
 // Phase transitions: "opened" → "handoff_injected" → "confirmed" → "cleared"
-// → "resumed" → "complete" (happy path) or "aborted" (timeout path).
+// → "resumed" → "complete". A timeout ends as "aborted". A recent operator
+// turn during the wait ends as "parked".
 type CycleJournal struct {
 	CycleID   string    `json:"cycle_id"`
 	Phase     string    `json:"phase"`
@@ -286,15 +287,6 @@ type CyclerConfig struct {
 	// (no pane to inject into). Refs: hk-6qf.
 	OperatorAttachedFn func(target string) bool
 
-	// OperatorAttachedSampleInterval bounds how often the poll-tick
-	// session_keeper_operator_attached event is persisted. Gate 7 re-checks live
-	// tmux on every watcher tick (~5s); without this throttle every tick wrote a
-	// durable event (logmine F55: 51% of one events.jsonl window). One sample per
-	// interval keeps the digest resolver's attached-source fresh (its
-	// AttachedInactiveTimeout default is 5m) while cutting event volume ~12x.
-	// Zero → defaultOperatorAttachedSampleInterval. Refs: hk-2yvx.
-	OperatorAttachedSampleInterval time.Duration
-
 	// SleepingCheckFn reports whether the session identified by sessionID is
 	// currently parked by the QuiesceArbiter (.harmonik/.sleeping.<sessionID>,
 	// M1 / hk-jeby). MaybeRun returns nil (cycle deferred) when this returns
@@ -349,12 +341,6 @@ type CyclerConfig struct {
 	hasRespawn bool
 }
 
-// defaultOperatorAttachedSampleInterval is the default Gate-7 emission sample
-// window: at most one operator_attached event per minute while an operator stays
-// attached. Well inside the digest resolver's 5m AttachedInactiveTimeout so
-// suppression stays pinned, but ~12x below the ~5s poll cadence. Refs: hk-2yvx.
-const defaultOperatorAttachedSampleInterval = time.Minute
-
 func (c *CyclerConfig) applyDefaults() {
 	// Threshold defaults are sourced from thresholds.go (the single source of
 	// truth shared with WatcherConfig.applyDefaults). Refs: hk-bpkv.
@@ -392,9 +378,6 @@ func (c *CyclerConfig) applyDefaults() {
 	}
 	if c.ForceRetryInterval <= 0 {
 		c.ForceRetryInterval = DefaultForceRetryInterval
-	}
-	if c.OperatorAttachedSampleInterval <= 0 {
-		c.OperatorAttachedSampleInterval = defaultOperatorAttachedSampleInterval
 	}
 	if c.BootGracePeriod > 0 && c.MaxBootGraceTotal <= 0 {
 		c.MaxBootGraceTotal = 2 * c.BootGracePeriod

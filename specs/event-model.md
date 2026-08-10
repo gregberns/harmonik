@@ -431,6 +431,7 @@ The session-keeper watcher/lifecycle cohort (codename:session-keeper, hk-ekap1).
 | 8.16.3 | `session_keeper_handoff_started` | O | internal/keeper | operator-observability, audit | `agent_name`, `cycle_id`, `session_id?` |
 | 8.16.4 | `session_keeper_cycle_complete` | O | internal/keeper | operator-observability, audit | `agent_name`, `cycle_id`, `prev_session_id?`, `new_session_id?` |
 | 8.16.5 | `session_keeper_cycle_aborted` | O | internal/keeper | operator-observability, audit | `agent_name`, `cycle_id`, `session_id?`, `reason` |
+| 8.16.5a | `session_keeper_cycle_parked` | O | internal/keeper | operator-observability, audit | `agent_name`, `cycle_id`, `session_id?`, `reason` |
 | 8.16.6 | `session_keeper_clear_unconfirmed` | O | internal/keeper | operator-observability, audit | `agent_name`, `cycle_id`, `session_id?` |
 | 8.16.7 | `session_keeper_cycle_recovered` | O | internal/keeper | operator-observability, audit | `agent_name`, `cycle_id`, `phase_at_crash` |
 | 8.16.8 | `session_keeper_precompact_blocked` | O | internal/keeper | operator-observability, audit | `agent_name`, `session_id?`, `action` |

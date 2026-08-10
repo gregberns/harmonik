@@ -42,9 +42,11 @@ type legacyActivityProbe struct{ port GaugePort }
 func (a legacyActivityProbe) IdleMarkerModTime() (time.Time, bool) {
 	return a.port.IdleMarkerModTime()
 }
+
 func (a legacyActivityProbe) LastUserTurn(string) (time.Time, bool) {
 	return time.Time{}, false
 }
+
 func (a legacyActivityProbe) LastAssistantTurn(sid string) (time.Time, bool) {
 	return a.port.LastAssistantTurn(sid)
 }

@@ -259,7 +259,7 @@ func rz4CountResolvedFor(t *testing.T, eventsPath, decisionID string) int {
 	var zeroID core.EventID
 	n := 0
 	for evt := range eventbus.ScanAfter(eventsPath, zeroID) {
-		if evt.Type != string(core.EventTypeDecisionResolved) {
+		if evt.Type != core.EventTypeDecisionResolved {
 			continue
 		}
 		var p core.DecisionResolvedPayload

@@ -52,7 +52,7 @@ func eventPayloadT9RunStarted(t *testing.T, jsonlPath string) (core.Event, core.
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
 			t.Fatalf("decode event log line: %v\n%s", err, line)
 		}
-		if event.Type == string(core.EventTypeRunStarted) {
+		if event.Type == core.EventTypeRunStarted {
 			starts = append(starts, event)
 		}
 	}

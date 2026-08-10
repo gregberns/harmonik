@@ -103,7 +103,7 @@ func bt4WriteMoveEvent(t *testing.T, projectDir string, evType core.EventType, t
 	ev := core.Event{
 		EventID:         id,
 		SchemaVersion:   1,
-		Type:            string(evType),
+		Type:            evType,
 		TimestampWall:   ts,
 		SourceSubsystem: "test",
 		Payload:         json.RawMessage(`{}`),

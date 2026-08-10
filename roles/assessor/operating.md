@@ -116,6 +116,16 @@ correction is a new dated entry with the original left intact.
    - `DRIFTED` — HEAD has moved off the pinned commit since init.
    - `MODIFIED` — the tree carries local edits to code that Go compiles. HEAD still matches the pin, so this is the one fault a HEAD check cannot see.
 
+   `status` also prints a `stamp` line, read from the built binary itself rather than from the tree. Quote it beside the revision. The three faults above measure the TREE; the stamp measures the ARTIFACT, and they can disagree. **`DIRTY` prints as a SECOND line BELOW the `vcs.revision` line, not instead of it**, so read to the end of the block: a scan that stops at the first stamp line finds the friendly one and misses the verdict.
+
+   - `stamp : vcs.revision=<hash> vcs.modified=false` — the binary agrees with the tree. This is the only state in which the binary can prove what it is.
+   - `stamp : DIRTY` — `harmonik version --binary` reports `contains-dirty` and exits 3, so the binary cannot prove it is that commit, EVEN IF the three tree faults are all clear. A `status` that says "no local edits" beside a DIRTY stamp is not a contradiction to resolve by picking the friendlier line; it is the artifact telling me the tree measurement excluded something Go counts. Treat DIRTY exactly as `+local-edits`.
+   - `stamp : no Go vcs stamp readable` — provenance cannot be established at all (exit 4). Not a pass.
+
+   Until 2026-08-10 the two signals were never printed together, and the tree measurement said clean while every binary the documented sequence produced stamped dirty — so the provenance check could not pass and quietly verified nothing (`hk-gate-clean-but-binary-dirty-7gwil`).
+
+   **What a clean stamp does and does not prove.** Both measurements read `git status`, so this check catches accident and drift — an edit left behind, a stray file in an embedded tree, a tree that moved off the pin. It does not catch a deliberate forgery by anyone able to write the git index, because a hidden index entry blinds the tree measurement and Go's stamp at the same time (`hk-ekqz9`). Quote the stamp as evidence the build is the commit it claims. Do not quote it as evidence nobody tampered with it.
+
    **A revision is a bare commit hash and nothing else.** A `+local-edits` suffix anywhere — in `build`, `up`, `status`, a `BATCH_SUMMARY` line, or a `revision` field in a results artifact — means the binary is NOT that commit. No result from it is an audit of that commit. Rebuild from a clean tree and run the gate again. Never fold a `+local-edits` result into a PASS.
 
    `build`, `up` and `batch` each name the revision they act on. **I quote that revision in my verdict**, and it must be a bare hash.

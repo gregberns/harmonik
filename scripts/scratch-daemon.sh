@@ -284,8 +284,10 @@ assert_pinned() {
 #
 # --untracked-files=all is load-bearing. `go build` compiles every .go file in a
 # package directory whether or not git tracks it, so an untracked
-# internal/daemon/zz_patch.go is in the binary. The second sweep adds .go files
-# that .gitignore hides, which the first cannot see and Go compiles regardless.
+# internal/daemon/zz_patch.go is in the binary. The second sweep adds the build
+# inputs .gitignore HIDES — .go files, and the embed trees, which go into the
+# binary just as surely as code does. The first sweep cannot see them and Go's
+# own vcs.modified cannot either, because both are `git status` in disguise.
 #
 # review-loop.dot is excluded because THIS HARNESS writes it, exactly as the
 # entries above name what `init` writes. scripts/core-loop-seed.sh copies it to
@@ -320,11 +322,32 @@ local_edits() {
   An unanswered check here would read as 'no local edits' and stamp a bare commit, so it stops instead."
     fi
     # `--ignored` reports whole ignored DIRECTORIES rather than only the paths the
-    # pathspec names, so this is filtered down to .go files. Without the filter
-    # every run reports .harmonik/bin/ and friends as local edits. A failure here
-    # is not fatal: the sweep above already covers everything git tracks or sees.
-    ignored="$(git -C "$scratch" status --porcelain --untracked-files=all --ignored=matching -- '*.go' 2>/dev/null \
-        | grep -E '\.go$' || true)"
+    # pathspec names, so the collapsed entries are dropped: without that every run
+    # reports .harmonik/bin/ and friends as local edits. A collapsed entry always
+    # ends in a slash, which is what the filter keys on. A failure here is not
+    # fatal: the sweep above already covers everything git tracks or sees.
+    #
+    # THE PATHSPEC IS THE SET OF BUILD INPUTS, NOT THE SET OF .go FILES. An
+    # earlier spelling swept only '*.go', which let an ignored file inside an
+    # embed tree reach the binary while every check called the tree clean: the
+    # bare `//go:embed assets` in cmd/harmonik/init_skill_assets.go compiles the
+    # whole subtree, .gitignore hides `*~`, so an ordinary editor backup file
+    # such as cmd/harmonik/assets/skills/<x>/SKILL.md~ was compiled in, was
+    # invisible to `git status` and therefore to Go's vcs.modified too, and the
+    # gate then proved the wrong revision with exit 0. That needs no malice to
+    # happen. The embed trees are in the pathspec for that reason.
+    #
+    # -z AND core.quotepath=false ARE BOTH LOAD-BEARING. git C-quotes any path it
+    # considers unusual — non-ASCII, a space, a quote — and wraps it in double
+    # quotes, so the old `grep -E '\.go$'` did not match its own target: an
+    # ignored cmd/harmonik/zz_canaré.go printed as
+    # "cmd/harmonik/zz_canar\303\251.go" with a trailing quote and was dropped
+    # from the sweep, live compiled code the gate then called clean. -z emits raw
+    # unquoted paths, and quotepath=false covers the non-ASCII case directly.
+    ignored="$(git -C "$scratch" -c core.quotepath=false status --porcelain -z \
+            --untracked-files=all --ignored=matching \
+            -- '*.go' 'cmd/harmonik/assets' 'internal/daemon/*.dot' 2>/dev/null \
+        | tr '\0' '\n' | grep -v '/$' || true)"
     printf '%s\n%s\n' "$tracked" "$ignored" | grep -v '^[[:space:]]*$' | sort -u || true
 }
 
@@ -349,6 +372,119 @@ build_stamp() {
         printf '%s+local-edits\n' "$rev"
     else
         printf '%s\n' "$rev"
+    fi
+}
+
+# binary_vcs <binary> — the provenance the Go toolchain EMBEDDED in <binary>,
+# printed as "<revision> <modified>". Empty when the file is absent, is not a Go
+# binary, or carries no vcs stamp.
+#
+# This reads the same `vcs.revision` / `vcs.modified` build settings that
+# `harmonik version --binary` reads, so the two can state a fact about one
+# binary and cannot come to different answers about it.
+binary_vcs() {
+    local bin="$1" info rev mod
+    [ -f "$bin" ] || return 0
+    info="$(go version -m "$bin" 2>/dev/null)" || return 0
+    # awk to EOF rather than `sed | head -1`: this script runs under `pipefail`,
+    # where head closing the pipe early can SIGPIPE the producer and turn a
+    # successful read into a fatal assignment.
+    rev="$(printf '%s\n' "$info" | awk '/vcs\.revision=/ && rev == "" { sub(/.*vcs\.revision=/, ""); rev = $0 } END { print rev }')"
+    mod="$(printf '%s\n' "$info" | awk '/vcs\.modified=/ && mod == "" { sub(/.*vcs\.modified=/, ""); mod = $0 } END { print mod }')"
+    [ -n "$rev" ] || return 0
+    printf '%s %s\n' "$rev" "${mod:-unknown}"
+}
+
+# reconcile_stamp_tree <scratch> <revision> — make git's WHOLE-TREE view of the
+# scratch agree with the answer local_edits already gave, so the stamp Go writes
+# into the binary says the same thing this script says.
+#
+# THE DEFECT THIS CLOSES (hk-gate-clean-but-binary-dirty-7gwil). Two tools
+# measured cleanliness two ways and disagreed about the same tree.
+#
+#   local_edits          sweeps everything git sees MINUS what this harness and
+#                        `harmonik init` write. After a correct init it is empty,
+#                        so `status` printed "no local edits".
+#   Go's vcs.modified    is whole-tree `git status --porcelain`. It has no
+#                        exclusion list and never will, because it is the
+#                        toolchain's, not ours.
+#
+# `scratch-daemon.sh init` runs `harmonik init --force`, and measured on a real
+# scratch clone that leaves EIGHT differences behind: five tracked files
+# rewritten (AGENTS.md, AGENT_INDEX.md, STATUS.md, .harmonik/context/project.yaml,
+# .harmonik/context/captain-lanes.md) and three files newly VISIBLE to git,
+# because init also writes .harmonik/.gitignore, whose content is `*` followed by
+# `!config.yaml`, `!branching.yaml`, `!.gitignore` — it deliberately re-admits
+# this scratch's own runtime config into git's view. The documented assessor
+# sequence then builds, and Go stamps vcs.modified=true.
+#
+# The consequence was not cosmetic. `harmonik version --binary <bin> --contains
+# <rev>` returned `contains-dirty` / exit 3 for EVERY binary that sequence
+# produced, so the project's own provenance check could never return 0 and
+# therefore verified nothing. Meanwhile the assessor contract reads a
+# `+local-edits` suffix as voiding a whole assessment, and this script was not
+# printing one.
+#
+# WHY RESTORE RATHER THAN RELAX EITHER CHECK. Making `version --binary` ignore
+# vcs.modified would turn the one provenance check this project has into a check
+# that always passes — the same defect facing the other way. Widening local_edits
+# to match Go would make every real scratch report itself tampered with. The tree
+# is the thing that is wrong, so the tree is what gets fixed: nothing here writes
+# a build input, so restoring these paths changes what the compiler sees not at
+# all, and it makes the binary able to prove that.
+#
+# THIS RUNS ONLY ON A TREE local_edits CALLED CLEAN. That precondition is what
+# keeps it honest. When a build input really has been edited the stamp is
+# `+local-edits`, this function is not called, Go stamps vcs.modified=true, and
+# `version --binary` still refuses with exit 3 — which is the behaviour a
+# provenance check exists for.
+#
+# Nothing the daemon needs is removed. .harmonik/config.yaml, branching.yaml and
+# every other runtime file stay exactly where init put them; only the file that
+# un-hid them from git goes, and the repo's own root .gitignore (`/.harmonik/*`)
+# already covers them. Measured on a real scratch clone: after this runs, whole
+# tree `git status --porcelain --untracked-files=all` is empty and the daemon
+# starts normally.
+reconcile_stamp_tree() {
+    local scratch="$1" rev="$2" tracked residue
+
+    # (1) The re-admit file. In a project that COMMITS its harmonik config this
+    # file is correct; a scratch clone commits nothing, so here its only effect is
+    # to expose three runtime files to git and dirty the stamp.
+    if [ -f "$scratch/.harmonik/.gitignore" ]; then
+        rm -f "$scratch/.harmonik/.gitignore"
+        echo "[scratch-daemon] provenance: dropped .harmonik/.gitignore (it re-admits this scratch's runtime config into git; the repo's own .gitignore already hides .harmonik)"
+    fi
+
+    # (2) Tracked files `harmonik init --force` rewrote. Restore them to the
+    # pinned commit. The paths are read from git rather than listed here, so a
+    # change to what init writes needs no second edit in this file.
+    #
+    # `checkout HEAD --`, NOT `checkout --`. The second form restores from the
+    # INDEX, so a change that was staged survives the reconcile and the tree is
+    # still dirty afterwards — a silent partial restore, which is the one outcome
+    # this function must not produce.
+    #
+    # THIS DISCARDS WORK, so it says so. The files it restores are the ones
+    # local_edits excludes — AGENTS.md, STATUS.md, .claude/skills and friends —
+    # and local_edits excludes them because `init` rewrites them, not because
+    # nobody edits them. A deliberate edit to one of them is invisible to the
+    # sweep that gated this call and is thrown away here. It goes to stderr and
+    # is named a discard, because `cycle` and `up` bury stdout.
+    tracked="$(git -C "$scratch" diff --name-only HEAD -- . 2>/dev/null || true)"
+    if [ -n "$tracked" ]; then
+        printf '%s\n' "$tracked" | tr '\n' '\0' \
+            | xargs -0 git -C "$scratch" checkout --quiet HEAD -- 2>/dev/null || true
+        echo "[scratch-daemon] WARNING: provenance reconcile DISCARDED the working-tree state of these files and restored them to $rev. Any edit you made to one of them is gone:" >&2
+        printf '%s\n' "$tracked" | sed 's/^/[scratch-daemon]   /' >&2
+    fi
+
+    # (3) Say so when it did not work. A silent partial reconcile would put this
+    # script straight back to claiming a cleanliness the binary contradicts.
+    residue="$(git -C "$scratch" status --porcelain --untracked-files=all 2>/dev/null || true)"
+    if [ -n "$residue" ]; then
+        echo "[scratch-daemon] WARNING: the tree still differs from $rev in ways Go's build stamp will see, so the binary will carry vcs.modified=true and 'harmonik version --binary --contains $rev' will exit 3:" >&2
+        printf '%s\n' "$residue" | sed 's/^/[scratch-daemon]   /' >&2
     fi
 }
 
@@ -759,6 +895,13 @@ cmd_build() {
         echo "[scratch-daemon] WARNING: this tree differs from the commit it is pinned to. Any file below can change what the binary does or how it behaves:" >&2
         local_edits "$scratch" >&2
         echo "[scratch-daemon] WARNING: the binary will be labelled '$stamp'. It is NOT $commit_hash, and no result from it is an audit of that commit." >&2
+    else
+        # The tree carries no local edits BY THIS SCRIPT'S MEASURE, and the label
+        # about to be stamped is a bare commit. Go is about to measure the same
+        # tree with no exclusion list at all, so make the two agree before the
+        # compiler looks — otherwise the bare label is a claim the binary itself
+        # contradicts (hk-gate-clean-but-binary-dirty-7gwil).
+        reconcile_stamp_tree "$scratch" "$commit_hash"
     fi
     echo "[scratch-daemon] building scratch binary → $bin (revision $stamp)"
     # Build FROM the scratch clone's source so the daemon runs exactly the code in
@@ -768,6 +911,48 @@ cmd_build() {
     # only after a successful build: a failed build must not leave a stamp claiming
     # the binary is current.
     printf '%s\n' "$stamp" >"$(scratch_binrevfile "$scratch")"
+    # READ THE STAMP BACK. Everything above is this script's opinion of the tree;
+    # this is what the compiler actually wrote into the artefact, and it is what
+    # `harmonik version --binary` will report to whoever audits this binary. The
+    # same read-back discipline the pin already uses for HEAD: never trust the
+    # command, check the result.
+    local vcs vcs_rev vcs_mod
+    vcs="$(binary_vcs "$bin")"
+    vcs_rev="${vcs%% *}"
+    vcs_mod="${vcs##* }"
+    if [ -z "$vcs" ]; then
+        echo "[scratch-daemon] WARNING: the binary carries no Go vcs stamp, so 'harmonik version --binary' cannot establish its provenance (exit 4)." >&2
+    else
+        echo "[scratch-daemon] build stamp: vcs.revision=$vcs_rev vcs.modified=$vcs_mod"
+        if [ "$vcs_rev" != "$commit_hash" ]; then
+            die "the binary's embedded revision is not the revision under audit.
+  pinned : $commit_hash
+  binary : $vcs_rev
+  Nothing downstream can name the commit this binary holds, so this build is not reported as one."
+        fi
+        if [ "$stamp" = "$commit_hash" ] && [ "$vcs_mod" != "false" ]; then
+            echo "[scratch-daemon] WARNING: labelled a bare commit, but Go stamped vcs.modified=$vcs_mod. 'harmonik version --binary $bin --contains $commit_hash' will report contains-dirty and exit 3, so this binary cannot prove it is $commit_hash." >&2
+            # DELIBERATELY ONLY A WARNING. Relabelling the build record
+            # +local-edits here looks like the honest correction and is not: the
+            # gap between this script's measure and Go's IS the exclusion list,
+            # and the excluded files are excluded because `init` and the harness
+            # write them, not because nobody looked. Relabelling on that gap
+            # re-breaks hk-assessor-lt-gate-dirties-its-own-tree-0jz5y — the
+            # seed-provisioned review-loop.dot is untracked at the scratch root,
+            # Go counts an untracked file as dirty, and `make core-loop-lt` would
+            # stamp +local-edits on every run and never return a usable result.
+            # Measured: relabelling fails four scratch-daemon-rev-pin-test
+            # assertions, one per deliberately excluded path.
+            #
+            # The inconsistency the warning discloses is real and is filed as
+            # hk-2zslg: built-revision can name a bare commit for a binary that
+            # `harmonik version --binary --contains` refuses, and `batch`,
+            # BATCH_SUMMARY and `feedback` all read that file without re-opening
+            # the binary. Closing it needs review-loop.dot to stop being an
+            # untracked file at the scratch root, which is a change to the seed
+            # and not to this line.
+        fi
+    fi
     echo "[scratch-daemon] build OK at revision $stamp"
 }
 
@@ -909,6 +1094,24 @@ cmd_status() {
         echo "[scratch-daemon] binary  : built from $(cat "$(scratch_binrevfile "$scratch")")"
     else
         echo "[scratch-daemon] binary  : not built by '$0 build'"
+    fi
+    # The provenance the BINARY carries, beside the provenance this script claims.
+    # These are two different measurements of one build and they used to be
+    # printed in two different places by two different tools, so nobody saw them
+    # disagree (hk-gate-clean-but-binary-dirty-7gwil). The revision line above is
+    # what this script measured; this line is what `harmonik version --binary`
+    # will report, read from the same embedded build settings that command reads.
+    local vcs vcs_rev vcs_mod
+    vcs="$(binary_vcs "$(scratch_bin "$scratch")")"
+    if [ -z "$vcs" ]; then
+        echo "[scratch-daemon] stamp   : no Go vcs stamp readable from the binary"
+    else
+        vcs_rev="${vcs%% *}"
+        vcs_mod="${vcs##* }"
+        echo "[scratch-daemon] stamp   : vcs.revision=$vcs_rev vcs.modified=$vcs_mod"
+        if [ "$vcs_mod" != "false" ]; then
+            echo "[scratch-daemon] stamp   : DIRTY — 'harmonik version --binary' reports contains-dirty (exit 3); this binary cannot prove it is $vcs_rev"
+        fi
     fi
     # session_name needs the binary; degrade gracefully if it is missing.
     if [ -x "$(scratch_bin "$scratch")" ]; then

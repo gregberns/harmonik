@@ -677,8 +677,8 @@ func TestQueueLifecycle_FullStateSequence(t *testing.T) {
 // eventTypes — helper for error messages
 // ─────────────────────────────────────────────────────────────────────────────
 
-// eventTypes returns the type strings of a slice of core.Event values.
-func eventTypes(events []core.Event) []string {
+// eventTypes returns the type strings of queue event intents.
+func eventTypes(events []queue.EventIntent) []string {
 	out := make([]string, len(events))
 	for i, e := range events {
 		out[i] = string(e.Type)

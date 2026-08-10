@@ -17,11 +17,8 @@ package queue
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
-
-	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
 )
@@ -66,7 +63,7 @@ func AdvanceGroup(
 	queueStatus QueueStatus,
 	queueID string,
 	now time.Time,
-) (newStatus GroupStatus, events []core.Event, err error) {
+) (newStatus GroupStatus, events []EventIntent, err error) {
 	if g == nil {
 		return "", nil, ErrGroupNil
 	}
@@ -146,7 +143,7 @@ func advancePending(
 	queueStatus QueueStatus,
 	queueID string,
 	now time.Time,
-) (GroupStatus, []core.Event, error) {
+) (GroupStatus, []EventIntent, error) {
 	// QM-031 guard: only advance when queue is active.
 	if queueStatus != QueueStatusActive {
 		return GroupStatusPending, nil, nil
@@ -154,7 +151,7 @@ func advancePending(
 
 	nowStr := now.UTC().Format(time.RFC3339Nano)
 
-	evt, err := newEvent("queue_group_started", &core.QueueGroupStartedPayload{
+	evt, err := NewEventIntent(core.EventTypeQueueGroupStarted, &core.QueueGroupStartedPayload{
 		QueueID:    queueID,
 		GroupIndex: g.GroupIndex,
 		GroupKind:  string(g.Kind),
@@ -165,7 +162,7 @@ func advancePending(
 		return GroupStatusPending, nil, fmt.Errorf("queue: AdvanceGroup: build queue_group_started: %w", err)
 	}
 
-	return GroupStatusActive, []core.Event{evt}, nil
+	return GroupStatusActive, []EventIntent{evt}, nil
 }
 
 // advanceActive applies the active → terminal transition per QM-030.
@@ -174,7 +171,7 @@ func advanceActive(
 	g *Group,
 	queueID string,
 	now time.Time,
-) (GroupStatus, []core.Event, error) {
+) (GroupStatus, []EventIntent, error) {
 	// QM-030 — all-terminal gate.
 	if !allItemsTerminal(g) {
 		return GroupStatusActive, nil, nil
@@ -185,7 +182,7 @@ func advanceActive(
 
 	if failCount == 0 {
 		// active → complete-success (§5.1 row 3)
-		evt, err := newEvent("queue_group_completed", &core.QueueGroupCompletedPayload{
+		evt, err := NewEventIntent(core.EventTypeQueueGroupCompleted, &core.QueueGroupCompletedPayload{
 			QueueID:      queueID,
 			GroupIndex:   g.GroupIndex,
 			FinalStatus:  string(GroupStatusCompleteSuccess),
@@ -196,12 +193,12 @@ func advanceActive(
 		if err != nil {
 			return GroupStatusActive, nil, fmt.Errorf("queue: AdvanceGroup: build queue_group_completed: %w", err)
 		}
-		return GroupStatusCompleteSuccess, []core.Event{evt}, nil
+		return GroupStatusCompleteSuccess, []EventIntent{evt}, nil
 	}
 
 	// active → complete-with-failures (§5.1 row 4)
 	// Emit queue_group_completed, then queue_paused{group_failure}.
-	evtCompleted, err := newEvent("queue_group_completed", &core.QueueGroupCompletedPayload{
+	evtCompleted, err := NewEventIntent(core.EventTypeQueueGroupCompleted, &core.QueueGroupCompletedPayload{
 		QueueID:      queueID,
 		GroupIndex:   g.GroupIndex,
 		FinalStatus:  string(GroupStatusCompleteWithFailures),
@@ -213,7 +210,7 @@ func advanceActive(
 		return GroupStatusActive, nil, fmt.Errorf("queue: AdvanceGroup: build queue_group_completed: %w", err)
 	}
 
-	evtPaused, err := newEvent("queue_paused", &core.QueuePausedPayload{
+	evtPaused, err := NewEventIntent(core.EventTypeQueuePaused, &core.QueuePausedPayload{
 		QueueID:    queueID,
 		GroupIndex: g.GroupIndex,
 		FailCount:  failCount,
@@ -224,7 +221,7 @@ func advanceActive(
 		return GroupStatusActive, nil, fmt.Errorf("queue: AdvanceGroup: build queue_paused: %w", err)
 	}
 
-	return GroupStatusCompleteWithFailures, []core.Event{evtCompleted, evtPaused}, nil
+	return GroupStatusCompleteWithFailures, []EventIntent{evtCompleted, evtPaused}, nil
 }
 
 // allItemsTerminal reports whether every item in g has reached a terminal
@@ -416,36 +413,6 @@ func ReevaluateDeferred(ctx context.Context, g *Group, ledger BeadLedger) ([]cor
 	}
 
 	return undeferred, nil
-}
-
-// newEvent constructs a core.Event for the given type+payload, marshalling
-// the payload to json.RawMessage and stamping a fresh UUIDv7 EventID.
-//
-// Callers that need daemon-stamped IDs (EV-002b) should discard the EventID
-// and let the daemon watcher re-stamp. The SourceSubsystem field is set to
-// the queue subsystem identifier per EV-034a.
-//
-// Returns an error if UUID generation or JSON marshalling fails.
-func newEvent(eventType core.EventType, payload core.EventPayload) (core.Event, error) {
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return core.Event{}, fmt.Errorf("queue: newEvent: marshal payload for %q: %w", eventType, err)
-	}
-	id, err := uuid.NewV7()
-	if err != nil {
-		return core.Event{}, fmt.Errorf("queue: newEvent: uuid.NewV7: %w", err)
-	}
-	eventID := core.EventID(id)
-	now := time.Now().UTC()
-	e := core.Event{
-		EventID:         eventID,
-		SchemaVersion:   1,
-		Type:            eventType,
-		TimestampWall:   now,
-		SourceSubsystem: subsystemID,
-		Payload:         raw,
-	}
-	return e, nil
 }
 
 // Sentinel errors returned by AdvanceGroup.

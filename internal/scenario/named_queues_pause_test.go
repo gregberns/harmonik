@@ -137,7 +137,7 @@ func namedQueuesPauseAdvanceGroup(
 	g *queue.Group,
 	queueStatus queue.QueueStatus,
 	queueID string,
-) (queue.GroupStatus, []core.Event) {
+) (queue.GroupStatus, []queue.EventIntent) {
 	t.Helper()
 	newStatus, events, err := queue.AdvanceGroup(
 		context.Background(),

@@ -149,6 +149,7 @@ type reapSeamPort struct {
 	runRegistry        *RunRegistry
 	targetBranch       string
 	eagerRefill        eagerRefillPort
+	completeQueue      func(context.Context, string, *queue.Queue) queue.TerminalResult
 }
 
 // newReapSeamPort projects the dependencies used by the force-reap completion
@@ -166,6 +167,7 @@ func newReapSeamPort(bus handlercontract.EventEmitter, projectDir, targetBranch 
 		runRegistry:        runRegistry,
 		targetBranch:       targetBranch,
 		eagerRefill:        eagerRefill,
+		completeQueue:      queue.CompleteAndUnlinkResult,
 	}
 }
 
@@ -895,7 +897,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 				// else advances it; activate it inline (under the held write lock) so
 				// this same tick can dispatch its items.
 				bootstrapped := false
-				var bootstrapEvents []core.Event
+				var bootstrapEvents []queue.EventIntent
 				for _, name := range lq.LockedAllQueueNames() {
 					q := lq.LockedQueueByName(name)
 					if q == nil || q.Status != queue.QueueStatusActive {
@@ -922,11 +924,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 					// active group and dispatches its items.
 					lq.Done()
 					for _, evt := range bootstrapEvents {
-						raw, mErr := json.Marshal(evt.Payload)
-						if mErr != nil {
-							raw = evt.Payload
-						}
-						_ = basePorts.Emitter.Emit(ctx, evt.Type, raw) //nolint:errcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
+						_ = basePorts.Emitter.Emit(ctx, evt.Type, evt.Payload) //nolint:errcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
 					}
 					continue
 				}
@@ -2054,7 +2052,7 @@ func hasEnabledScheduledJob(s *schedule.Store) bool {
 //
 // Spec ref: specs/queue-model.md §5 QM-031; §8 QM-063.
 // Bead ref: hk-tigaf.4 (NQ-B1).
-func activateFirstPendingGroupLocked(ctx context.Context, projectDir string, lq *queuewiring.LockedQueueStore, q *queue.Queue) (bool, []core.Event) {
+func activateFirstPendingGroupLocked(ctx context.Context, projectDir string, lq *queuewiring.LockedQueueStore, q *queue.Queue) (bool, []queue.EventIntent) {
 	if q == nil {
 		return false, nil
 	}
@@ -2388,9 +2386,17 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, port reapSeamPort, que
 		// All groups complete-success → CompleteAndUnlink (QM-003 / QM-053).
 		// This internally sets q.Status = completed and persists before
 		// unlinking queue.json (hk-xsutm).
-		if err := queue.CompleteAndUnlink(ctx, port.projectDir, q); err != nil {
+		completeQueue := port.completeQueue
+		if completeQueue == nil {
+			completeQueue = queue.CompleteAndUnlinkResult
+		}
+		result := completeQueue(ctx, port.projectDir, q)
+		if err := result.Err(); err != nil {
 			fmt.Fprintf(os.Stderr, "daemon: workloop: CompleteAndUnlink queueID=%s: %v\n",
 				queueID, err)
+			if !result.Committed {
+				events = nil
+			}
 			// Fall through: still clear in-memory state so the loop isn't stuck.
 		}
 		lq.Done()
@@ -2448,11 +2454,7 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, port reapSeamPort, que
 	// Emit the queued events (after lock release above). Bus.Emit is non-blocking
 	// per EV-002a so ordering relative to the lock release is acceptable.
 	for _, evt := range events {
-		raw, err := json.Marshal(evt.Payload)
-		if err != nil {
-			raw = evt.Payload
-		}
-		_ = port.bus.Emit(ctx, evt.Type, raw) //nolint:errcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
+		_ = port.bus.Emit(ctx, evt.Type, evt.Payload) //nolint:errcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
 	}
 
 	// EM-062: eager-refill fires AFTER all terminal-event processing (merge,

@@ -75,7 +75,7 @@ func queuePausedFixtureAdvance(
 	t *testing.T,
 	g *queue.Group,
 	qs queue.QueueStatus,
-) (queue.GroupStatus, []core.Event) {
+) (queue.GroupStatus, []queue.EventIntent) {
 	t.Helper()
 	newStatus, events, err := queue.AdvanceGroup(
 		context.Background(),
@@ -92,7 +92,7 @@ func queuePausedFixtureAdvance(
 
 // queuePausedFixtureUnmarshalPausedPayload decodes a queue_paused event payload,
 // failing the test on any error.
-func queuePausedFixtureUnmarshalPausedPayload(t *testing.T, e core.Event) core.QueuePausedPayload {
+func queuePausedFixtureUnmarshalPausedPayload(t *testing.T, e queue.EventIntent) core.QueuePausedPayload {
 	t.Helper()
 	var p core.QueuePausedPayload
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
@@ -103,7 +103,7 @@ func queuePausedFixtureUnmarshalPausedPayload(t *testing.T, e core.Event) core.Q
 
 // queuePausedFixtureUnmarshalCompletedPayload decodes a queue_group_completed
 // event payload, failing the test on any error.
-func queuePausedFixtureUnmarshalCompletedPayload(t *testing.T, e core.Event) core.QueueGroupCompletedPayload {
+func queuePausedFixtureUnmarshalCompletedPayload(t *testing.T, e queue.EventIntent) core.QueueGroupCompletedPayload {
 	t.Helper()
 	var p core.QueueGroupCompletedPayload
 	if err := json.Unmarshal(e.Payload, &p); err != nil {

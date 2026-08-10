@@ -173,6 +173,8 @@ func eagerRefillEval(ctx context.Context, port reapSeamPort) {
 	if err := queue.Persist(ctx, port.projectDir, q); err != nil {
 		fmt.Fprintf(os.Stderr, "daemon: eagerRefillEval: Persist queueID=%s: %v\n",
 			targetQueueID, err)
+		lq.Done()
+		return
 	}
 	lq.LockedSetQueueByName(queue.NormaliseQueueName(targetQueueName), q)
 	lq.Done()
@@ -187,13 +189,9 @@ func eagerRefillEval(ctx context.Context, port reapSeamPort) {
 // emitEagerRefillEvents emits queue-append events after the queue lock is
 // released. An emission failure is non-fatal because the durable queue update
 // has already completed.
-func emitEagerRefillEvents(ctx context.Context, port reapSeamPort, events []core.Event) {
+func emitEagerRefillEvents(ctx context.Context, port reapSeamPort, events []queue.EventIntent) {
 	for _, evt := range events {
-		raw, mErr := json.Marshal(evt.Payload)
-		if mErr != nil {
-			raw = evt.Payload
-		}
-		if emitErr := port.bus.Emit(ctx, evt.Type, raw); emitErr != nil {
+		if emitErr := port.bus.Emit(ctx, evt.Type, evt.Payload); emitErr != nil {
 			fmt.Fprintf(os.Stderr, "daemon: eagerRefillEval: emit %s: %v\n", evt.Type, emitErr)
 		}
 	}

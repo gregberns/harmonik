@@ -96,8 +96,8 @@ func appendFixtureItem(beadID string, status queue.ItemStatus) queue.Item {
 	}
 }
 
-// appendFixtureDecodePayload unmarshals a core.Event's payload into dst.
-func appendFixtureDecodePayload(t *testing.T, evt core.Event, dst interface{}) {
+// appendFixtureDecodePayload unmarshals an event intent payload into dst.
+func appendFixtureDecodePayload(t *testing.T, evt queue.EventIntent, dst interface{}) {
 	t.Helper()
 	if err := json.Unmarshal(evt.Payload, dst); err != nil {
 		t.Fatalf("decode event payload for %q: %v", evt.Type, err)
@@ -325,6 +325,52 @@ func TestAppendItemsQM042DeferredEventsAfterAppended(t *testing.T) {
 	appendedItem := q.Groups[0].Items[len(q.Groups[0].Items)-1]
 	if appendedItem.Status != queue.ItemStatusDeferredForLedgerDep {
 		t.Errorf("appended item status = %q, want deferred-for-ledger-dep", appendedItem.Status)
+	}
+}
+
+func TestAppendItemsSeveralDeferredItemsKeepExactIntentOrder(t *testing.T) {
+	t.Parallel()
+
+	q := appendFixtureStreamQueue(queue.GroupStatusActive, []queue.Item{
+		appendFixtureItem("hk-blocker", queue.ItemStatusPending),
+	})
+	ledger := &appendFixtureFakeLedger{
+		statuses: map[core.BeadID]queue.BeadStatus{
+			"hk-blocker": queue.BeadStatusOpen,
+			"hk-first":   queue.BeadStatusOpen,
+			"hk-second":  queue.BeadStatusOpen,
+		},
+		edges: map[[2]core.BeadID]bool{
+			{core.BeadID("hk-blocker"), core.BeadID("hk-first")}:  true,
+			{core.BeadID("hk-blocker"), core.BeadID("hk-second")}: true,
+		},
+	}
+
+	_, intents, err := queue.AppendItems(t.Context(), q, 0, []string{"hk-first", "hk-second"}, ledger, appendFixtureAcceptedAt)
+	if err != nil {
+		t.Fatalf("AppendItems: %v", err)
+	}
+	if len(intents) != 3 {
+		t.Fatalf("intent count = %d, want 3", len(intents))
+	}
+	wantTypes := []core.EventType{
+		core.EventTypeQueueAppended,
+		core.EventTypeQueueItemDeferredForLedgerDep,
+		core.EventTypeQueueItemDeferredForLedgerDep,
+	}
+	for i, want := range wantTypes {
+		if intents[i].Type != want {
+			t.Fatalf("intent[%d].Type = %q, want %q", i, intents[i].Type, want)
+		}
+	}
+	var first, second core.QueueItemDeferredForLedgerDepPayload
+	appendFixtureDecodePayload(t, intents[1], &first)
+	appendFixtureDecodePayload(t, intents[2], &second)
+	if first.BeadID != "hk-first" || second.BeadID != "hk-second" {
+		t.Fatalf("deferred order = [%q %q], want [hk-first hk-second]", first.BeadID, second.BeadID)
+	}
+	if first.DetectedAt != "2026-05-16T18:12:13.456Z" || second.DetectedAt != first.DetectedAt {
+		t.Fatalf("detected times = [%q %q], want one supplied UTC time", first.DetectedAt, second.DetectedAt)
 	}
 }
 

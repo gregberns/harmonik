@@ -416,7 +416,7 @@ func HandleQueueAppend(
 	req QueueAppendRequest,
 	ledger BeadLedger,
 	projectDir string,
-) (QueueAppendResponse, *Queue, []core.Event, *RPCError) {
+) (QueueAppendResponse, *Queue, []EventIntent, *RPCError) {
 	q, rpcErr := resolveAppendTargetFromDisk(ctx, req, projectDir)
 	if rpcErr != nil {
 		return QueueAppendResponse{}, nil, nil, rpcErr
@@ -493,7 +493,7 @@ func HandleQueueAppendOnQueue(
 	ledger BeadLedger,
 	projectDir string,
 	q *Queue,
-) (QueueAppendResponse, *Queue, []core.Event, *RPCError) {
+) (QueueAppendResponse, *Queue, []EventIntent, *RPCError) {
 	if q == nil {
 		return QueueAppendResponse{}, nil, nil, &RPCError{
 			Code:    ErrorCodeAppendTargetInvalid,
@@ -1209,7 +1209,7 @@ func (a *HandlerAdapter) appendUnderLock(
 	ctx context.Context,
 	req QueueAppendRequest,
 	locker MutationLocker,
-) (QueueAppendResponse, []core.Event, *RPCError) {
+) (QueueAppendResponse, []EventIntent, *RPCError) {
 	lv := locker.LockForMutationView()
 	defer lv.Done()
 
@@ -1309,7 +1309,7 @@ func (a *HandlerAdapter) HandleQueueAppend(ctx context.Context, params json.RawM
 	locker, hasLock := a.qs.(MutationLocker)
 
 	var resp QueueAppendResponse
-	var events []core.Event
+	var events []EventIntent
 	var rpcErr *RPCError
 	if hasLock {
 		resp, events, rpcErr = a.appendUnderLock(ctx, req, locker)
@@ -1341,15 +1341,7 @@ func (a *HandlerAdapter) HandleQueueAppend(ctx context.Context, params json.RawM
 	// Emit append events returned by AppendItems (hk-peucr).
 	if a.bus != nil {
 		for _, evt := range events {
-			raw, err := json.Marshal(evt.Payload)
-			if err != nil {
-				// Fall back to the raw payload, but surface the marshal failure
-				// rather than dropping it silently — a persistently unmarshalable
-				// payload would otherwise emit malformed events unnoticed.
-				log.Printf("queue: HandleQueueAppend: marshal %s payload: %v (emitting raw payload)", evt.Type, err)
-				raw = evt.Payload
-			}
-			a.emitOrLog(ctx, "HandleQueueAppend", evt.Type, raw)
+			a.emitOrLog(ctx, "HandleQueueAppend", evt.Type, evt.Payload)
 		}
 	}
 

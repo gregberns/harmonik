@@ -62,7 +62,7 @@ func stateFixtureAdvance(
 	t *testing.T,
 	g *queue.Group,
 	qs queue.QueueStatus,
-) (queue.GroupStatus, []core.Event) {
+) (queue.GroupStatus, []queue.EventIntent) {
 	t.Helper()
 	newStatus, events, err := queue.AdvanceGroup(
 		context.Background(),
@@ -78,7 +78,7 @@ func stateFixtureAdvance(
 }
 
 // stateFixtureEventType returns the Type field of events[i], failing if out of bounds.
-func stateFixtureEventType(t *testing.T, events []core.Event, i int) string {
+func stateFixtureEventType(t *testing.T, events []queue.EventIntent, i int) string {
 	t.Helper()
 	if i >= len(events) {
 		t.Fatalf("expected at least %d event(s), got %d", i+1, len(events))
@@ -88,7 +88,7 @@ func stateFixtureEventType(t *testing.T, events []core.Event, i int) string {
 
 // stateFixturePayloadFinalStatus unmarshals the FinalStatus field from a
 // queue_group_completed event's payload, failing on any error.
-func stateFixturePayloadFinalStatus(t *testing.T, e core.Event) string {
+func stateFixturePayloadFinalStatus(t *testing.T, e queue.EventIntent) string {
 	t.Helper()
 	var p core.QueueGroupCompletedPayload
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
@@ -99,7 +99,7 @@ func stateFixturePayloadFinalStatus(t *testing.T, e core.Event) string {
 
 // stateFixturePayloadPausedReason unmarshals the Reason field from a
 // queue_paused event's payload, failing on any error.
-func stateFixturePayloadPausedReason(t *testing.T, e core.Event) string {
+func stateFixturePayloadPausedReason(t *testing.T, e queue.EventIntent) string {
 	t.Helper()
 	var p core.QueuePausedPayload
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
@@ -696,9 +696,9 @@ func TestAdvanceGroup_GroupCompletedPayload(t *testing.T) {
 	}
 }
 
-// TestAdvanceGroup_EventEnvelope verifies the common Event envelope fields
-// (SourceSubsystem, SchemaVersion, Type, non-nil Payload).
-func TestAdvanceGroup_EventEnvelope(t *testing.T) {
+// TestAdvanceGroup_ReturnsDetachedEventIntent verifies that the queue state
+// machine returns only the event type and detached payload bytes.
+func TestAdvanceGroup_ReturnsDetachedEventIntent(t *testing.T) {
 	t.Parallel()
 	g := stateFixtureGroup(0, queue.GroupKindWave, queue.GroupStatusPending, []queue.Item{
 		stateFixtureItem("hk-vvv01", queue.ItemStatusPending),
@@ -708,13 +708,50 @@ func TestAdvanceGroup_EventEnvelope(t *testing.T) {
 		t.Fatal("expected at least 1 event")
 	}
 	e := events[0]
-	if e.SchemaVersion != 1 {
-		t.Errorf("SchemaVersion = %d, want 1", e.SchemaVersion)
-	}
-	if e.SourceSubsystem == "" {
-		t.Error("SourceSubsystem is empty")
+	if e.Type != core.EventTypeQueueGroupStarted {
+		t.Errorf("Type = %q, want %q", e.Type, core.EventTypeQueueGroupStarted)
 	}
 	if e.Payload == nil {
 		t.Error("Payload is nil")
+	}
+}
+
+func TestAdvanceGroupFixedInputProducesExactStableIntents(t *testing.T) {
+	t.Parallel()
+
+	build := func() []queue.EventIntent {
+		g := stateFixtureGroup(3, queue.GroupKindWave, queue.GroupStatusActive, []queue.Item{
+			stateFixtureItem("hk-stable-ok", queue.ItemStatusCompleted),
+			stateFixtureItem("hk-stable-fail", queue.ItemStatusFailed),
+		})
+		_, events := stateFixtureAdvance(t, &g, queue.QueueStatusActive)
+		return events
+	}
+
+	first := build()
+	second := build()
+	if len(first) != 2 || len(second) != 2 {
+		t.Fatalf("event counts = %d and %d, want 2 and 2", len(first), len(second))
+	}
+	want := []struct {
+		typ     core.EventType
+		payload string
+	}{
+		{
+			typ:     core.EventTypeQueueGroupCompleted,
+			payload: `{"queue_id":"0190b3c4-8f12-7c4e-9a82-2bf0d4ee0001","group_index":3,"final_status":"complete-with-failures","success_count":1,"fail_count":1,"completed_at":"2026-05-15T12:00:00Z"}`,
+		},
+		{
+			typ:     core.EventTypeQueuePaused,
+			payload: `{"queue_id":"0190b3c4-8f12-7c4e-9a82-2bf0d4ee0001","group_index":3,"fail_count":1,"paused_at":"2026-05-15T12:00:00Z","reason":"group_failure"}`,
+		},
+	}
+	for i := range want {
+		if first[i].Type != want[i].typ || string(first[i].Payload) != want[i].payload {
+			t.Fatalf("first[%d] = {%q %s}, want {%q %s}", i, first[i].Type, first[i].Payload, want[i].typ, want[i].payload)
+		}
+		if first[i].Type != second[i].Type || string(first[i].Payload) != string(second[i].Payload) {
+			t.Fatalf("fixed input changed output at %d: first=%+v second=%+v", i, first[i], second[i])
+		}
 	}
 }

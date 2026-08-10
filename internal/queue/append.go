@@ -59,7 +59,7 @@ func AppendItems(
 	ledger BeadLedger,
 	acceptedAt time.Time,
 	otherQueues ...*Queue,
-) (*Queue, []core.Event, error) {
+) (*Queue, []EventIntent, error) {
 	if q == nil {
 		return nil, nil, ErrAppendQueueNil
 	}
@@ -188,7 +188,7 @@ func AppendItems(
 	appendedBeadIDStrs := make([]string, len(beadIDs))
 	copy(appendedBeadIDStrs, beadIDs)
 
-	evtAppended, err := newEvent("queue_appended", &core.QueueAppendedPayload{
+	evtAppended, err := NewEventIntent(core.EventTypeQueueAppended, &core.QueueAppendedPayload{
 		QueueID:         q.QueueID,
 		GroupIndex:      groupIndex,
 		AppendedBeadIDs: appendedBeadIDStrs,
@@ -198,7 +198,7 @@ func AppendItems(
 		return nil, nil, fmt.Errorf("queue: AppendItems: build queue_appended: %w", err)
 	}
 
-	events := []core.Event{evtAppended}
+	events := []EventIntent{evtAppended}
 
 	// QM-042 — emit queue_item_deferred_for_ledger_dep per deferred item, in
 	// append order, after queue_appended.
@@ -208,7 +208,7 @@ func AppendItems(
 		if !deferred {
 			continue
 		}
-		evtDeferred, evtErr := newEvent("queue_item_deferred_for_ledger_dep", &core.QueueItemDeferredForLedgerDepPayload{
+		evtDeferred, evtErr := NewEventIntent(core.EventTypeQueueItemDeferredForLedgerDep, &core.QueueItemDeferredForLedgerDepPayload{
 			QueueID:       q.QueueID,
 			GroupIndex:    groupIndex,
 			BeadID:        string(beadID),

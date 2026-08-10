@@ -273,7 +273,24 @@ type ReplacementPlan struct {
 type ReplacementCommit struct {
 	NamespaceResult
 	Intent ReplaceIntentV1
+	Phase  CompletionPhase
 }
+
+// CompletionPhase identifies the last completed QM-053 boundary.
+type CompletionPhase string
+
+// CompletionPhase values identify the last completed QM-053 boundary.
+const (
+	CompletionPhaseRejected             CompletionPhase = "rejected"
+	CompletionPhaseNotCommitted         CompletionPhase = "not_committed"
+	CompletionPhaseCommitIndeterminate  CompletionPhase = "commit_indeterminate"
+	CompletionPhaseCanonicalCommitted   CompletionPhase = "canonical_committed"
+	CompletionPhaseReceiptDurable       CompletionPhase = "receipt_durable"
+	CompletionPhaseObservationAttempted CompletionPhase = "observation_attempted"
+	CompletionPhaseCleaned              CompletionPhase = "cleaned"
+	CompletionPhaseOwnershipReleased    CompletionPhase = "ownership_released"
+	CompletionPhaseMarkerFailed         CompletionPhase = "marker_failed"
+)
 
 // ReplaceRecoveryAction is the only action permitted by an exact intent
 // classifier. It never consults events or process-local generations.
@@ -309,6 +326,7 @@ type namespaceOps struct {
 	remove    func(string) error
 	readFile  func(string) ([]byte, error)
 	readDir   func(string) ([]os.DirEntry, error)
+	lstat     func(string) (os.FileInfo, error)
 	openDir   func(string) (*os.File, error)
 	syncDir   func(*os.File) error
 	closeDir  func(*os.File) error
@@ -349,6 +367,7 @@ func osNamespaceOps() namespaceOps {
 		remove:    os.Remove,
 		readFile:  os.ReadFile,
 		readDir:   os.ReadDir,
+		lstat:     os.Lstat,
 		openDir:   os.Open,
 		syncDir:   (*os.File).Sync,
 		closeDir:  (*os.File).Close,
@@ -365,10 +384,10 @@ func WriteReplacement(ctx context.Context, plan ReplacementPlan) ReplacementComm
 func writeReplacement(ctx context.Context, plan ReplacementPlan, ops namespaceOps) ReplacementCommit {
 	intent, intentBytes, validationErr := prepareReplacement(plan)
 	if validationErr != nil {
-		return ReplacementCommit{NamespaceResult: NamespaceResult{Outcome: OutcomeRejected, Err: validationErr}}
+		return ReplacementCommit{NamespaceResult: NamespaceResult{Outcome: OutcomeRejected, Err: validationErr}, Phase: CompletionPhaseRejected}
 	}
 	if err := ctx.Err(); err != nil {
-		return ReplacementCommit{NamespaceResult: NamespaceResult{Outcome: OutcomeRejected, Err: err}}
+		return ReplacementCommit{NamespaceResult: NamespaceResult{Outcome: OutcomeRejected, Err: err}, Phase: CompletionPhaseRejected}
 	}
 
 	qDir := queuesDir(plan.ProjectDir)
@@ -464,9 +483,28 @@ func writeReplacement(ctx context.Context, plan ReplacementPlan, ops namespaceOp
 			return replacementFailure(intent, OutcomeCommitIndeterminate, fmt.Errorf("failed recovery receipt: %w", err))
 		}
 	}
+	phase := CompletionPhase("")
+	if intent.CompletionReceiptBinding != nil {
+		phase = CompletionPhaseCanonicalCommitted
+		if err := writeCompletionReceipt(
+			plan.ProjectDir,
+			intent.QueueID,
+			intent.TransactionID,
+			intent.CompletionReceiptBinding,
+			ops,
+		); err != nil {
+			return ReplacementCommit{
+				NamespaceResult: NamespaceResult{Outcome: OutcomeCommitIndeterminate, Err: fmt.Errorf("completion receipt: %w", err)},
+				Intent:          intent,
+				Phase:           phase,
+			}
+		}
+		phase = CompletionPhaseReceiptDurable
+	}
 	return ReplacementCommit{
 		NamespaceResult: NamespaceResult{Outcome: OutcomeCommittedDurable},
 		Intent:          intent,
+		Phase:           phase,
 	}
 }
 
@@ -1360,7 +1398,18 @@ func classifyReplacementFailure(projectDir string, intent ReplaceIntentV1, cause
 }
 
 func replacementFailure(intent ReplaceIntentV1, outcome NamespaceOutcome, err error) ReplacementCommit {
-	return ReplacementCommit{NamespaceResult: NamespaceResult{Outcome: outcome, Err: err}, Intent: intent}
+	phase := CompletionPhase("")
+	if intent.OperationKind == OperationCompletion {
+		switch outcome {
+		case OutcomeRejected:
+			phase = CompletionPhaseRejected
+		case OutcomeCommitIndeterminate:
+			phase = CompletionPhaseCommitIndeterminate
+		default:
+			phase = CompletionPhaseNotCommitted
+		}
+	}
+	return ReplacementCommit{NamespaceResult: NamespaceResult{Outcome: outcome, Err: err}, Intent: intent, Phase: phase}
 }
 
 // CleanupReplaceIntent removes the exact resolved intent and makes its absence
@@ -1698,6 +1747,92 @@ func replaceIntentPath(projectDir, name string) string {
 
 func failedRecoveryReceiptsDir(projectDir string) string {
 	return filepath.Join(queuesDir(projectDir), ".failed-recovery-receipts")
+}
+
+func completionReceiptsDir(projectDir string) string {
+	return filepath.Join(queuesDir(projectDir), ".completion-receipts")
+}
+
+func writeCompletionReceipt(
+	projectDir, queueID, transactionID string,
+	binding *CompletionReceiptBinding,
+	ops namespaceOps,
+) error {
+	data, err := base64.StdEncoding.DecodeString(binding.CanonicalBytesBase64)
+	if err != nil {
+		return err
+	}
+	receipt, err := DecodeCompletionReceipt(data)
+	if err != nil {
+		return err
+	}
+	if err := validateCompletionReceiptBinding(
+		binding,
+		queueID,
+		transactionID,
+		receipt.NormalizedName,
+		receipt.CompletedQueueSHA256,
+	); err != nil {
+		return err
+	}
+	root := completionReceiptsDir(projectDir)
+	if err := ops.mkdirAll(root, 0o700); err != nil {
+		return err
+	}
+	info, err := ops.lstat(root)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("completion receipt root is not a real directory")
+	}
+	if err := syncDirectory(queuesDir(projectDir), ops); err != nil {
+		return err
+	}
+	install := durableNoReplace(filepath.Join(root, binding.Basename), data, ops)
+	if install.State != noReplaceInstalled {
+		if install.Err != nil {
+			return install.Err
+		}
+		return errors.New("completion receipt was not installed")
+	}
+	return syncDirectory(root, ops)
+}
+
+// CleanupCompletedCanonical removes only the exact completed queue bound by a
+// durable receipt. A newer same-name queue or changed bytes are preserved.
+func CleanupCompletedCanonical(
+	projectDir, normalizedName, queueID, completedQueueSHA256 string,
+) error {
+	return cleanupCompletedCanonical(projectDir, normalizedName, queueID, completedQueueSHA256, osNamespaceOps())
+}
+
+func cleanupCompletedCanonical(
+	projectDir, normalizedName, queueID, completedQueueSHA256 string,
+	ops namespaceOps,
+) error {
+	path := queuePath(projectDir, NormaliseQueueName(normalizedName))
+	data, err := ops.readFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return syncDirectory(queuesDir(projectDir), ops)
+	}
+	if err != nil {
+		return err
+	}
+	q, err := UnmarshalQueue(data)
+	if err != nil {
+		return fmt.Errorf("completed canonical: %w", err)
+	}
+	if q.QueueID != queueID {
+		return errors.New("completed canonical belongs to a different queue")
+	}
+	if digestHex(data) != completedQueueSHA256 {
+		return errors.New("completed canonical digest differs from receipt")
+	}
+	if err := ops.remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return syncDirectory(queuesDir(projectDir), ops)
 }
 
 func writeFailedRecoveryReceipt(

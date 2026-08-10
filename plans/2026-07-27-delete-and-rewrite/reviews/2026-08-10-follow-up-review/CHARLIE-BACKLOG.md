@@ -10,14 +10,28 @@ Charlie must deliberately break each new claim test before accepting it.
 Updated: 2026-08-10
 
 - Owner: Charlie.
-- Active slice: C05 through C07.
+- Active slice: C08 is complete. C09 is next.
 - Start revision: `b49210d67` on `work/alpha-integration-merge`.
 - State: C01 through C04 are complete and independently approved.
 - Implementation commit: `de0a6ca3`.
 - Integration reconciliation commit: `b0cac51a`.
 - Stop gate: C05 through C07 received independent approval before C08.
 - Coordination note: the queue RPC overlap retained both the active-run status work and the event-intent path.
-- Later tasks: C08 through C31 remain unstarted.
+- Later tasks: C09 through C31 remain unstarted.
+
+### C08 evidence
+
+- The queue transaction owner installs the completed canonical and exact receipt before observation.
+- The result names each durable phase through ownership release.
+- The canonical cleanup uses queue identity and byte digest checks.
+- The observer runs without the queue lock. A temporary quarantine refuses all other mutation entry points.
+- A missing observer is refused before filesystem I/O.
+- Boundary tests cover receipt-root safety, each canonical and receipt write cut, cleanup cuts, and ownership retention.
+- Focused queue and queue-store tests pass with `-count=1`.
+- Repository compilation, `go vet ./...`, and the pinned changed-line lint pass.
+- Removing the observer requirement fails its pre-I/O test.
+- Removing the raw mutation guard fails the observation-window ownership test.
+- Independent reviewer verdict: `APPROVE` after four correction rounds.
 
 ### C05 through C07 evidence
 

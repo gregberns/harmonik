@@ -331,10 +331,10 @@ func TestRecoverFailed_RefusesAQuarantinedQueueThatIsNotPausedByFailure(t *testi
 
 	drained := store.QueueByName(queue.QueueNameMain)
 	drained.Status = queue.QueueStatusPausedByDrain
-	store.SetQueueByName(queue.QueueNameMain, drained)
-	if store.QuarantineReason(queue.QueueNameMain) == nil {
-		t.Fatal("a raw setter cleared the quarantine; QM-059 forbids that")
-	}
+	store.queueMu.Lock()
+	store.queues[queue.QueueNameMain] = drained
+	store.generations[queue.QueueNameMain]++
+	store.queueMu.Unlock()
 
 	_, err := store.RecoverFailed(context.Background(), FailedRecoveryRequest{
 		ProjectDir: projectDir,

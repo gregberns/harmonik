@@ -89,6 +89,8 @@ type QueueStore struct {
 	wakeC chan struct{}
 }
 
+var errCompletionObservationInProgress = errors.New("completion observation is in progress")
+
 // newQueueStore returns a ready-to-use QueueStore with no active queues.
 //
 // Bead ref: hk-j808w, hk-tigaf.2.
@@ -117,7 +119,8 @@ func NewQueueStore() *QueueStore {
 
 // SetQueue installs q under the write lock at the slot derived from q.Name
 // (normalised to QueueNameMain if empty). It replaces any prior value at that
-// slot and signals the wake channel. It does not clear an I/O quarantine.
+// slot and signals the wake channel. It refuses a quarantined name because a
+// raw memory write cannot prove that durable recovery completed.
 //
 // This is the primary mutation entry point per QM-060. All queue-submit /
 // queue-append paths MUST call SetQueue (or SetQueueByName / ClearQueue /
@@ -128,6 +131,10 @@ func NewQueueStore() *QueueStore {
 func (s *QueueStore) SetQueue(q *queue.Queue) {
 	name := queue.NormaliseQueueName(q.Name)
 	s.queueMu.Lock()
+	if s.quarantined[name] != nil {
+		s.queueMu.Unlock()
+		return
+	}
 	s.queues[name] = q
 	s.generations[name]++
 	s.queueMu.Unlock()
@@ -158,7 +165,8 @@ func (s *QueueStore) Queue() *queue.Queue {
 }
 
 // ClearQueue removes the QueueNameMain ("main") slot under the write lock.
-// After ClearQueue returns, Queue returns nil.
+// It refuses a quarantined name because that name still owns unresolved
+// durable state.
 //
 // Called by the composition root after queue completion (QM-003: queue.json
 // unlinked when all groups reach complete-success).
@@ -167,6 +175,10 @@ func (s *QueueStore) Queue() *queue.Queue {
 // Bead ref: hk-j808w.
 func (s *QueueStore) ClearQueue() {
 	s.queueMu.Lock()
+	if s.quarantined[queue.QueueNameMain] != nil {
+		s.queueMu.Unlock()
+		return
+	}
 	delete(s.queues, queue.QueueNameMain)
 	s.generations[queue.QueueNameMain]++
 	s.queueMu.Unlock()
@@ -192,11 +204,15 @@ func (s *QueueStore) QueueByName(name string) *queue.Queue {
 
 // SetQueueByName installs q under the write lock at the given name slot,
 // replacing any prior value. name MUST be normalised before calling. Signals
-// the wake channel. It does not clear an I/O quarantine.
+// the wake channel. It refuses an I/O quarantine.
 //
 // Bead ref: hk-tigaf.2.
 func (s *QueueStore) SetQueueByName(name string, q *queue.Queue) {
 	s.queueMu.Lock()
+	if s.quarantined[name] != nil {
+		s.queueMu.Unlock()
+		return
+	}
 	s.queues[name] = q
 	s.generations[name]++
 	s.queueMu.Unlock()
@@ -208,11 +224,15 @@ func (s *QueueStore) SetQueueByName(name string, q *queue.Queue) {
 
 // ClearQueueByName removes the queue at the given name slot under the write
 // lock. name MUST be normalised before calling. No-ops when the name is
-// absent.
+// absent. It refuses an I/O quarantine.
 //
 // Bead ref: hk-tigaf.2.
 func (s *QueueStore) ClearQueueByName(name string) {
 	s.queueMu.Lock()
+	if s.quarantined[name] != nil {
+		s.queueMu.Unlock()
+		return
+	}
 	delete(s.queues, name)
 	s.generations[name]++
 	s.queueMu.Unlock()
@@ -317,21 +337,29 @@ type LockedQueueStore struct {
 }
 
 // Queue returns the current queue pointer for the QueueNameMain ("main") slot.
-// Safe to call while the write lock is held (i.e. during a LockForMutation block).
+// It returns nil when the name is quarantined. This refuses a mutation flow
+// before it can persist a replacement. Safe to call while the write lock is
+// held (i.e. during a LockForMutation block).
 //
 // Bead ref: hk-j808w.
 func (lq *LockedQueueStore) Queue() *queue.Queue {
+	if lq.s.quarantined[queue.QueueNameMain] != nil {
+		return nil
+	}
 	return lq.s.queues[queue.QueueNameMain]
 }
 
 // SetQueue updates the queue pointer at the slot derived from q.Name
 // (normalised to QueueNameMain if empty). Safe to call while the write lock
 // is held. Does NOT signal the wake channel (use QueueStore.SetQueue for that).
-// It does not clear an I/O quarantine.
+// It refuses an I/O quarantine.
 //
 // Bead ref: hk-j808w, hk-tigaf.2.
 func (lq *LockedQueueStore) SetQueue(q *queue.Queue) {
 	name := queue.NormaliseQueueName(q.Name)
+	if lq.s.quarantined[name] != nil {
+		return
+	}
 	lq.s.queues[name] = q
 	lq.s.generations[name]++
 }
@@ -347,22 +375,29 @@ func (lq *LockedQueueStore) Done() {
 // LockedQueueByName returns the *queue.Queue for the given name while the
 // write lock is held. name MUST be normalised before calling (use
 // queue.NormaliseQueueName). Returns nil when no queue with that name is
-// loaded.
+// loaded. A quarantined queue is hidden from the mutation view. This refuses
+// read-modify-persist flows before they can perform an external write.
 //
 // Safe to call while holding the LockForMutation write lock.
 //
 // Bead ref: hk-tigaf.6.
 func (lq *LockedQueueStore) LockedQueueByName(name string) *queue.Queue {
+	if lq.s.quarantined[name] != nil {
+		return nil
+	}
 	return lq.s.queues[name]
 }
 
 // LockedSetQueueByName updates the queue pointer at the given name slot
 // while the write lock is held. name MUST be normalised before calling.
 // Does NOT signal the wake channel (use QueueStore.SetQueueByName for that).
-// It does not clear an I/O quarantine.
+// It refuses an I/O quarantine.
 //
 // Bead ref: hk-tigaf.6.
 func (lq *LockedQueueStore) LockedSetQueueByName(name string, q *queue.Queue) {
+	if lq.s.quarantined[name] != nil {
+		return
+	}
 	lq.s.queues[name] = q
 	lq.s.generations[name]++
 }
@@ -700,6 +735,143 @@ func (s *QueueStore) Transact(ctx context.Context, req TransactionRequest) Trans
 		Snapshot:        resultSnapshot,
 		CleanupErr:      cleanupErr,
 	}
+}
+
+// Complete executes the QM-053 final-success transaction for one exact live
+// snapshot. It retains name ownership on every pre-release failure.
+func (s *QueueStore) Complete(ctx context.Context, req queue.CompletionRequest) queue.CompletionResult {
+	return s.complete(ctx, req, queue.CleanupCompletedCanonical, queue.CleanupReplaceIntent)
+}
+
+func (s *QueueStore) complete(
+	ctx context.Context,
+	req queue.CompletionRequest,
+	cleanupCanonical func(string, string, string, string) error,
+	cleanupIntent func(string, string) error,
+) queue.CompletionResult {
+	name := queue.NormaliseQueueName(req.Snapshot.Name)
+	s.queueMu.Lock()
+
+	if quarantineErr := s.quarantined[name]; quarantineErr != nil {
+		s.queueMu.Unlock()
+		return queue.CompletionResult{
+			NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeRejected, Err: quarantineErr},
+			Phase:           queue.CompletionPhaseRejected,
+		}
+	}
+	if req.Snapshot.Generation != s.generations[name] ||
+		!sameQueue(s.queues[name], req.Snapshot.Queue) ||
+		req.Snapshot.Queue == nil {
+		s.queueMu.Unlock()
+		return queue.CompletionResult{
+			NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeRejected, Err: errors.New("stale completion snapshot")},
+			Phase:           queue.CompletionPhaseRejected,
+		}
+	}
+	if req.Observe == nil {
+		s.queueMu.Unlock()
+		return queue.CompletionResult{
+			NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeRejected, Err: errors.New("completion observation is required")},
+			Phase:           queue.CompletionPhaseRejected,
+		}
+	}
+	prepared, err := queue.PrepareCompletion(
+		*req.Snapshot.Queue,
+		req.TransactionID,
+		req.ReceiptID,
+		req.CompletedAt,
+	)
+	if err != nil {
+		s.queueMu.Unlock()
+		return queue.CompletionResult{
+			NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeRejected, Err: err},
+			Phase:           queue.CompletionPhaseRejected,
+		}
+	}
+	priorBytes, err := json.Marshal(req.Snapshot.Queue)
+	if err != nil {
+		s.queueMu.Unlock()
+		return queue.CompletionResult{
+			NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeRejected, Err: err},
+			Phase:           queue.CompletionPhaseRejected,
+		}
+	}
+	commit := queue.WriteReplacement(ctx, queue.ReplacementPlan{
+		ProjectDir:               req.ProjectDir,
+		TransactionID:            prepared.TransactionID,
+		OperationKind:            queue.OperationCompletion,
+		NormalizedName:           name,
+		QueueID:                  prepared.Candidate.QueueID,
+		PriorBytes:               priorBytes,
+		CandidateBytes:           prepared.CandidateBytes,
+		CompletionReceiptBinding: prepared.Binding,
+	})
+	result := queue.CompletionResult{
+		NamespaceResult: commit.NamespaceResult,
+		Phase:           commit.Phase,
+		Receipt:         prepared.Receipt,
+	}
+	if !commit.Committed() {
+		if commit.Outcome != queue.OutcomeRejected {
+			s.quarantined[name] = commit.Err
+		}
+		s.queueMu.Unlock()
+		return result
+	}
+	return s.finishCompletion(req, prepared, result, name, cleanupCanonical, cleanupIntent)
+}
+
+func (s *QueueStore) finishCompletion(
+	req queue.CompletionRequest,
+	prepared queue.CompletionPlan,
+	result queue.CompletionResult,
+	name string,
+	cleanupCanonical func(string, string, string, string) error,
+	cleanupIntent func(string, string) error,
+) queue.CompletionResult {
+	// The completed canonical and receipt are durable. Retain the completed
+	// queue in memory until canonical and intent absence are also durable.
+	s.queues[name] = cloneQueue(&prepared.Candidate)
+	s.generations[name]++
+	installedGeneration := s.generations[name]
+	s.quarantined[name] = errCompletionObservationInProgress
+	s.queueMu.Unlock()
+
+	result.Phase = queue.CompletionPhaseObservationAttempted
+	result.ObservationErr = req.Observe(prepared.Receipt)
+
+	s.queueMu.Lock()
+	if s.generations[name] != installedGeneration || !sameQueue(s.queues[name], &prepared.Candidate) {
+		err := errors.New("completion ownership changed during observation")
+		result.CleanupErr = err
+		s.quarantined[name] = err
+		s.queueMu.Unlock()
+		return result
+	}
+	if err := cleanupCanonical(
+		req.ProjectDir,
+		name,
+		prepared.Candidate.QueueID,
+		prepared.Receipt.CompletedQueueSHA256,
+	); err != nil {
+		result.CleanupErr = err
+		s.quarantined[name] = err
+		s.queueMu.Unlock()
+		return result
+	}
+	if err := cleanupIntent(req.ProjectDir, name); err != nil {
+		result.CleanupErr = err
+		s.quarantined[name] = err
+		s.queueMu.Unlock()
+		return result
+	}
+	result.Phase = queue.CompletionPhaseCleaned
+	delete(s.queues, name)
+	delete(s.quarantined, name)
+	s.generations[name]++
+	result.Phase = queue.CompletionPhaseOwnershipReleased
+	s.queueMu.Unlock()
+	return result
 }
 
 // otherQueuesLocked returns a deep copy of every queue except exclude. The

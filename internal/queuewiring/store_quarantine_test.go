@@ -114,12 +114,12 @@ func TestQuarantineReason_ReportsTheCauseForTheShutQueueOnly(t *testing.T) {
 }
 
 // Raw in-memory writers do not prove that durable recovery completed. They
-// must leave a recorded I/O failure in place. A new QueueStore starts after an
-// operator resolves the I/O fault.
-func TestRawQueueWriters_PreserveQuarantine(t *testing.T) {
+// must refuse the write and leave the recorded owner and I/O failure in place.
+// A new QueueStore starts after an operator resolves the I/O fault.
+func TestRawQueueWriters_RefuseQuarantine(t *testing.T) {
 	t.Parallel()
 
-	const name = "alpha"
+	const name = queue.QueueNameMain
 	quarantineErr := errors.New("queue write failed")
 
 	cases := []struct {
@@ -136,6 +136,18 @@ func TestRawQueueWriters_PreserveQuarantine(t *testing.T) {
 			name: "set_queue_by_name",
 			write: func(store *QueueStore) {
 				store.SetQueueByName(name, &queue.Queue{Name: name})
+			},
+		},
+		{
+			name: "clear_queue",
+			write: func(store *QueueStore) {
+				store.ClearQueue()
+			},
+		},
+		{
+			name: "clear_queue_by_name",
+			write: func(store *QueueStore) {
+				store.ClearQueueByName(name)
 			},
 		},
 		{
@@ -160,12 +172,17 @@ func TestRawQueueWriters_PreserveQuarantine(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			store := NewQueueStore()
+			original := &queue.Queue{Name: name, QueueID: "original"}
+			store.queues[name] = original
 			store.quarantined[name] = quarantineErr
 
 			tc.write(store)
 
 			if got := store.QuarantineReason(name); !errors.Is(got, quarantineErr) {
 				t.Errorf("QuarantineReason(%q) = %v, want %v", name, got, quarantineErr)
+			}
+			if got := store.QueueByName(name); got == nil || got.QueueID != original.QueueID {
+				t.Errorf("QueueByName(%q) = %+v, want retained owner %+v", name, got, original)
 			}
 		})
 	}

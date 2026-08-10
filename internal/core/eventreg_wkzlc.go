@@ -50,6 +50,19 @@ type RunStalePayload struct {
 	// any bus event. Always positive; rounded to the nearest second.
 	AgeSeconds int64 `json:"age_seconds"`
 
+	// NoProgressSeconds is the wall-clock seconds elapsed since the run last
+	// produced an event that shows it MOVED, as opposed to an event that only
+	// shows something is still there to report on it. Nil unless the no-progress
+	// clock is what caused this emission.
+	//
+	// It is a SEPARATE field and not a redefinition of AgeSeconds, because the
+	// two answer different questions. A run whose agent process is alive but
+	// wedged emits agent_heartbeat every 5 minutes, so AgeSeconds stays small
+	// and truthful while NoProgressSeconds grows. An emission carrying a large
+	// NoProgressSeconds beside a small AgeSeconds and
+	// last_event_type=agent_heartbeat IS the signature of that failure.
+	NoProgressSeconds *int64 `json:"no_progress_seconds,omitempty"`
+
 	// LastEventType is the EventType string of the most recent event received
 	// from this run. Empty when no event has been seen yet (e.g. the run was
 	// claimed but never emitted run_started — unusual but possible during race

@@ -1207,7 +1207,7 @@ func appendGateLogArchive(projectDir string, runID core.RunID, nodeID string, co
 		return ""
 	}
 	dir := filepath.Join(projectDir, ".harmonik", gateLogArchiveDir, runID.String())
-	if mkErr := os.MkdirAll(dir, 0o700); mkErr != nil {
+	if mkErr := os.MkdirAll(dir, core.HarmonikDirMode); mkErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: dot cascade: mkdir gate-log archive %q: %v\n", dir, mkErr)
 		return ""
 	}

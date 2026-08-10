@@ -1012,10 +1012,10 @@ func buildEdge(re *rawEdge) (*Edge, []*ParseError, []ParseWarning) {
 // lhsWhitelist is the allowed LHS values per WG-014.
 // context.<key> is handled separately via HasPrefix check.
 var lhsWhitelist = map[string]bool{
-	"outcome.status":          true,
-	"outcome.preferred_label": true,
-	"outcome.failure_class":   true,
-	"outcome.kind":            true,
+	lhsOutcomeStatus:         true,
+	lhsOutcomePreferredLabel: true,
+	lhsOutcomeFailureClass:   true,
+	lhsOutcomeKind:           true,
 }
 
 // closedStatusValues is the OutcomeStatus closed enum per EM-005.
@@ -1097,7 +1097,7 @@ func parseEquality(s string, line int, fullCond string) (Equality, *ParseError) 
 	rhs := strings.TrimSpace(s[opIdx+len(op):])
 
 	// Validate LHS against WG-014 whitelist.
-	if !lhsWhitelist[lhs] && !strings.HasPrefix(lhs, "context.") {
+	if !lhsWhitelist[lhs] && !strings.HasPrefix(lhs, lhsContextPrefix) {
 		return Equality{}, &ParseError{
 			Line: line,
 			Message: fmt.Sprintf(
@@ -1134,7 +1134,7 @@ func validateRHS(rhs, lhs string, line int, fullCond string) (string, *ParseErro
 	}
 	// Closed-enum identifier: validate membership per WG-015.
 	switch lhs {
-	case "outcome.status":
+	case lhsOutcomeStatus:
 		if !closedStatusValues[rhs] {
 			return "", &ParseError{
 				Line: line,
@@ -1144,7 +1144,7 @@ func validateRHS(rhs, lhs string, line int, fullCond string) (string, *ParseErro
 					rhs, fullCond),
 			}
 		}
-	case "outcome.failure_class":
+	case lhsOutcomeFailureClass:
 		if !closedFailureClassValues[rhs] {
 			return "", &ParseError{
 				Line: line,
@@ -1153,7 +1153,7 @@ func validateRHS(rhs, lhs string, line int, fullCond string) (string, *ParseErro
 					rhs, fullCond),
 			}
 		}
-	case "outcome.kind":
+	case lhsOutcomeKind:
 		if !closedKindValues[rhs] {
 			return "", &ParseError{
 				Line: line,

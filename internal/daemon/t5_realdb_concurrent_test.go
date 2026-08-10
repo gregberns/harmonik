@@ -223,13 +223,8 @@ func TestT4RealDB_ConcurrentClaimExclusion(t *testing.T) {
 	cancelA()
 	cancelB()
 	for loopName, ch := range map[string]chan error{"A": doneA, "B": doneB} {
-		select {
-		case loopErr := <-ch:
-			if loopErr != nil {
-				t.Errorf("t5: work loop %s returned error: %v", loopName, loopErr)
-			}
-		case <-time.After(5 * time.Second):
-			t.Errorf("t5: work loop %s did not exit within 5 s after context cancel", loopName)
+		if loopErr := awaitLoopTeardownErr(t, ch, "t5: work loop "+loopName); loopErr != nil {
+			t.Errorf("t5: work loop %s returned error: %v", loopName, loopErr)
 		}
 	}
 

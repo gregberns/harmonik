@@ -208,11 +208,7 @@ func TestGreenlightHoldDoesNotParkTheLoop(t *testing.T) {
 	late := ledger.showCount(heldID)
 
 	cancel()
-	select {
-	case <-loopDone:
-	case <-time.After(15 * time.Second):
-		t.Error("work loop did not exit within 15s after context cancel")
-	}
+	awaitLoopTeardown(t, loopDone, "greenlight-fallback work loop")
 
 	// Positive control: the loop must have reached the bead at all. A count of
 	// zero would mean the fixture never dispatched, and the growth assertion

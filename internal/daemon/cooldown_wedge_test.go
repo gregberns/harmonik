@@ -123,11 +123,7 @@ func TestCooldownRefusalDoesNotParkTheLoop(t *testing.T) {
 	late := readTicks()
 
 	cancel()
-	select {
-	case <-loopDone:
-	case <-time.After(15 * time.Second):
-		t.Error("work loop did not exit within 15s after context cancel")
-	}
+	awaitLoopTeardown(t, loopDone, "cooldown-wedge work loop")
 
 	if early == 0 {
 		t.Fatal("the loop never ticked, so this fixture cannot tell a polling loop from a parked one")

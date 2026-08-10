@@ -428,11 +428,7 @@ func TestScenario_RemoteSubstrate_ClaudeSlice_RemoteWorker_E2E(t *testing.T) {
 		t.Fatalf("timed out waiting for bead %s to reach a terminal state; events=%v", bead, collector.eventTypes())
 	}
 
-	select {
-	case <-loopDone:
-	case <-time.After(30 * time.Second):
-		t.Error("work loop did not exit within 30s of cancel")
-	}
+	awaitLoopTeardown(t, loopDone, "remote-substrate work loop")
 
 	closed := ledger.closedCount(bead)
 	reopened := ledger.reopenedCount(bead)

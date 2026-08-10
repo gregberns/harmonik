@@ -493,11 +493,7 @@ func runAdmissionLoop(t *testing.T, qs *queuewiring.QueueStore, runLoop func(con
 	inspect()
 
 	cancel()
-	select {
-	case <-loopDone:
-	case <-time.After(15 * time.Second):
-		t.Error("work loop did not exit within 15s after context cancel")
-	}
+	awaitLoopTeardown(t, loopDone, "admission-order work loop")
 	<-pumpDone
 }
 

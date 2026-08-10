@@ -178,11 +178,7 @@ func runDeferralLoop(
 	inspect()
 
 	cancel()
-	select {
-	case <-loopDone:
-	case <-time.After(15 * time.Second):
-		t.Error("work loop did not exit within 15s after context cancel")
-	}
+	awaitLoopTeardown(t, loopDone, "deferred-reeval work loop")
 	<-pumpDone
 }
 

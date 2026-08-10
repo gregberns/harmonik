@@ -429,11 +429,7 @@ func TestScenario_RemoteSubstrate_NoWorker_RunStartedWorkerNameEmpty(t *testing.
 		t.Fatalf("timed out waiting for bead %s to reach a terminal state; events=%v", bead, collector.eventTypes())
 	}
 
-	select {
-	case <-loopDone:
-	case <-time.After(15 * time.Second):
-		t.Error("work loop did not exit within 15s of cancel")
-	}
+	awaitLoopTeardown(t, loopDone, "localhost work loop")
 
 	// ── The run took the LOCAL path: run_started.worker_name MUST be empty. ────
 	gotWorker, ok := rsb12RunStartedWorkerName(t, collector)

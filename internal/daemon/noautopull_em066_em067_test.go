@@ -138,11 +138,7 @@ func TestScenario_NoAutoPull_ZeroRunsStarted_EM066(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	cancel()
 
-	select {
-	case <-loopDone:
-	case <-time.After(3 * time.Second):
-		t.Fatal("em066: workloop did not exit within 3s after context cancel")
-	}
+	awaitLoopTeardown(t, loopDone, "em066 work loop")
 
 	// Assert: Ready() was never called.
 	if readyCalls := ledger.readyCalls.Load(); readyCalls != 0 {
@@ -218,11 +214,7 @@ func TestScenario_AutoPull_BrReadyFallbackFires_EM066(t *testing.T) {
 	}
 
 	cancel()
-	select {
-	case <-loopDone:
-	case <-time.After(3 * time.Second):
-		t.Fatal("em066-opt-in: workloop did not exit within 3s after context cancel")
-	}
+	awaitLoopTeardown(t, loopDone, "em066 opt-in work loop")
 
 	t.Logf("em066-opt-in PASS: Ready() called %d time(s) — br-ready fallback active when NoAutoPull=false",
 		ledger.readyCalls.Load())
@@ -316,11 +308,7 @@ func TestScenario_BrReadyOperatorPauseGate_EM067(t *testing.T) {
 	}
 
 	cancel()
-	select {
-	case <-loopDone:
-	case <-time.After(3 * time.Second):
-		t.Fatal("em067: workloop did not exit within 3s after context cancel")
-	}
+	awaitLoopTeardown(t, loopDone, "em067 work loop")
 
 	t.Logf("em067 PASS: Ready() correctly suppressed while paused, fired after resume (total Ready()=%d)",
 		ledger.readyCalls.Load())

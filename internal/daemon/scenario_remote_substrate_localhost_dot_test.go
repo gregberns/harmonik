@@ -313,11 +313,7 @@ func rsb12RunRemoteDot(t *testing.T, shutdownDrain bool) {
 		}
 	}
 
-	select {
-	case <-loopDone:
-	case <-time.After(15 * time.Second):
-		t.Error("work loop did not exit within 15s of cancel")
-	}
+	awaitLoopTeardown(t, loopDone, "localhost DOT-mode work loop")
 
 	// ── Diagnostics. ──────────────────────────────────────────────────────────
 	closed := ledger.closedCount(bead)

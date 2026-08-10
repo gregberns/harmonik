@@ -162,11 +162,7 @@ func runLoopCapturingExit(t *testing.T, run func() error) error {
 		defer close(done)
 		err = run()
 	}()
-	select {
-	case <-done:
-	case <-time.After(30 * time.Second):
-		t.Fatal("work loop did not exit within 30s")
-	}
+	awaitLoopTeardown(t, done, "reservation-window work loop")
 	return err
 }
 

@@ -570,12 +570,13 @@ var briefDeliveredTimeout = 2 * time.Minute
 var commitPollInterval = 500 * time.Millisecond
 
 // commitPollTimeout is the per-progress commit-budget window: the maximum time
-// pasteInjectQuitOnCommit will wait for a new commit WITHOUT a fresh progress
-// signal before giving up.  It is NOT a flat wall-clock deadline — every genuine
-// progress signal (an agent_heartbeat event) extends the budget by another
-// commitPollTimeout window (see commitHardCeiling for the absolute backstop).
-// This is a safety backstop only; the primary kill trigger is heartbeat
-// staleness (heartbeatStalenessThreshold).
+// pasteInjectQuitOnCommit will wait for a new commit WITHOUT evidence of work
+// before giving up.  It is NOT a flat wall-clock deadline — when the window
+// elapses the loop looks for observable progress (a changed working tree or
+// growing pane output) and extends by another commitPollTimeout window when it
+// finds some (see commitHardCeiling for the absolute backstop).  This is a
+// safety backstop only; the primary kill trigger is heartbeat staleness
+// (heartbeatStalenessThreshold).
 //
 // hk-9vp51: previously this was a FLAT 30-min wall clock that guillotined any
 // implementer that was genuinely working but slow to commit (e.g. a deep
@@ -584,6 +585,12 @@ var commitPollInterval = 500 * time.Millisecond
 // no_commit.  Making the budget progress-extended (with a hard ceiling) lets a
 // progressing session run as long as it keeps making progress, while a
 // stalled-but-active session is still killed once progress goes stale.
+//
+// hk-cw0fa: the extension used to fire on an agent_heartbeat as well, which made
+// this window unable to close.  The beat is a fixed 5-minute timer and the window
+// is 30 minutes, so any live process held the budget open and every wedged run
+// reached the 90-minute ceiling instead, under whatever cause fired there.  The
+// budget now advances on evidence of work only.
 //
 // Declared as var (not const) so tests can override it without waiting real
 // wall time.
@@ -908,15 +915,21 @@ func pasteInjectQuitOnCommit(
 	reseedGrace := implementerReseedGrace
 
 	loopStart := clk.Now()
-	// hk-9vp51: totalDeadline is the per-PROGRESS commit budget, extended on every
-	// genuine progress signal (agent_heartbeat) rather than a flat wall clock.
+	// hk-9vp51: totalDeadline is the per-PROGRESS commit budget, extended on
+	// observed progress rather than run as a flat wall clock.
+	// hk-cw0fa: only the guarded checks in the ticker case extend it — a changed
+	// working tree or growing pane output.  An agent_heartbeat does not.
 	totalDeadline := loopStart.Add(pollTimeout)
 	// hk-9vp51: hardDeadline is the absolute backstop — never extended; bounds a
 	// truly-hung-but-pane-active session.
 	hardDeadline := loopStart.Add(hardCeiling)
 	lastHeartbeat := clk.Now() // initialised to now; first real beat resets it
-	// hk-9vp51: lastProgress tracks the last genuine progress signal for the
+	// hk-9vp51: lastProgress tracks the last observed progress for the
 	// implementer_budget_exceeded diagnostic (since_last_progress_ms).
+	// hk-cw0fa: it advances with the budget, so it now reports the age of the
+	// last evidence of WORK.  It used to advance on every heartbeat, which made
+	// the number report the age of the last beat — never more than 5 minutes,
+	// whatever the session was doing.
 	lastProgress := loopStart
 	heartbeatProvided := eventCh != nil
 	// hk-3gq0b: launch-verification window — starts after brief delivery.
@@ -1034,6 +1047,25 @@ func pasteInjectQuitOnCommit(
 		}
 	}
 
+	// hk-cw0fa: noteHeartbeat records a beat for the two clocks it can honestly
+	// serve — heartbeat staleness and launch verification — and for nothing else.
+	//
+	// A beat proves the agent PROCESS is alive.  It does not prove the WORK
+	// advanced: RunHeartbeatLoop (internal/handler, RunHeartbeatLoop) is a fixed
+	// timer started at launch and stopped only when the process exits, and its
+	// payload is a session id plus a phase string that never varies.  It used to
+	// extend the commit budget too, and a 5-minute beat that always reopens a
+	// 30-minute window is a window that cannot close.  The budget is extended by
+	// the guarded checks in the ticker case below, which read a real working tree
+	// and real pane output first.
+	//
+	// Both places that consume a beat call this, so the event case and the drain
+	// below cannot drift apart again — they already had the same defect twice.
+	noteHeartbeat := func(at time.Time) {
+		lastHeartbeat = at
+		firstHeartbeatSeen = true
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -1050,27 +1082,22 @@ func pasteInjectQuitOnCommit(
 				continue
 			}
 			if env.Type == core.EventTypeAgentHeartbeat {
-				now := clk.Now()
-				lastHeartbeat = now
-				firstHeartbeatSeen = true
-				// hk-9vp51: a genuine progress signal extends the per-progress
-				// commit budget so a session that keeps making progress is not
-				// guillotined by the flat budget window.  The absolute
-				// hardDeadline is NOT extended.
-				lastProgress = now
-				totalDeadline = now.Add(pollTimeout)
+				noteHeartbeat(clk.Now())
 			}
 
 		case <-ticker.C():
 			now := clk.Now()
 
 			// hk-ukx: drain any heartbeats that arrived in eventCh between the
-			// last iteration and this tick.  Without this drain, the ticker case
-			// can fire before a buffered heartbeat is processed by the eventCh
-			// case, causing totalDeadline to look expired even though progress
-			// was imminent.  The drain is non-blocking (default: exit) and runs
-			// only for the heartbeat event type so other event types are not
-			// silently consumed.
+			// last iteration and this tick, so the staleness clock and the
+			// launch-verification gate see a beat the tick would otherwise race
+			// past.  The drain is non-blocking (default: exit) and runs only for
+			// the heartbeat event type so other event types are not silently
+			// consumed.
+			//
+			// hk-cw0fa: this drain used to extend the commit budget as well, so
+			// draining a beat here could reopen the window the check below was
+			// about to close.  It no longer touches the budget.
 			if eventCh != nil {
 			drainHeartbeats:
 				for {
@@ -1081,11 +1108,7 @@ func pasteInjectQuitOnCommit(
 							break drainHeartbeats
 						}
 						if env.Type == core.EventTypeAgentHeartbeat {
-							drainNow := clk.Now()
-							lastHeartbeat = drainNow
-							firstHeartbeatSeen = true
-							lastProgress = drainNow
-							totalDeadline = drainNow.Add(pollTimeout)
+							noteHeartbeat(clk.Now())
 						}
 					default:
 						break drainHeartbeats
@@ -1121,9 +1144,10 @@ func pasteInjectQuitOnCommit(
 			// pane), so it still gets the extension.  An idle Claude waiting for
 			// input has a stable fingerprint and is killed at the 30-min boundary.
 			if now.After(totalDeadline) {
-				// Any buffered heartbeats were drained above; if totalDeadline
-				// is still expired, no heartbeat arrived in this budget window.
-				// Require observable progress before extending (hk-ukx).
+				// hk-ukx / hk-cw0fa: the budget window has elapsed.  Whether any
+				// heartbeat arrived during it does not matter here — a beat says
+				// the process exists, and this check asks whether the work moved.
+				// Require observable progress before extending.
 				if livenessChecker != nil && livenessChecker.PaneHasActiveProcess(ctx) {
 					// hk-ej7k6: check pane output FIRST (no git subprocess) so a
 					// streaming session short-circuits before paying the worktree

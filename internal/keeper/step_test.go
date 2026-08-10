@@ -178,6 +178,35 @@ func TestStep_HandoffTimeout_NoFresh_Aborts(t *testing.T) {
 	}
 }
 
+func TestStep_RecentOperatorTurn_ParksWithoutTimeoutEscalation(t *testing.T) {
+	t.Parallel()
+	cfg := stepTestConfig()
+	m := NewCycle(cfg)
+	at := time.Unix(1_700_000_000, 0)
+
+	m.Step(gaugeTickAt(at, "cyc-step-park"))
+	m.state.ConsecutiveHandoffTimeouts = 2
+	actions := m.Step(Event{Kind: EvOperatorTurnRecent, CycleID: "cyc-step-park", At: at.Add(time.Second)})
+
+	assertKinds(t, actions, []ActionKind{ActWriteJournal, ActEmit, ActCancelTimer, ActSetHold})
+	if actions[0].Journal.Phase != "parked" || actions[0].Journal.Reason != "operator_turn_recent" {
+		t.Fatalf("park journal = %+v", actions[0].Journal)
+	}
+	if actions[1].Type != core.EventTypeSessionKeeperCycleParked {
+		t.Fatalf("emit type = %v; want cycle_parked", actions[1].Type)
+	}
+	st := m.State()
+	if st.Phase != PhaseIdle || st.LastTerminal != "parked" {
+		t.Fatalf("state = %v/%v; want Idle/parked", st.Phase, st.LastTerminal)
+	}
+	if st.ConsecutiveHandoffTimeouts != 2 {
+		t.Fatalf("timeout count = %d; want unchanged 2", st.ConsecutiveHandoffTimeouts)
+	}
+	if st.LastFiredSID != "" || st.LastFireWasAbort {
+		t.Fatalf("park armed abort suppression: %+v", st)
+	}
+}
+
 // TestStep_HandoffTimeout_FreshRecovers proves the hk-fi78d recovery edge:
 // HandoffFreshSeen before the timeout makes TimerFired(handoff_timeout) take
 // the confirmed(reason=handoff_timeout_recovered) path into AwaitModelDone

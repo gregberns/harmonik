@@ -64,15 +64,16 @@ type EventKind string
 
 // The shell→reactor event vocabulary (design §3a / SK §6.3).
 const (
-	EvGaugeTick         EventKind = "gauge_tick"
-	EvPrecompactTrigger EventKind = "precompact_trigger"
-	EvIdleRestartTick   EventKind = "idle_restart_tick"
-	EvNonceObserved     EventKind = "nonce_observed"
-	EvHandoffFreshSeen  EventKind = "handoff_fresh_seen"
-	EvModelDone         EventKind = "model_done"
-	EvSessionChanged    EventKind = "session_changed"
-	EvTimerFired        EventKind = "timer_fired"
-	EvCrashJournal      EventKind = "crash_journal"
+	EvGaugeTick          EventKind = "gauge_tick"
+	EvPrecompactTrigger  EventKind = "precompact_trigger"
+	EvIdleRestartTick    EventKind = "idle_restart_tick"
+	EvNonceObserved      EventKind = "nonce_observed"
+	EvHandoffFreshSeen   EventKind = "handoff_fresh_seen"
+	EvOperatorTurnRecent EventKind = "operator_turn_recent"
+	EvModelDone          EventKind = "model_done"
+	EvSessionChanged     EventKind = "session_changed"
+	EvTimerFired         EventKind = "timer_fired"
+	EvCrashJournal       EventKind = "crash_journal"
 )
 
 // TimerKind names the four reactor timers (design §2c / SK-010).
@@ -99,6 +100,7 @@ const (
 //   - NonceObserved: CycleID, At.
 //   - HandoffFreshSeen: CycleID, Mtime, At (sampled by the shell at
 //     handoff-timeout expiry, exactly where handoffWrittenAndFresh read today).
+//   - OperatorTurnRecent: CycleID, At.
 //   - ModelDone: CycleID, SessionID, Source, At.
 //   - SessionChanged: CycleID, PrevSID, NewSID, At.
 //   - TimerFired: CycleID, Timer, At.
@@ -171,7 +173,6 @@ type CycleState struct {
 	SeenLowPctAfterLastFire    bool
 	LastFireWasAbort           bool
 	LastForcedAttemptAt        time.Time
-	LastOperatorAttachedEmit   time.Time
 	LastIdleRestartAt          time.Time
 	LastIdleCrewNotifiedSID    string
 	ConsecutiveHandoffTimeouts int
@@ -212,7 +213,7 @@ type CycleState struct {
 	ModelDoneSource string
 
 	// LastTerminal records the most recent terminal outcome ("complete" |
-	// "aborted"); informational (the phase returns to Idle).
+	// "aborted" | "parked"); informational (the phase returns to Idle).
 	LastTerminal string
 }
 
@@ -329,6 +330,8 @@ func stepAwaitingHandoff(cfg *CyclerConfig, s CycleState, ev Event) (CycleState,
 		s.HandoffFresh = true
 		s.HandoffFreshMtime = ev.Mtime
 		return s, nil
+	case EvOperatorTurnRecent:
+		return stepParkForOperator(cfg, s, ev)
 	case EvTimerFired:
 		if ev.Timer != TimerHandoffTimeout {
 			return s, nil
@@ -352,6 +355,20 @@ func stepAwaitingHandoff(cfg *CyclerConfig, s CycleState, ev Event) (CycleState,
 		return stepAbort(cfg, s, ev)
 	default:
 		return s, nil
+	}
+}
+
+// stepParkForOperator ends a cycle without treating an operator turn as an
+// agent failure. The handoff stays intact for the next cycle.
+func stepParkForOperator(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action) {
+	s.Reason = "operator_turn_recent"
+	s.Phase = PhaseIdle
+	s.LastTerminal = "parked"
+	return s, []Action{
+		journalAction(&s, "parked", ev.At),
+		emitCycleParkedAction(cfg, s.CycleID, s.EntryCF.SessionID, s.Reason),
+		{Kind: ActCancelTimer, Timer: TimerHandoffTimeout},
+		{Kind: ActSetHold},
 	}
 }
 
@@ -514,11 +531,9 @@ func stepIdleGaugeTick(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, [
 	if gateAntiLoopSuppresses(cfg, s, ev.At, cf) {
 		return s, nil
 	}
-	// Gate 7: operator-attached guard (warn-only, hk-6qf). The emission is a
-	// deliberate NO-OP (logmine TA3/F55 — do NOT resurrect); only the
-	// once-per-interval sampling state advances (hk-2yvx).
+	// Gate 7: operator-attached guard (warn-only, hk-6qf).
 	if snap.OperatorAttached {
-		return gateOperatorAttachedSample(cfg, s, ev.At), nil
+		return s, nil
 	}
 
 	return stepStartCycle(cfg, s, ev, cf)
@@ -536,17 +551,6 @@ func gateOperatorTurnHolds(cfg *CyclerConfig, snap GateSnapshot, at time.Time, s
 func gatePostAnswerGraceHolds(cfg *CyclerConfig, snap GateSnapshot, at time.Time, sid string) bool {
 	return cfg.PostAnswerGrace > 0 && sid != "" && !snap.LastAssistantTurnAt.IsZero() &&
 		at.Sub(snap.LastAssistantTurnAt) <= cfg.PostAnswerGrace
-}
-
-// gateOperatorAttachedSample advances Gate 7's once-per-interval sampling
-// state (hk-2yvx). The emission itself is a deliberate NO-OP (logmine
-// TA3/F55 — do NOT resurrect).
-func gateOperatorAttachedSample(cfg *CyclerConfig, s CycleState, at time.Time) CycleState {
-	if s.LastOperatorAttachedEmit.IsZero() ||
-		at.Sub(s.LastOperatorAttachedEmit) >= cfg.OperatorAttachedSampleInterval {
-		s.LastOperatorAttachedEmit = at
-	}
-	return s
 }
 
 // applyAntiLoopPrelude is the UNCONDITIONAL anti-loop prelude shared by the
@@ -1102,6 +1106,16 @@ func emitCycleAbortedAction(cfg *CyclerConfig, cycleID, sessionID, reason string
 		Reason:    reason,
 	})
 	return Action{Kind: ActEmit, Type: core.EventTypeSessionKeeperCycleAborted, Payload: raw}
+}
+
+func emitCycleParkedAction(cfg *CyclerConfig, cycleID, sessionID, reason string) Action {
+	raw := mustMarshalPayload(core.SessionKeeperCycleParkedPayload{
+		AgentName: cfg.AgentName,
+		CycleID:   cycleID,
+		SessionID: sessionID,
+		Reason:    reason,
+	})
+	return Action{Kind: ActEmit, Type: core.EventTypeSessionKeeperCycleParked, Payload: raw}
 }
 
 func emitClearUnconfirmedAction(cfg *CyclerConfig, cycleID, sessionID string) Action {

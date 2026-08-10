@@ -237,16 +237,6 @@ var zeroCountAssertions = []finding{
 	},
 	{
 		Type: "session_keeper_operator_attached",
-		At:   "internal/keeper/cycle_operator_attached_throttle_test.go TestCycler_OperatorAttached_ReEmitsAfterInterval",
-		Note: "The name says the keeper re-emits after an interval. The body asserts zero, and zero is all it can ever be.",
-	},
-	{
-		Type: "session_keeper_operator_attached",
-		At:   "internal/keeper/cycle_operator_attached_throttle_test.go TestCycler_OperatorAttached_ThrottledAcrossTicks",
-		Note: "Claims to pin a throttle. Pins nothing — the throttled event does not exist.",
-	},
-	{
-		Type: "session_keeper_operator_attached",
 		At:   "internal/keeper/cycle_twin_e2e_integration_test.go TestIntegration_TwinE2E_OperatorRealEnv",
 		Note: "Same family, in the twin end-to-end path.",
 	},

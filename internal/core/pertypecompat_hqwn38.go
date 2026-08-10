@@ -277,6 +277,7 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: EventTypeSessionKeeperHandoffStarted, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeSessionKeeperCycleComplete, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeSessionKeeperCycleAborted, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: EventTypeSessionKeeperCycleParked, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeSessionKeeperClearUnconfirmed, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// Phase-2 crash-recovery (hk-kct9t):
 	{TypeName: EventTypeSessionKeeperCycleRecovered, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},

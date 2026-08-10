@@ -835,6 +835,27 @@ func TestKeeperDoctor_LiveWatcherPresentIsGreen(t *testing.T) {
 	}
 }
 
+func TestKeeperDoctor_ReportsParkedCycleReason(t *testing.T) {
+	t.Parallel()
+	cfg, _ := makeDoctorCfg(t, "orchestrator")
+	cycleDir := filepath.Join(cfg.projectDir, ".harmonik", "keeper")
+	if err := os.MkdirAll(cycleDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte(`{"cycle_id":"cyc-parked","phase":"parked","opened_at":"2026-08-09T00:00:00Z","updated_at":"2026-08-09T00:01:00Z","reason":"operator_turn_recent"}`)
+	if err := os.WriteFile(filepath.Join(cycleDir, "orchestrator.cycle"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	runKeeperDoctor(cfg, &stdout, &stdout)
+	out := stdout.String()
+	if !strings.Contains(out, "last-cycle") || !strings.Contains(out, "phase=parked") ||
+		!strings.Contains(out, "reason=operator_turn_recent") {
+		t.Fatalf("doctor did not explain parked cycle:\n%s", out)
+	}
+}
+
 // TestKeeperDoctor_TmuxPaneMissing_IsRed verifies that doctor exits non-zero
 // and reports the tmux-pane check as red when the session is live but the pane
 // is not reachable (the zsh :a modifier bug — unbraced $session:agent mangled

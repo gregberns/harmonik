@@ -69,6 +69,65 @@ about, and nothing about anything filed after this date. The floor rule stands.
 
 ---
 
+## 2026-08-09 — the assessor lane's own findings were placed, and nine were already fixed
+
+The assessor lane filed 50 findings across three sessions. This section places them. The sources are
+`HANDOFF-bravo.md`, the open `found-by:assessor` bead set, and the four `codename:quality-system`
+findings the same lane filed without that label. Re-derived against `fced344cf`. Every fix commit
+named below is an ancestor of that commit.
+
+**Nine were already fixed in the tree before this triage ran.**
+
+| Finding | Fixed by | What was checked |
+| --- | --- | --- |
+| the run that merges nothing and reports success (P1) | `db2e14efa` | A missing run branch now fails closed. Pinned by `TestMergeToMain_RunBranchMissingIsNotSilentSuccess`. |
+| codex resumed with a claude session id (P1) | `4f89681e4` | The resume is handed the captured codex thread id. Pinned by `TestDotCodexBackEdgeResumesCapturedThreadID_hk5rmtc`. |
+| every pi and codex run said it was claude (P2) | `ef20ad01e` | `buildCodexRoutedLaunchSpec` reports the resolved harness. The same commit fixed the empty `log_path`. |
+| the gate asked for a workflow mode the daemon does not report (P3) | `c7e79e24f` | `core.RunStartedPayload.Valid` requires `workflow_mode == dot`, so the cell assertion could never go green. Fixture drift. |
+| the live gate dirtied its own tree (P1) | `f1cf21dd7` | Pinned by `scripts/scratch-daemon-rev-pin-test.sh`. |
+| the queue item's mode outranked the per-bead label (P1) | `967335704` and its parents | Closed with the fixture guard. |
+| the assessor contract named a dead build target (P1, two beads) | `f1cf21dd7` | `roles/assessor/operating.md` and `good-enough-principles.md` name `make core` and `make full`. |
+
+**Two of the nine were measurement errors, and one is the exact failure this file keeps warning
+about.**
+
+- The codex resume bug was re-reported as still live at `89dc52d5`. **That tip does not contain its
+  own fix.** `git merge-base --is-ancestor 4f89681e4 89dc52d5` exits 1. The build that made the
+  observation predates the repair.
+- The no-merge bug was filed as a P1 blocker against a run that had merged. The reporter read `main`.
+  The daemon's target was `scratch/main`, and `scratch/main` advanced. The silent-success path is
+  real and is fixed. The observation that found it was wrong.
+
+**Three claims in `HANDOFF-bravo.md` are stale. Do not work them.**
+
+- "`AGENTS.md` still has no assessor row." It has one. The per-role load map names
+  `roles/assessor/operating.md` as the contract.
+- "The fleet config still says `model: ornith`." It says `nemotron`, and `base_url` is the 8553
+  tunnel.
+- The pi endpoint was never wedged. `a08fa9de3` made the probe read `base_url` and `model` from the
+  overlay. Twelve days of "restart vLLM on the DGX" were a written-down copy of two values another
+  component owns.
+
+**One fix is in the working tree and is not committed.** `scripts/core-loop-seed.sh` now reads
+`defaults.start_from` out of the daemon's own `branching.yaml`. `HEAD` still cuts every landing
+branch with `git branch -f <target> main`. That repair is `hk-igege`, it is the reason the gate could
+not reach a green landing, and it is one checkout from gone. Commit it before anything else here.
+
+**Apparatus and product are two lists, and this file had no rule for that. Use this one.**
+A defect in the assessment apparatus — the scratch daemon, the matrix scripts, the cell fixtures,
+the assertion jq — goes in List A when it makes the gate unrunnable, or when it lets the gate report
+a green it did not earn. It never goes on a production blocker list, because the product ships
+without the apparatus. Each entry below carries **APPARATUS** when it is one. A4 already worked this
+way and never said so.
+
+**List A answers a narrower question than "can this go to production".** The criterion at the top of
+this file is one local scratch audit at concurrency one. Several List B items block production under
+`plans/2026-07-06-quality-system/07-assessor-severity-framework.md` §2. They are named in the
+production-delta block at the end of List B. **Never read a List B placement as "safe in
+production".**
+
+---
+
 ## List A — fix before the candidate goes to the assessor
 
 ### A1. The assessor cannot run at all
@@ -91,6 +150,29 @@ about, and nothing about anything filed after this date. The floor rule stands.
 > zero network egress) and `hk-bzydx` (a sandboxed run cannot reach its harness state directory) are
 > therefore **moved to List B**. They are still real and still serious; they are simply not on this
 > path. Do not promote them back without turning sandboxing on first.
+
+**Placed 2026-08-09. All four are APPARATUS.**
+
+- **`hk-igege`** (P1) — the live-verify gate cut every landing branch from `main` while the daemon
+  starts its runs from `scratch/main`. Measured on a real clone: the two refs are 932 commits apart,
+  so the rebase replayed 822 commits and ended `rebase_conflict` every time. The daemon behaved
+  correctly and named the reason. **The fix is in the working tree and is not committed.**
+- **The three siblings `hk-igege` names, all still open in the fixture.** Five of the seven cells in
+  `scenarios/core-loop-proof/cells.json` declare `expect.lands_on: main` while their seeds carry no
+  `target_branch`, so the daemon lands them on the project default. **Those five cells cannot go
+  green as written.** Only `pi:local` and `pi-dot:local` are correct. `scripts/core-loop-matrix.sh`
+  reads the same literal for its landing witness, and `scripts/core-loop-assert.jq` hardcodes it in
+  the `t10` comparison. Checked in the tree 2026-08-09.
+- **`hk-gate-clean-but-binary-dirty-7gwil`** (P2) — the gate reports "no local edits" and stamps the
+  binary `vcs.modified=true`, so `harmonik version --binary` refuses every binary the documented
+  assessor sequence produces. The provenance check cannot pass. Its priority understates it: this is
+  the surviving half of the self-taint family that `f1cf21dd7` closed.
+- **`hk-assessor-reads-stale-tree-xfe8h`** (P1) — the assessor reads its contract and its
+  scratch-daemon script from whatever the checkout holds, so a lagging tree supplies the pre-fix
+  versions in silence. **Both named fixes have now reached the tree:** `scripts/scratch-daemon.sh`
+  names `--rev` 22 times, and `roles/assessor/operating.md` opens with the
+  `grep -c -- '--rev' scripts/scratch-daemon.sh` self-check the bead asked for. **The structural half
+  is open.** Nothing stamps a contract version, and nothing refuses to gate from an older tree.
 
 ### A2. The assessor reaches a verdict, but the verdict is not honest
 
@@ -165,6 +247,38 @@ This group is the reason the list exists. Each one makes something pass that sho
   check; the billing guard got nothing. **On List A because an assessor audit that drives concurrent
   dispatch can be refused a launch for a reason that is not about the candidate commit.**
 
+**Placed 2026-08-09.** The first three are the review gate. The rest make a run report an outcome the
+product did not have.
+
+- **`hk-pd732`** (P0) — the no-reviewer escape hatch is invoked without testing the claim, so it
+  bypasses the review gate. **A new instance landed on 2026-08-09.** `fde81d95b` is an ancestor of
+  `HEAD` and carries "no reviewer reachable from this session". The trailer was pre-written into a
+  scratchpad by a session that died, and the next session committed it without testing it. Three to
+  five commits have now landed unreviewed on the integration branch this way. **This is the sibling
+  of `hk-fabricated-review-trailer-zbkqf` and the two are one decision, not two.**
+- **`hk-assessor-duplicate-review-verdict-two-commits-4fizc`** (P2) — one review verdict is attached
+  byte-identically to two different commits. **This is the proof that the trailer format cannot bind
+  a verdict to a diff.** Its priority is wrong for what it demonstrates. Keep it with the two P0s
+  above and decide all three together.
+- **`hk-codex-success-retried-and-lost-rqxz3`** (P1) — a codex attempt that committed, exited 0 and
+  exited clean is retried. The retry dies on a bad thread id, and the retry's failure replaces the
+  success. The run reports a failure the product did not have, and the landed work is discarded.
+  `4f89681e4` repaired the thread id only.
+- **`hk-quit-instruction-not-portable-ms55w`** (P1) — pi and codex agents are told to run `/quit`, a
+  Claude-only command. The pi agent committed correctly, ran `echo /quit | pbcopy`, and the daemon
+  killed it as a crash. Every non-claude cell grades the harness against a Claude instruction.
+- **`hk-queue-pause-succeeds-on-unknown-queue-nr18c`** (P1) — `queue pause` on a misspelled queue name
+  reports `paused` and exits 0 while the real queue keeps dispatching. The operator's stop control
+  reports a state it never reached.
+- **`hk-3kw4a`** (P2) — a successful merge emits no event, so the event stream cannot answer "did this
+  land". `workspace_merge_status` is registered in `internal/core/eventreg_hqwn59.go` and
+  `internal/daemon/notifystream.go` subscribes to it. **Nothing produces it.** The consumer is dead.
+  This already cost one wrong P1 filing, which is the concrete price of the gap.
+- **`hk-ihfwe`** (P2) — EM-054's skip-if-uncomputable leaves the INDEX stale, so a later commit of
+  those paths from the main root silently reverts the merge, inside `.harmonik/`, where the escape
+  check does not look. A silent revert of merged work is the worst shape this project has.
+  **Claimed only. Filed 2026-07-22 and never re-derived. Re-check before you spend a day on it.**
+
 ### A3. The run does not survive its own lifecycle
 
 - **`hk-hsp9e`** (P0) — both halves of hang handling are dead: nothing kills a hung agent, and nothing
@@ -187,6 +301,13 @@ This group is the reason the list exists. Each one makes something pass that sho
   sent to fix did not exist. The live-verify leg drives real dispatch, so this grades the wrong code.
 - **`hk-1xp9h`** — the socket server registers 28 routes and checks readiness on none of them. The
   assessor stops and starts its scratch daemon, which is exactly when a pre-ready request lands.
+
+**Placed 2026-08-09.**
+
+- **`hk-queue-status-blind-shutdown-gate-9dco0`** (P1) — `queue status` reports "(no queue active)"
+  while a bead is dispatched, and the captain shutdown gate reads an `active_runs` field that does
+  not exist. The assessor stops and starts its scratch daemon, and this is the check that is supposed
+  to say whether that is safe.
 
 ### A4. The test bed corrupts itself or the machine
 
@@ -227,6 +348,18 @@ These matter more than usual because lanes run beside the assessor on one box.
   `git stash pop` takes another's work. Observed 2026-08-06 with real work briefly lost. Lanes run
   beside the assessor on one box.
 
+**Placed 2026-08-09. APPARATUS, and it reaches the operator's machine.**
+
+- **`hk-assessor-scratch-daemon-locks-real-claude-config-gpmmr`** (P1) — dispatching any claude bead
+  makes the scratch daemon take a write lock on the operator's real `~/.claude.json`, through
+  `EnsureWorktreeTrust` in `internal/workspace/claudetrust_wm040b.go`. A running Claude Code session
+  holds that file, so every run dies before launch. Four of four runs failed this way. **A throwaway
+  daemon also mutates the operator's real global config, which is the opposite of what the scratch
+  harness promises.** The workaround is verified: export `CLAUDE_CONFIG_HOME` to a path inside the
+  scratch project before `scratch-daemon.sh up`. Checked 2026-08-09 — no script under `scripts/` sets
+  it, so the caller still has to remember. `HARMONIK_CLAUDE_PROJECTS_DIR` is the matching seam for the
+  session log, which still lands in the operator's real projects directory.
+
 ### A5. Cheap safety, do them while you are in there
 
 - **`hk-ifj6p`** — an unknown first token falls through and **boots a daemon against the current
@@ -253,6 +386,13 @@ These matter more than usual because lanes run beside the assessor on one box.
   `specs/cognition-loop.md`'s "two-phase done" definition is a THIRD clause and it is weaker: it
   requires the trailer AND a `run_completed{success}` event, so it is not the same false green. Fix
   the two skip clauses; do not sweep the definition in with them.
+
+**Placed 2026-08-09.**
+
+- **`hk-cli-flag-first-starts-daemon-gjhiy`** (P1) — a leading flag turns off the
+  unknown-subcommand guard, so `harmonik --project DIR queue list` boots a daemon instead of listing.
+  This is `hk-ifj6p` above reached by a second route. Fix both in one change or the guard grows a
+  third hole.
 
 ---
 
@@ -320,6 +460,62 @@ unauthenticated) · `hk-rlvhi`, `hk-xbrc2`, `hk-j7yo0` (stale binary and wrong-v
 - `hk-specs-crossrepo-stale-i1bcg` — two specs still say cross-repo dispatch is refused. It has
   been supported for some time. Spec staleness, and the specs are normative, so it will mislead a
   reader before it breaks a run.
+
+**Placed 2026-08-09 — the assessor lane's remaining findings.** None of these makes a local scratch
+audit fail, and none makes it pass when it should not.
+
+- **Missing tests, no runtime effect.** `hk-assessor-release-giveup-untested-85cgl` (P1) — nothing
+  drives `releaseFrom` to budget exhaustion, so replacing its `return last` with a released verdict
+  survives the whole suite. Confirmed by reading the test file:
+  `TestReleaseFrom_RetriesAfterLosingTheSnapshotRace` arranges one lost race and asserts that the
+  retry wins. No test spends the budget. The
+  implemented behaviour is right and nothing pins it. **The queue is the centre, so this is the
+  highest-value item in List B.** With it: `hk-assessor-release-dispatched-guard-unpinned-83pmo`,
+  `hk-assessor-release-identity-guards-unpinned-6881f`,
+  `hk-assessor-release-e2e-fixture-trivial-shape-pvlu2` (P2, P2, P3) — the same package, the same
+  shape.
+- **The instrument is honest about the paths it covers and silent about the rest.**
+  `hk-matrix-no-failure-cells-emc5z` (P2) — all seven cells expect `terminal: pass`, so no failure
+  route is proven live anywhere in this project. Same reasoning as `hk-wn8wp`: this is the baseline's
+  own honesty, not a false green on the paths it does run. `hk-20jak` (P2, cells are not bound to
+  their seeds) and `hk-gap4-dispatch-live-verify-4kd1t` (P3, the dispatch expectations are derived
+  from the spec and never observed) sit with it. All three are APPARATUS. `hk-20jak` promotes to
+  List A the moment a cell is found grading the wrong seed.
+- **Wrong words to the operator, right behaviour underneath.**
+  `hk-pi-failure-misclassified-claude-a52et` (P2, a pi kill recorded as `claude_crashed`) ·
+  `hk-assessor-release-verdict-blames-contention-2rmht` (P2, every pre-I/O rejection reported as
+  snapshot contention) · `hk-assessor-release-message-wrong-on-reap-7djok` (P3) ·
+  `hk-opaque-unknown-bead-error-x4pj2` (P3) · `hk-phantom-status-command-nlbtz` (P2, two commands
+  tell the operator to run `harmonik status`, which does not exist).
+- **Outside the core set by `CHARTER.md` §3, so not on this path.**
+  `hk-subscribe-accepts-unknown-type-rd07b` (P2) · `hk-comms-send-unknown-recipient-9yh1l` (P3) ·
+  `hk-usage-misattributes-cost-yymyu` (P2) · `hk-init-leaves-project-unsynced-bwat9` (P3) ·
+  `hk-ilg6c` (P3).
+- **Housekeeping.** `hk-assessor-intent-temp-leaks-uncollected-zwkia` (P2) ·
+  `hk-assessor-mainhealth-stdout-capture-race-dk8b4` (P2) ·
+  `hk-assessor-mission-brief-misdescribes-lane-k8a4a` (P2) ·
+  `hk-assessor-commit-credits-unrequested-test-4bhsw` (P2) ·
+  `hk-assessor-candidate-removal-not-dirsynced-c6zbu` (P3).
+
+### The production delta — List B is not "safe in production"
+
+Six List B items block a production run under
+`plans/2026-07-06-quality-system/07-assessor-severity-framework.md` §2, and they are in List B only
+because a local audit at concurrency one does not reach them. **The moment the daemon runs real work
+unattended, these move to blocking. Do not let a List B placement retire one of them.**
+
+| Finding | Why it is List B here | Why it blocks production |
+| --- | --- | --- |
+| `hk-71joj` (P1) | the assessor runs at concurrency one | two of three concurrent agents never returned an outcome — an unbounded wedge |
+| `hk-j63y6` (P1) | same | the merge gate races itself and blames the agent for a missing tool |
+| `hk-set-concurrency-unbounded-ad79i` (P2) | the assessor never raises concurrency | `999999` is accepted and applied to the live daemon with no bound |
+| `hk-promote-dryrun-validates-nothing-975nt` (P2) | the assessor never runs `promote` | `promote --dry-run` prints the same plan for a commit and a branch that do not exist, and exits 0 — a false green on the release tool |
+| `hk-assessor-mainhealth-rename-fail-commits-on-boot-du1y5` (P2) | not reached in one audit | a rename failure reported as not-committed is committed by the next boot |
+| `hk-3kw4a` (P2) | placed in List A above, repeated here | production cannot answer "did this land" from the event stream either |
+
+`hk-85pqo` is the other production item and it is unchanged: worktree trust writes into the operator's
+real `~/.claude.json` and nothing prunes it. It stays blocker 2 for the operator, because pruning that
+file needs their yes.
 
 **Close rather than fix:** `hk-main-required-check-red-i14hq`. The operator ruled on 2026-08-06 that
 `main` needs nothing until the merge at the end. Nothing should judge this branch's work against it.

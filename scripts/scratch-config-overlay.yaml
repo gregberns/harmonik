@@ -97,8 +97,13 @@ harnesses:
   # tunnel, so the cell is SKIP-loud (never green) and you should restart vLLM on the dgx box.
   pi:
     provider: ornith
-    model: nemotron                      # the model id the DGX vLLM actually serves; `ornith` is the
-                                         # provider alias, not a model, and asking for it 404s
+    # The DGX vLLM serves ONE model and names it on the wire. It is `nemotron` as of
+    # 2026-08-09; it was `ornith` before that. This is the served-model-name the engine
+    # answers to, NOT the provider -- `ornith` is the provider alias and asking for it
+    # 404s. pi puts this straight into the request body, so a stale value here returns
+    # 404 "The model `X` does not exist", never a timeout.
+    # Read the live name from `curl http://127.0.0.1:8553/v1/models` before changing it.
+    model: nemotron
     base_url: http://127.0.0.1:8553/v1   # loopback tunnel -> DGX vLLM (srt permits loopback; LAN IP blocked)
     api: openai-completions              # ornith needs "openai-completions", NOT bare "openai"
     api_key_env: ORNITH_API_KEY

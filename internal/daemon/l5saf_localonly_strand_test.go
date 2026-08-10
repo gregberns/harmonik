@@ -143,11 +143,7 @@ func TestL5saf_LocalOnlyItemNotStrandedByCapGuard(t *testing.T) {
 	got := qs.Queue()
 
 	cancel()
-	select {
-	case <-loopDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("l5saf: work loop did not exit within 5s after context cancel")
-	}
+	awaitLoopTeardown(t, loopDone, "work loop")
 
 	// The guard must have deferred WITHOUT ever claiming/dispatching the bead.
 	if claims := ledger.claimCalls.Load(); claims != 0 {

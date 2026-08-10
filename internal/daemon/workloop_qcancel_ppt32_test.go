@@ -162,11 +162,7 @@ func TestQueueCancel_TransitionsToCancelled(t *testing.T) {
 		daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	select {
-	case <-loopDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("workloop did not exit within 5s after immediate context cancel")
-	}
+	awaitLoopTeardown(t, loopDone, "work loop")
 
 	// (a) The canonical main-queue file (.harmonik/queues/main.json) must be
 	// absent — CancelQueueOnShutdown renamed it to main.json.cancelled-<ts>.
@@ -273,11 +269,7 @@ func TestQueueCancel_AlreadyTerminal_NoOp(t *testing.T) {
 		daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	select {
-	case <-loopDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("workloop did not exit within 5s")
-	}
+	awaitLoopTeardown(t, loopDone, "work loop")
 
 	// queue.json must still exist with paused-by-failure (not archived by drainCancelledQueue).
 	reloaded, loadErr := queue.Load(context.Background(), projectDir, queue.QueueNameMain)
@@ -376,11 +368,7 @@ func TestQueueCancel_NamedQueue_ArchivedOnShutdown(t *testing.T) {
 		daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	select {
-	case <-loopDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("workloop did not exit within 5s after immediate context cancel")
-	}
+	awaitLoopTeardown(t, loopDone, "work loop")
 
 	// (a) .harmonik/queues/cp.json must be absent (archived by drainCancelledQueue).
 	reloaded, loadErr := queue.Load(context.Background(), projectDir, queueName)

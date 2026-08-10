@@ -346,14 +346,12 @@ func TestSmokeLoop(t *testing.T) {
 	// Stop the work loop by cancelling the context.
 	loopCancel()
 
-	// Wait for daemon.Start to return (up to 5 s after cancel).
-	select {
-	case err := <-startDone:
-		if err != nil {
-			t.Errorf("daemon.Start returned error after context cancel: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Error("daemon.Start did not return within 5 s after context cancel")
+	// Wait for daemon.Start to return. This test's property — bead closed,
+	// run_started and run_completed all seen — has already been observed above by
+	// the time we get here, so a stopwatch on the unwind can only fail a test
+	// that has passed. It did exactly that (hk-scenario-budgets-structural-2z9dx).
+	if err := awaitLoopTeardownErr(t, startDone, "daemon.Start"); err != nil {
+		t.Errorf("daemon.Start returned error after context cancel: %v", err)
 	}
 
 	// Assert bead was closed within the polling budget.

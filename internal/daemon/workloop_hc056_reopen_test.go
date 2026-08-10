@@ -231,11 +231,7 @@ func TestWorkLoop_HC056Timeout_ReopenAndRepickup(t *testing.T) {
 	}
 
 	// Wait for the loop goroutine to exit (should be fast after cancel).
-	select {
-	case <-loopDone:
-	case <-time.After(5 * time.Second):
-		t.Error("work loop did not exit within 5s after context cancellation")
-	}
+	awaitLoopTeardown(t, loopDone, "work loop")
 
 	// Assertions: at least one ReopenBead and at least two ClaimBead calls.
 	if reopens := ledger.getReopenCount(); reopens < 1 {

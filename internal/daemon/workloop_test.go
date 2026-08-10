@@ -372,8 +372,8 @@ func TestWorkLoop_DispatchClosesBead(t *testing.T) {
 	})
 
 	// Real productionWorktreeFactory + buildClaudeLaunchSpec run; stopHookGrace
-	// (~3s) fires per bead. 20s budget covers git + grace + CI variability (hk-ngw3d).
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	// (~3s) fires per bead (hk-ngw3d).
+	ctx, cancel := context.WithTimeout(context.Background(), workLoopTestBudget)
 	defer cancel()
 
 	// The loop will dispatch the bead, close it, then find the queue empty and
@@ -384,11 +384,11 @@ func TestWorkLoop_DispatchClosesBead(t *testing.T) {
 		daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	// Poll until the bead is closed or timeout.
-	deadline := time.After(15 * time.Second)
+	// Poll until the bead is closed. The context is the one budget — a second,
+	// smaller poll deadline only adds a way to fail while the loop still works.
 	for len(ledger.closedIDs()) == 0 {
 		select {
-		case <-deadline:
+		case <-ctx.Done():
 			t.Fatal("timed out waiting for bead to be closed")
 		case <-time.After(50 * time.Millisecond):
 		}
@@ -396,11 +396,7 @@ func TestWorkLoop_DispatchClosesBead(t *testing.T) {
 
 	// Cancel the context to stop the loop goroutine.
 	cancel()
-	select {
-	case <-waitDone:
-	case <-time.After(2 * time.Second):
-		t.Fatal("work loop did not exit after context cancellation")
-	}
+	awaitLoopTeardown(t, waitDone, "work loop")
 
 	// Assert bead was closed.
 	closedIDs := ledger.closedIDs()
@@ -465,8 +461,8 @@ func TestWorkLoop_FailedHandlerReopensBead(t *testing.T) {
 	})
 
 	// Real productionWorktreeFactory + buildClaudeLaunchSpec run; stopHookGrace
-	// (~3s) fires per bead. 20s budget covers git + grace + CI variability (hk-ngw3d).
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	// (~3s) fires per bead (hk-ngw3d).
+	ctx, cancel := context.WithTimeout(context.Background(), workLoopTestBudget)
 	defer cancel()
 
 	waitDone := make(chan struct{})
@@ -475,22 +471,17 @@ func TestWorkLoop_FailedHandlerReopensBead(t *testing.T) {
 		daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	// Poll until the bead is reopened.
-	deadline := time.After(15 * time.Second)
+	// Poll until the bead is reopened, bounded by the context.
 	for len(ledger.reopenedIDs()) == 0 {
 		select {
-		case <-deadline:
+		case <-ctx.Done():
 			t.Fatal("timed out waiting for bead to be reopened")
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
 
 	cancel()
-	select {
-	case <-waitDone:
-	case <-time.After(2 * time.Second):
-		t.Fatal("work loop did not exit after context cancellation")
-	}
+	awaitLoopTeardown(t, waitDone, "work loop")
 
 	reopenedIDs := ledger.reopenedIDs()
 	if len(reopenedIDs) == 0 {
@@ -663,9 +654,9 @@ func TestWorkLoop_TwoConcurrentBeads(t *testing.T) {
 	})
 
 	// Real productionWorktreeFactory + buildClaudeLaunchSpec run concurrently for
-	// both beads; stopHookGrace (~3s) per bead runs in parallel at MaxConcurrent=2.
-	// 30s budget covers git + grace + CI variability (hk-ngw3d).
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// both beads; stopHookGrace (~3s) per bead runs in parallel at MaxConcurrent=2
+	// (hk-ngw3d).
+	ctx, cancel := context.WithTimeout(context.Background(), workLoopTestBudget)
 	defer cancel()
 
 	loopDone := make(chan struct{})
@@ -674,30 +665,25 @@ func TestWorkLoop_TwoConcurrentBeads(t *testing.T) {
 		daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	// Wait until both beads are simultaneously claimed (or test times out).
+	// Wait until both beads are simultaneously claimed, bounded by the context.
 	select {
 	case <-ledger.claimedCh:
 		// Both beads claimed — concurrency confirmed.
-	case <-time.After(20 * time.Second):
+	case <-ctx.Done():
 		t.Fatal("timed out waiting for two simultaneous in-flight beads at MaxConcurrent=2")
 	}
 
 	// Wait for both beads to close.
-	deadline := time.After(20 * time.Second)
 	for ledger.closedCount() < 2 {
 		select {
-		case <-deadline:
+		case <-ctx.Done():
 			t.Fatalf("timed out waiting for both beads to close; closed=%d", ledger.closedCount())
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
 
 	cancel()
-	select {
-	case <-loopDone:
-	case <-time.After(3 * time.Second):
-		t.Fatal("work loop did not exit after context cancellation")
-	}
+	awaitLoopTeardown(t, loopDone, "work loop")
 
 	// Assert peak concurrency was 2.
 	if p := ledger.peak(); p < 2 {
@@ -805,8 +791,8 @@ func TestWorkLoop_CloseBeadError_EmitsRunFailed(t *testing.T) {
 	})
 
 	// Real productionWorktreeFactory + buildClaudeLaunchSpec run; stopHookGrace
-	// (~3s) fires per bead. 20s budget covers git + grace + CI variability (hk-ngw3d).
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	// (~3s) fires per bead (hk-ngw3d).
+	ctx, cancel := context.WithTimeout(context.Background(), workLoopTestBudget)
 	defer cancel()
 
 	waitDone := make(chan struct{})
@@ -815,8 +801,7 @@ func TestWorkLoop_CloseBeadError_EmitsRunFailed(t *testing.T) {
 		daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	// Poll until a run_failed event is emitted or timeout.
-	deadline := time.After(15 * time.Second)
+	// Poll until a run_failed event is emitted, bounded by the context.
 	for {
 		types := collector.eventTypes()
 		for _, et := range types {
@@ -825,7 +810,7 @@ func TestWorkLoop_CloseBeadError_EmitsRunFailed(t *testing.T) {
 			}
 		}
 		select {
-		case <-deadline:
+		case <-ctx.Done():
 			t.Fatalf("timed out waiting for run_failed event; got events: %v", collector.eventTypes())
 		case <-time.After(50 * time.Millisecond):
 		}
@@ -833,11 +818,7 @@ func TestWorkLoop_CloseBeadError_EmitsRunFailed(t *testing.T) {
 found:
 
 	cancel()
-	select {
-	case <-waitDone:
-	case <-time.After(2 * time.Second):
-		t.Fatal("work loop did not exit after context cancellation")
-	}
+	awaitLoopTeardown(t, waitDone, "work loop")
 
 	// Must have emitted run_failed, NOT run_completed.
 	types := collector.eventTypes()
@@ -989,8 +970,9 @@ func TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency(t *testing.T) {
 	})
 
 	// Real buildClaudeLaunchSpec + productionWorktreeFactory run; stopHookGrace
-	// (~3s) fires per bead. 30s budget covers git + grace + CI variability (hk-ngw3d).
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// (~3s) fires per bead, and this test dispatches ten of them four at a time,
+	// so three waves of grace are a 9-second floor before any git work (hk-ngw3d).
+	ctx, cancel := context.WithTimeout(context.Background(), workLoopTestBudget)
 	defer cancel()
 
 	loopDone := make(chan struct{})
@@ -999,11 +981,10 @@ func TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency(t *testing.T) {
 		daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	// Poll until all 10 beads are closed or the test times out.
-	deadline := time.After(25 * time.Second)
+	// Poll until all 10 beads are closed, bounded by the context.
 	for ledger.closedCount() < beadCount {
 		select {
-		case <-deadline:
+		case <-ctx.Done():
 			t.Fatalf("timed out waiting for all %d beads to close; closed=%d peak_concurrent_claims=%d",
 				beadCount, ledger.closedCount(), ledger.peakClaims.Load())
 		case <-time.After(50 * time.Millisecond):
@@ -1011,11 +992,7 @@ func TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency(t *testing.T) {
 	}
 
 	cancel()
-	select {
-	case <-loopDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("work loop did not exit after context cancellation")
-	}
+	awaitLoopTeardown(t, loopDone, "work loop")
 
 	// Assert concurrent ClaimBead calls never exceeded MaxConcurrent.
 	peak := ledger.peakClaims.Load()

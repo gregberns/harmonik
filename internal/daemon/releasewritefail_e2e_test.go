@@ -179,11 +179,7 @@ func TestReleaseWriteFailure_ReportsTheFailedWrite(t *testing.T) {
 	// the loop goroutine, so the two cannot be observed apart.
 	time.Sleep(200 * time.Millisecond)
 	cancel()
-	select {
-	case <-loopDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("work loop did not exit within 5s after context cancel")
-	}
+	awaitLoopTeardown(t, loopDone, "work loop")
 
 	// Positive control. A run with zero claims never reached the release, and
 	// every assertion below would then pass for the wrong reason.

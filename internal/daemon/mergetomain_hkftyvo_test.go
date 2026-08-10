@@ -480,11 +480,7 @@ func TestMergeToMain_SuccessPath(t *testing.T) {
 		t.Error("timed out waiting for bead close/reopen")
 	}
 
-	select {
-	case <-loopDone:
-	case <-time.After(5 * time.Second):
-		t.Error("work loop did not exit within 5s")
-	}
+	awaitLoopTeardown(t, loopDone, "work loop")
 
 	// ── Assertion (a): main advanced beyond mainSHABefore. ────────────────────
 	mainSHAAfter := mergeToMainFixtureHeadSHA(t, projectDir, "main")
@@ -659,13 +655,8 @@ func TestMergeToMain_PreCommittedWorktreeAndIdleAgentStillFails(t *testing.T) {
 		t.Fatal("timed out waiting for bead close/reopen")
 	}
 
-	select {
-	case loopErr := <-loopDone:
-		if loopErr != nil && !errors.Is(loopErr, context.Canceled) {
-			t.Errorf("work loop returned unexpected error: %v", loopErr)
-		}
-	case <-time.After(5 * time.Second):
-		t.Error("work loop did not exit within 5s")
+	if loopErr := awaitLoopTeardownErr(t, loopDone, "work loop"); loopErr != nil && !errors.Is(loopErr, context.Canceled) {
+		t.Errorf("work loop returned unexpected error: %v", loopErr)
 	}
 
 	types := mergeToMainEventOrder(collector)
@@ -782,11 +773,7 @@ func TestMergeToMain_NonFFReopen(t *testing.T) {
 		t.Error("timed out waiting for bead close/reopen")
 	}
 
-	select {
-	case <-loopDone:
-	case <-time.After(5 * time.Second):
-		t.Error("work loop did not exit within 5s")
-	}
+	awaitLoopTeardown(t, loopDone, "work loop")
 
 	// ── Assertion (f): ReopenBead called. ────────────────────────────────────
 	if got := ledger.getReopenedCount(); got < 1 {

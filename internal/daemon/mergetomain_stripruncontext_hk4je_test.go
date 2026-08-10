@@ -169,11 +169,7 @@ func TestStripRunContext_NeverLandsOnMain(t *testing.T) {
 	case <-ctx.Done():
 		t.Error("timed out waiting for bead close/reopen")
 	}
-	select {
-	case <-loopDone:
-	case <-time.After(5 * time.Second):
-		t.Error("work loop did not exit within 5s")
-	}
+	awaitLoopTeardown(t, loopDone, "work loop")
 
 	// ── Assertion (q1): bead closed (not reopened). ───────────────────────────
 	if got := ledger.getClosedCount(); got < 1 {

@@ -163,7 +163,7 @@ func TestT2_NonZeroExit(t *testing.T) {
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), workLoopTestBudget)
 	defer cancel()
 
 	waitDone := make(chan struct{})
@@ -173,10 +173,10 @@ func TestT2_NonZeroExit(t *testing.T) {
 	}()
 
 	// Poll until ReopenBead is called (indicates loop handled the failure).
-	deadline := time.After(6 * time.Second)
+
 	for len(ledger.reopenedIDs()) == 0 {
 		select {
-		case <-deadline:
+		case <-ctx.Done():
 			t.Logf("closed=%v reopened=%v events=%v", ledger.closedIDs(), ledger.reopenedIDs(), collector.eventTypes())
 			t.Fatal("T2-S1 FAIL: timed out; ReopenBead never called after non-zero exit")
 		case <-time.After(50 * time.Millisecond):
@@ -242,7 +242,7 @@ func TestT2_SIGKILLDuringRun(t *testing.T) {
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), workLoopTestBudget)
 	defer cancel()
 
 	// We need to intercept the process to kill it. Since the loop runs handler
@@ -257,7 +257,7 @@ func TestT2_SIGKILLDuringRun(t *testing.T) {
 	}()
 
 	// Wait for run_started event indicating the hang twin is running.
-	deadline := time.After(6 * time.Second)
+
 	for {
 		types := collector.eventTypes()
 		for _, et := range types {
@@ -266,7 +266,7 @@ func TestT2_SIGKILLDuringRun(t *testing.T) {
 			}
 		}
 		select {
-		case <-deadline:
+		case <-ctx.Done():
 			t.Fatalf("T2-S2: run_started never fired; events=%v", collector.eventTypes())
 		case <-time.After(50 * time.Millisecond):
 		}
@@ -276,14 +276,14 @@ launched:
 
 	// Kill this test's OWN twin. The pattern is the per-test marker in the
 	// twin's argv, never the shared "twin-hang" name — see t2ScopedTwin.
+	//nolint:gosec // G204: twinMarker is built from t.Name() and the pid — test-internal, not user input
 	killCmd := exec.CommandContext(context.Background(), "pkill", "-SIGKILL", "-f", twinMarker)
 	_ = killCmd.Run() // ignore error if no process found
 
 	// Now wait for the loop to detect the kill and reopen the bead.
-	sigkillDeadline := time.After(6 * time.Second)
 	for len(ledger.reopenedIDs()) == 0 && len(ledger.closedIDs()) == 0 {
 		select {
-		case <-sigkillDeadline:
+		case <-ctx.Done():
 			t.Logf("T2-S2: events=%v closed=%v reopened=%v", collector.eventTypes(), ledger.closedIDs(), ledger.reopenedIDs())
 			t.Fatal("T2-S2 FAIL: timed out waiting for bead state change after SIGKILL")
 		case <-time.After(100 * time.Millisecond):
@@ -351,7 +351,7 @@ exit 0
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), workLoopTestBudget)
 	defer cancel()
 
 	waitDone := make(chan struct{})
@@ -362,10 +362,10 @@ exit 0
 	}()
 
 	// Poll for bead state change (closed or reopened).
-	deadline := time.After(6 * time.Second)
+
 	for len(ledger.closedIDs()) == 0 && len(ledger.reopenedIDs()) == 0 {
 		select {
-		case <-deadline:
+		case <-ctx.Done():
 			t.Logf("T2-S3: events=%v closed=%v reopened=%v", collector.eventTypes(), ledger.closedIDs(), ledger.reopenedIDs())
 			t.Fatal("T2-S3 FAIL: timed out; bead never closed or reopened after malformed NDJSON + exit 0")
 		case <-time.After(50 * time.Millisecond):
@@ -429,7 +429,7 @@ func TestT2_ExitZeroNoSignal(t *testing.T) {
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), workLoopTestBudget)
 	defer cancel()
 
 	waitDone := make(chan struct{})
@@ -438,10 +438,9 @@ func TestT2_ExitZeroNoSignal(t *testing.T) {
 		daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	deadline := time.After(6 * time.Second)
 	for len(ledger.closedIDs()) == 0 && len(ledger.reopenedIDs()) == 0 {
 		select {
-		case <-deadline:
+		case <-ctx.Done():
 			t.Logf("T2-S4: events=%v closed=%v reopened=%v", collector.eventTypes(), ledger.closedIDs(), ledger.reopenedIDs())
 			t.Fatal("T2-S4 FAIL: timed out waiting for bead to be closed after silent exit 0")
 		case <-time.After(50 * time.Millisecond):
@@ -516,15 +515,15 @@ func TestT2_HangTwinCtxCancel(t *testing.T) {
 		loopErr = daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	// Loop should exit within 5s of context cancellation.
-	select {
-	case <-waitDone:
-		elapsed := time.Since(startTime)
-		t.Logf("T2-S5: loop exited in %v; loopErr=%v events=%v closed=%v reopened=%v",
-			elapsed, loopErr, collector.eventTypes(), ledger.closedIDs(), ledger.reopenedIDs())
-	case <-time.After(10 * time.Second):
-		t.Fatal("T2-S5 FAIL: work loop did not exit within 10s after context cancellation with hanging twin")
-	}
+	// The subject here is that the loop EXITS with a twin that never will, not
+	// how fast. The old 10-second cap read like a latency claim and behaved like
+	// one: it failed under parallel load on a loop that exits in 3.8 seconds
+	// alone, and a twin that hangs for ever fails this test at any bound. The
+	// elapsed time is logged, so a real slowdown is still visible to anyone
+	// reading the run (hk-scenario-budgets-structural-2z9dx).
+	awaitLoopTeardown(t, waitDone, "T2-S5 work loop with a hanging twin")
+	t.Logf("T2-S5: loop exited in %v; loopErr=%v events=%v closed=%v reopened=%v",
+		time.Since(startTime), loopErr, collector.eventTypes(), ledger.closedIDs(), ledger.reopenedIDs())
 
 	if loopErr != nil {
 		t.Errorf("T2-S5: loop returned non-nil error: %v", loopErr)
@@ -561,7 +560,7 @@ func TestT2_ProcessGroupCleanup(t *testing.T) {
 	})
 
 	// Launch and wait until run_started is emitted (hang twin is alive).
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), workLoopTestBudget)
 	defer cancel()
 
 	waitDone := make(chan struct{})
@@ -571,7 +570,6 @@ func TestT2_ProcessGroupCleanup(t *testing.T) {
 	}()
 
 	// Wait for run_started.
-	runStartedDeadline := time.After(6 * time.Second)
 	for {
 		types := collector.eventTypes()
 		runStarted := false
@@ -585,7 +583,7 @@ func TestT2_ProcessGroupCleanup(t *testing.T) {
 			break
 		}
 		select {
-		case <-runStartedDeadline:
+		case <-ctx.Done():
 			t.Fatalf("T2-S6: run_started never fired")
 		case <-time.After(50 * time.Millisecond):
 		}
@@ -594,6 +592,7 @@ func TestT2_ProcessGroupCleanup(t *testing.T) {
 	// Check that THIS test's twin is running. Matching the shared "twin-hang"
 	// name also counted a sibling's twin, so the orphan-leak assertion below
 	// could fire on a process this test never started.
+	//nolint:gosec // G204: twinMarker is test-internal; see t2ScopedTwin
 	checkCmd := exec.CommandContext(context.Background(), "pgrep", "-f", twinMarker)
 	pids, _ := checkCmd.Output()
 	t.Logf("T2-S6: twin PIDs before cancel: %s", strings.TrimSpace(string(pids)))
@@ -601,14 +600,11 @@ func TestT2_ProcessGroupCleanup(t *testing.T) {
 
 	// Cancel context (simulates SIGINT/SIGTERM to the daemon).
 	cancel()
-	select {
-	case <-waitDone:
-	case <-time.After(6 * time.Second):
-		t.Fatal("T2-S6: loop did not exit after context cancellation")
-	}
+	awaitLoopTeardown(t, waitDone, "T2-S6 work loop")
 
 	// After loop exit, check whether twin-hang is still running.
 	time.Sleep(500 * time.Millisecond) // give OS time to reap
+	//nolint:gosec // G204: twinMarker is test-internal; see t2ScopedTwin
 	checkCmd2 := exec.CommandContext(context.Background(), "pgrep", "-f", twinMarker)
 	pids2, _ := checkCmd2.Output()
 	afterPIDs := strings.TrimSpace(string(pids2))
@@ -617,7 +613,10 @@ func TestT2_ProcessGroupCleanup(t *testing.T) {
 	if hangRunning && afterPIDs != "" {
 		t.Errorf("T2-S6 FINDING: twin process(es) still alive after context cancellation: %s — orphan leak", afterPIDs)
 		// Cleanup for the test run — this test's own twin only.
-		_ = exec.CommandContext(context.Background(), "pkill", "-SIGKILL", "-f", twinMarker).Run()
+		//nolint:gosec // G204: twinMarker is test-internal; see t2ScopedTwin
+		if killErr := exec.CommandContext(context.Background(), "pkill", "-SIGKILL", "-f", twinMarker).Run(); killErr != nil {
+			t.Logf("T2-S6: cleanup pkill: %v", killErr)
+		}
 	}
 }
 
@@ -648,7 +647,7 @@ func TestT2_RunFailedEventContainsExitCode(t *testing.T) {
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), workLoopTestBudget)
 	defer cancel()
 
 	waitDone := make(chan struct{})
@@ -657,10 +656,9 @@ func TestT2_RunFailedEventContainsExitCode(t *testing.T) {
 		daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	deadline := time.After(6 * time.Second)
 	for len(ledger.reopenedIDs()) == 0 {
 		select {
-		case <-deadline:
+		case <-ctx.Done():
 			t.Fatal("T2-ExitCode: timed out waiting for reopen")
 		case <-time.After(50 * time.Millisecond):
 		}
@@ -722,7 +720,7 @@ func TestT2_WorktreeLeftAfterFailure(t *testing.T) {
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), workLoopTestBudget)
 	defer cancel()
 
 	waitDone := make(chan struct{})
@@ -731,10 +729,9 @@ func TestT2_WorktreeLeftAfterFailure(t *testing.T) {
 		daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	deadline := time.After(6 * time.Second)
 	for len(ledger.reopenedIDs()) == 0 {
 		select {
-		case <-deadline:
+		case <-ctx.Done():
 			t.Fatal("T2-S7: timed out waiting for reopen after failure")
 		case <-time.After(50 * time.Millisecond):
 		}

@@ -149,11 +149,7 @@ func TestReservationWriteFailure_NeverClaimsAndNeverLaunches(t *testing.T) {
 
 	got := qs.Queue()
 	cancel()
-	select {
-	case <-loopDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("work loop did not exit within 5s after context cancel")
-	}
+	awaitLoopTeardown(t, loopDone, "work loop")
 
 	if claims := ledger.claimCalls.Load(); claims != 0 {
 		t.Errorf("ClaimBead called %d time(s); want 0 — a dispatch whose reservation write "+

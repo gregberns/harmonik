@@ -105,11 +105,7 @@ func TestMergeToMain_RunBranchMissingIsNotSilentSuccess(t *testing.T) {
 		t.Error("timed out waiting for bead close/reopen")
 	}
 
-	select {
-	case <-loopDone:
-	case <-time.After(5 * time.Second):
-		t.Error("work loop did not exit within 5s")
-	}
+	awaitLoopTeardown(t, loopDone, "work loop")
 
 	// ── Assertion (i): the bead must NOT be closed. ───────────────────────────
 	if got := ledger.getClosedCount(); got != 0 {

@@ -198,11 +198,7 @@ func TestRunFailed_BeadResetToOpen_s20z(t *testing.T) {
 	}
 
 	// Wait for the loop to exit.
-	select {
-	case <-loopDone:
-	case <-time.After(5 * time.Second):
-		t.Error("TestRunFailed_BeadResetToOpen_s20z: work loop did not exit within 5s after context cancellation")
-	}
+	awaitLoopTeardown(t, loopDone, "work loop")
 
 	// ── Assertion (a): ReopenBead was called ─────────────────────────────────
 	//

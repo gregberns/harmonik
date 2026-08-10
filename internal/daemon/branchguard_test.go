@@ -201,11 +201,7 @@ func branchGuardRunBead(
 		t.Fatal("branchGuardRunBead: timed out waiting for bead close/reopen")
 	}
 
-	select {
-	case <-loopDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("branchGuardRunBead: work loop did not exit within 5s")
-	}
+	awaitLoopTeardown(t, loopDone, "work loop")
 
 	return recording, collector
 }

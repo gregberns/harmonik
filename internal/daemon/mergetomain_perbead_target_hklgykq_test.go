@@ -143,13 +143,8 @@ func TestMergeToMain_PerBeadIntegrationTargetLandsOnBranch(t *testing.T) {
 		t.Fatal("timed out waiting for bead close/reopen")
 	}
 
-	select {
-	case err := <-loopDone:
-		if err != nil && !errors.Is(err, context.Canceled) {
-			t.Errorf("work loop returned unexpected error: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("work loop did not exit within 5s")
+	if err := awaitLoopTeardownErr(t, loopDone, "work loop"); err != nil && !errors.Is(err, context.Canceled) {
+		t.Errorf("work loop returned unexpected error: %v", err)
 	}
 
 	// ── Assertion 1: the integration branch ADVANCED and now CONTAINS the run's

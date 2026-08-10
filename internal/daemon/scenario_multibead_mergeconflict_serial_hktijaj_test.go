@@ -479,11 +479,7 @@ func TestScenario_MultiBead_ConflictSkipsButOthersProceed(t *testing.T) {
 		t.Fatalf("timed out waiting for all %d beads to reach a terminal state", len(allBeads))
 	}
 
-	select {
-	case <-loopDone:
-	case <-time.After(10 * time.Second):
-		t.Error("work loop did not exit within 10s of cancel")
-	}
+	awaitLoopTeardown(t, loopDone, "work loop")
 
 	// ── (1) Conflict bead reopened, not closed, not lost. ─────────────────────
 	if got := ledger.reopenedCount(beadConflict); got < 1 {
@@ -614,11 +610,7 @@ func TestScenario_MultiBead_SerializedNCompletion(t *testing.T) {
 		t.Fatalf("timed out waiting for all %d beads to complete; closed so far=%d", n, ledger.totalClosed())
 	}
 
-	select {
-	case <-loopDone:
-	case <-time.After(10 * time.Second):
-		t.Error("work loop did not exit within 10s of cancel")
-	}
+	awaitLoopTeardown(t, loopDone, "work loop")
 
 	// ── All N beads closed, none reopened. ────────────────────────────────────
 	for _, b := range beads {

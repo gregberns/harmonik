@@ -281,13 +281,8 @@ func throughputFixtureRunDaemon(
 
 	loopCancel()
 
-	select {
-	case err := <-startDone:
-		if err != nil {
-			t.Errorf("daemon.Start returned error: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Error("daemon.Start did not return within 5 s after context cancel")
+	if err := awaitLoopTeardownErr(t, startDone, "daemon.Start"); err != nil {
+		t.Errorf("daemon.Start returned error: %v", err)
 	}
 
 	if !allClosed {

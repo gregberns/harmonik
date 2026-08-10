@@ -182,7 +182,9 @@ func TestT4_EmptyQueue(t *testing.T) {
 	deps := daemon.ExportedTestRuntime(t4FixtureDeps(t, projectDir, ledger, "/bin/sh", []string{"-c", "exit 0"}))
 
 	// Run the loop for a short period — should poll, find nothing, sleep, repeat.
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	// The budget is an outer bound only: the loop is stopped by the explicit
+	// cancel below, never by this context expiring.
+	ctx, cancel := context.WithTimeout(context.Background(), workLoopTestBudget)
 	defer cancel()
 
 	done := make(chan error, 1)
@@ -190,7 +192,7 @@ func TestT4_EmptyQueue(t *testing.T) {
 		done <- daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	// Let it poll a few times (loop sleep is 2s; 3s budget gives at least 1 poll)
+	// Let it poll a few times (loop sleep is 2s).
 	time.Sleep(250 * time.Millisecond)
 
 	// Verify the loop is still alive — not panicked, not exited early.
@@ -207,15 +209,10 @@ func TestT4_EmptyQueue(t *testing.T) {
 
 	// Cancel and wait for clean return.
 	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Errorf("T4-S1: work loop returned non-nil error on ctx cancel: %v", err)
-		} else {
-			t.Log("T4-S1: PASS — loop exited cleanly on cancel with empty queue")
-		}
-	case <-time.After(3 * time.Second):
-		t.Error("T4-S1: FINDING: work loop did not exit within 3s after ctx cancel")
+	if err := awaitLoopTeardownErr(t, done, "T4-S1 work loop"); err != nil {
+		t.Errorf("T4-S1: work loop returned non-nil error on ctx cancel: %v", err)
+	} else {
+		t.Log("T4-S1: PASS — loop exited cleanly on cancel with empty queue")
 	}
 
 	// Confirm Ready was called at least once.
@@ -266,7 +263,7 @@ func TestT4_ClaimConflict(t *testing.T) {
 	}
 	deps := daemon.ExportedTestRuntime(depsParams)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), workLoopTestBudget)
 	defer cancel()
 
 	done := make(chan error, 1)
@@ -304,15 +301,10 @@ func TestT4_ClaimConflict(t *testing.T) {
 	}
 
 	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Errorf("T4-S2: loop returned error after claim conflict: %v", err)
-		} else {
-			t.Log("T4-S2: PASS — loop exited cleanly after claim conflict + ctx cancel")
-		}
-	case <-time.After(3 * time.Second):
-		t.Error("T4-S2: FINDING: work loop did not exit within 3s after ctx cancel")
+	if err := awaitLoopTeardownErr(t, done, "T4-S2 work loop"); err != nil {
+		t.Errorf("T4-S2: loop returned error after claim conflict: %v", err)
+	} else {
+		t.Log("T4-S2: PASS — loop exited cleanly after claim conflict + ctx cancel")
 	}
 }
 
@@ -397,10 +389,10 @@ exit 0
 	// This scenario runs the work loop through TWO full iterations (iter-1 fails
 	// exit 1 → reopen; iter-2 exits 0 → empty-commit merge-to-main → close). Each
 	// iteration pays the stopHookGrace (~3s) window plus worktree-create + merge
-	// overhead, so the close arrives at ~8s. The poll deadline / ctx budget are
-	// sized generously (25s / 30s) so the test isn't flaky under parallel load —
-	// it still breaks out of the poll the instant the bead closes (hk-st77j).
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// overhead, so the close arrives at ~8s. One generous budget bounds the whole
+	// test — it still breaks out of the poll the instant the bead closes
+	// (hk-st77j).
+	ctx, cancel := context.WithTimeout(context.Background(), workLoopTestBudget)
 	defer cancel()
 
 	done := make(chan error, 1)
@@ -408,14 +400,13 @@ exit 0
 		done <- daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	// Poll until bead is closed (ceiling 25s; the happy path closes at ~8s).
-	deadline := time.After(25 * time.Second)
+	// Poll until bead is closed (the happy path closes at ~8s).
 	for len(requeueLedger.getClosedIDs()) == 0 {
 		select {
-		case <-deadline:
-			t.Logf("T4-S3: bead not closed within 25s; reopened=%v closed=%v events=%v",
+		case <-ctx.Done():
+			t.Logf("T4-S3: bead not closed within the budget; reopened=%v closed=%v events=%v",
 				requeueLedger.getReopenedIDs(), requeueLedger.getClosedIDs(), collector.eventTypes())
-			t.Error("T4-S3: FINDING: bead was not closed within 25s after reopen+redispatch")
+			t.Error("T4-S3: FINDING: bead was not closed after reopen+redispatch")
 			goto done
 		case <-time.After(50 * time.Millisecond):
 		}
@@ -458,10 +449,8 @@ done:
 	}
 
 	cancel()
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Error("T4-S3: loop did not exit within 3s after cancel")
+	if err := awaitLoopTeardownErr(t, done, "T4-S3 work loop"); err != nil {
+		t.Errorf("T4-S3: loop returned error after reopen+redispatch: %v", err)
 	}
 }
 
@@ -503,7 +492,10 @@ func TestT4_CloseBeadError(t *testing.T) {
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	// Two sequential dispatches, each paying runloop.StopHookGrace, put a
+	// 6-second floor under this test. Its budget was 7 seconds and the margin was
+	// never real (hk-scenario-budgets-structural-2z9dx).
+	ctx, cancel := context.WithTimeout(context.Background(), workLoopTestBudget)
 	defer cancel()
 
 	done := make(chan error, 1)
@@ -512,11 +504,10 @@ func TestT4_CloseBeadError(t *testing.T) {
 	}()
 
 	// Wait for both beads to be attempted (CloseBead called twice — both will fail).
-	deadline := time.After(7 * time.Second)
 	for ledger.getClaimCallCount() < 2 {
 		select {
-		case <-deadline:
-			t.Logf("T4-S4: only %d claim(s) seen after 7s; closeErr injected; loop may have crashed",
+		case <-ctx.Done():
+			t.Logf("T4-S4: only %d claim(s) seen before the budget ran out; closeErr injected; loop may have crashed",
 				ledger.getClaimCallCount())
 			t.Error("T4-S4: FINDING: work loop did not continue to next bead after CloseBead error")
 			goto doneS4
@@ -547,15 +538,10 @@ doneS4:
 	}
 
 	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Errorf("T4-S4: FINDING: loop returned fatal error after CloseBead failures: %v", err)
-		} else {
-			t.Log("T4-S4: PASS — loop exited cleanly despite CloseBead errors")
-		}
-	case <-time.After(3 * time.Second):
-		t.Error("T4-S4: FINDING: work loop hung after CloseBead errors and ctx cancel")
+	if err := awaitLoopTeardownErr(t, done, "T4-S4 work loop"); err != nil {
+		t.Errorf("T4-S4: FINDING: loop returned fatal error after CloseBead failures: %v", err)
+	} else {
+		t.Log("T4-S4: PASS — loop exited cleanly despite CloseBead errors")
 	}
 }
 
@@ -615,7 +601,7 @@ func TestT4_ConcurrentLoops(t *testing.T) {
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), workLoopTestBudget)
 	defer cancel()
 
 	done1 := make(chan error, 1)
@@ -623,12 +609,11 @@ func TestT4_ConcurrentLoops(t *testing.T) {
 	go func() { done1 <- daemon.ExportedRunWorkLoop(ctx, deps1) }()
 	go func() { done2 <- daemon.ExportedRunWorkLoop(ctx, deps2) }()
 
-	// Wait for at least one close to be recorded.
-	deadline := time.After(5 * time.Second)
+	// Wait for at least one close to be recorded, bounded by the context.
 	for len(sharedLedger.getClosedIDs()) == 0 {
 		select {
-		case <-deadline:
-			t.Log("T4-S5: no bead closed within 5s with two concurrent loops")
+		case <-ctx.Done():
+			t.Log("T4-S5: no bead closed within the budget with two concurrent loops")
 			goto doneS5
 		case <-time.After(50 * time.Millisecond):
 		}
@@ -665,13 +650,8 @@ doneS5:
 
 	cancel()
 	for _, ch := range []chan error{done1, done2} {
-		select {
-		case err := <-ch:
-			if err != nil {
-				t.Errorf("T4-S5: loop returned error: %v", err)
-			}
-		case <-time.After(3 * time.Second):
-			t.Error("T4-S5: a loop did not exit within 3s after cancel")
+		if err := awaitLoopTeardownErr(t, ch, "T4-S5 work loop"); err != nil {
+			t.Errorf("T4-S5: loop returned error: %v", err)
 		}
 	}
 }
@@ -729,9 +709,9 @@ func TestT4_EventOrderingOnCloseError(t *testing.T) {
 	// Real buildClaudeLaunchSpec + emptyCommitWorktreeFactory run; the handler
 	// exits 0 (HEAD already advanced by the factory's --allow-empty commit),
 	// stopHookGrace (~3s) fires, the run-branch merges to main, then CloseBead
-	// is called. 15s total budget covers git worktree creation + grace window
-	// + CI variability (hk-ngw3d).
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	// is called, and the budget covers git worktree creation plus that grace
+	// window (hk-ngw3d).
+	ctx, cancel := context.WithTimeout(context.Background(), workLoopTestBudget)
 	defer cancel()
 
 	done := make(chan error, 1)
@@ -739,11 +719,10 @@ func TestT4_EventOrderingOnCloseError(t *testing.T) {
 		done <- daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	deadline := time.After(10 * time.Second)
 	for ledger.closeCallCount() == 0 {
 		select {
-		case <-deadline:
-			t.Error("T4-S6: CloseBead was not called within 10s")
+		case <-ctx.Done():
+			t.Error("T4-S6: CloseBead was not called within the budget")
 			goto doneS6
 		case <-time.After(10 * time.Millisecond):
 		}

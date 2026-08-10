@@ -23,11 +23,8 @@
         },
         "model_selected": {
           "harness": "codex",
-          "model": null,
-          "no_leak_models": [
-            "claude-opus-4-8",
-            "ornith"
-          ]
+          "model": "@resolved",
+          "no_leak_models": ["@foreign"]
         },
         "terminal": "pass",
         "dispatch": {
@@ -58,11 +55,8 @@
         },
         "model_selected": {
           "harness": "codex",
-          "model": null,
-          "no_leak_models": [
-            "claude-opus-4-8",
-            "ornith"
-          ]
+          "model": "@resolved",
+          "no_leak_models": ["@foreign"]
         },
         "terminal": "pass",
         "dispatch": {
@@ -100,10 +94,8 @@
         },
         "model_selected": {
           "harness": "pi",
-          "model": "ornith",
-          "no_leak_models": [
-            "claude-opus-4-8"
-          ]
+          "model": "@resolved",
+          "no_leak_models": ["@foreign"]
         },
         "terminal": "pass",
         "dispatch": {
@@ -123,12 +115,12 @@
       ]
     },
     {
-      "//": "pi-dot cell (D4): dot-mode review->implement round-trip, BOTH nodes on pi/ornith.",
+      "//": "pi-dot cell (D4): dot-mode review->implement round-trip, BOTH nodes on the pi family.",
       "//2": "The pi-dot seed carries harness:pi + workflow:dot; the scratch project's",
       "//3": "workflow.dot is provisioned to review-loop.dot (unpinned reviewer => inherits",
-      "//4": "the implementer's pi/ornith harness => same-model). gap6 asserts the ordered",
+      "//4": "the implementer's pi harness+model => same-model). gap6 asserts the ordered",
       "//5": "round-trip (REQUEST_CHANGES -> implementer re-dispatch -> APPROVE -> close) AND",
-      "//6": "that every model_selected == ornith (no claude leak). Run via EXTRA_CELLS.",
+      "//6": "that every model_selected == the resolved pi model (no claude leak). Run via EXTRA_CELLS.",
       "cell": "pi-dot:local",
       "harness": "pi",
       "substrate": "local",
@@ -140,10 +132,8 @@
         },
         "model_selected": {
           "harness": "pi",
-          "model": "ornith",
-          "no_leak_models": [
-            "claude-opus-4-8"
-          ]
+          "model": "@resolved",
+          "no_leak_models": ["@foreign"]
         },
         "terminal": "pass",
         "//dispatch": "gap4 here proves workflow_mode fidelity (dot stays dot; NOT silently",
@@ -182,10 +172,8 @@
         },
         "model_selected": {
           "harness": "pi",
-          "model": "ornith",
-          "no_leak_models": [
-            "claude-opus-4-8"
-          ]
+          "model": "@resolved",
+          "no_leak_models": ["@foreign"]
         },
         "terminal": "pass",
         "dispatch": {
@@ -217,10 +205,8 @@
         },
         "model_selected": {
           "harness": "claude-code",
-          "model": "claude-opus-4-8",
-          "no_leak_models": [
-            "ornith"
-          ]
+          "model": "@resolved",
+          "no_leak_models": ["@foreign"]
         },
         "terminal": "pass",
         "dispatch": {
@@ -255,10 +241,8 @@
         },
         "model_selected": {
           "harness": "claude-code",
-          "model": "claude-opus-4-8",
-          "no_leak_models": [
-            "ornith"
-          ]
+          "model": "@resolved",
+          "no_leak_models": ["@foreign"]
         },
         "terminal": "pass",
         "dispatch": {

@@ -169,21 +169,109 @@ fi
 # with detail "pi endpoint wedged/no response" rather than letting the daemon spend minutes
 # discovering the wedge as a run_failed. Always-on for pi (no --no-preflight escape hatch):
 # a green pi cell MUST be backed by a live model, and catching the wedge here is the point.
-# Endpoint + key default to the overlay's harnesses.pi values; override via PI_BASE_URL /
-# PI_KEY_FILE. If the vLLM is wedged: restart it on the dgx box.
-PI_BASE_URL="${PI_BASE_URL:-http://127.0.0.1:8551/v1}"
+# Endpoint, model and key are READ FROM THE SCRATCH'S OWN harnesses.pi config, which is
+# what the pi harness will actually dial. Override via PI_BASE_URL / PI_MODEL / PI_KEY_FILE.
+#
+# WHY THIS IS READ AND NOT WRITTEN DOWN. These three were hardcoded here, with a comment
+# claiming they "default to the overlay's harnesses.pi values". They did not. The overlay
+# moved to port 8553 and this probe stayed on 8551, so the probe dialled a port nothing was
+# listening on, every pi cell reported "pi endpoint wedged/no response", and the gate skipped
+# the only cell it runs. The endpoint was healthy the whole time. That message was then read
+# as evidence of a wedged vLLM and copied into a handoff and a bead, and the wrong thing was
+# believed for days. A probe that does not dial what the harness dials is not a preflight, it
+# is a second source of truth that silently disagrees.
+#
+# The model matters for the same reason: vLLM 404s an unknown model id, and a 404 here is
+# indistinguishable from a wedge in the output above.
+harness_cfg_value() {
+    # Pull one scalar out of the harnesses.<harness> block of the scratch config. Flat
+    # scalars only; trailing `# ...` comments and surrounding quotes are stripped.
+    awk -v want="$2" -v harness="  $1:" '
+        /^harnesses:/            { in_h=1; next }
+        in_h && /^[^[:space:]]/  { in_h=0 }
+        in_h && $0 ~ "^" harness "$" { in_pi=1; next }
+        in_pi && /^  [^[:space:]]/ { in_pi=0 }
+        in_pi {
+            line=$0
+            sub(/#.*/, "", line)
+            if (match(line, /^[[:space:]]*[A-Za-z_]+:/)) {
+                key=substr(line, RSTART, RLENGTH-1); gsub(/[[:space:]]/, "", key)
+                if (key == want) {
+                    val=substr(line, RSTART+RLENGTH)
+                    gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
+                    gsub(/^["'"'"']|["'"'"']$/, "", val)
+                    print val; exit
+                }
+            }
+        }
+    ' "$SCRATCH/.harmonik/config.yaml" 2>/dev/null
+}
+PI_BASE_URL="${PI_BASE_URL:-$(harness_cfg_value pi base_url)}"
+PI_MODEL="${PI_MODEL:-$(harness_cfg_value pi model)}"
 PI_KEY_FILE="${PI_KEY_FILE:-$HOME/.config/harmonik/ornith.key}"
 pi_preflight() {
     command -v curl >/dev/null 2>&1 || { log "preflight: curl missing — cannot probe pi endpoint"; return 1; }
+    # An unreadable config is a failed preflight, not a fallback to a guess. Guessing is
+    # exactly what produced the false wedge.
+    [ -n "$PI_BASE_URL" ] || { log "preflight: no harnesses.pi.base_url in $SCRATCH/.harmonik/config.yaml"; return 1; }
+    [ -n "$PI_MODEL" ]    || { log "preflight: no harnesses.pi.model in $SCRATCH/.harmonik/config.yaml"; return 1; }
     local key="" body
     [ -f "$PI_KEY_FILE" ] && key="$(tr -d '[:space:]' < "$PI_KEY_FILE" 2>/dev/null)"
     body="$(curl -sS -m 12 -X POST "$PI_BASE_URL/completions" \
         -H "Authorization: Bearer $key" -H "Content-Type: application/json" \
-        -d '{"model":"ornith","prompt":"ping","max_tokens":16}' 2>/dev/null)" || return 1
+        -d "{\"model\":\"$PI_MODEL\",\"prompt\":\"ping\",\"max_tokens\":16}" 2>/dev/null)" || return 1
     [ -n "$body" ] || return 1
+    # A model the server does not serve returns a 404 body with no choices. Report that as
+    # itself rather than as a wedge — they need opposite fixes.
+    if printf '%s' "$body" | jq -e '.error' >/dev/null 2>&1; then
+        log "preflight: endpoint answered but rejected the request: $(printf '%s' "$body" | jq -r '.error.message // .error' 2>/dev/null | head -1)"
+        return 1
+    fi
     printf '%s' "$body" \
         | jq -e '((.choices[0].text // .choices[0].message.content // "") | tostring | length) > 0' \
           >/dev/null 2>&1
+}
+
+# ---- model resolution for the cell specs ----------------------------------
+# cells.json does NOT name any model. It cannot: a model name written into a gate spec is a
+# copy of a fact that lives somewhere else, and it goes stale the day the model changes
+# without anything noticing. That happened — the spec pinned a model the endpoint had stopped
+# serving, and the gate could not pass until somebody hand-edited four files.
+#
+# So the spec says WHERE the model comes from and this resolves it, from the same two places
+# harmonik itself resolves it from (EM-012b):
+#
+#   a per-bead `model:<alias>` label   — the pin under test (the claude seed uses this), or
+#   harnesses.<harness>.model in config — when no label pins one (the pi seeds use this).
+#
+# A seed with neither resolves to empty, and the model check is skipped for that cell — which
+# is right, because nothing pinned a model, so there is nothing to be faithful to.
+seed_model_for() {
+    # seed_model_for <seed-key> <harness> — the model this seed's run must select.
+    local key="$1" harness="$2" label
+    label="$(jq -r --arg k "$key" '
+        .seeds[] | select(.key == $k) | .labels[]? | select(startswith("model:"))
+    ' "$REPO_ROOT/scenarios/core-loop-proof/seed-beads.json" 2>/dev/null | head -1)"
+    if [ -n "$label" ]; then printf '%s' "${label#model:}"; return 0; fi
+    harness_cfg_value "$harness" model
+}
+
+# foreign_models_for <seed-key> <harness> — every OTHER harness family's model, which is
+# exactly the set that must never appear on this cell's runs. Derived, so adding a harness or
+# changing a model updates the leak check for free instead of needing a second edit.
+foreign_models_for() {
+    local own_key="$1" own_harness="$2" out="" k h m
+    while IFS=$'\t' read -r k h; do
+        [ -n "$k" ] || continue
+        m="$(seed_model_for "$k" "$h")"
+        [ -n "$m" ] || continue
+        [ "$m" = "$(seed_model_for "$own_key" "$own_harness")" ] && continue
+        case "$out" in *"|$m|"*) continue;; esac
+        out="$out|$m|"
+    done <<EOF
+$(jq -r '.seeds[] | "\(.key)\t\(.harness)"' "$REPO_ROOT/scenarios/core-loop-proof/seed-beads.json" 2>/dev/null)
+EOF
+    printf '%s' "$out" | tr '|' '\n' | grep -v '^$' | jq -R . | jq -sc .
 }
 
 # cell_slug: a queue-name-safe + filesystem-safe token for a cell name (':' and '/' -> '-'),
@@ -367,8 +455,23 @@ for _run_cell in "${RUN_CELLS[@]}"; do
             # resolve the cell spec, overriding seed_bead with the real dispatched id and
             # injecting the git-observed landing branch (D2) so assert_t10 compares intent
             # (expect.lands_on) against reality (._observed_lands_on).
+            # Resolve the two model sentinels the spec carries instead of literal model
+            # names. Read the seed KEY before .seed_bead is overwritten with the dispatched
+            # bead id below — the key is what ties a cell to its seed's labels.
+            spec_seed_key="$(jq -r --arg c "$cell" '.cells[]|select(.cell==$c)|.seed_bead // empty' "$SPECS" 2>/dev/null || true)"
+            spec_harness="$(jq -r --arg c "$cell" '.cells[]|select(.cell==$c)|.harness // empty' "$SPECS" 2>/dev/null || true)"
+            want_model="$(seed_model_for "$spec_seed_key" "$spec_harness")"
+            foreign_models="$(foreign_models_for "$spec_seed_key" "$spec_harness")"
+            [ -n "$foreign_models" ] || foreign_models='[]'
             spec="$(jq -c --arg c "$cell" --arg sb "$local_seed" --arg obs "$observed_lands_on" \
-                      '.cells[] | select(.cell==$c) | .seed_bead=$sb | ._observed_lands_on=$obs' "$SPECS" 2>/dev/null || true)"
+                      --arg wm "$want_model" --argjson fm "$foreign_models" \
+                      '.cells[] | select(.cell==$c) | .seed_bead=$sb | ._observed_lands_on=$obs
+                       | if (.expect.model_selected.model? == "@resolved")
+                         then .expect.model_selected.model = (if $wm == "" then null else $wm end)
+                         else . end
+                       | if (.expect.model_selected.no_leak_models? == ["@foreign"])
+                         then .expect.model_selected.no_leak_models = $fm
+                         else . end' "$SPECS" 2>/dev/null || true)"
             if [ -z "$spec" ]; then
                 cell_verdict="pending"; detail="no spec for cell in $SPECS"
             else

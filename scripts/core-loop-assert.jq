@@ -210,10 +210,14 @@ def assert_t10:
 #       implementer node (node_id matches /implement/) OR a second implementer_phase_complete,
 #   (c) a reviewer_verdict APPROVE after the re-dispatch, then a terminal pass/close, AND
 #   (d) SAME-MODEL: every model_selected.model in the run == the pinned model (spec
-#       expect.model_selected.model, default ornith) — any other model is a leak → fail.
+#       expect.model_selected.model). When the spec pins nothing, the run's OWN first
+#       model_selected is the reference, so the check stays what its name says — every node
+#       used the same model — without this file naming a model. A literal default here was a
+#       copy of a fact that lives in config, and it went stale the day the model changed.
 # Positional ordering is taken from the append-ordered capture stream (event index).
 def assert_gap6:
-  ($spec.expect.model_selected.model // "ornith") as $wantModel
+  ($spec.expect.model_selected.model
+     // (of_type("model_selected") | map(pl.model) | map(select(. != null)) | first)) as $wantModel
   | ([ events[] | {type: .type, p: pl} ] | to_entries
        | map({i: .key, type: .value.type, p: .value.p})) as $seq
   | ([ $seq[] | select(.type == "reviewer_verdict" and (.p.verdict == "REQUEST_CHANGES")) ]

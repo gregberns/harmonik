@@ -3,8 +3,10 @@
   "//usage": "scripts/core-loop-seed.sh reads this and creates one OPEN bead per entry in the",
   "//usage2": "SCRATCH daemon's beads DB, then emits a cell->bead_id MATRIX_SEED_MAP the runner consumes.",
   "//pin": "The harness:<family> label is the tier-1 per-bead harness pin (agentevents_hqwn59.go).",
-  "//pin2": "model_pin records the harmonik-controlled model the model_selected event must carry",
-  "//pin3": "(empty for codex — model is not harmonik-controlled; set by $CODEX_HOME/config.toml).",
+  "//pin2": "A model:<alias> label is the tier-1 per-bead model pin and the ONLY place a model",
+  "//pin3": "name is written for a seed. A seed without one takes harnesses.<harness>.model from",
+  "//pin4": "config (pi), or leaves the model uncontrolled (codex, set by $CODEX_HOME/config.toml).",
+  "//pin5": "cells.json names NO model: it says @resolved and the runner resolves it from here.",
   "//branch": "target_branch (optional, D2): when set, core-loop-seed.sh creates/resets that",
   "//branch2": "branch off main in the SCRATCH clone BEFORE creating the bead, and appends a",
   "//branch3": "## Branching fenced-yaml block (target_branch: <b>) to the bead description so",
@@ -18,8 +20,7 @@
       "title": "core-loop-proof seed: trivial one-line change (codex)",
       "body": "Append a single dated line to docs/core-loop-proof-seed.txt and commit. No other change. This is a fixture bead that exercises the real task-processing loop end to end.",
       "labels": ["codename:quality-system", "core-loop-seed", "harness:codex"],
-      "harness": "codex",
-      "model_pin": null
+      "harness": "codex"
     },
     {
       "key": "pi",
@@ -27,7 +28,7 @@
       "body": "Append a single dated line to docs/core-loop-proof-seed.txt and commit. No other change. Fixture bead for the pi harness family (single workflow mode).",
       "labels": ["codename:quality-system", "core-loop-seed", "harness:pi", "workflow:single"],
       "harness": "pi",
-      "model_pin": "ornith",
+
       "target_branch": "core-loop-proof-integ"
     },
     {
@@ -41,7 +42,7 @@
       "//dot5": "`git reset --hard HEAD` restores it, so overriding that tracked file cannot hold.",
       "labels": ["codename:quality-system", "core-loop-seed", "harness:pi", "workflow:dot", "dot:review-loop"],
       "harness": "pi",
-      "model_pin": "ornith",
+
       "target_branch": "core-loop-proof-dot-integ"
     },
     {
@@ -49,8 +50,7 @@
       "title": "core-loop-proof seed: trivial one-line change (claude)",
       "body": "Append a single dated line to docs/core-loop-proof-seed.txt and commit. No other change. Fixture bead for the claude-code harness family (flag-gated cell).",
       "labels": ["codename:quality-system", "core-loop-seed", "harness:claude-code", "workflow:single", "model:claude-opus-4-8"],
-      "harness": "claude-code",
-      "model_pin": "claude-opus-4-8"
+      "harness": "claude-code"
     }
   ]
 }

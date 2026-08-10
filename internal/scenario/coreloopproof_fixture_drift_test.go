@@ -19,8 +19,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
 )
@@ -60,8 +64,14 @@ type coreLoopProofCell struct {
 		// empty string".
 		Dispatch *struct {
 			WorkflowMode            *string `json:"workflow_mode"`
+			WorkflowID              *string `json:"workflow_id"`
+			WorkflowIDPresent       *bool   `json:"workflow_id_present"`
 			ReviewPolicy            *string `json:"review_policy"`
 			WorkflowSelectionSource *string `json:"workflow_selection_source"`
+			Nodes                   *struct {
+				Required  []string `json:"required"`
+				Forbidden []string `json:"forbidden"`
+			} `json:"nodes"`
 		} `json:"dispatch"`
 	} `json:"expect"`
 }
@@ -196,6 +206,20 @@ func TestCoreLoopProofFixtureDrift_CodexEmptyModel(t *testing.T) {
 // reviewed distinction now rides on review_policy and workflow_selection_source
 // instead: those two fields carry the fact the mode field used to carry.
 //
+// The guard checks five things about every cell that declares expect.dispatch:
+//
+//  1. workflow_mode is "dot".
+//  2. workflow_id_present is true and workflow_id names a graph. A record whose
+//     descriptor is empty cannot be emitted, so a cell expecting the field
+//     absent asserts less than the daemon guarantees.
+//  3. review_policy and workflow_selection_source are both declared and both
+//     legal values.
+//  4. The (policy, source, workflow_id) tuple is one core.RunStartedPayload
+//     accepts — checked in BOTH directions. See
+//     checkCoreLoopProofPolicyBinding.
+//  5. The cell declares a dispatched node set, and a no_review cell forbids the
+//     reviewer node ids.
+//
 // Bead refs: hk-oeqn9, hk-gap4-workflow-mode-drift-7xwat.
 func TestCoreLoopProofFixtureDrift_RunStartedDispatchContract(t *testing.T) {
 	t.Parallel()
@@ -224,6 +248,21 @@ func TestCoreLoopProofFixtureDrift_RunStartedDispatchContract(t *testing.T) {
 				cell.Cell, *d.WorkflowMode)
 		}
 
+		// workflow_id is always emitted, so a cell that expects it absent asserts
+		// less than the daemon guarantees. core.RunStartedPayload.Valid rejects a
+		// record whose descriptor is invalid, and the descriptor reaching
+		// emitRunStarted came from a resolvedWorkflow that was already checked the
+		// same way (internal/daemon/workloop_runplan.go resolveWorkflow). An empty
+		// workflow_id therefore cannot appear on the wire.
+		if d.WorkflowIDPresent == nil {
+			t.Errorf("cell %q expect.dispatch has no workflow_id_present; gap4 cannot assert the descriptor resolved", cell.Cell)
+		} else if !*d.WorkflowIDPresent {
+			t.Errorf("cell %q expects workflow_id_present = false; want true — core.RunStartedPayload.Valid rejects an invalid descriptor, so every emitted run_started carries a workflow_id (specs/workflow-graph.md WG-055)", cell.Cell)
+		}
+		if d.WorkflowID == nil || *d.WorkflowID == "" {
+			t.Errorf("cell %q expect.dispatch has no workflow_id; the selection source fixes which graph runs, so the cell can and must name it", cell.Cell)
+		}
+
 		if d.ReviewPolicy == nil {
 			t.Errorf("cell %q expect.dispatch has no review_policy; with workflow_mode a constant, review_policy is what still tells single-mode work apart from reviewed work", cell.Cell)
 			continue
@@ -235,25 +274,82 @@ func TestCoreLoopProofFixtureDrift_RunStartedDispatchContract(t *testing.T) {
 			t.Errorf("cell %q expect.dispatch has no workflow_selection_source; it is the field that names WHY the graph was chosen", cell.Cell)
 			continue
 		}
-		// The pairing runs both ways, and core owns which sources are the
-		// no-review ones. A one-directional check let a cell name a
-		// compatibility source and still expect a review, which the resolver
-		// never produces: both compatibility inputs land on the no-review graph
-		// (internal/daemon resolveNoReviewWorkflow), so the policy follows from
-		// the source with nothing left to choose.
-		selectsNoReview := core.WorkflowSelectionSource(*d.WorkflowSelectionSource).SelectsNoReview()
-		switch {
-		case *d.ReviewPolicy == "no_review" && !selectsNoReview:
-			t.Errorf("cell %q pairs review_policy=no_review with workflow_selection_source=%q; only legacy_single_label and queue_item_single_mode may select no_review (execution-model.md §4.3 EM-012a)",
-				cell.Cell, *d.WorkflowSelectionSource)
-		case *d.ReviewPolicy == "reviewed" && selectsNoReview:
-			t.Errorf("cell %q pairs review_policy=reviewed with workflow_selection_source=%q; that source selects the no-review graph, so the run carries no_review (execution-model.md §4.3 EM-012a)",
-				cell.Cell, *d.WorkflowSelectionSource)
+		workflowID, workflowMode := "", ""
+		if d.WorkflowID != nil {
+			workflowID = *d.WorkflowID
+		}
+		if d.WorkflowMode != nil {
+			workflowMode = *d.WorkflowMode
+		}
+		checkCoreLoopProofPolicyBinding(t, cell.Cell, workflowMode, workflowID, *d.ReviewPolicy, *d.WorkflowSelectionSource)
+
+		// The dispatched node set is the second, independent signal that the run
+		// took the path the policy claims. It is a containment check: required
+		// names what the run must dispatch, forbidden what it must never dispatch.
+		var required, forbidden []string
+		if d.Nodes != nil {
+			required, forbidden = d.Nodes.Required, d.Nodes.Forbidden
+		}
+		if len(required) == 0 {
+			t.Errorf("cell %q expect.dispatch declares no nodes.required; the DOT cascade dispatches the graph's start_node on its first iteration, so every cell can name at least that (event-model.md §8.1.11)", cell.Cell)
+		}
+		if *d.ReviewPolicy == "no_review" {
+			for _, reviewerNode := range []string{"review", "reviewer"} {
+				if !slices.Contains(forbidden, reviewerNode) {
+					t.Errorf("cell %q is no_review but does not forbid node id %q; the no-review-bead graph declares no reviewer node, so a dispatched reviewer is the observable form of the policy being wrong",
+						cell.Cell, reviewerNode)
+				}
+			}
 		}
 	}
 	if !sawDispatch {
 		t.Error("no cell in cells.json declares expect.dispatch; the gap4 drift guard would be vacuous")
 	}
+}
+
+// checkCoreLoopProofPolicyBinding fails when a cell's (workflow_mode,
+// workflow_id, review_policy, workflow_selection_source) tuple is one the daemon
+// could never emit.
+//
+// It does NOT restate the rule. It builds the run_started payload the cell
+// describes and asks core.RunStartedPayload.Valid — the same method the daemon's
+// own resolver output must satisfy — whether that record is legal. A restated
+// copy of the rule is what went wrong the first time: the earlier guard listed
+// the two sources that may select no_review and checked only that direction, so
+// flipping a legacy_single_label cell from no_review to reviewed stayed green
+// even though core.ValidPolicyBinding rejects the pair. Calling the real
+// validator cannot drift from it.
+//
+// TWO VALUES THE FIXTURE DOES NOT SUPPLY are filled in here, and neither weakens
+// the check:
+//
+//   - workflow_version. Valid compares the whole descriptor, ID and version. All
+//     three graphs the matrix reaches declare version "1.0" (workflow.dot,
+//     specs/examples/review-loop.dot, specs/examples/no-review-bead.dot), so the
+//     version never varies across the matrix and a second constant in cells.json
+//     would be a copy of a fact that lives in the graph file.
+//   - run_id, workspace_path, input_ref, started_at. Valid requires them
+//     non-zero. They carry no policy meaning, so any legal value does.
+func checkCoreLoopProofPolicyBinding(t *testing.T, cellName, mode, workflowID, policy, source string) {
+	t.Helper()
+
+	const graphVersion = "1.0"
+	payload := core.RunStartedPayload{
+		RunID:                   core.RunID(uuid.Must(uuid.NewV7())),
+		WorkflowID:              core.WorkflowID(workflowID),
+		WorkflowVersion:         core.WorkflowVersion(graphVersion),
+		WorkflowMode:            core.WorkflowMode(mode),
+		ReviewPolicy:            core.ReviewPolicy(policy),
+		WorkflowSelectionSource: core.WorkflowSelectionSource(source),
+		WorkspacePath:           "/w",
+		InputRef:                "bead:seed",
+		StartedAt:               time.Unix(0, 0).UTC(),
+	}
+	if payload.Valid() {
+		return
+	}
+	t.Errorf("cell %q describes a run_started record core.RunStartedPayload.Valid rejects: workflow_mode=%q workflow_id=%q (version %q) review_policy=%q workflow_selection_source=%q — the daemon can never emit it, so gap4 could never go green (execution-model.md §4.3 EM-012a)",
+		cellName, mode, workflowID, graphVersion, policy, source)
 }
 
 // coreLoopProofFindSeed returns the seed with the given key or fails the test.

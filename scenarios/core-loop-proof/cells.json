@@ -8,11 +8,28 @@
   "//mode6": "mode: it selects the embedded no-review-bead graph. The single-versus-",
   "//mode7": "reviewed distinction therefore rides on review_policy and workflow_",
   "//mode8": "selection_source, which is why every cell now asserts those two as well.",
-  "//workflow_id": "EVERY cell asserts dispatch.workflow_id_present=false. The daemon DOES",
-  "//workflow_id2": "emit workflow_id now (core.RunStartedPayload requires a valid descriptor),",
-  "//workflow_id3": "so this assertion is weaker than the spec allows, not wrong. Raising it to",
-  "//workflow_id4": "true is a tracked follow-up that wants one live run to confirm the value",
-  "//workflow_id5": "each cell resolves, not a core-loop gap.",
+  "//workflow_id": "EVERY cell asserts dispatch.workflow_id_present=true AND the exact",
+  "//workflow_id2": "workflow_id it resolves. No live run is needed to know either. The daemon",
+  "//workflow_id3": "emits run_started from core.RunStartedPayload, whose Valid() rejects an",
+  "//workflow_id4": "invalid descriptor, and the descriptor comes from a resolvedWorkflow that",
+  "//workflow_id5": "was already checked the same way (internal/daemon/workloop_runplan.go",
+  "//workflow_id6": "resolveWorkflow). An empty workflow_id can therefore never be emitted.",
+  "//workflow_id7": "The VALUE follows from the selection source: legacy_single_label always",
+  "//workflow_id8": "loads the embedded no-review-bead graph, project_default loads the scratch",
+  "//workflow_id9": "clone's tracked workflow.dot (workflow_id=standard-bead), and explicit_ref",
+  "//workflow_id10": "on the dot cell loads the seed-provisioned review-loop.dot copy of",
+  "//workflow_id11": "specs/examples/review-loop.dot (workflow_id=review-loop-example).",
+  "//nodes": "EVERY cell also declares dispatch.nodes, the CONTAINMENT check on the",
+  "//nodes2": "dispatched node set. nodes.required lists node ids the run must dispatch",
+  "//nodes3": "and nodes.forbidden lists node ids it must never dispatch. The DOT cascade",
+  "//nodes4": "emits node_dispatch_requested for the graph's start_node on its first",
+  "//nodes5": "iteration, so the start node is guaranteed and pins WHICH graph ran. A",
+  "//nodes6": "no_review cell also forbids every reviewer node id, because the no-review-",
+  "//nodes7": "bead graph declares none — that is the second, independent signal that the",
+  "//nodes8": "run really took the no-review path. This is containment, NOT equality: how",
+  "//nodes9": "many times a fix loop revisits a node, and which terminal node it ends on,",
+  "//nodes10": "are routing outcomes and need a live capture to pin. See hk-gap4-workflow-",
+  "//nodes11": "mode-drift-7xwat.",
   "schema_version": 1,
   "cells": [
     {
@@ -33,9 +50,13 @@
         "terminal": "pass",
         "dispatch": {
           "workflow_mode": "dot",
-          "workflow_id_present": false,
+          "workflow_id": "standard-bead",
+          "workflow_id_present": true,
           "review_policy": "reviewed",
-          "workflow_selection_source": "project_default"
+          "workflow_selection_source": "project_default",
+          "nodes": {
+            "required": ["start"]
+          }
         },
         "provider": {
           "enabled": true
@@ -67,9 +88,13 @@
         "terminal": "pass",
         "dispatch": {
           "workflow_mode": "dot",
-          "workflow_id_present": false,
+          "workflow_id": "standard-bead",
+          "workflow_id_present": true,
           "review_policy": "reviewed",
-          "workflow_selection_source": "project_default"
+          "workflow_selection_source": "project_default",
+          "nodes": {
+            "required": ["start"]
+          }
         },
         "provider": {
           "enabled": true
@@ -108,9 +133,14 @@
         "terminal": "pass",
         "dispatch": {
           "workflow_mode": "dot",
-          "workflow_id_present": false,
+          "workflow_id": "no-review-bead",
+          "workflow_id_present": true,
           "review_policy": "no_review",
-          "workflow_selection_source": "legacy_single_label"
+          "workflow_selection_source": "legacy_single_label",
+          "nodes": {
+            "required": ["implement"],
+            "forbidden": ["review", "reviewer"]
+          }
         },
         "provider": {
           "enabled": true
@@ -150,13 +180,19 @@
         "//dispatch2": "dot:review-loop label pins review-loop.dot, so the selection source is",
         "//dispatch3": "explicit_ref and the policy is reviewed. Contrast the single cells, which",
         "//dispatch4": "resolve legacy_single_label + no_review from the SAME workflow_mode value.",
-        "//dispatch5": "workflow_id_present stays false here for the same reason as every other",
-        "//dispatch6": "cell — see the file-level //workflow_id note.",
+        "//dispatch5": "The dot: label points at the seed-provisioned review-loop.dot, a copy",
+        "//dispatch6": "of specs/examples/review-loop.dot, so workflow_id is review-loop-example",
+        "//dispatch7": "and the start node is \"start\". A silent fall-back to the no-review-bead",
+        "//dispatch8": "graph would start at \"implement\" instead, which nodes.required catches.",
         "dispatch": {
           "workflow_mode": "dot",
-          "workflow_id_present": false,
+          "workflow_id": "review-loop-example",
+          "workflow_id_present": true,
           "review_policy": "reviewed",
-          "workflow_selection_source": "explicit_ref"
+          "workflow_selection_source": "explicit_ref",
+          "nodes": {
+            "required": ["start"]
+          }
         },
         "provider": {
           "enabled": true
@@ -189,9 +225,14 @@
         "terminal": "pass",
         "dispatch": {
           "workflow_mode": "dot",
-          "workflow_id_present": false,
+          "workflow_id": "no-review-bead",
+          "workflow_id_present": true,
           "review_policy": "no_review",
-          "workflow_selection_source": "legacy_single_label"
+          "workflow_selection_source": "legacy_single_label",
+          "nodes": {
+            "required": ["implement"],
+            "forbidden": ["review", "reviewer"]
+          }
         },
         "provider": {
           "enabled": true
@@ -224,9 +265,14 @@
         "terminal": "pass",
         "dispatch": {
           "workflow_mode": "dot",
-          "workflow_id_present": false,
+          "workflow_id": "no-review-bead",
+          "workflow_id_present": true,
           "review_policy": "no_review",
-          "workflow_selection_source": "legacy_single_label"
+          "workflow_selection_source": "legacy_single_label",
+          "nodes": {
+            "required": ["implement"],
+            "forbidden": ["review", "reviewer"]
+          }
         },
         "provider": {
           "enabled": true
@@ -262,9 +308,14 @@
         "terminal": "pass",
         "dispatch": {
           "workflow_mode": "dot",
-          "workflow_id_present": false,
+          "workflow_id": "no-review-bead",
+          "workflow_id_present": true,
           "review_policy": "no_review",
-          "workflow_selection_source": "legacy_single_label"
+          "workflow_selection_source": "legacy_single_label",
+          "nodes": {
+            "required": ["implement"],
+            "forbidden": ["review", "reviewer"]
+          }
         },
         "provider": {
           "enabled": true

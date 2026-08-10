@@ -926,7 +926,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 						if mErr != nil {
 							raw = evt.Payload
 						}
-						_ = basePorts.Emitter.Emit(ctx, core.EventType(evt.Type), raw) //nolint:errcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
+						_ = basePorts.Emitter.Emit(ctx, evt.Type, raw) //nolint:errcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
 					}
 					continue
 				}
@@ -2452,7 +2452,7 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, port reapSeamPort, que
 		if err != nil {
 			raw = evt.Payload
 		}
-		_ = port.bus.Emit(ctx, core.EventType(evt.Type), raw) //nolint:errcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
+		_ = port.bus.Emit(ctx, evt.Type, raw) //nolint:errcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
 	}
 
 	// EM-062: eager-refill fires AFTER all terminal-event processing (merge,

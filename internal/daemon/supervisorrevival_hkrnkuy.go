@@ -47,7 +47,7 @@ func detectAndEmitSupervisorRevival(ctx context.Context, eventsPath string, bus 
 	var cur *daemonSession
 
 	for ev := range eventbus.ScanAfter(eventsPath, core.EventID{}) {
-		switch core.EventType(ev.Type) {
+		switch ev.Type {
 		case core.EventTypeDaemonStarted:
 			sessions = append(sessions, daemonSession{})
 			cur = &sessions[len(sessions)-1]
@@ -60,6 +60,8 @@ func detectAndEmitSupervisorRevival(ctx context.Context, eventsPath string, bus 
 			if cur != nil {
 				cur.hasShutdown = true
 			}
+		default:
+			// Only daemon start and daemon shutdown bound a daemon session.
 		}
 	}
 

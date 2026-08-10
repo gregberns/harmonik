@@ -201,6 +201,8 @@ func ComputeRegistry(eventsPath string) map[string]Record {
 			if ev.TimestampWall.After(lastActivity[p.From]) {
 				lastActivity[p.From] = ev.TimestampWall
 			}
+		default:
+			// Every other event type says nothing about agent presence.
 		}
 	}
 

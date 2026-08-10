@@ -222,7 +222,7 @@ func newGovernorPort(cfg Config, daemonStartTime time.Time) (governorPort, bool,
 func scanEmittedEpics(jsonlLogPath string) map[core.BeadID]struct{} {
 	seed := make(map[core.BeadID]struct{})
 	for ev := range eventbus.ScanAfter(jsonlLogPath, core.EventID{}) {
-		if core.EventType(ev.Type) != core.EventTypeEpicCompleted {
+		if ev.Type != core.EventTypeEpicCompleted {
 			continue
 		}
 		var pl core.EpicCompletedPayload

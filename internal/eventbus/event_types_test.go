@@ -11,7 +11,7 @@ func init() {
 		hc034FixtureEventType,
 	} {
 		if err := core.RegisterEventType(eventType, func() core.EventPayload { return &struct{}{} }); err != nil {
-			panic("eventbus test event registration: " + err.Error())
+			panic("eventbus test event registration: " + err.Error()) //nolint:forbidigo // init-time fixture registration: no caller to return an error to.
 		}
 	}
 }

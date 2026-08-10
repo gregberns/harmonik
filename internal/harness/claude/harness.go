@@ -128,7 +128,7 @@ func (h *Harness) Teardown(sess handlercontract.Session) error {
 // future event whose type string happens to be equal to agent_ready would still
 // satisfy the contract, while launch_initiated never will).
 func (h *Harness) DetectReady(ev handlercontract.EventEnvelope) bool {
-	return core.EventType(ev.Type) == core.EventTypeAgentReady
+	return ev.Type == core.EventTypeAgentReady
 }
 
 // SessionIDPolicy returns SessionIDMinted: the claude harness mints a fresh

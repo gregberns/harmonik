@@ -136,7 +136,7 @@ func (*SR7Checker) Types() []core.EventType {
 // Check flags a handoff_started for an agent whose prior cycle is still open,
 // adopting the newer cycle, and clears the open cycle on its terminal.
 func (c *SR7Checker) Check(ev core.Event, _ core.EventPayload, s *CycleState) []Violation {
-	switch core.EventType(ev.Type) {
+	switch ev.Type {
 	case core.EventTypeSessionKeeperHandoffStarted:
 		if cur, ok := c.open[s.AgentName]; ok && cur != s.CycleID {
 			v := Violation{

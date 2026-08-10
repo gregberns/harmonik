@@ -100,7 +100,7 @@ func reconcileOrphanedRunsOnResume(
 		if ev.RunID == nil {
 			continue
 		}
-		switch core.EventType(ev.Type) {
+		switch ev.Type {
 		case core.EventTypeRunStarted:
 			pl, err := core.DecodeRunStartedForRead(ev)
 			if err != nil || pl.BeadID == "" {
@@ -113,6 +113,9 @@ func reconcileOrphanedRunsOnResume(
 			}
 		case core.EventTypeRunCompleted, core.EventTypeRunFailed:
 			terminated[*ev.RunID] = struct{}{}
+		default:
+			// Only the run start and the two run terminals say whether a run is
+			// still in flight.
 		}
 	}
 

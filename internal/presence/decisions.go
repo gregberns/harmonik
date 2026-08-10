@@ -177,6 +177,9 @@ func OpenDecisions(eventsPath string) map[string]Decision {
 			}
 			seen[evID] = struct{}{}
 			delete(open, p.DecisionID)
+
+		default:
+			// Every other event type does not change the open decision set.
 		}
 	}
 

@@ -63,6 +63,8 @@ func TestBusImpl_DrainRunWaitsForReentrantCascade(t *testing.T) {
 				// window in which a buggy DrainRun would return early.
 				time.Sleep(10 * time.Millisecond)
 				atomic.StoreInt32(&cascadeDelivered, 1)
+			default:
+				// This fixture emits no other event type.
 			}
 			return nil
 		},

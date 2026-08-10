@@ -62,7 +62,7 @@ func (PiAdapter) DetectReady(event handlercontract.EventEnvelope) bool {
 	if event.Type == core.EventType(handlercontract.ProgressMsgTypeLaunchInitiated) {
 		return false
 	}
-	return core.EventType(event.Type) == core.EventTypeAgentReady
+	return event.Type == core.EventTypeAgentReady
 }
 
 // DetectRateLimit reports whether event signals a rate-limit condition for a

@@ -193,7 +193,7 @@ func emitEagerRefillEvents(ctx context.Context, port reapSeamPort, events []core
 		if mErr != nil {
 			raw = evt.Payload
 		}
-		if emitErr := port.bus.Emit(ctx, core.EventType(evt.Type), raw); emitErr != nil {
+		if emitErr := port.bus.Emit(ctx, evt.Type, raw); emitErr != nil {
 			fmt.Fprintf(os.Stderr, "daemon: eagerRefillEval: emit %s: %v\n", evt.Type, emitErr)
 		}
 	}

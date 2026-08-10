@@ -360,7 +360,7 @@ func scanSignalEvents(
 			st.lastEventAt = ev.TimestampWall
 		}
 
-		applyRunEvent(st, core.EventType(ev.Type), ev.TimestampWall, laneForwardProgress)
+		applyRunEvent(st, ev.Type, ev.TimestampWall, laneForwardProgress)
 	}
 }
 

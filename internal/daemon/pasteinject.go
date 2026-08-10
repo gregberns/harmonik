@@ -1049,7 +1049,7 @@ func pasteInjectQuitOnCommit(
 				eventCh = nil
 				continue
 			}
-			if core.EventType(env.Type) == core.EventTypeAgentHeartbeat {
+			if env.Type == core.EventTypeAgentHeartbeat {
 				now := clk.Now()
 				lastHeartbeat = now
 				firstHeartbeatSeen = true
@@ -1080,7 +1080,7 @@ func pasteInjectQuitOnCommit(
 							eventCh = nil
 							break drainHeartbeats
 						}
-						if core.EventType(env.Type) == core.EventTypeAgentHeartbeat {
+						if env.Type == core.EventTypeAgentHeartbeat {
 							drainNow := clk.Now()
 							lastHeartbeat = drainNow
 							firstHeartbeatSeen = true
@@ -2489,7 +2489,7 @@ func pasteInjectQuitOnReviewFile(
 				eventCh = nil
 				continue
 			}
-			if core.EventType(env.Type) == core.EventTypeAgentHeartbeat {
+			if env.Type == core.EventTypeAgentHeartbeat {
 				lastHeartbeatAt = clk.Now()
 			}
 
@@ -2508,7 +2508,7 @@ func pasteInjectQuitOnReviewFile(
 							eventCh = nil
 							break drainReviewerHB
 						}
-						if core.EventType(env.Type) == core.EventTypeAgentHeartbeat {
+						if env.Type == core.EventTypeAgentHeartbeat {
 							lastHeartbeatAt = now
 						}
 					default:

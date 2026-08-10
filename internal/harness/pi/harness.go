@@ -247,7 +247,7 @@ func (h *Harness) Teardown(sess handlercontract.Session) error {
 // check below can only match agent_ready — launch_initiated never will.
 // PI-013.
 func (h *Harness) DetectReady(ev handlercontract.EventEnvelope) bool {
-	return core.EventType(ev.Type) == core.EventTypeAgentReady
+	return ev.Type == core.EventTypeAgentReady
 }
 
 // SessionIDPolicy returns SessionIDCaptured: Pi does not accept a caller-minted

@@ -151,7 +151,7 @@ func CheckRuns(path string, since core.EventID, strict bool, checkers []RunCheck
 // event: first-occurrence Seen tracking, the LastEventID watermark, and the
 // first-terminal latch. Mirrors recordEvent for the run track.
 func runRecordEvent(st *RunState, ev core.Event) {
-	et := core.EventType(ev.Type)
+	et := ev.Type
 	if _, dup := st.Seen[et]; !dup {
 		st.Seen[et] = ev
 	}

@@ -1349,7 +1349,7 @@ func (a *HandlerAdapter) HandleQueueAppend(ctx context.Context, params json.RawM
 				log.Printf("queue: HandleQueueAppend: marshal %s payload: %v (emitting raw payload)", evt.Type, err)
 				raw = evt.Payload
 			}
-			a.emitOrLog(ctx, "HandleQueueAppend", core.EventType(evt.Type), raw)
+			a.emitOrLog(ctx, "HandleQueueAppend", evt.Type, raw)
 		}
 	}
 

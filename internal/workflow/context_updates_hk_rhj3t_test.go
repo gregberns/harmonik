@@ -104,7 +104,7 @@ func captureBus(t *testing.T) (eventbus.EventBus, *[]capturedEvent, *sync.Mutex)
 			mu.Lock()
 			defer mu.Unlock()
 			captured = append(captured, capturedEvent{
-				EventType: core.EventType(evt.Type),
+				EventType: evt.Type,
 				Payload:   evt.Payload,
 			})
 			return nil

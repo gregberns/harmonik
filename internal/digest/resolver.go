@@ -168,12 +168,12 @@ const eventTypeAgentMessage = "agent_message"
 // A missing or unreadable events.jsonl returns zero times (no suppression).
 func scanSuppressionEvents(eventsPath string) (attachedLast, dialogueLast time.Time) {
 	for ev := range eventbus.ScanAfter(eventsPath, ZeroEventID) {
-		switch {
-		case core.EventType(ev.Type) == core.EventTypeSessionKeeperOperatorAttached:
+		switch ev.Type {
+		case core.EventTypeSessionKeeperOperatorAttached:
 			if ev.TimestampWall.After(attachedLast) {
 				attachedLast = ev.TimestampWall
 			}
-		case ev.Type == eventTypeAgentMessage:
+		case eventTypeAgentMessage:
 			var p agentMessagePayloadFrom
 			if err := json.Unmarshal(ev.Payload, &p); err != nil {
 				continue
@@ -181,6 +181,8 @@ func scanSuppressionEvents(eventsPath string) (attachedLast, dialogueLast time.T
 			if p.From == "operator" && ev.TimestampWall.After(dialogueLast) {
 				dialogueLast = ev.TimestampWall
 			}
+		default:
+			// No other event type suppresses the digest.
 		}
 	}
 	return attachedLast, dialogueLast

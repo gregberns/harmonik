@@ -47,7 +47,7 @@ func init() {
 	}
 	for _, registration := range registrations {
 		if err := core.RegisterEventType(registration.eventType, registration.payload); err != nil {
-			panic("workflow: register context-update event: " + err.Error())
+			panic("workflow: register context-update event: " + err.Error()) //nolint:forbidigo // init-time registry wiring: a duplicate or bad registration is a build-time bug, and there is no caller to return an error to.
 		}
 		if err := core.RegisterPayloadCompatEntry(core.PayloadCompatEntry{
 			TypeName:          registration.eventType,
@@ -55,7 +55,7 @@ func init() {
 			CompatWindowHolds: true,
 			AdditiveOnly:      true,
 		}); err != nil {
-			panic("workflow: register context-update compatibility: " + err.Error())
+			panic("workflow: register context-update compatibility: " + err.Error()) //nolint:forbidigo // init-time registry wiring: a duplicate or bad registration is a build-time bug, and there is no caller to return an error to.
 		}
 	}
 }

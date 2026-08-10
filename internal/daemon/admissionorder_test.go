@@ -1026,7 +1026,8 @@ func TestClaimFailureRoutingUsesTypedRefusal(t *testing.T) {
 		deps := daemon.ExportedTestRuntime(admissionDeps(t, ledger, qs, &admissionQueueLedger{}, true, nil))
 		var snapshot *queue.Queue
 		runAdmissionLoop(t, qs,
-			func(c context.Context) { daemon.ExportedRunWorkLoop(c, deps) }, //nolint:errcheck,gosec
+			//nolint:errcheck,gosec // the loop's error is the cancel this test causes; the assertions below read the queue, not the return.
+			func(c context.Context) { daemon.ExportedRunWorkLoop(c, deps) },
 			func() { snapshot = qs.Queue() },
 		)
 		ledger.assertNoRunPathCalls(t)

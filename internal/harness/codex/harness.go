@@ -176,7 +176,7 @@ func (h *Harness) Teardown(sess handlercontract.Session) error {
 // never returns true for launch_initiated (HC-041 hard rule): the positive type
 // check below can only match agent_ready, never launch_initiated.
 func (h *Harness) DetectReady(ev handlercontract.EventEnvelope) bool {
-	return core.EventType(ev.Type) == core.EventTypeAgentReady
+	return ev.Type == core.EventTypeAgentReady
 }
 
 // SessionIDPolicy returns SessionIDCaptured: codex does not accept a

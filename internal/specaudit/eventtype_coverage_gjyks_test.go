@@ -1,4 +1,4 @@
-package core_test
+package specaudit_test
 
 import (
 	"go/ast"
@@ -88,7 +88,7 @@ func collectDeclaredEventTypes(t *testing.T, path string, parsed *ast.File, decl
 	}
 }
 
-func eventTypeLiteral(corePackage bool, typeExpr ast.Expr, valueExpr ast.Expr) (*ast.BasicLit, bool) {
+func eventTypeLiteral(corePackage bool, typeExpr, valueExpr ast.Expr) (*ast.BasicLit, bool) {
 	typed := false
 	switch expr := typeExpr.(type) {
 	case *ast.Ident:

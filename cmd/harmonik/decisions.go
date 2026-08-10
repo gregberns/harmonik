@@ -512,6 +512,8 @@ func decisionTerminalFromEvent(evt core.Event, decisionID string) (decisionTermi
 			return decisionTerminal{}, false
 		}
 		return decisionTerminal{Resolved: false, Reason: string(p.Reason)}, true
+	default:
+		// Every other event type carries no decision terminal.
 	}
 	return decisionTerminal{}, false
 }

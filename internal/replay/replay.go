@@ -244,7 +244,7 @@ func schemaMismatchSkips(rep *Report, ev core.Event) bool {
 		return false
 	}
 	rep.SchemaMismatches = append(rep.SchemaMismatches, ev.EventID)
-	if entry, ok := core.LookupPayloadCompatEntry(core.EventType(ev.Type)); ok && !entry.CompatWindowHolds {
+	if entry, ok := core.LookupPayloadCompatEntry(ev.Type); ok && !entry.CompatWindowHolds {
 		return true
 	}
 	return false
@@ -254,7 +254,7 @@ func schemaMismatchSkips(rep *Report, ev core.Event) bool {
 // decode failure is a hard error; in observational mode an unknown type or a
 // malformed payload is counted on the report and skipped (EV-033).
 func decodeEvent(rep *Report, ev core.Event, strict bool) (p core.EventPayload, skip bool, err error) {
-	if core.EventType(ev.Type) == core.EventTypeRunStarted {
+	if ev.Type == core.EventTypeRunStarted {
 		readPayload, derr := core.DecodeRunStartedForRead(ev)
 		if derr == nil {
 			return &readPayload, false, nil
@@ -291,7 +291,7 @@ func decodeEvent(rep *Report, ev core.Event, strict bool) (p core.EventPayload, 
 // event: first-occurrence Seen tracking, the LastEventID watermark, and the
 // first-terminal latch.
 func recordEvent(st *CycleState, ev core.Event) {
-	et := core.EventType(ev.Type)
+	et := ev.Type
 	if _, dup := st.Seen[et]; !dup {
 		st.Seen[et] = ev
 	}

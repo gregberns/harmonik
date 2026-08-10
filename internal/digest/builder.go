@@ -390,6 +390,8 @@ func buildPendingDecisions(eventsPath, acksDir string) []DecisionRequiredSummary
 			if p.AckToken != "" {
 				ackedTokens[p.AckToken] = struct{}{}
 			}
+		default:
+			// Every other event type carries no decision for the digest.
 		}
 	}
 

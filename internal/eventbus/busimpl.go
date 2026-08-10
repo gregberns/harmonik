@@ -740,7 +740,7 @@ func (b *busImpl) EmitAgentMessage(ctx context.Context, payload core.AgentMessag
 	b.mu.Unlock()
 
 	for _, sub := range subs {
-		if !sub.EventPattern.MatchesType(core.EventType(agentMessageType)) {
+		if !sub.EventPattern.MatchesType(agentMessageType) {
 			continue
 		}
 		if sub.Handler == nil {
@@ -831,7 +831,7 @@ func (b *busImpl) EmitAgentPresence(ctx context.Context, payload core.AgentPrese
 	b.mu.Unlock()
 
 	for _, sub := range subs {
-		if !sub.EventPattern.MatchesType(core.EventType(agentPresenceType)) {
+		if !sub.EventPattern.MatchesType(agentPresenceType) {
 			continue
 		}
 		if sub.Handler == nil {
@@ -1271,7 +1271,7 @@ func (b *busImpl) Seal() error {
 			continue // synchronous consumers do not participate in replay per EV-014d
 		}
 		lastDurable, truncated, err := replayAndDetectTrunc(ctx, b.jsonlPath, effectiveSince, func(ctx context.Context, ev core.Event) error {
-			if !sub.EventPattern.MatchesType(core.EventType(ev.Type)) {
+			if !sub.EventPattern.MatchesType(ev.Type) {
 				return nil
 			}
 			return sub.Handler(ctx, ev)
@@ -1317,7 +1317,7 @@ func (b *busImpl) ReplayFrom(consumerID string, since core.EventID) error {
 
 	ctx := context.Background()
 	_, _, err := replayAndDetectTrunc(ctx, b.jsonlPath, since, func(ctx context.Context, ev core.Event) error {
-		if !found.EventPattern.MatchesType(core.EventType(ev.Type)) {
+		if !found.EventPattern.MatchesType(ev.Type) {
 			return nil
 		}
 		return found.Handler(ctx, ev)
@@ -1384,7 +1384,7 @@ func (b *busImpl) DeadLetterReplay(consumerName string, filter *core.EventPatter
 			if decodeErr := json.Unmarshal(bytes.TrimRight(lineBytes, "\n"), &entry); decodeErr != nil {
 				log.Printf("eventbus.DeadLetterReplay: malformed line (skipping): %v", decodeErr)
 			} else {
-				evType := core.EventType(entry.Envelope.Type)
+				evType := entry.Envelope.Type
 				matches := found.EventPattern.MatchesType(evType)
 				if matches && filter != nil {
 					matches = filter.MatchesType(evType)

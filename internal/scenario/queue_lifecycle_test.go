@@ -363,6 +363,8 @@ func TestQueueLifecycle_EmissionOrdering_QM065(t *testing.T) {
 			if startedIdx < 0 {
 				startedIdx = i
 			}
+		default:
+			// This assertion reads only the two group-lifecycle event types.
 		}
 	}
 	if completedIdx < 0 {

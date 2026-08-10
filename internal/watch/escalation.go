@@ -79,7 +79,7 @@ const (
 // Unknown event types default to EscalationPullDigest — safe accumulate-and-batch
 // behavior that never wakes the captain spuriously.
 func Classify(ev core.Event) EscalationClass {
-	switch core.EventType(ev.Type) {
+	switch ev.Type {
 
 	// IMMEDIATE — captain judgment needed now.
 	case core.EventTypeDecisionRequired,
@@ -193,7 +193,7 @@ func (e *EscalationEngine) recordImmediate() error {
 }
 
 func opsMonitorReceipt(ev core.Event) (OpsMonitorReceipt, bool, error) {
-	if core.EventType(ev.Type) != core.EventType("agent_message") {
+	if ev.Type != core.EventTypeAgentMessage {
 		return OpsMonitorReceipt{}, false, nil
 	}
 	var msg core.AgentMessagePayload

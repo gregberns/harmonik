@@ -333,7 +333,7 @@ func computeWindowMovement(
 			break // events are ordered; no need to scan further
 		}
 
-		evType := core.EventType(ev.Type)
+		evType := ev.Type
 		switch evType {
 		case core.EventTypeBeadClosed, core.EventTypeRunCompleted:
 			w := weights[evType]

@@ -97,6 +97,8 @@ func decisionsClientProjection(eventsPath string) map[string]decisionRow {
 			}
 			seen[evID] = struct{}{}
 			delete(open, p.DecisionID)
+		default:
+			// Every other event type does not change the open decision set.
 		}
 	}
 	return open

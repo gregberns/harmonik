@@ -324,7 +324,6 @@ internal/daemon/reviewgateanomaly_hktnmjy.go	nilerr
 internal/daemon/run_session_adoption.go	gocognit
 internal/daemon/runfailed_bead_reset_s20z_test.go	errcheck
 internal/daemon/runfailed_bead_reset_s20z_test.go	revive
-internal/daemon/runinflightreconcile_hkr73qr.go	exhaustive
 internal/daemon/runinflightreconcile_hkr73qr.go	gocognit
 internal/daemon/runregistry_test.go	gocritic
 internal/daemon/runsupport.go	gocritic
@@ -361,7 +360,6 @@ internal/daemon/srt_pi_egress_e2e_test.go	errcheck
 internal/daemon/srt_pi_egress_e2e_test.go	gosec
 internal/daemon/stalewatch_wkzlc_test.go	nilerr
 internal/daemon/stalewatch.go	gocognit
-internal/daemon/stalewatch.go	unconvert
 internal/daemon/stalewatch.go	unparam
 internal/daemon/standardgraph_sync_test.go	gocritic
 internal/daemon/standardgraph_sync_test.go	gosec
@@ -383,7 +381,6 @@ internal/daemon/subscribe.go	contextcheck
 internal/daemon/subscribe.go	gocognit
 internal/daemon/subscribe.go	gocritic
 internal/daemon/subscribe.go	unused
-internal/daemon/supervisorrevival_hkrnkuy.go	exhaustive
 internal/daemon/survive_shutdown_run_resources_test.go	unparam
 internal/daemon/survive_shutdown_run_resources_test.go	unused
 internal/daemon/t2_scenarios_test.go	errcheck

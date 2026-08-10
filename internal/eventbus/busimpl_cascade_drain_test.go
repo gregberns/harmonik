@@ -49,7 +49,7 @@ func TestBusImpl_ReentrantEmitDuringDrain_IsWaitedAndDelivered(t *testing.T) {
 		EventPattern:  busImplFixtureWildcardPattern(),
 		OnPanic:       core.OnPanicRecoverAndLog,
 		Handler: func(ctx context.Context, evt core.Event) error {
-			switch core.EventType(evt.Type) {
+			switch evt.Type {
 			case cascadeParentType:
 				// Re-entrant cascade: emit the child only once Drain is waiting,
 				// so the child's delivery goroutine is registered mid-Drain —

@@ -52,7 +52,7 @@ import (
 
 func init() {
 	if err := core.RegisterEventType(core.EventTypeGovernorSignal, func() core.EventPayload { return &sentinel.GovernorSignal{} }); err != nil {
-		panic("daemon: register governor_signal: " + err.Error())
+		panic("daemon: register governor_signal: " + err.Error()) //nolint:forbidigo // init-time registry wiring: a duplicate or bad registration is a build-time bug, and there is no caller to return an error to.
 	}
 }
 

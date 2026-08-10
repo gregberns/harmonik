@@ -252,13 +252,10 @@ func (w resolvedWorkflow) Valid() bool {
 	if w.Graph == nil || !w.Descriptor.Valid() || w.Mode != core.WorkflowModeDot || !w.ReviewPolicy.Valid() || !w.SelectionSource.Valid() {
 		return false
 	}
-	noReviewDescriptor := w.Descriptor == noReviewBeadDescriptor
-	legacySource := w.SelectionSource == core.WorkflowSelectionLegacySingleLabel ||
-		w.SelectionSource == core.WorkflowSelectionQueueItemSingleMode
-	if w.ReviewPolicy == core.ReviewPolicyNoReview {
-		return noReviewDescriptor && legacySource
-	}
-	return w.ReviewPolicy == core.ReviewPolicyReviewed && (!noReviewDescriptor || !legacySource)
+	// The descriptor/policy/source rule belongs to core.RunStartedPayload, which
+	// is what this resolution is emitted as. Ask core rather than restate it —
+	// this function used to carry a second copy that could drift out of step.
+	return core.ValidPolicyBinding(w.Descriptor, w.ReviewPolicy, w.SelectionSource)
 }
 
 // resolveWorkflow returns the parsed graph and every durable selection fact.

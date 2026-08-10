@@ -86,6 +86,18 @@ const (
 	WorkflowSelectionQueueItemSingleMode WorkflowSelectionSource = "queue_item_single_mode"
 )
 
+// SelectsNoReview reports whether s is one of the two compatibility inputs that
+// may select the no-review graph: a workflow:single bead label or a queue item
+// that asks for single mode. Every other source is reviewed.
+//
+// This is the one owner of that set. The daemon resolver, the run_started
+// payload validator and the core-loop fixture guard all ask here instead of
+// listing the two sources again, because a rule with three copies reports the
+// daemon as broken the day one copy changes.
+func (s WorkflowSelectionSource) SelectsNoReview() bool {
+	return s == WorkflowSelectionLegacySingleLabel || s == WorkflowSelectionQueueItemSingleMode
+}
+
 // Valid reports whether s is a declared selection source.
 func (s WorkflowSelectionSource) Valid() bool {
 	switch s {

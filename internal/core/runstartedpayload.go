@@ -65,7 +65,7 @@ func (p RunStartedPayload) Valid() bool {
 	if p.WorkflowMode != WorkflowModeDot || !p.ReviewPolicy.Valid() || !p.WorkflowSelectionSource.Valid() {
 		return false
 	}
-	if !validRunStartedPolicyBinding(p.Descriptor(), p.ReviewPolicy, p.WorkflowSelectionSource) {
+	if !ValidPolicyBinding(p.Descriptor(), p.ReviewPolicy, p.WorkflowSelectionSource) {
 		return false
 	}
 	if p.BeadID != nil && *p.BeadID == "" {
@@ -80,11 +80,19 @@ func (p RunStartedPayload) Valid() bool {
 	return true
 }
 
-func validRunStartedPolicyBinding(d WorkflowDescriptor, policy ReviewPolicy, source WorkflowSelectionSource) bool {
+// ValidPolicyBinding reports whether a descriptor, a review policy and a
+// selection source form a tuple the resolver can produce.
+//
+// no_review holds only for the embedded no-review-bead graph reached through one
+// of the two compatibility inputs. Any other pairing is reviewed, and reviewed
+// may not claim the no-review graph by way of a compatibility input.
+//
+// The daemon resolver and this payload validator both call it, so the rule has
+// one owner rather than a copy per package.
+func ValidPolicyBinding(d WorkflowDescriptor, policy ReviewPolicy, source WorkflowSelectionSource) bool {
 	noReviewDescriptor := d.WorkflowID == WorkflowID("no-review-bead") && d.WorkflowVersion == WorkflowVersion("1.0")
-	legacySource := source == WorkflowSelectionLegacySingleLabel || source == WorkflowSelectionQueueItemSingleMode
 	if policy == ReviewPolicyNoReview {
-		return noReviewDescriptor && legacySource
+		return noReviewDescriptor && source.SelectsNoReview()
 	}
-	return policy == ReviewPolicyReviewed && (!noReviewDescriptor || !legacySource)
+	return policy == ReviewPolicyReviewed && (!noReviewDescriptor || !source.SelectsNoReview())
 }

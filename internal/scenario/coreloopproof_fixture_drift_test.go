@@ -21,6 +21,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
 
 // coreLoopProofSeedFile is the parsed shape of scenarios/core-loop-proof/seed-beads.json.
@@ -207,14 +209,6 @@ func TestCoreLoopProofFixtureDrift_RunStartedDispatchContract(t *testing.T) {
 		t.Fatalf("unmarshal cells.json: %v", err)
 	}
 
-	// The no-review policy is reachable from exactly two selection sources per
-	// EM-012a; every other source is reviewed. Mirrors core.RunStartedPayload's
-	// policy binding so the fixture cannot assert a tuple the daemon rejects.
-	noReviewSources := map[string]bool{
-		"legacy_single_label":    true,
-		"queue_item_single_mode": true,
-	}
-
 	sawDispatch := false
 	for _, cell := range cellsFile.Cells {
 		d := cell.Expect.Dispatch
@@ -241,8 +235,19 @@ func TestCoreLoopProofFixtureDrift_RunStartedDispatchContract(t *testing.T) {
 			t.Errorf("cell %q expect.dispatch has no workflow_selection_source; it is the field that names WHY the graph was chosen", cell.Cell)
 			continue
 		}
-		if *d.ReviewPolicy == "no_review" && !noReviewSources[*d.WorkflowSelectionSource] {
+		// The pairing runs both ways, and core owns which sources are the
+		// no-review ones. A one-directional check let a cell name a
+		// compatibility source and still expect a review, which the resolver
+		// never produces: both compatibility inputs land on the no-review graph
+		// (internal/daemon resolveNoReviewWorkflow), so the policy follows from
+		// the source with nothing left to choose.
+		selectsNoReview := core.WorkflowSelectionSource(*d.WorkflowSelectionSource).SelectsNoReview()
+		switch {
+		case *d.ReviewPolicy == "no_review" && !selectsNoReview:
 			t.Errorf("cell %q pairs review_policy=no_review with workflow_selection_source=%q; only legacy_single_label and queue_item_single_mode may select no_review (execution-model.md §4.3 EM-012a)",
+				cell.Cell, *d.WorkflowSelectionSource)
+		case *d.ReviewPolicy == "reviewed" && selectsNoReview:
+			t.Errorf("cell %q pairs review_policy=reviewed with workflow_selection_source=%q; that source selects the no-review graph, so the run carries no_review (execution-model.md §4.3 EM-012a)",
 				cell.Cell, *d.WorkflowSelectionSource)
 		}
 	}

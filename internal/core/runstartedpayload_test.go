@@ -65,6 +65,53 @@ func TestRunStartedPayloadV2AllowsOnlyRegisteredNoReviewBinding(t *testing.T) {
 	}
 }
 
+// ValidPolicyBinding is now the one owner of the descriptor/policy/source rule:
+// the run_started payload validator and the daemon's resolvedWorkflow.Valid both
+// call it. It is exercised directly so a change to the rule cannot pass by
+// hiding behind either caller's other checks.
+func TestValidPolicyBinding(t *testing.T) {
+	noReview := WorkflowDescriptor{WorkflowID: "no-review-bead", WorkflowVersion: "1.0"}
+	standard := WorkflowDescriptor{WorkflowID: "standard-bead", WorkflowVersion: "1.0"}
+
+	for name, tc := range map[string]struct {
+		descriptor WorkflowDescriptor
+		policy     ReviewPolicy
+		source     WorkflowSelectionSource
+		want       bool
+	}{
+		"no review from a bead label":                                {noReview, ReviewPolicyNoReview, WorkflowSelectionLegacySingleLabel, true},
+		"no review from a queue item":                                {noReview, ReviewPolicyNoReview, WorkflowSelectionQueueItemSingleMode, true},
+		"no review from an ordinary source":                          {noReview, ReviewPolicyNoReview, WorkflowSelectionProjectDefault, false},
+		"no review on another graph":                                 {standard, ReviewPolicyNoReview, WorkflowSelectionLegacySingleLabel, false},
+		"reviewed on an ordinary graph":                              {standard, ReviewPolicyReviewed, WorkflowSelectionProjectDefault, true},
+		"reviewed claiming the no-review graph through a bead label": {noReview, ReviewPolicyReviewed, WorkflowSelectionLegacySingleLabel, false},
+		"reviewed on the no-review graph by explicit ref":            {noReview, ReviewPolicyReviewed, WorkflowSelectionExplicitRef, true},
+		"undeclared policy":                                          {standard, ReviewPolicy("audited"), WorkflowSelectionProjectDefault, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := ValidPolicyBinding(tc.descriptor, tc.policy, tc.source); got != tc.want {
+				t.Fatalf("ValidPolicyBinding(%v, %q, %q) = %v, want %v",
+					tc.descriptor, tc.policy, tc.source, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestWorkflowSelectionSourceSelectsNoReview(t *testing.T) {
+	for source, want := range map[WorkflowSelectionSource]bool{
+		WorkflowSelectionLegacySingleLabel:   true,
+		WorkflowSelectionQueueItemSingleMode: true,
+		WorkflowSelectionEmbeddedDefault:     false,
+		WorkflowSelectionProjectDefault:      false,
+		WorkflowSelectionExplicitRef:         false,
+		WorkflowSelectionSource("invented"):  false,
+	} {
+		if got := source.SelectsNoReview(); got != want {
+			t.Errorf("%q.SelectsNoReview() = %v, want %v", source, got, want)
+		}
+	}
+}
+
 func TestRunStartedPayloadV2JSONRoundTrip(t *testing.T) {
 	want := runStartedV2Fixture()
 	encoded, err := json.Marshal(want)

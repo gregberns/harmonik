@@ -468,15 +468,32 @@ func TestSubmitStaleTerminal(t *testing.T) {
 		t.Fatalf("second err = %v, want ErrInputStale", err)
 	}
 
-	types := rec.types()
-	var stales int
-	for _, ty := range types {
-		if ty == codexinput.EmitInputStale {
-			stales++
+	// SubmitInput returning ErrInputStale does not mean the matching emission
+	// has been recorded: the caller is released on its own goroutine and the
+	// emit lands on the reactor's. Reading the recorder straight after the
+	// second return therefore saw the second stale about one run in a hundred,
+	// and the failure looked like a product defect —
+	//
+	//	stale emissions = 1 (all: [agent_input_submitted agent_input_stale
+	//	agent_input_submitted]), want 2
+	//
+	// — a missing terminal, not a missing synchronisation. It went red inside a
+	// live commit gate on 2026-08-10 and sent a correct, committed codex change
+	// back to the implementer to fix a defect that was not there.
+	//
+	// Wait for the emission instead of assuming it has landed, the same way the
+	// concurrent-caller tests below wait for agent_input_submitted. The property
+	// under test is unchanged: two stale terminals, and no more than two.
+	deadline := time.Now().Add(10 * time.Second)
+	for rec.countType(codexinput.EmitInputStale) < 2 {
+		if time.Now().After(deadline) {
+			t.Fatalf("stale emissions = %d (all: %v), want 2",
+				rec.countType(codexinput.EmitInputStale), rec.types())
 		}
+		time.Sleep(5 * time.Millisecond) // test scaffolding poll, not driver timing
 	}
-	if stales != 2 {
-		t.Fatalf("stale emissions = %d (all: %v), want 2", stales, types)
+	if got := rec.countType(codexinput.EmitInputStale); got != 2 {
+		t.Fatalf("stale emissions = %d (all: %v), want exactly 2", got, rec.types())
 	}
 }
 

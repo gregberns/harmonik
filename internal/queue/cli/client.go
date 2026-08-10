@@ -235,6 +235,11 @@ func renderQueueStatusText(result json.RawMessage, out io.Writer) int {
 			} `json:"groups"`
 		} `json:"queue"`
 		QuarantineReason string `json:"quarantine_reason"`
+		ActiveRuns       []struct {
+			Queue  string `json:"queue"`
+			BeadID string `json:"bead_id"`
+			RunID  string `json:"run_id"`
+		} `json:"active_runs"`
 	}
 	p := newPrinter(out)
 	if err := json.Unmarshal(result, &envelope); err != nil {
@@ -243,8 +248,28 @@ func renderQueueStatusText(result json.RawMessage, out io.Writer) int {
 		return renderExit(p)
 	}
 
+	// In-flight work is reported FIRST and whatever queue was resolved, because
+	// it is the answer to the question people actually bring to this command.
+	// Without a --queue argument the resolved queue is "main", and beads
+	// dispatched from a named queue are invisible in it — so this block used to
+	// print "(no queue active)" over a running agent, and a captain following
+	// the shutdown runbook read that as a lull
+	// (hk-queue-status-blind-shutdown-gate-9dco0).
+	if len(envelope.ActiveRuns) > 0 {
+		p.printf("in flight: %d\n", len(envelope.ActiveRuns))
+		for _, r := range envelope.ActiveRuns {
+			p.printf("  %-20s  queue=%s\n", r.BeadID, r.Queue)
+		}
+	}
+
 	if envelope.Queue == nil {
-		p.println("(no queue active)")
+		if len(envelope.ActiveRuns) == 0 {
+			p.println("(no queue active)")
+			return renderExit(p)
+		}
+		// Never claim idle over running work. Name the flag that shows it.
+		p.println("(no queue named 'main'; the work above is in named queues)")
+		p.println("  see one with: harmonik queue status --queue <name>")
 		return renderExit(p)
 	}
 

@@ -607,6 +607,15 @@ func HandleQueueStatus(
 	projectDir string,
 	req QueueStatusRequest,
 ) (QueueStatusResponse, *RPCError) {
+	// ActiveRuns is computed for EVERY resolution path, including the ones
+	// that resolve no queue at all. The Queue field answers a question the
+	// caller asked with a name; this one answers "is anything running", which
+	// a caller with no name still has to be able to ask.
+	activeRuns, rpcErr := collectActiveRuns(ctx, projectDir)
+	if rpcErr != nil {
+		return QueueStatusResponse{}, rpcErr
+	}
+
 	switch {
 	case req.Name != "":
 		// Name-based lookup.
@@ -618,18 +627,25 @@ func HandleQueueStatus(
 				Detail:  map[string]any{"error": loadErr.Error()},
 			}
 		}
-		return QueueStatusResponse{Queue: q}, nil
+		return QueueStatusResponse{Queue: q, ActiveRuns: activeRuns}, nil
 
 	case req.QueueID != "":
 		// UUID-based lookup: enumerate all queues and find the matching one.
-		q, rpcErr := findQueueByID(ctx, projectDir, req.QueueID)
-		if rpcErr != nil {
-			return QueueStatusResponse{}, rpcErr
+		q, findErr := findQueueByID(ctx, projectDir, req.QueueID)
+		if findErr != nil {
+			return QueueStatusResponse{}, findErr
 		}
-		return QueueStatusResponse{Queue: q}, nil
+		return QueueStatusResponse{Queue: q, ActiveRuns: activeRuns}, nil
 
 	default:
 		// Backward-compatible default: load the "main" queue.
+		//
+		// The Queue field keeps that meaning, because QM-057 defines it and
+		// callers read it. What changes is that "main" is no longer the whole
+		// answer: work dispatched from a NAMED queue used to make this path
+		// report {"queue": null} while an agent was running, and every reader
+		// of that payload concluded the daemon was idle. ActiveRuns above is
+		// computed across all queues and says otherwise.
 		q, loadErr := Load(ctx, projectDir, QueueNameMain)
 		if loadErr != nil {
 			return QueueStatusResponse{}, &RPCError{
@@ -638,8 +654,58 @@ func HandleQueueStatus(
 				Detail:  map[string]any{"error": loadErr.Error()},
 			}
 		}
-		return QueueStatusResponse{Queue: q}, nil
+		return QueueStatusResponse{Queue: q, ActiveRuns: activeRuns}, nil
 	}
+}
+
+// collectActiveRuns enumerates every queue and returns one entry per item that
+// is currently dispatched.
+//
+// It returns an empty non-nil slice when nothing is in flight, so the encoded
+// payload carries [] rather than null and a reader can trust len() as the
+// answer to "is anything running".
+//
+// A queue that fails to load is skipped rather than failing the whole call,
+// matching findQueueByID: a single unreadable queue file must not make the
+// daemon unable to answer whether OTHER queues are busy. Only the enumeration
+// itself is fatal, because a failure there means the answer would be silently
+// partial.
+func collectActiveRuns(ctx context.Context, projectDir string) ([]ActiveRun, *RPCError) {
+	active := []ActiveRun{}
+
+	names, err := EnumerateQueueNames(projectDir)
+	if err != nil {
+		return nil, &RPCError{
+			Code:    -32099,
+			Message: "internal_error",
+			Detail:  map[string]any{"error": err.Error()},
+		}
+	}
+
+	for _, name := range names {
+		q, loadErr := Load(ctx, projectDir, name)
+		if loadErr != nil || q == nil {
+			continue
+		}
+		for _, g := range q.Groups {
+			for _, item := range g.Items {
+				if item.Status != ItemStatusDispatched {
+					continue
+				}
+				runID := ""
+				if item.RunID != nil {
+					runID = *item.RunID
+				}
+				active = append(active, ActiveRun{
+					Queue:  q.Name,
+					BeadID: string(item.BeadID),
+					RunID:  runID,
+				})
+			}
+		}
+	}
+
+	return active, nil
 }
 
 // ---------------------------------------------------------------------------

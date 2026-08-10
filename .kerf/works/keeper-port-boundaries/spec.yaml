@@ -1,0 +1,29 @@
+codename: keeper-port-boundaries
+type: plan
+project:
+    id: gregberns-harmonik
+jig: plan
+jig_version: 1
+status: ready
+status_values:
+    - problem-space
+    - analyze
+    - decompose
+    - research
+    - change-spec
+    - integration
+    - tasks
+    - ready
+created: 2026-08-10T19:55:23Z
+updated: 2026-08-10T20:11:09Z
+sessions:
+    - id: null
+      started: 2026-08-10T19:55:23Z
+active_session: anonymous
+depends_on: []
+bead_filter:
+pinned_beads: []
+implementation:
+    branch: null
+    pr: null
+    commits: []

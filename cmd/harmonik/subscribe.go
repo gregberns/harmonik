@@ -9,7 +9,10 @@ package main
 //
 // Flag reference:
 //
-//	--types t1,t2,...      Comma-separated event-type filter (default: all)
+//	--types t1,t2,...      Comma-separated event-type filter (default: all).
+//	                        An unknown type is refused before the dial — see
+//	                        subscribetypes.go for why silence is not an option.
+//	--list-types           Print every accepted --types value and exit
 //	--heartbeat <dur>      Idle heartbeat cadence (default 60s; clamped 10s..600s)
 //	--since-event-id <id>  Resume cursor: replay events strictly after this event_id before delivering live stream
 //	--follow               Auto-reconnect on daemon-restart/EOF (hk-5hs5b); resumes from last cursor
@@ -131,6 +134,11 @@ func runSubscribeSubcommand(subArgs []string) int {
 			heartbeatFileFlag = subArgs[i]
 		case strings.HasPrefix(arg, "--heartbeat-file="):
 			heartbeatFileFlag = strings.TrimPrefix(arg, "--heartbeat-file=")
+		case arg == "--list-types":
+			for _, t := range knownSubscribeTypes() {
+				fmt.Println(t)
+			}
+			return 0
 		// Accept --json as a no-op alias (output is already NDJSON).
 		case arg == "--json":
 			// no-op
@@ -169,6 +177,17 @@ func runSubscribeSubcommand(subArgs []string) int {
 				types = append(types, t)
 			}
 		}
+	}
+
+	// Refuse a filter that can never match. A --types value that is not an
+	// event type produces a stream that heartbeats on cadence and delivers
+	// nothing, which the observer reads as "the work is still running"
+	// (hk-subscribe-accepts-unknown-type-rd07b). Check it here, before the
+	// dial, so the refusal does not depend on a running daemon and both the
+	// follow and the non-follow path are covered.
+	if err := validateSubscribeTypes(types); err != nil {
+		fmt.Fprintf(os.Stderr, "harmonik subscribe: %v\n", err)
+		return 1
 	}
 
 	// Build the base request body (without since_event_id, which may advance on reconnect).
@@ -507,7 +526,9 @@ USAGE
   harmonik subscribe [flags]
 
 FLAGS
-  --types t1,t2,...      Comma-separated event-type filter (default: all)
+  --types t1,t2,...      Comma-separated event-type filter (default: all).
+                         An unknown type is refused, not silently accepted.
+  --list-types           Print every accepted --types value and exit
   --heartbeat DUR        Idle heartbeat cadence (default 60s; clamped 10s..600s)
   --since-event-id ID    Replay cursor: replay events strictly after this event_id before delivering live stream
   --follow               Auto-reconnect on daemon-restart or EOF; resumes from last cursor so no events are lost
@@ -522,7 +543,7 @@ FLAGS
 
 EXIT CODES
   0   Stream closed cleanly
-  1   Argument error or stream write failure
+  1   Argument error (this includes an unknown --types value) or stream write failure
   17  Daemon not running (socket missing or ECONNREFUSED)
 
 EXAMPLES

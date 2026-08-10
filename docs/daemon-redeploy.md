@@ -106,8 +106,11 @@ swap_gate && harmonik supervise restart --project "$PWD" --watch-restart
 pgrep -fl 'harmonik --project '"$PWD"' --no-auto-pull'      # -> <OLD_DAEMON_PID>
 kill -TERM <OLD_DAEMON_PID>
 
-# 5. Wait for revival WITHOUT polling `harmonik status` (bare `harmonik status` tries
-#    to START a daemon and will hang / contend with the reviving one). Watch files:
+# 5. Wait for revival WITHOUT polling for status. There is no `status` subcommand.
+#    Bare `harmonik status` is REFUSED with exit 2 and starts nothing — it is the
+#    FLAG-FIRST spelling, `harmonik --project X status`, that still starts a daemon
+#    and will hang / contend with the reviving one (hk-cli-flag-first-starts-daemon-gjhiy).
+#    Watch files:
 #    - socket reappears:      ls .harmonik/daemon.sock
 #    - new daemon pid:        pgrep -f 'harmonik --project '"$PWD"' --no-auto-pull'
 #    - watchdog progress:     harmonik supervise logs --project "$PWD" --lines 20
@@ -226,9 +229,14 @@ rollback` then targets the *new* binary. For a guaranteed old-binary rollback us
 
 1. `supervise restart` alone does **not** redeploy — the orphaned daemon keeps running
    the old binary until you SIGTERM it (step 4).
-2. **Don't poll `harmonik status`** during revival — it spawns a transient daemon and
-   contends with the reviving one (it hung a poll loop and likely killed an early
-   revive attempt during the 2026-06-30 deploy). Use file/event checks instead.
+2. **Don't poll for status during revival.** A transient daemon contends with the
+   reviving one — it hung a poll loop and likely killed an early revive attempt during
+   the 2026-06-30 deploy. Use file/event checks instead.
+   **This warning used to name the wrong spelling, which made it dangerous.** There is
+   no `status` subcommand at all. Bare `harmonik status` is refused with exit 2 and
+   starts nothing; the FLAG-FIRST form, `harmonik --project X status`, is the one that
+   still starts a daemon (hk-cli-flag-first-starts-daemon-gjhiy). A reader who trusted
+   the old wording avoided the harmless spelling and reached for the harmful one.
 3. Clean tree is mandatory before `ff` — the daemon reverts uncommitted tracked edits.
 4. `supervise restart` re-reads `config.json` (no hot-reload) — concurrency/flags only
    change on restart.

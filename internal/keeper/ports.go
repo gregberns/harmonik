@@ -213,6 +213,13 @@ func (g fnGauge) LastAssistantTurn(sessionID string) (time.Time, bool) {
 	return g.cfg.recentTurnFn()(g.cfg.resolvedTranscriptDir(), sessionID, "assistant")
 }
 
+func (g fnGauge) LastUserTurn(sessionID string) (time.Time, bool) {
+	if sessionID == "" {
+		return time.Time{}, false
+	}
+	return g.cfg.recentTurnFn()(g.cfg.resolvedTranscriptDir(), sessionID, "user")
+}
+
 // fnHandoff adapts the handoff-file + journal fn-fields to HandoffPort. Paths
 // are computed per call (never cached), matching the old call sites.
 type fnHandoff struct{ cfg *CyclerConfig }

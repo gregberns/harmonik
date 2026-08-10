@@ -338,6 +338,22 @@ func TestViaSendRequest_ValidResponse(t *testing.T) {
 				report(fmt.Errorf("close daemon connection: %w", err))
 			}
 		}()
+		// Read the request to EOF BEFORE replying. This is the synchronisation
+		// between the two sides, not a formality — delete it and the test fails
+		// under load. viaSendRequest writes its payload and only then half-closes,
+		// so this read returns exactly when the client's write has landed. A fake
+		// daemon that replies and closes straight after Accept can finish the whole
+		// exchange while the client goroutine is still descheduled between its dial
+		// and its write; the client then writes to a closed peer, gets EPIPE, and
+		// viaSendRequest reports a transport error (exit 1) against a daemon that
+		// answered correctly. Reading first also drains this side's receive buffer,
+		// so the close below cannot discard the reply the client has yet to read.
+		// TestViaSubmitOrAppendWritesPendingGroup below reads first for the same
+		// reason, as does every other fake daemon in this package.
+		if _, readErr := io.ReadAll(conn); readErr != nil {
+			report(fmt.Errorf("read daemon request: %w", readErr))
+			return
+		}
 		reply, marshalErr := json.Marshal(viaSocketResponse{Ok: true, Result: json.RawMessage(`{"queue":null}`)})
 		if marshalErr != nil {
 			report(fmt.Errorf("marshal daemon response: %w", marshalErr))

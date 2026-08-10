@@ -12,6 +12,13 @@ package daemon
 //   - staleAfter: base quiet window (default: 10 min). Configurable via
 //     Config.StaleAfterSeconds (per-daemon) or a per-bead label
 //     "stale_after=<seconds>" (per-bead override via beadStaleAfter).
+//   - noProgressAfter: the SECOND clock behind run_stale (default: 90 min).
+//     The quiet window above is measured from the last event of any kind, and
+//     the daemon emits agent_heartbeat for a live agent process every 5 min, so
+//     it cannot fire for a run that wedges with its process alive. This window
+//     is measured from the last event that shows the run MOVED, so the daemon's
+//     own beat does not refresh it. Per-bead override via
+//     "no_progress_after=<seconds>" (beadNoProgressAfter).
 //   - scanInterval: how often the background goroutine wakes (default: 30 s).
 //   - neverSpawnedReaperDefaultTimeout: deadline for the never-spawned reaper
 //     (default: 30 min). Per-bead override via "never_spawned_timeout=<seconds>"
@@ -77,6 +84,71 @@ const (
 	// for that node type (logmine F38, hk-0z2).  30 min matches the reviewer's
 	// observed worst-case latency.
 	staleWatchReviewerLaunchAfter = 30 * time.Minute
+
+	// staleWatchNoProgressAfter is the default window a run may pass without a
+	// single event that shows it MOVED.
+	//
+	// It backs a SECOND clock, deliberately separate from the quiet window
+	// above. The quiet window measures silence, and the daemon breaks that
+	// silence itself: RunHeartbeatLoop emits agent_heartbeat for the run every
+	// 5 min for as long as the agent process exists, whether or not the agent
+	// is doing anything. Measured from the last event of any kind, a run that
+	// wedges with its process alive is refreshed by that beat every 5 min
+	// against a 10-min window, so run_stale can never fire for it — the last
+	// 490 recorded runs produced 2 run_stale events between them. This is the
+	// same trap
+	// launchInitiatedAt and lastLivenessAt already guard against, one layer up:
+	// the beat is the daemon's own timer, so reading it as proof the run is
+	// alive is a watchdog listening to its own alarm.
+	//
+	// THIS CLOCK REPORTS. IT DOES NOT CANCEL. Only the quiet window above arms
+	// killConsumerBackstop — see the shouldKillConsumer assignment in checkRun.
+	// That is what makes the number below safe to be approximately right, and
+	// the first draft of this change shows why the property is worth having.
+	//
+	// It is not free of consequence, though, and the one it does have is worth
+	// naming: an emission on either clock drives the session FSM to
+	// StateFailed(silent_hang), and that state has no valid outgoing
+	// transitions. So an early fire does not kill the agent, but it does close
+	// the machine for a run that may still be working. Nothing reaps on FSM
+	// state today, so the cost is a wrong record rather than lost work: a later
+	// legitimate transition on a closed machine is silently ignored rather than
+	// raised as an error, and the silent-hang aggregate degraded-daemon reason
+	// has no producer. The one live cost is an operator wake — cognition-loop
+	// consumers treat Ready→Failed(silent_hang) as a judgment wake — which is
+	// the price the reporting-only design accepts in exchange for never
+	// cancelling on this clock.
+	//
+	// That draft chose 90 min and justified it with a measurement: across the
+	// recorded implementer phases the longest was 85 min and none passed 90, so
+	// 90 left a 5-minute margin. The measurement does not survive contact with
+	// the instrument. The claude path gives up on its own commit hard ceiling at
+	// exactly 90 min (pasteinject.go commitHardCeiling), so no phase CAN be
+	// recorded past 90 — the sample is truncated at the very value being chosen
+	// and "none over 90" describes the ceiling, not the workload. Re-measured
+	// over 2372 phases: max 90.6 min, p99 90.1 min, 75 phases past 85 min, and
+	// every one of those 75 carries commit_landed=false with exit 0, which is
+	// the ceiling giving up. Nothing at all is recorded past 91 min.
+	//
+	// So the real margin at 90 min was not 5 minutes, it was negative: a window
+	// firing at 90.0 pre-empts the ceiling by seconds and turns an orderly
+	// give-up into a cancel, on the claude path the draft said was unaffected.
+	//
+	// 120 min is chosen to clear the truncation rather than to sit on it. It is
+	// the first round value comfortably past the 90-min ceiling that hides the
+	// true tail, and past the 4-hour run-age backstop it changes nothing. The
+	// population this clock uniquely covers is the SessionIDCaptured harnesses
+	// (codex, pi), where pasteTarget is nil so no commit ceiling is built at all
+	// and a wedged child holds its slot until that 4-hour backstop. Their
+	// recorded history is far too thin to bound a tail from — 18 clean codex
+	// runs and 2 pi runs — which is the second reason this clock reports rather
+	// than cancels. When those harnesses have a real history, re-measure, and
+	// arming the canceller becomes a decision someone can defend with data.
+	//
+	// A bead whose work legitimately passes the window carries a
+	// "no_progress_after=<seconds>" label, the same escape hatch the other
+	// watchdogs in this file use.
+	staleWatchNoProgressAfter = 120 * time.Minute
 )
 
 // neverSpawnedReaperDefaultTimeout is the default deadline for the never-spawned
@@ -184,6 +256,23 @@ type runStaleState struct {
 
 	// lastEventAt is the wall-clock time of the most recent event.
 	lastEventAt time.Time
+
+	// lastProgressAt is the wall-clock time of the most recent event that shows
+	// the run MOVED, as opposed to showing that something is still there to
+	// report on it. It is lastEventAt minus the daemon's own periodic beat and
+	// minus the watcher's own alarms — see runProgressEvent. Zero until the
+	// first such event, in which case the run's StartedAt is the reference.
+	lastProgressAt time.Time
+
+	// nextNoProgressAfter is the no-progress window for the next emission on
+	// that clock. Initialised from the bead's "no_progress_after=<seconds>"
+	// label (beadNoProgressAfter), falling back to w.cfg.NoProgressAfter, and
+	// doubled after each emission the no-progress clock causes.
+	//
+	// It backs off separately from nextEmitAfter because the two clocks measure
+	// different things: a wedged run that trips the no-progress window must not
+	// widen the quiet window that catches a run which stops emitting entirely.
+	nextNoProgressAfter time.Duration
 
 	// emitCount is the number of run_stale events already emitted for this run.
 	emitCount int
@@ -348,6 +437,13 @@ type StaleWatcherConfig struct {
 	// execution window (logmine F38, hk-0z2).
 	ReviewerLaunchStaleAfter time.Duration
 
+	// NoProgressAfter is the window a run may pass with no event that shows it
+	// moved. It measures from the last such event, NOT from the last event of
+	// any kind, so the daemon's own 5-minute agent_heartbeat does not refresh
+	// it. Zero → staleWatchNoProgressAfter (90 min). Per-bead override via the
+	// "no_progress_after=<seconds>" label (beadNoProgressAfter).
+	NoProgressAfter time.Duration
+
 	// ScanInterval is how often the background goroutine scans active runs.
 	// Zero → staleWatchScanInterval (30 s).
 	ScanInterval time.Duration
@@ -493,6 +589,36 @@ func beadStaleAfter(labels []string, defaultAfter time.Duration) time.Duration {
 	return defaultAfter
 }
 
+// beadNoProgressAfter parses a "no_progress_after=<seconds>" or
+// "no_progress_after:<seconds>" label from labels and returns the corresponding
+// duration. Returns defaultAfter when no such label is present or the value is
+// not a positive integer.
+//
+// This is the false-positive escape hatch for the no-progress clock. The window
+// is a wall-clock bound on how long an agent may work without reaching one of
+// the events that mark a phase, and that is a property of the WORK, not of the
+// fleet. Put this label on a bead whose single phase legitimately runs longer
+// than the default.
+func beadNoProgressAfter(labels []string, defaultAfter time.Duration) time.Duration {
+	for _, l := range labels {
+		var val string
+		switch {
+		case strings.HasPrefix(l, "no_progress_after="):
+			val = strings.TrimPrefix(l, "no_progress_after=")
+		case strings.HasPrefix(l, "no_progress_after:"):
+			val = strings.TrimPrefix(l, "no_progress_after:")
+		default:
+			continue
+		}
+		secs, err := strconv.ParseInt(val, 10, 64)
+		if err != nil || secs <= 0 {
+			return defaultAfter
+		}
+		return time.Duration(secs) * time.Second
+	}
+	return defaultAfter
+}
+
 // beadNeverSpawnedTimeout parses a "never_spawned_timeout=<seconds>" or
 // "never_spawned_timeout:<seconds>" label from labels and returns the
 // corresponding duration.  Returns defaultTimeout when no such label is present
@@ -562,6 +688,9 @@ func NewStaleWatcher(cfg StaleWatcherConfig) *StaleWatcher {
 	}
 	if cfg.ReviewerLaunchStaleAfter <= 0 {
 		cfg.ReviewerLaunchStaleAfter = staleWatchReviewerLaunchAfter
+	}
+	if cfg.NoProgressAfter <= 0 {
+		cfg.NoProgressAfter = staleWatchNoProgressAfter
 	}
 	if cfg.ScanInterval <= 0 {
 		cfg.ScanInterval = staleWatchScanInterval
@@ -679,6 +808,9 @@ func (w *StaleWatcher) observe(_ context.Context, evt core.Event) error {
 	if !watcherOwnAlarm(core.EventType(typeStr)) {
 		st.lastLivenessAt = now
 	}
+	if runProgressEvent(core.EventType(typeStr)) {
+		st.lastProgressAt = now
+	}
 
 	w.mu.Unlock()
 	return nil
@@ -701,6 +833,49 @@ func watcherOwnAlarm(evType core.EventType) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// runProgressEvent reports whether evType is evidence the run MOVED, rather
+// than evidence that something is still there to report on it.
+//
+// THE RULE IS ABOUT WHO CAUSED THE EVENT, not about what it is called. An event
+// the AGENT caused is progress. An event the DAEMON emits about the run on its
+// own timer, or on its own decision, is not — a clock the daemon refreshes on
+// its own behalf is a clock that can never run out. That is the same trap
+// watcherOwnAlarm names one layer up, and the exclusions below are the same
+// rule applied wider:
+//
+//   - the watcher's own alarms, per watcherOwnAlarm.
+//   - agent_heartbeat: a fixed 5-minute timer (handler.RunHeartbeatLoop) that
+//     runs for as long as the agent PROCESS exists and says nothing about
+//     whether the agent is doing anything. The payload is a session id and a
+//     phase string that is always "reasoning", so an agent sitting at an idle
+//     prompt beats exactly like one that is working.
+//   - no_progress_detected: the daemon emits this when the diff hash did not
+//     change between iterations (emitDotNoProgressDetected). It is a statement
+//     that the run did NOT move. Counting it as progress lets the one event
+//     that means "stuck" reset the stuck clock.
+//   - implementer_resumed: the daemon emits this BEFORE it dispatches a resume
+//     back-edge (emitDotImplementerResumed). It is the daemon's own nudge, not
+//     the agent's answer to it. A loop that keeps resuming and keeps producing
+//     nothing would otherwise refresh this clock for as long as the loop runs.
+//
+// Everything else the daemon stamps with a run id follows the agent — a launch,
+// a readiness, a phase completion, a verdict, a terminal — so the default is
+// progress. That direction is deliberate: an event type added later counts as
+// progress, which can only delay a detection, never invent one.
+func runProgressEvent(evType core.EventType) bool {
+	if watcherOwnAlarm(evType) {
+		return false
+	}
+	switch evType {
+	case core.EventTypeAgentHeartbeat,
+		core.EventTypeNoProgressDetected,
+		core.EventTypeImplementerResumed:
+		return false
+	default:
+		return true
 	}
 }
 
@@ -817,6 +992,7 @@ func (w *StaleWatcher) checkRun(
 		// Apply per-bead label overrides if present.
 		st = &runStaleState{
 			nextEmitAfter:            beadStaleAfter(handle.Labels, w.cfg.StaleAfter),
+			nextNoProgressAfter:      beadNoProgressAfter(handle.Labels, w.cfg.NoProgressAfter),
 			neverSpawnedTimeout:      beadNeverSpawnedTimeout(handle.Labels, w.cfg.NeverSpawnedReaperTimeout),
 			agentReadyStallThreshold: beadAgentReadyStallThreshold(handle.Labels, w.cfg.AgentReadyStallThreshold),
 		}
@@ -830,6 +1006,9 @@ func (w *StaleWatcher) checkRun(
 		}
 		if st.agentReadyStallThreshold == 0 {
 			st.agentReadyStallThreshold = beadAgentReadyStallThreshold(handle.Labels, w.cfg.AgentReadyStallThreshold)
+		}
+		if st.nextNoProgressAfter == 0 {
+			st.nextNoProgressAfter = beadNoProgressAfter(handle.Labels, w.cfg.NoProgressAfter)
 		}
 	}
 	// Hydrate BeadID from the RunHandle (available even before first event).
@@ -1035,15 +1214,57 @@ func (w *StaleWatcher) checkRun(
 		effectiveThreshold = w.cfg.ReviewerLaunchStaleAfter
 	}
 
-	if age < effectiveThreshold {
+	// The NO-PROGRESS clock. The quiet window above measures silence, and the
+	// daemon breaks the silence itself — agent_heartbeat every 5 min for as long
+	// as the agent process exists — so a run that wedges with its process alive
+	// is never quiet and run_stale never fires for it. This second clock
+	// measures from the last event that shows the run MOVED (runProgressEvent),
+	// so the daemon's own beat cannot refresh it. A run with no progress event
+	// yet is measured from its start, which is the whole of its life so far.
+	//
+	// The window is far wider than the quiet one because the two are answering
+	// different questions: an agent that is thinking is legitimately silent for
+	// tens of minutes, and cancelling it costs the work it had done. See
+	// staleWatchNoProgressAfter for how the default was sized.
+	progressRef := st.lastProgressAt
+	if progressRef.IsZero() {
+		progressRef = handle.StartedAt
+	}
+	noProgressAge := now.Sub(progressRef)
+
+	quiet := age >= effectiveThreshold
+	wedged := noProgressAge >= st.nextNoProgressAfter
+
+	if !quiet && !wedged {
 		w.mu.Unlock()
 		return
+	}
+	// noProgressSeconds is reported in its OWN payload field. age_seconds is
+	// spec'd as the seconds since the run last produced any bus event
+	// (core.RunStalePayload), and a wedged-but-beating run is the exact case
+	// where the two differ, so overwriting it would make the payload disagree
+	// with itself precisely when a reader most needs it. Both numbers are true
+	// and the pair is the diagnosis: a large no_progress_seconds beside a small
+	// age_seconds and last_event_type=agent_heartbeat is this failure.
+	var noProgressSeconds *int64
+	if wedged {
+		secs := int64(noProgressAge.Seconds())
+		noProgressSeconds = &secs
 	}
 
 	// Stale threshold crossed — capture snapshot fields under the lock.
 	st.emitCount++
 	emitCount := st.emitCount
+	// core.RunStalePayload.Valid requires AgeSeconds > 0, and a no-progress
+	// emission is the one case that can round to zero: the run is beating, so
+	// the last event may be under a second old when the scan tick lands. An
+	// invalid payload is dropped, which would lose exactly the emission this
+	// clock exists to produce. Floor at one second — the truncation is under a
+	// second and only ever moves the number away from zero.
 	ageSeconds := int64(age.Seconds())
+	if ageSeconds < 1 {
+		ageSeconds = 1
+	}
 	lastEventType := st.lastEventType
 	lastEventAtStr := ""
 	if !st.lastEventAt.IsZero() {
@@ -1053,7 +1274,17 @@ func (w *StaleWatcher) checkRun(
 	// hk-tn36: kill-consumer backstop fires on the FIRST run_stale emission.
 	// Capture and set the flag under the same lock region as emitCount so the
 	// backstop fires exactly once even under concurrent scan ticks.
-	shouldKillConsumer := !st.killConsumerFired
+	//
+	// THE NO-PROGRESS CLOCK NEVER ARMS IT. Only the quiet window cancels, which
+	// is exactly what it did before this clock existed. A cancel destroys the
+	// work the run has already done, so arming a canceller from a new clock
+	// requires the confidence that its window cannot fire early — and the
+	// harnesses this clock uniquely covers (codex, pi) have far too few recorded
+	// runs to bound their tail. Reporting is what the finding asked for: a run
+	// that is not moving must stop reporting itself healthy. Cancelling it is a
+	// separate escalation, and it is not evidenced yet. See
+	// staleWatchNoProgressAfter.
+	shouldKillConsumer := quiet && !st.killConsumerFired
 	if shouldKillConsumer {
 		st.killConsumerFired = true
 		// hk-mdus1: start the force-reap grace clock. Recorded even though
@@ -1067,7 +1298,16 @@ func (w *StaleWatcher) checkRun(
 	// Use effectiveThreshold as the base so that the reviewer-launch gate
 	// floor is accounted for in the schedule: if the gate raised the
 	// threshold to 30 min, the next window is 60 min (not 20 min).
-	st.nextEmitAfter = effectiveThreshold * 2
+	//
+	// Each clock backs off only when it was the one that fired. A shared
+	// backoff would let a wedged-but-beating run widen the quiet window, which
+	// is the window that catches a run that stops emitting altogether.
+	if quiet {
+		st.nextEmitAfter = effectiveThreshold * 2
+	}
+	if wedged {
+		st.nextNoProgressAfter *= 2
+	}
 	w.mu.Unlock()
 
 	// HC-064..HC-067 / hk-xrygh: before emitting run_stale, drive the session
@@ -1076,6 +1316,18 @@ func (w *StaleWatcher) checkRun(
 	// transition event fires BEFORE run_stale, satisfying the acceptance
 	// criterion that "run_stale carries the lifecycle snapshot" and that the
 	// silent-hang is visible as a deterministic FSM event first.
+	//
+	// This runs on BOTH clocks, so the reason string names the clock that
+	// fired. On a no-progress emission the run is beating and ageSeconds is
+	// tiny — often the floored 1 — so reporting it here would write "silent for
+	// 1s" into the durable transition history for a run that has not moved in
+	// two hours. That is the same self-contradicting record NoProgressSeconds
+	// exists to prevent, one layer up.
+	staleReason := fmt.Sprintf("session silent for %ds", ageSeconds)
+	if noProgressSeconds != nil {
+		staleReason = fmt.Sprintf("session made no progress for %ds (last event %s, %ds ago)",
+			*noProgressSeconds, lastEventType, ageSeconds)
+	}
 	var lifecycleStateStr, lifecycleEnteredAtStr string
 	if m := handle.GetMachine(); m != nil {
 		cur := m.Current()
@@ -1085,7 +1337,7 @@ func (w *StaleWatcher) checkRun(
 			// to a concurrent path) the error is silently ignored.
 			from := cur
 			if tErr := m.Transition(hclifecycle.StateFailed, hclifecycle.ReasonSilentHang,
-				"run_stale", fmt.Sprintf("session silent for %ds", ageSeconds)); tErr == nil {
+				"run_stale", staleReason); tErr == nil {
 				// Successfully transitioned — emit lifecycle_transition event.
 				w.emitSilentHangTransition(ctx, runID, m, from)
 			}
@@ -1118,6 +1370,7 @@ func (w *StaleWatcher) checkRun(
 		RunID:              runID.String(),
 		BeadID:             string(beadID),
 		AgeSeconds:         ageSeconds,
+		NoProgressSeconds:  noProgressSeconds,
 		LastEventType:      lastEventType,
 		LastEventAt:        lastEventAtStr,
 		EmitCount:          emitCount,

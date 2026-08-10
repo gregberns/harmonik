@@ -530,6 +530,40 @@ type QueueStatusResponse struct {
 	// Spec ref: specs/queue-model.md §3.1 QM-001.
 	// Bead ref: hk-ujanf.
 	QuarantineReason string `json:"quarantine_reason,omitempty"`
+
+	// ActiveRuns is every item that is dispatched right now, across EVERY
+	// queue — not only the one the Queue field names. It answers "is anything
+	// in flight", which is a different question from "what does this one queue
+	// look like", and the caller that needs it usually cannot name the queue.
+	//
+	// It carries no omitempty and is never nil: a reader has to be able to
+	// tell "nothing is running" from "this daemon does not report it", and an
+	// absent key cannot say the first. len(active_runs) == 0 is the only
+	// honest way to read a lull.
+	//
+	// The captain's shutdown gate is why this exists. It was told to read
+	// active_runs from `queue status --json`, where the field had never
+	// existed, off a payload that answers {"queue": null} whenever the running
+	// work sits in a NAMED queue. The gate computed zero in flight every time
+	// and could not fail, so a shutdown could orphan a running agent
+	// (hk-queue-status-blind-shutdown-gate-9dco0).
+	ActiveRuns []ActiveRun `json:"active_runs"`
+}
+
+// ActiveRun is one dispatched queue item: a bead the daemon has handed to an
+// agent and has not yet seen finish.
+type ActiveRun struct {
+	// Queue is the name of the queue holding the item. It is the argument the
+	// caller needs for `queue status --queue <name>`, so a reader that finds
+	// work in flight can go and look at it without guessing.
+	Queue string `json:"queue"`
+
+	// BeadID is the bead being worked.
+	BeadID string `json:"bead_id"`
+
+	// RunID is the daemon-minted run identifier, empty if the item recorded
+	// none.
+	RunID string `json:"run_id,omitempty"`
 }
 
 // QueueSummary is a single-queue row in a QueueListResponse.

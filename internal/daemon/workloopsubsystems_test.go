@@ -42,17 +42,22 @@ import (
 // wlsubBus is a recording EventEmitter. It counts events by type so a test can
 // assert both "this fired" and "nothing fired at all".
 type wlsubBus struct {
-	mu sync.Mutex
-	n  map[core.EventType]int
+	mu      sync.Mutex
+	n       map[core.EventType]int
+	payload map[core.EventType][]byte
 }
 
-func (b *wlsubBus) Emit(_ context.Context, t core.EventType, _ []byte) error {
+func (b *wlsubBus) Emit(_ context.Context, t core.EventType, payload []byte) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.n == nil {
 		b.n = make(map[core.EventType]int)
 	}
 	b.n[t]++
+	if b.payload == nil {
+		b.payload = make(map[core.EventType][]byte)
+	}
+	b.payload[t] = append([]byte(nil), payload...)
 	return nil
 }
 
@@ -64,6 +69,12 @@ func (b *wlsubBus) count(t core.EventType) int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.n[t]
+}
+
+func (b *wlsubBus) lastPayload(t core.EventType) []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]byte(nil), b.payload[t]...)
 }
 
 // wlsubCountingLedger is a beadLedger whose only job is to report how many times
@@ -225,6 +236,9 @@ func TestSubsystemPartition_MovementGovernor_DefaultRuns(t *testing.T) {
 	}
 	if got := bus.count(core.EventTypeGovernorSignal); got != 1 {
 		t.Errorf("governor_signal emitted %d times; want 1", got)
+	}
+	if _, err := (core.Event{Type: core.EventTypeGovernorSignal, Payload: bus.lastPayload(core.EventTypeGovernorSignal)}).DecodePayload(); err != nil {
+		t.Fatalf("emitted governor_signal does not decode through the production registry: %v", err)
 	}
 
 	// The eval-cadence gate is load-bearing, not politeness: evaluating on every

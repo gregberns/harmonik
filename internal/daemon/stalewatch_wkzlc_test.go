@@ -53,7 +53,7 @@ func staleFixtureNewBus(t *testing.T) *staleFixtureBus {
 		EventPattern:  core.EventPattern{Wildcard: true},
 		OnPanic:       core.OnPanicRecoverAndLog,
 		Handler: func(_ context.Context, evt core.Event) error {
-			if evt.Type != string(core.EventTypeRunStale) {
+			if evt.Type != core.EventTypeRunStale {
 				return nil
 			}
 			var pl core.RunStalePayload
@@ -381,7 +381,7 @@ func TestStaleWatch_LastEventTypeTracked(t *testing.T) {
 		EventPattern:  core.EventPattern{Wildcard: true},
 		OnPanic:       core.OnPanicRecoverAndLog,
 		Handler: func(_ context.Context, evt core.Event) error {
-			if evt.Type != string(core.EventTypeRunStale) {
+			if evt.Type != core.EventTypeRunStale {
 				return nil
 			}
 			var pl core.RunStalePayload

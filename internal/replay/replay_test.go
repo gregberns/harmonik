@@ -60,13 +60,13 @@ func writeLog(t *testing.T, lines []line) string {
 			t.Fatalf("marshal payload %s: %v", ln.evType, err)
 		}
 		schemaVersion := 1
-		if registeredVersion, ok := core.LookupTypeSchemaVersion(string(ln.evType)); ok {
+		if registeredVersion, ok := core.LookupTypeSchemaVersion(ln.evType); ok {
 			schemaVersion = registeredVersion
 		}
 		ev := core.Event{
 			EventID:         mkID(ln.seq),
 			SchemaVersion:   schemaVersion,
-			Type:            string(ln.evType),
+			Type:            ln.evType,
 			TimestampWall:   base.Add(time.Duration(ln.seq) * time.Second),
 			SourceSubsystem: "keeper",
 			Payload:         json.RawMessage(raw),

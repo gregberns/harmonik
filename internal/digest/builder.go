@@ -518,7 +518,7 @@ func buildRecentEvents(eventsPath string, sinceID core.EventID, lim Limits) ([]E
 	for ev := range eventbus.ScanAfter(eventsPath, sinceID) {
 		s := EventSummary{
 			EventID: ev.EventID.String(),
-			Type:    ev.Type,
+			Type:    string(ev.Type),
 		}
 		if ev.RunID != nil {
 			s.RunID = ev.RunID.String()

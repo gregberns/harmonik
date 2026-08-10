@@ -150,7 +150,7 @@ func (d *Dispatcher) Subscribe() error {
 // bus dispatch path per EV-012. The dispatcher returns nil always to avoid
 // any observable side-effect on the bus error path.
 func (d *Dispatcher) handleEvent(ctx context.Context, ev core.Event) error {
-	triggerName := hookTriggerPrefix + ev.Type
+	triggerName := hookTriggerPrefix + string(ev.Type)
 	hooks := d.registry.LookupByTrigger(triggerName)
 	if len(hooks) == 0 {
 		return nil

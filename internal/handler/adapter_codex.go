@@ -57,7 +57,7 @@ func RegisterCodex(reg *handlercontract.AdapterRegistry) error {
 // codex has no distinct readiness handshake; the harmonik infrastructure emits
 // a synthetic agent_ready event once the process start is confirmed.
 func (CodexAdapter) DetectReady(event handlercontract.EventEnvelope) bool {
-	if event.Type == handlercontract.ProgressMsgTypeLaunchInitiated {
+	if event.Type == core.EventType(handlercontract.ProgressMsgTypeLaunchInitiated) {
 		return false
 	}
 	return core.EventType(event.Type) == core.EventTypeAgentReady

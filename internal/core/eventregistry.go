@@ -69,8 +69,8 @@ var secretPrefixRe = regexp.MustCompile(`(?i)(secret|token|password|api[_-]?key|
 
 type eventRegistry struct {
 	mu      sync.Mutex
-	entries map[string]typeEntry // TODO(hk-hqwn.59.82): hoist key from string to EventType when the enum lands.
-	sealed  bool                 // EV-034: once true, registration is forbidden.
+	entries map[EventType]typeEntry
+	sealed  bool // EV-034: once true, registration is forbidden.
 }
 
 // ErrRegistrySealed is returned by RegisterEventType / RegisterEventTypeAtVersion
@@ -110,7 +110,7 @@ func EventRegistrySealed() bool {
 }
 
 var globalEventRegistry = &eventRegistry{
-	entries: make(map[string]typeEntry),
+	entries: make(map[EventType]typeEntry),
 }
 
 // RegisterEventType registers a constructor for the given event type name at
@@ -134,7 +134,7 @@ var globalEventRegistry = &eventRegistry{
 //
 // Returns ErrDuplicateEventType if typeName has already been registered.
 // Thread-safe.
-func RegisterEventType(typeName string, constructor func() EventPayload) error {
+func RegisterEventType(typeName EventType, constructor func() EventPayload) error {
 	return RegisterEventTypeAtVersion(typeName, constructor, 1)
 }
 
@@ -148,7 +148,7 @@ func RegisterEventType(typeName string, constructor func() EventPayload) error {
 //
 // Returns ErrDuplicateEventType if typeName has already been registered.
 // Thread-safe.
-func RegisterEventTypeAtVersion(typeName string, constructor func() EventPayload, schemaVersion int) error {
+func RegisterEventTypeAtVersion(typeName EventType, constructor func() EventPayload, schemaVersion int) error {
 	if typeName == "" {
 		return fmt.Errorf("core: RegisterEventTypeAtVersion: typeName must not be empty")
 	}
@@ -180,7 +180,7 @@ func RegisterEventTypeAtVersion(typeName string, constructor func() EventPayload
 // enforce this invariant on an incoming Event.
 //
 // Thread-safe.
-func LookupTypeSchemaVersion(typeName string) (int, bool) {
+func LookupTypeSchemaVersion(typeName EventType) (int, bool) {
 	r := globalEventRegistry
 	r.mu.Lock()
 	entry, ok := r.entries[typeName]
@@ -224,10 +224,10 @@ func ValidateEnvelopeSchemaVersion(e Event) error {
 // Spec ref: event-model.md §4.8 EV-029 — one independent compatibility
 // contract per registered type (the per-type "N-1 readable" window).
 // Bead ref: hk-hqwn.38.
-func AllPayloadSchemaVersions() map[string]int {
+func AllPayloadSchemaVersions() map[EventType]int {
 	r := globalEventRegistry
 	r.mu.Lock()
-	snapshot := make(map[string]int, len(r.entries))
+	snapshot := make(map[EventType]int, len(r.entries))
 	for k, v := range r.entries {
 		snapshot[k] = v.schemaVersion
 	}
@@ -362,7 +362,7 @@ func ScanRegisteredPayloadsForSecretFields() error {
 	r.mu.Lock()
 	snapshot := make(map[string]func() EventPayload, len(r.entries))
 	for k, v := range r.entries {
-		snapshot[k] = v.constructor
+		snapshot[string(k)] = v.constructor
 	}
 	r.mu.Unlock()
 	return scanConstructors(snapshot)

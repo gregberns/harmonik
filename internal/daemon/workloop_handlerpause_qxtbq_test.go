@@ -160,7 +160,7 @@ func hfatalFixtureEmitRateLimitActive(t *testing.T, policy *daemon.HandlerPauseP
 	evt := core.Event{
 		EventID:         core.EventID(evID),
 		SchemaVersion:   1,
-		Type:            string(core.EventTypeAgentRateLimitStatus),
+		Type:            core.EventTypeAgentRateLimitStatus,
 		TimestampWall:   time.Now(),
 		SourceSubsystem: "test",
 		Payload:         json.RawMessage(payloadJSON),

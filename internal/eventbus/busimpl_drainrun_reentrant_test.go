@@ -49,7 +49,7 @@ func TestBusImpl_DrainRunWaitsForReentrantCascade(t *testing.T) {
 		OnPanic:       core.OnPanicRecoverAndLog,
 		Handler: func(_ context.Context, evt core.Event) error {
 			switch evt.Type {
-			case string(core.EventTypeRunStarted):
+			case core.EventTypeRunStarted:
 				// Initial event A: announce we're in-flight, wait until DrainRun
 				// is active, then emit the run-scoped cascade B while the run is
 				// mid-drain — the exact window the seal-orphan bug drops.
@@ -58,7 +58,7 @@ func TestBusImpl_DrainRunWaitsForReentrantCascade(t *testing.T) {
 				if reErr := bus.EmitWithRunID(ctx, runID, core.EventTypeRunCompleted, payload); reErr != nil {
 					t.Errorf("re-entrant EmitWithRunID: %v", reErr)
 				}
-			case string(core.EventTypeRunCompleted):
+			case core.EventTypeRunCompleted:
 				// Cascade event B: record delivery. A short delay widens the
 				// window in which a buggy DrainRun would return early.
 				time.Sleep(10 * time.Millisecond)

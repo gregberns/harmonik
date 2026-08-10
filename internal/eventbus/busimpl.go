@@ -173,11 +173,11 @@ func (b *busImpl) recordDeadLetter(ctx context.Context, evt core.Event, reason s
 // Bead ref: hk-8mup.63, hk-uunpf (G1 gap — 15 missing F-class entries added).
 var fsyncBoundaryEventTypes = map[core.EventType]struct{}{
 	// §8.1 Run lifecycle (F-class rows).
-	core.EventType("run_started"):        {},
-	core.EventType("run_completed"):      {},
-	core.EventType("run_failed"):         {},
-	core.EventType("transition_event"):   {},
-	core.EventType("checkpoint_written"): {},
+	core.EventTypeRunStarted:        {},
+	core.EventTypeRunCompleted:      {},
+	core.EventTypeRunFailed:         {},
+	core.EventTypeTransitionEvent:   {},
+	core.EventTypeCheckpointWritten: {},
 	// §8.1a Review-loop lifecycle (F-class rows; added v0.4.0, hk-uunpf G1).
 	core.EventTypeReviewerVerdict:         {},
 	core.EventTypeReviewLoopCycleComplete: {},
@@ -188,11 +188,11 @@ var fsyncBoundaryEventTypes = map[core.EventType]struct{}{
 	// §8.5 Workspace lifecycle (F-class rows; added v0.5.0, hk-uunpf G1).
 	core.EventTypeWorkspaceMergeStatus: {},
 	// §8.7 Daemon lifecycle (F-class rows).
-	core.EventType("daemon_started"):             {},
-	core.EventType("daemon_ready"):               {},
-	core.EventType("daemon_shutdown"):            {},
-	core.EventType("daemon_startup_failed"):      {},
-	core.EventType("operator_upgrade_completed"): {},
+	core.EventTypeDaemonStarted:            {},
+	core.EventTypeDaemonReady:              {},
+	core.EventTypeDaemonShutdown:           {},
+	core.EventTypeDaemonStartupFailed:      {},
+	core.EventTypeOperatorUpgradeCompleted: {},
 	// §8.10 Queue lifecycle (F-class rows; added v0.5.0–v0.5.1, hk-uunpf G1).
 	core.EventTypeQueueSubmitted:      {},
 	core.EventTypeQueueGroupCompleted: {},
@@ -206,14 +206,14 @@ var fsyncBoundaryEventTypes = map[core.EventType]struct{}{
 	core.EventTypeDecisionAcknowledged: {},
 	// agent-comms §1.1 (hk-djqc9): agent_message is F-class so comms-send is
 	// durable before returning OK ("no silent drops" goal G2).
-	core.EventType("agent_message"): {},
+	core.EventTypeAgentMessage: {},
 	// hitl-decisions §1 (hk-33p, K1): the three decision_* events are F-class
 	// (SPEC §6 N1, load-bearing) — a lost decision_resolved would leave the
 	// blocked agent waiting forever (Risk R1). Distinct from the §8.12
 	// decision_required/decision_acknowledged daemon-escalation family.
-	core.EventType("decision_needed"):    {},
-	core.EventType("decision_resolved"):  {},
-	core.EventType("decision_withdrawn"): {},
+	core.EventTypeDecisionNeeded:    {},
+	core.EventTypeDecisionResolved:  {},
+	core.EventTypeDecisionWithdrawn: {},
 	// §8.15 Beads adapter (F-class rows; added v0.6.4, hk-uunpf G1).
 	core.EventTypeBeadSyncFailed: {},
 }
@@ -470,17 +470,15 @@ func (b *busImpl) Emit(ctx context.Context, eventType core.EventType, payload []
 	if idErr != nil {
 		return fmt.Errorf("eventbus.Emit: generate event_id: %w", idErr)
 	}
-	typeSchemaVersion, knownType := core.LookupTypeSchemaVersion(string(eventType))
+	typeSchemaVersion, knownType := core.LookupTypeSchemaVersion(eventType)
 	if !knownType {
-		// Unknown type: fall back to version 1 rather than failing here; the
-		// registry-coverage sensor (EV-034) catches unregistered types at startup.
-		typeSchemaVersion = 1
+		return fmt.Errorf("eventbus.Emit: %w: %q", core.ErrUnknownEventType, eventType)
 	}
 	now := time.Now().UTC()
 	evt := core.Event{
 		EventID:         eventID,
 		SchemaVersion:   typeSchemaVersion,
-		Type:            string(eventType),
+		Type:            eventType,
 		TimestampWall:   now,
 		SourceSubsystem: "eventbus",
 		Payload:         redactedBytes,
@@ -593,16 +591,16 @@ func (b *busImpl) EmitWithRunID(ctx context.Context, runID core.RunID, eventType
 	if idErr != nil {
 		return fmt.Errorf("eventbus.EmitWithRunID: generate event_id: %w", idErr)
 	}
-	typeSchemaVersionWithRun, knownTypeWithRun := core.LookupTypeSchemaVersion(string(eventType))
+	typeSchemaVersionWithRun, knownTypeWithRun := core.LookupTypeSchemaVersion(eventType)
 	if !knownTypeWithRun {
-		typeSchemaVersionWithRun = 1
+		return fmt.Errorf("eventbus.EmitWithRunID: %w: %q", core.ErrUnknownEventType, eventType)
 	}
 	now := time.Now().UTC()
 	runIDVal := runID
 	evt := core.Event{
 		EventID:         eventID,
 		SchemaVersion:   typeSchemaVersionWithRun,
-		Type:            string(eventType),
+		Type:            eventType,
 		TimestampWall:   now,
 		RunID:           &runIDVal,
 		SourceSubsystem: "eventbus",
@@ -711,10 +709,10 @@ func (b *busImpl) EmitAgentMessage(ctx context.Context, payload core.AgentMessag
 	if idErr != nil {
 		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentMessage: generate event_id: %w", idErr)
 	}
-	const agentMessageType = "agent_message"
+	const agentMessageType = core.EventTypeAgentMessage
 	typeSchemaVersion, knownType := core.LookupTypeSchemaVersion(agentMessageType)
 	if !knownType {
-		typeSchemaVersion = 1
+		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentMessage: %w: %q", core.ErrUnknownEventType, agentMessageType)
 	}
 	evt := core.Event{
 		EventID:         eventID,
@@ -801,10 +799,10 @@ func (b *busImpl) EmitAgentPresence(ctx context.Context, payload core.AgentPrese
 	if idErr != nil {
 		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentPresence: generate event_id: %w", idErr)
 	}
-	const agentPresenceType = "agent_presence"
+	const agentPresenceType = core.EventTypeAgentPresence
 	typeSchemaVersion, knownType := core.LookupTypeSchemaVersion(agentPresenceType)
 	if !knownType {
-		typeSchemaVersion = 1
+		return core.EventID{}, fmt.Errorf("eventbus.EmitAgentPresence: %w: %q", core.ErrUnknownEventType, agentPresenceType)
 	}
 	evt := core.Event{
 		EventID:         eventID,
@@ -902,14 +900,14 @@ func (b *busImpl) EmitTyped(ctx context.Context, eventType core.EventType, paylo
 	if idErr != nil {
 		return core.EventID{}, fmt.Errorf("eventbus.EmitTyped(%s): generate event_id: %w", typeName, idErr)
 	}
-	typeSchemaVersion, knownType := core.LookupTypeSchemaVersion(typeName)
+	typeSchemaVersion, knownType := core.LookupTypeSchemaVersion(eventType)
 	if !knownType {
-		typeSchemaVersion = 1
+		return core.EventID{}, fmt.Errorf("eventbus.EmitTyped(%s): %w", typeName, core.ErrUnknownEventType)
 	}
 	evt := core.Event{
 		EventID:         eventID,
 		SchemaVersion:   typeSchemaVersion,
-		Type:            typeName,
+		Type:            eventType,
 		TimestampWall:   time.Now().UTC(),
 		SourceSubsystem: "eventbus",
 		Payload:         redactedBytes,

@@ -132,7 +132,7 @@ func CheckRuns(path string, since core.EventID, strict bool, checkers []RunCheck
 		st := runStateFor(states, rid)
 		runRecordEvent(st, ev)
 		for _, c := range checkers {
-			if runCheckerMatches(c, ev.Type) {
+			if runCheckerMatches(c, string(ev.Type)) {
 				rep.Violations = append(rep.Violations, c.Check(ev, p, st)...)
 			}
 		}

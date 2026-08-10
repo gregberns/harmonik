@@ -129,7 +129,7 @@ func TestDispatchSegment_FreshLaunchDeliversBriefAfterReady(t *testing.T) {
 	// A relay-synthesized agent_ready, as the production SetAgentReadyCallback
 	// delivers it: emitted through the tap once the launch has been wired up.
 	seg.Adapter = segStubAdapter{ready: func(env core.EventEnvelope) bool {
-		return env.Type == string(core.EventTypeAgentReady)
+		return env.Type == core.EventTypeAgentReady
 	}}
 	seg.OnLaunched = func(ctx context.Context) {
 		log.add("OnLaunched")

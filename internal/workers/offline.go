@@ -37,7 +37,7 @@ type WorkerOfflinePayload struct {
 }
 
 func init() {
-	if err := core.RegisterEventType("worker_offline", func() core.EventPayload { return &WorkerOfflinePayload{} }); err != nil {
+	if err := core.RegisterEventType(core.EventTypeWorkerOffline, func() core.EventPayload { return &WorkerOfflinePayload{} }); err != nil {
 		panic("workers: init: register worker_offline: " + err.Error())
 	}
 }

@@ -603,7 +603,7 @@ func TestStallFeeder_StallDetectedPayloadsAreWellFormed(t *testing.T) {
 	var seen int
 	var zero core.EventID
 	for ev := range eventbus.ScanAfter(f.jsonlPath, zero) {
-		if ev.Type != string(core.EventTypeStallDetected) {
+		if ev.Type != core.EventTypeStallDetected {
 			continue
 		}
 		seen++

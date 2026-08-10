@@ -483,7 +483,7 @@ func (h *SubscribeHub) HandleSubscribe(ctx context.Context, conn net.Conn, req S
 				default:
 				}
 				if !wildcard {
-					if _, ok := typeFilter[evt.Type]; !ok {
+					if _, ok := typeFilter[string(evt.Type)]; !ok {
 						continue
 					}
 				}
@@ -636,7 +636,7 @@ type subscriptionStream struct {
 // addressing filter (N1) via MatchAgentMessage.
 func (s *subscriptionStream) offer(evt core.Event) {
 	if !s.wildcard {
-		if _, ok := s.typeFilter[evt.Type]; !ok {
+		if _, ok := s.typeFilter[string(evt.Type)]; !ok {
 			return
 		}
 	}

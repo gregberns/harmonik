@@ -133,7 +133,7 @@ func OpenDecisions(eventsPath string) map[string]Decision {
 		}
 
 		switch ev.Type {
-		case string(core.EventTypeDecisionNeeded):
+		case core.EventTypeDecisionNeeded:
 			var p core.DecisionNeededPayload
 			if err := json.Unmarshal(ev.Payload, &p); err != nil {
 				continue
@@ -153,7 +153,7 @@ func OpenDecisions(eventsPath string) map[string]Decision {
 				Urgency:        p.Urgency,
 			}
 
-		case string(core.EventTypeDecisionResolved):
+		case core.EventTypeDecisionResolved:
 			var p core.DecisionResolvedPayload
 			if err := json.Unmarshal(ev.Payload, &p); err != nil {
 				continue
@@ -167,7 +167,7 @@ func OpenDecisions(eventsPath string) map[string]Decision {
 			seen[evID] = struct{}{}
 			delete(open, p.DecisionID)
 
-		case string(core.EventTypeDecisionWithdrawn):
+		case core.EventTypeDecisionWithdrawn:
 			var p core.DecisionWithdrawnPayload
 			if err := json.Unmarshal(ev.Payload, &p); err != nil {
 				continue

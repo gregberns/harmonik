@@ -396,7 +396,7 @@ func TestClaudeHarness_DetectReady_AgentReady(t *testing.T) {
 	t.Parallel()
 
 	h := claude.NewHarness()
-	ev := handlercontract.EventEnvelope{Type: string(core.EventTypeAgentReady)}
+	ev := handlercontract.EventEnvelope{Type: core.EventTypeAgentReady}
 	if !h.DetectReady(ev) {
 		t.Error("DetectReady(agent_ready) = false; want true")
 	}
@@ -408,7 +408,7 @@ func TestClaudeHarness_DetectReady_LaunchInitiated(t *testing.T) {
 	t.Parallel()
 
 	h := claude.NewHarness()
-	ev := handlercontract.EventEnvelope{Type: string(core.EventTypeLaunchInitiated)}
+	ev := handlercontract.EventEnvelope{Type: core.EventTypeLaunchInitiated}
 	if h.DetectReady(ev) {
 		t.Error("DetectReady(launch_initiated) = true; want false (HC-041)")
 	}

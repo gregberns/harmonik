@@ -127,7 +127,7 @@ func TestKeeperDriftCanary_CorpusIntegrity(t *testing.T) {
 				t.Errorf("%s.jsonl line %d: invalid JSON: %v", base, lines, err)
 				continue
 			}
-			if _, ok := registered[env.Type]; !ok {
+			if _, ok := registered[core.EventType(env.Type)]; !ok {
 				unknownTypes = append(unknownTypes, env.Type)
 			}
 		}

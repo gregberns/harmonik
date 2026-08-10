@@ -61,7 +61,7 @@ func wakeGapFixtureResumeEvent(t *testing.T, queueName string) core.Event {
 		t.Fatalf("wakeGapFixtureResumeEvent: marshal: %v", err)
 	}
 	return core.Event{
-		Type:    string(core.EventTypeOperatorResuming),
+		Type:    core.EventTypeOperatorResuming,
 		Payload: raw,
 	}
 }

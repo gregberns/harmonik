@@ -59,7 +59,7 @@ func RegisterPi(reg *handlercontract.AdapterRegistry) error {
 // agent-ready wait (workloop.go ~3999).  DetectReady is nevertheless required
 // to be HC-041-correct (enforced by adapterreadydetect_hc041_test).  PI-013.
 func (PiAdapter) DetectReady(event handlercontract.EventEnvelope) bool {
-	if event.Type == handlercontract.ProgressMsgTypeLaunchInitiated {
+	if event.Type == core.EventType(handlercontract.ProgressMsgTypeLaunchInitiated) {
 		return false
 	}
 	return core.EventType(event.Type) == core.EventTypeAgentReady

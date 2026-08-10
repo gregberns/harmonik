@@ -58,7 +58,7 @@ func readyDetectFixtureMakeEvent(t *testing.T, eventType string) core.EventEnvel
 	t.Helper()
 	return core.EventEnvelope{
 		EventID: core.EventID(uuid.MustParse("0196f500-0000-7000-8000-000000000001")),
-		Type:    eventType,
+		Type:    core.EventType(eventType),
 		Payload: json.RawMessage(`{}`),
 	}
 }
@@ -74,7 +74,7 @@ type readyDetectFixtureAdapter struct{}
 func (readyDetectFixtureAdapter) DetectReady(event core.EventEnvelope) bool {
 	// Per HC-041: return true ONLY for agent_ready events.
 	// Adapters MUST NOT synthesize ready-state from other signals.
-	return event.Type == handlercontract.ProgressMsgTypeAgentReady
+	return event.Type == core.EventType(handlercontract.ProgressMsgTypeAgentReady)
 }
 
 func (readyDetectFixtureAdapter) DetectRateLimit(_ core.EventEnvelope) (bool, time.Duration) {

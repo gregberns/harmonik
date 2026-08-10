@@ -182,7 +182,7 @@ func Replay(path string, since core.EventID, strict bool, checkers []Checker) (R
 		if skip {
 			continue
 		}
-		observed[ev.Type] = struct{}{}
+		observed[string(ev.Type)] = struct{}{}
 
 		// 2c. Route into the composite-keyed CycleState.
 		agent, cid, ok := cycleKey(p)
@@ -196,7 +196,7 @@ func Replay(path string, since core.EventID, strict bool, checkers []Checker) (R
 
 		// 2d. Run the matching checkers over the (already-updated) state.
 		for _, c := range checkers {
-			if checkerMatches(c, ev.Type) {
+			if checkerMatches(c, string(ev.Type)) {
 				rep.Violations = append(rep.Violations, c.Check(ev, p, st)...)
 			}
 		}
@@ -308,9 +308,9 @@ func recordEvent(st *CycleState, ev core.Event) {
 func neverObservedKeeperTypes(observed map[string]struct{}) []core.EventType {
 	var out []core.EventType
 	for t := range core.AllPayloadSchemaVersions() {
-		if strings.HasPrefix(t, "session_keeper_") {
-			if _, seen := observed[t]; !seen {
-				out = append(out, core.EventType(t))
+		if strings.HasPrefix(string(t), "session_keeper_") {
+			if _, seen := observed[string(t)]; !seen {
+				out = append(out, t)
 			}
 		}
 	}

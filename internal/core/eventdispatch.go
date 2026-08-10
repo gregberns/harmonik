@@ -22,8 +22,8 @@ var ErrSkipUnknown = errors.New("core: event skipped — unknown type")
 // Spec ref: event-model.md §4.9 EV-033 — "fail with a structured error
 // (synchronous consumers)".
 type DispatchUnknownEventError struct {
-	// EventType is the unrecognised type string from Event.Type.
-	EventType string
+	// EventType is the unrecognised type from Event.Type.
+	EventType EventType
 	// EventID is the event's identifier, for log correlation.
 	EventID EventID
 }

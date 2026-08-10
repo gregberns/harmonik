@@ -83,7 +83,7 @@ const (
 )
 
 func init() {
-	if err := core.RegisterEventType("resource_breach", func() core.EventPayload { return &ResourceBreachPayload{} }); err != nil {
+	if err := core.RegisterEventType(core.EventTypeResourceBreach, func() core.EventPayload { return &ResourceBreachPayload{} }); err != nil {
 		panic("workers: init: register resource_breach: " + err.Error())
 	}
 }

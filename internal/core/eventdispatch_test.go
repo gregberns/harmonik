@@ -18,7 +18,7 @@ type dispatchFixturePayloadGamma struct {
 
 // dispatchFixtureBuildEvent returns a valid Event with the given type and raw
 // payload JSON. Fatals the test on UUID generation failure.
-func dispatchFixtureBuildEvent(t *testing.T, typeName string, payloadJSON []byte) Event {
+func dispatchFixtureBuildEvent(t *testing.T, typeName EventType, payloadJSON []byte) Event {
 	t.Helper()
 	id, err := uuid.NewV7()
 	if err != nil {
@@ -36,7 +36,7 @@ func dispatchFixtureBuildEvent(t *testing.T, typeName string, payloadJSON []byte
 
 // dispatchFixtureRegisterGamma registers the dispatchFixturePayloadGamma
 // constructor under the given typeName. Fatals the test on error.
-func dispatchFixtureRegisterGamma(t *testing.T, typeName string) {
+func dispatchFixtureRegisterGamma(t *testing.T, typeName EventType) {
 	t.Helper()
 	if err := RegisterEventType(typeName, func() EventPayload { return &dispatchFixturePayloadGamma{} }); err != nil {
 		t.Fatalf("dispatchFixtureRegisterGamma: RegisterEventType(%q): %v", typeName, err)

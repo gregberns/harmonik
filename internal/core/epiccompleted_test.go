@@ -62,7 +62,7 @@ func TestEpicCompletedRegistryRoundTrip(t *testing.T) {
 	}
 
 	evt := Event{
-		Type:    string(EventTypeEpicCompleted),
+		Type:    EventTypeEpicCompleted,
 		Payload: b,
 	}
 

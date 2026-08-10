@@ -77,7 +77,7 @@ func hppMakeSyntheticEvent(t *testing.T, evtType string, payload json.RawMessage
 	return core.Event{
 		EventID:         core.EventID(evID),
 		SchemaVersion:   1,
-		Type:            evtType,
+		Type:            core.EventType(evtType),
 		TimestampWall:   time.Now(),
 		SourceSubsystem: "test",
 		Payload:         payload,

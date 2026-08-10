@@ -138,7 +138,7 @@ func mustEmitEpicCompleted(t *testing.T, arbiter *QuiesceArbiter) {
 		t.Fatalf("marshal epic_completed: %v", err)
 	}
 	evt := core.Event{
-		Type:    string(core.EventTypeEpicCompleted),
+		Type:    core.EventTypeEpicCompleted,
 		Payload: payload,
 	}
 	if err := arbiter.handleEpicCompleted(context.Background(), evt); err != nil {

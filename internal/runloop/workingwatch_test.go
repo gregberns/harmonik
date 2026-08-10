@@ -35,7 +35,7 @@ func workingWatchSegment(t *testing.T, stalls <-chan runexec.Event) (seg *Dispat
 	killed := make(chan string, 4)
 
 	seg.Adapter = segStubAdapter{ready: func(env core.EventEnvelope) bool {
-		return env.Type == string(core.EventTypeAgentReady)
+		return env.Type == core.EventTypeAgentReady
 	}}
 	seg.OnLaunched = func(ctx context.Context) {
 		if err := seg.Tap.EmitWithRunID(ctx, seg.RunID, core.EventTypeAgentReady, nil); err != nil {
@@ -152,7 +152,7 @@ func TestDispatchWorkingWatch_StopWaitsForAKillAlreadyRunning(t *testing.T) {
 	release := make(chan struct{})
 
 	seg.Adapter = segStubAdapter{ready: func(env core.EventEnvelope) bool {
-		return env.Type == string(core.EventTypeAgentReady)
+		return env.Type == core.EventTypeAgentReady
 	}}
 	seg.OnLaunched = func(ctx context.Context) {
 		if err := seg.Tap.EmitWithRunID(ctx, seg.RunID, core.EventTypeAgentReady, nil); err != nil {

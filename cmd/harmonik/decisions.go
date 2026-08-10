@@ -494,7 +494,7 @@ func decisionsPrintTerminal(t decisionTerminal) int {
 // or decision_withdrawn) for decisionID, and if so returns its outcome.
 func decisionTerminalFromEvent(evt core.Event, decisionID string) (decisionTerminal, bool) {
 	switch evt.Type {
-	case string(core.EventTypeDecisionResolved):
+	case core.EventTypeDecisionResolved:
 		var p core.DecisionResolvedPayload
 		if err := json.Unmarshal(evt.Payload, &p); err != nil {
 			return decisionTerminal{}, false
@@ -503,7 +503,7 @@ func decisionTerminalFromEvent(evt core.Event, decisionID string) (decisionTermi
 			return decisionTerminal{}, false
 		}
 		return decisionTerminal{Resolved: true, ChosenOption: p.ChosenOption}, true
-	case string(core.EventTypeDecisionWithdrawn):
+	case core.EventTypeDecisionWithdrawn:
 		var p core.DecisionWithdrawnPayload
 		if err := json.Unmarshal(evt.Payload, &p); err != nil {
 			return decisionTerminal{}, false

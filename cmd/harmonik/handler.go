@@ -607,7 +607,7 @@ func emitHandlerResumedEvent(eventsPath, agentType string, priorCause *core.Hand
 	event := core.Event{
 		EventID:         core.EventID(eventID),
 		SchemaVersion:   1,
-		Type:            string(core.EventTypeHandlerResumed),
+		Type:            core.EventTypeHandlerResumed,
 		TimestampWall:   time.Now().UTC(),
 		SourceSubsystem: handlerSubsystemID,
 		Payload:         payload,

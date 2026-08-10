@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
@@ -98,10 +99,10 @@ func Register(reg *handlercontract.AdapterRegistry) error {
 // the Type field alone is the gate here.
 func (ClaudeCodeAdapter) DetectReady(event handlercontract.EventEnvelope) bool {
 	// Explicitly reject launch_initiated — it MUST NOT satisfy ready-state.
-	if event.Type == handlercontract.ProgressMsgTypeLaunchInitiated {
+	if event.Type == core.EventType(handlercontract.ProgressMsgTypeLaunchInitiated) {
 		return false
 	}
-	return event.Type == handlercontract.ProgressMsgTypeAgentReady
+	return event.Type == core.EventType(handlercontract.ProgressMsgTypeAgentReady)
 }
 
 // DetectRateLimit reports whether event signals a rate-limit condition for a
@@ -115,7 +116,7 @@ func (ClaudeCodeAdapter) DetectReady(event handlercontract.EventEnvelope) bool {
 // Returns (false, 0) for all other event types, including
 // "agent_rate_limit_cleared".
 func (ClaudeCodeAdapter) DetectRateLimit(event handlercontract.EventEnvelope) (bool, time.Duration) {
-	if event.Type != handlercontract.ProgressMsgTypeAgentRateLimited {
+	if event.Type != core.EventType(handlercontract.ProgressMsgTypeAgentRateLimited) {
 		return false, 0
 	}
 

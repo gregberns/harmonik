@@ -426,7 +426,7 @@ func ReevaluateDeferred(ctx context.Context, g *Group, ledger BeadLedger) ([]cor
 // the queue subsystem identifier per EV-034a.
 //
 // Returns an error if UUID generation or JSON marshalling fails.
-func newEvent(eventType string, payload core.EventPayload) (core.Event, error) {
+func newEvent(eventType core.EventType, payload core.EventPayload) (core.Event, error) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return core.Event{}, fmt.Errorf("queue: newEvent: marshal payload for %q: %w", eventType, err)

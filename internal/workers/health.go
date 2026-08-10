@@ -43,7 +43,7 @@ type WorkerUnhealthyPayload struct {
 }
 
 func init() {
-	if err := core.RegisterEventType("worker_unhealthy", func() core.EventPayload { return &WorkerUnhealthyPayload{} }); err != nil {
+	if err := core.RegisterEventType(core.EventTypeWorkerUnhealthy, func() core.EventPayload { return &WorkerUnhealthyPayload{} }); err != nil {
 		panic("workers: init: register worker_unhealthy: " + err.Error())
 	}
 }

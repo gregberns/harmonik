@@ -126,7 +126,7 @@ func TestDecisionsRaise_HappyPath(t *testing.T) {
 		t.Fatalf("expected 1 decision_needed event, got %d", len(*captured))
 	}
 	ev := (*captured)[0]
-	if ev.Type != string(core.EventTypeDecisionNeeded) {
+	if ev.Type != core.EventTypeDecisionNeeded {
 		t.Errorf("captured event type = %q, want decision_needed", ev.Type)
 	}
 	// The decision_id MUST be the decision_needed event's OWN event_id (SPEC §1).
@@ -190,7 +190,7 @@ func TestDecisionsWithdraw_HappyPath(t *testing.T) {
 		t.Fatalf("expected 1 decision_withdrawn event, got %d", len(*captured))
 	}
 	ev := (*captured)[0]
-	if ev.Type != string(core.EventTypeDecisionWithdrawn) {
+	if ev.Type != core.EventTypeDecisionWithdrawn {
 		t.Errorf("captured event type = %q, want decision_withdrawn", ev.Type)
 	}
 	var p core.DecisionWithdrawnPayload

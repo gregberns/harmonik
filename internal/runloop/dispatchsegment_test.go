@@ -254,7 +254,7 @@ func TestDispatchSegment_ResumeProbe_RunIDStampedReadyDelivers(t *testing.T) {
 			ReadyKillReap:    10 * time.Second,
 		},
 		Adapter: segStubAdapter{ready: func(env core.EventEnvelope) bool {
-			return env.Type == string(core.EventTypeAgentReady)
+			return env.Type == core.EventTypeAgentReady
 		}},
 		ProbeResume: true,
 		Tap:         tap,

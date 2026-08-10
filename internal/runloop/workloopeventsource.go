@@ -153,7 +153,7 @@ func (t *PerRunEventTap) Emit(ctx context.Context, eventType core.EventType, pay
 	if id, uuidErr := uuid.NewV7(); uuidErr == nil {
 		env.EventID = core.EventID(id)
 	}
-	env.Type = string(eventType)
+	env.Type = eventType
 	runIDCopy := t.runID
 	env.RunID = &runIDCopy
 
@@ -175,7 +175,7 @@ func (t *PerRunEventTap) EmitWithRunID(ctx context.Context, runID core.RunID, ev
 	if id, uuidErr := uuid.NewV7(); uuidErr == nil {
 		env.EventID = core.EventID(id)
 	}
-	env.Type = string(eventType)
+	env.Type = eventType
 	runIDCopy := runID
 	env.RunID = &runIDCopy
 

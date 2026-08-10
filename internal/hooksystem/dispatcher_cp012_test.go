@@ -189,7 +189,7 @@ func cp012FixtureBuildBus(t *testing.T, collector *cp012FixtureEventCollector, e
 		EventPattern:  core.EventPattern{Wildcard: true},
 		OnPanic:       core.OnPanicRecoverAndLog,
 		Handler: func(_ context.Context, ev core.Event) error {
-			collector.record(ev.Type)
+			collector.record(string(ev.Type))
 			return nil
 		},
 	})

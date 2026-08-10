@@ -679,7 +679,7 @@ func TestQueueLifecycle_FullStateSequence(t *testing.T) {
 func eventTypes(events []core.Event) []string {
 	out := make([]string, len(events))
 	for i, e := range events {
-		out[i] = e.Type
+		out[i] = string(e.Type)
 	}
 	return out
 }

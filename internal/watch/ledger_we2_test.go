@@ -53,7 +53,7 @@ func ledgerFixtureEvent(t *testing.T, evType string) core.Event {
 	return core.Event{
 		EventID:         core.EventID(id),
 		SchemaVersion:   1,
-		Type:            evType,
+		Type:            core.EventType(evType),
 		TimestampWall:   time.Now(),
 		SourceSubsystem: "watch_test",
 		Payload:         json.RawMessage(`{}`),

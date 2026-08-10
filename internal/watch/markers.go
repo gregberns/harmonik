@@ -111,8 +111,8 @@ func (mc *MarkerChecker) Check(ev core.Event) string {
 	}
 	// Fall through to bare event type if qualified key didn't match.
 	if violated == "" {
-		if _, hit := markerSet[ev.Type]; hit {
-			violated = ev.Type
+		if _, hit := markerSet[string(ev.Type)]; hit {
+			violated = string(ev.Type)
 		}
 	}
 	if violated == "" {
@@ -177,7 +177,7 @@ func (mc *MarkerChecker) qualifiedKey(ev core.Event) string {
 	}
 	for _, key := range []string{"queue", "queue_name", "target", "lane"} {
 		if v, ok := payload[key].(string); ok && v != "" {
-			return ev.Type + ":" + v
+			return string(ev.Type) + ":" + v
 		}
 	}
 	return ""

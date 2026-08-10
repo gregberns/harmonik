@@ -215,7 +215,7 @@ func writeReplayedStream(t *testing.T, path string) int {
 			if a.Kind != keeper.ActEmit {
 				continue
 			}
-			ver, ok := versions[string(a.Type)]
+			ver, ok := versions[a.Type]
 			if !ok {
 				t.Fatalf("%s: reactor emitted unregistered event type %q", sum.CKey, a.Type)
 			}
@@ -223,7 +223,7 @@ func writeReplayedStream(t *testing.T, path string) int {
 			ev := core.Event{
 				EventID:         mkEventID(seq),
 				SchemaVersion:   ver,
-				Type:            string(a.Type),
+				Type:            a.Type,
 				TimestampWall:   base.Add(time.Duration(seq) * time.Millisecond),
 				SourceSubsystem: "internal/keeper",
 				Payload:         json.RawMessage(a.Payload),

@@ -40,7 +40,7 @@ type WorkerTunnelFailedPayload struct {
 }
 
 func init() {
-	if err := core.RegisterEventType("worker_tunnel_failed", func() core.EventPayload { return &WorkerTunnelFailedPayload{} }); err != nil {
+	if err := core.RegisterEventType(core.EventTypeWorkerTunnelFailed, func() core.EventPayload { return &WorkerTunnelFailedPayload{} }); err != nil {
 		panic("workers: init: register worker_tunnel_failed: " + err.Error())
 	}
 }

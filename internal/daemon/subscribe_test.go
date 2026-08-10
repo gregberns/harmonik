@@ -40,7 +40,7 @@ func subscribeTestMakeEvent(t *testing.T, evtType string) core.Event {
 	return core.Event{
 		EventID:         core.EventID(evID),
 		SchemaVersion:   1,
-		Type:            evtType,
+		Type:            core.EventType(evtType),
 		TimestampWall:   time.Now(),
 		SourceSubsystem: "test",
 		Payload:         json.RawMessage(`{}`),
@@ -505,7 +505,7 @@ func TestSubscribe_ReplaySinceEventID(t *testing.T) {
 		return core.Event{
 			EventID:         core.EventID(id),
 			SchemaVersion:   1,
-			Type:            evtType,
+			Type:            core.EventType(evtType),
 			TimestampWall:   time.Now(),
 			SourceSubsystem: "test",
 			Payload:         json.RawMessage(`{}`),
@@ -605,7 +605,7 @@ func TestSubscribe_ReplayTypeFilter(t *testing.T) {
 		return core.Event{
 			EventID:         core.EventID(id),
 			SchemaVersion:   1,
-			Type:            evtType,
+			Type:            core.EventType(evtType),
 			TimestampWall:   time.Now(),
 			SourceSubsystem: "test",
 			Payload:         json.RawMessage(`{}`),
@@ -653,7 +653,7 @@ func TestSubscribe_ReplayTypeFilter(t *testing.T) {
 			}
 			t.Fatalf("%s: decode: %v (line=%q)", label, jsonErr, string(line))
 		}
-		return ev.Type
+		return string(ev.Type)
 	}
 
 	// eA and eC ("want") should arrive; eB ("skip") should be filtered.

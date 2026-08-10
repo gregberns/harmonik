@@ -55,6 +55,14 @@ import (
 // satisfies the core.EventType alias.
 const busImplFixtureEventType core.EventType = "test.busimpl.v1"
 
+func TestBusImplEmit_UnknownTypeReturnsTypedError(t *testing.T) {
+	bus := eventbus.NewBusImpl()
+	err := bus.Emit(context.Background(), core.EventType("test.unknown.event"), []byte(`{}`))
+	if !errors.Is(err, core.ErrUnknownEventType) {
+		t.Fatalf("Emit error = %v; want errors.Is(ErrUnknownEventType)", err)
+	}
+}
+
 // busImplFixtureWildcardPattern returns an EventPattern that matches every
 // event type. Used to wire consumer subscriptions in tests.
 func busImplFixtureWildcardPattern() core.EventPattern {
@@ -682,7 +690,7 @@ func TestBusImplEmitAgentPresence_RefreshPersistsForWhoProjection(t *testing.T) 
 		t.Fatalf("decode persisted refresh: %v", err)
 	}
 	const presenceType core.EventType = "agent_presence"
-	if evt.Type != string(presenceType) {
+	if evt.Type != presenceType {
 		t.Fatalf("persisted event type = %q, want %q", evt.Type, presenceType)
 	}
 }
@@ -726,7 +734,7 @@ func TestBusImplEmitWithRunID_RunIDAppearsInJSONL(t *testing.T) {
 		t.Fatalf("json.Marshal payload: %v", marshalErr)
 	}
 
-	if emitErr := bus.EmitWithRunID(context.Background(), runID, core.EventType("run_started"), payload); emitErr != nil {
+	if emitErr := bus.EmitWithRunID(context.Background(), runID, core.EventTypeRunStarted, payload); emitErr != nil {
 		t.Fatalf("EmitWithRunID: %v", emitErr)
 	}
 
@@ -780,7 +788,7 @@ func TestBusImplEmit_PlainEmit_RunIDAbsentFromJSONL(t *testing.T) {
 	}
 
 	// daemon_started is F-class (daemon-level, no run in flight).
-	if emitErr := bus.Emit(context.Background(), core.EventType("daemon_started"), payload); emitErr != nil {
+	if emitErr := bus.Emit(context.Background(), core.EventTypeDaemonStarted, payload); emitErr != nil {
 		t.Fatalf("Emit: %v", emitErr)
 	}
 

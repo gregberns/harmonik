@@ -41,7 +41,7 @@ func writeTestEvent(t *testing.T, path string, evType string, payload any) strin
 	}
 	ev := core.Event{
 		EventID:       id,
-		Type:          evType,
+		Type:          core.EventType(evType),
 		Payload:       payloadBytes,
 		TimestampWall: time.Now().UTC(),
 	}

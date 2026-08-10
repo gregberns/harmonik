@@ -239,10 +239,10 @@ func registerAgentEvents() {
 	mustRegister(EventTypePiBillingGuard, func() EventPayload { return &PiBillingGuardPayload{} })
 	// agent_message (hk-djqc9, agent-comms spec §1.1): directed/broadcast message
 	// between agents. Durability class: F (fsync-boundary — durable delivery G2).
-	mustRegister("agent_message", func() EventPayload { return &AgentMessagePayload{} })
+	mustRegister(EventTypeAgentMessage, func() EventPayload { return &AgentMessagePayload{} })
 	// agent_presence (hk-djqc9, agent-comms spec §1.2): join/refresh/leave presence
 	// beat. Durability class: O (ordinary — TTL projection reconciles crash gaps).
-	mustRegister("agent_presence", func() EventPayload { return &AgentPresencePayload{} })
+	mustRegister(EventTypeAgentPresence, func() EventPayload { return &AgentPresencePayload{} })
 	// harness_selected (hk-lr5t): emitted by resolveHarness at dispatch time to
 	// record which harness (agent_type) was chosen and which tier resolved it.
 	// Closes the observability gap where silent claude-code fallback was invisible.
@@ -651,13 +651,13 @@ func registerBeadLedgerEvents() {
 // This helper is intentionally unexported and limited to init() callers; it
 // MUST NOT be called after startup completes.
 func mustRegister(typeName EventType, ctor func() EventPayload) {
-	if err := RegisterEventType(string(typeName), ctor); err != nil {
+	if err := RegisterEventType(typeName, ctor); err != nil {
 		panic("core: mustRegister: " + string(typeName) + ": " + err.Error())
 	}
 }
 
 func mustRegisterAtVersion(typeName EventType, ctor func() EventPayload, version int) {
-	if err := RegisterEventTypeAtVersion(string(typeName), ctor, version); err != nil {
+	if err := RegisterEventTypeAtVersion(typeName, ctor, version); err != nil {
 		panic("core: mustRegisterAtVersion: " + string(typeName) + ": " + err.Error())
 	}
 }

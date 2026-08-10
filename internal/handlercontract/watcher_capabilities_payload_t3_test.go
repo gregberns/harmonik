@@ -93,7 +93,7 @@ func TestWatcher_HandlerCapabilitiesUsesConfiguredRunIDWithoutMachine(t *testing
 		t.Fatal("handler_capabilities published its raw wire payload")
 	}
 
-	event := core.Event{Type: string(core.EventTypeHandlerCapabilities), Payload: events[0].payload}
+	event := core.Event{Type: core.EventTypeHandlerCapabilities, Payload: events[0].payload}
 	decoded, err := event.DecodePayload()
 	if err != nil {
 		t.Fatalf("DecodePayload: %v", err)

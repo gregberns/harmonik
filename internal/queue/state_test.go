@@ -83,7 +83,7 @@ func stateFixtureEventType(t *testing.T, events []core.Event, i int) string {
 	if i >= len(events) {
 		t.Fatalf("expected at least %d event(s), got %d", i+1, len(events))
 	}
-	return events[i].Type
+	return string(events[i].Type)
 }
 
 // stateFixturePayloadFinalStatus unmarshals the FinalStatus field from a

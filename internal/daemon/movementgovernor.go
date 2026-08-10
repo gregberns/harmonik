@@ -50,6 +50,12 @@ import (
 	"github.com/gregberns/harmonik/internal/sentinel"
 )
 
+func init() {
+	if err := core.RegisterEventType(core.EventTypeGovernorSignal, func() core.EventPayload { return &sentinel.GovernorSignal{} }); err != nil {
+		panic("daemon: register governor_signal: " + err.Error())
+	}
+}
+
 // governorPort is the movement governor's configuration and per-daemon mutable
 // state. It is built at boot and held by loopMaintenance, not legacy aggregate.
 type governorPort struct {

@@ -95,7 +95,7 @@ func perQueueFixturePauseEvent(t *testing.T, queueName string) core.Event {
 	return core.Event{
 		EventID:         core.EventID(evID),
 		SchemaVersion:   1,
-		Type:            string(core.EventTypeOperatorPauseStatus),
+		Type:            core.EventTypeOperatorPauseStatus,
 		TimestampWall:   time.Now(),
 		SourceSubsystem: "test",
 		Payload:         json.RawMessage(raw),
@@ -119,7 +119,7 @@ func perQueueFixtureResumingEvent(t *testing.T, queueName string) core.Event {
 	return core.Event{
 		EventID:         core.EventID(evID),
 		SchemaVersion:   1,
-		Type:            string(core.EventTypeOperatorResuming),
+		Type:            core.EventTypeOperatorResuming,
 		TimestampWall:   time.Now(),
 		SourceSubsystem: "test",
 		Payload:         json.RawMessage(raw),

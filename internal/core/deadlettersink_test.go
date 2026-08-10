@@ -23,7 +23,7 @@ import (
 )
 
 // makeTestEnvelope returns a minimal but valid EventEnvelope for sink tests.
-func makeTestEnvelope(t *testing.T, eventType string) EventEnvelope {
+func makeTestEnvelope(t *testing.T, eventType EventType) EventEnvelope {
 	t.Helper()
 	id, err := uuid.NewRandom()
 	if err != nil {
@@ -252,7 +252,7 @@ func TestProp_DeadLetterSink_EnvelopeRoundTrip(t *testing.T) {
 		env := EventEnvelope{
 			EventID:         EventID(id),
 			SchemaVersion:   1,
-			Type:            eventType,
+			Type:            EventType(eventType),
 			TimestampWall:   time.Now().UTC(),
 			SourceSubsystem: "prop_test",
 			Payload:         json.RawMessage(`{}`),
@@ -287,7 +287,7 @@ func TestProp_DeadLetterSink_EnvelopeRoundTrip(t *testing.T) {
 		if rec.Reason != reason {
 			rt.Errorf("reason round-trip: got %q, want %q", rec.Reason, reason)
 		}
-		if rec.Envelope.Type != eventType {
+		if rec.Envelope.Type != EventType(eventType) {
 			rt.Errorf("envelope.Type round-trip: got %q, want %q", rec.Envelope.Type, eventType)
 		}
 	})

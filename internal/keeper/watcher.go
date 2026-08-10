@@ -80,7 +80,7 @@ func (f *FileEmitter) EmitWithRunID(ctx context.Context, runID core.RunID, event
 	ev := core.Event{
 		EventID:         eventID,
 		SchemaVersion:   1,
-		Type:            string(eventType),
+		Type:            eventType,
 		TimestampWall:   f.clock.Now().UTC(),
 		SourceSubsystem: "internal/keeper",
 		Payload:         json.RawMessage(payload),

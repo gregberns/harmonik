@@ -222,7 +222,7 @@ func TestWatchEscalation_ClassifyTable(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.evType, func(t *testing.T) {
 			t.Parallel()
-			ev := core.Event{Type: tc.evType}
+			ev := core.Event{Type: core.EventType(tc.evType)}
 			got := watch.Classify(ev)
 			if got != tc.want {
 				t.Errorf("Classify(%q) = %d, want %d", tc.evType, got, tc.want)

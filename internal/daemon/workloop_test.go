@@ -256,7 +256,7 @@ func (s *stubEventCollector) collect(evt core.Event) {
 	raw := make(json.RawMessage, len(evt.Payload))
 	copy(raw, evt.Payload)
 	s.events = append(s.events, stubEmittedEvent{
-		EventType: evt.Type,
+		EventType: string(evt.Type),
 		EventID:   evt.EventID,
 		Payload:   raw,
 	})

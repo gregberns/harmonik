@@ -31,7 +31,7 @@ func TestEV029_AllRegisteredTypesHaveSchemaVersion(t *testing.T) {
 	}
 
 	for typeName, version := range versions {
-		t.Run(typeName, func(t *testing.T) {
+		t.Run(string(typeName), func(t *testing.T) {
 			t.Parallel()
 			if version < 1 {
 				t.Errorf("EV-029: registered type %q has schema version %d; all registered types MUST have version >= 1 per EV-028",
@@ -55,18 +55,18 @@ func TestEV029_CompatTableCoversAllRegisteredTypes(t *testing.T) {
 	declared := AllPayloadCompatEntries()
 
 	// Build lookup maps.
-	declaredByName := make(map[string]PayloadCompatEntry, len(declared))
+	declaredByName := make(map[EventType]PayloadCompatEntry, len(declared))
 	for _, e := range declared {
-		declaredByName[string(e.TypeName)] = e
+		declaredByName[e.TypeName] = e
 	}
-	registeredNames := make(map[string]bool, len(registered))
+	registeredNames := make(map[EventType]bool, len(registered))
 	for name := range registered {
 		registeredNames[name] = true
 	}
 
 	// Every registered type must have a compat entry.
 	for typeName := range registered {
-		t.Run("registered/"+typeName, func(t *testing.T) {
+		t.Run("registered/"+string(typeName), func(t *testing.T) {
 			t.Parallel()
 			if _, ok := declaredByName[typeName]; !ok {
 				t.Errorf("EV-029: registered type %q has no PayloadCompatEntry in allPayloadCompatEntries; "+
@@ -79,7 +79,7 @@ func TestEV029_CompatTableCoversAllRegisteredTypes(t *testing.T) {
 	for _, e := range declared {
 		t.Run("declared/"+string(e.TypeName), func(t *testing.T) {
 			t.Parallel()
-			if !registeredNames[string(e.TypeName)] {
+			if !registeredNames[e.TypeName] {
 				t.Errorf("EV-029: PayloadCompatEntry for %q exists in allPayloadCompatEntries but the type is NOT registered; "+
 					"remove the stale entry or register the type", e.TypeName)
 			}
@@ -176,7 +176,7 @@ func TestEV029_CompatEntryVersionsMatchRegistry(t *testing.T) {
 	for _, e := range AllPayloadCompatEntries() {
 		t.Run(string(e.TypeName), func(t *testing.T) {
 			t.Parallel()
-			registryVersion, ok := LookupTypeSchemaVersion(string(e.TypeName))
+			registryVersion, ok := LookupTypeSchemaVersion(e.TypeName)
 			if !ok {
 				// Type in compat table but not registered — caught by
 				// TestEV029_CompatTableCoversAllRegisteredTypes; skip here.
@@ -325,7 +325,7 @@ func TestEV029_ValidateEnvelopeSchemaVersionDetectsMismatch(t *testing.T) {
 
 // makeTestEvent constructs a minimal valid Event with the given type name and
 // envelope schema version. Used for ValidateEnvelopeSchemaVersion tests.
-func makeTestEvent(typeName string, schemaVersion int) Event {
+func makeTestEvent(typeName EventType, schemaVersion int) Event {
 	return Event{
 		EventID:         EventID(uuid.Must(uuid.NewV7())),
 		SchemaVersion:   schemaVersion,

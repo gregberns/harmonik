@@ -64,7 +64,7 @@ func decisionsClientProjection(eventsPath string) map[string]decisionRow {
 			continue
 		}
 		switch evt.Type {
-		case string(core.EventTypeDecisionNeeded):
+		case core.EventTypeDecisionNeeded:
 			var p core.DecisionNeededPayload
 			if err := json.Unmarshal(evt.Payload, &p); err != nil {
 				continue
@@ -77,7 +77,7 @@ func decisionsClientProjection(eventsPath string) map[string]decisionRow {
 				BlockedAgent: p.BlockedAgent,
 				ContextLink:  p.ContextLink,
 			}
-		case string(core.EventTypeDecisionResolved):
+		case core.EventTypeDecisionResolved:
 			var p core.DecisionResolvedPayload
 			if err := json.Unmarshal(evt.Payload, &p); err != nil {
 				continue
@@ -87,7 +87,7 @@ func decisionsClientProjection(eventsPath string) map[string]decisionRow {
 			}
 			seen[evID] = struct{}{}
 			delete(open, p.DecisionID)
-		case string(core.EventTypeDecisionWithdrawn):
+		case core.EventTypeDecisionWithdrawn:
 			var p core.DecisionWithdrawnPayload
 			if err := json.Unmarshal(evt.Payload, &p); err != nil {
 				continue
@@ -301,7 +301,7 @@ func TestDecisionTerminalInLog_StillOpen(t *testing.T) {
 
 func TestDecisionTerminalFromEvent(t *testing.T) {
 	resolved := core.Event{
-		Type:    string(core.EventTypeDecisionResolved),
+		Type:    core.EventTypeDecisionResolved,
 		Payload: mustJSON(t, core.DecisionResolvedPayload{DecisionID: dx9D2, ChosenOption: "eu"}),
 	}
 	if term, ok := decisionTerminalFromEvent(resolved, dx9D2); !ok || !term.Resolved || term.ChosenOption != "eu" {
@@ -313,7 +313,7 @@ func TestDecisionTerminalFromEvent(t *testing.T) {
 	}
 
 	withdrawn := core.Event{
-		Type:    string(core.EventTypeDecisionWithdrawn),
+		Type:    core.EventTypeDecisionWithdrawn,
 		Payload: mustJSON(t, core.DecisionWithdrawnPayload{DecisionID: dx9D3, Reason: core.DecisionWithdrawnReasonSelfObsoleted}),
 	}
 	if term, ok := decisionTerminalFromEvent(withdrawn, dx9D3); !ok || term.Resolved || term.Reason != "self_obsoleted" {

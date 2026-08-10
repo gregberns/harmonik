@@ -37,6 +37,29 @@ const EventTypeContextUpdateUnregisteredKey = core.EventType("context_update_unr
 // context_updates have been applied to run.Context (EM-041a).
 const EventTypeContextUpdated = core.EventType("context_updated")
 
+func init() {
+	registrations := []struct {
+		eventType core.EventType
+		payload   func() core.EventPayload
+	}{
+		{EventTypeContextUpdateUnregisteredKey, func() core.EventPayload { return &ContextUpdateUnregisteredKeyPayload{} }},
+		{EventTypeContextUpdated, func() core.EventPayload { return &ContextUpdatedPayload{} }},
+	}
+	for _, registration := range registrations {
+		if err := core.RegisterEventType(registration.eventType, registration.payload); err != nil {
+			panic("workflow: register context-update event: " + err.Error())
+		}
+		if err := core.RegisterPayloadCompatEntry(core.PayloadCompatEntry{
+			TypeName:          registration.eventType,
+			CurrentVersion:    1,
+			CompatWindowHolds: true,
+			AdditiveOnly:      true,
+		}); err != nil {
+			panic("workflow: register context-update compatibility: " + err.Error())
+		}
+	}
+}
+
 // ContextUpdateUnregisteredKeyPayload is the event payload for
 // context_update_unregistered_key (HC-062).
 //

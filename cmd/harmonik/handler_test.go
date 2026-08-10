@@ -657,7 +657,7 @@ func TestHandlerResume_EmitsEvent(t *testing.T) {
 	if !event.Valid() {
 		t.Errorf("event envelope is invalid: %+v", event)
 	}
-	if event.Type != string(core.EventTypeHandlerResumed) {
+	if event.Type != core.EventTypeHandlerResumed {
 		t.Errorf("event type = %q, want %q", event.Type, core.EventTypeHandlerResumed)
 	}
 	if event.SourceSubsystem != handlerSubsystemID {

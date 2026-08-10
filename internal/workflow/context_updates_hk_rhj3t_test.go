@@ -35,6 +35,38 @@ import (
 
 // ── fixtures ────────────────────────────────────────────────────────────────
 
+func TestContextUpdateEventsHaveRuntimeContracts(t *testing.T) {
+	workflowID, err := core.NewWorkflowID("test-workflow")
+	if err != nil {
+		t.Fatalf("workflow ID fixture: %v", err)
+	}
+	runID := core.RunID(uuid.Must(uuid.NewV7()))
+	tests := []struct {
+		eventType core.EventType
+		payload   core.EventPayload
+	}{
+		{workflow.EventTypeContextUpdateUnregisteredKey, &workflow.ContextUpdateUnregisteredKeyPayload{RunID: runID, NodeID: "node", WorkflowID: workflowID, Key: "key", ValueType: "string"}},
+		{workflow.EventTypeContextUpdated, &workflow.ContextUpdatedPayload{RunID: runID, NodeID: "node", WorkflowID: workflowID, Diff: map[string]any{"key": "value"}}},
+	}
+	for _, test := range tests {
+		t.Run(string(test.eventType), func(t *testing.T) {
+			if _, ok := core.LookupTypeSchemaVersion(test.eventType); !ok {
+				t.Fatal("event type is not registered")
+			}
+			if _, ok := core.LookupPayloadCompatEntry(test.eventType); !ok {
+				t.Fatal("event type has no compatibility contract")
+			}
+			raw, err := json.Marshal(test.payload)
+			if err != nil {
+				t.Fatalf("marshal payload: %v", err)
+			}
+			if _, err := (core.Event{Type: test.eventType, Payload: raw}).DecodePayload(); err != nil {
+				t.Fatalf("decode registered payload: %v", err)
+			}
+		})
+	}
+}
+
 func contextUpdatesFixtureRun(t *testing.T) *core.Run {
 	t.Helper()
 	return &core.Run{

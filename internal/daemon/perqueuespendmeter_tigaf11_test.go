@@ -69,7 +69,7 @@ func pqMakeAccrualEvent(t *testing.T, runID core.RunID, usdUnits float64) core.E
 	return core.Event{
 		EventID:       core.EventID(evID),
 		SchemaVersion: 1,
-		Type:          string(core.EventTypeBudgetAccrual),
+		Type:          core.EventTypeBudgetAccrual,
 		TimestampWall: time.Now(),
 		Payload:       json.RawMessage(payloadJSON),
 	}

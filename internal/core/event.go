@@ -14,10 +14,6 @@ import (
 // EV-001. The envelope is type-discriminated: the payload bytes are decoded by the
 // per-type registry keyed on Type per §6.3.
 //
-// Type uses string directly. The EventType enum (~79 rows) is owned by the parent
-// bead hk-hqwn.59 and is too large to define here. The hoist to EventType is
-// non-breaking once the enum lands.
-//
 // Idempotent emission (event-model.md §4.4 EV-018): every producer MUST emit each
 // event in idempotent form. Re-emitting the same event (same EventID, same payload)
 // during recovery MUST be safe for downstream observational consumers. Producers MUST
@@ -41,10 +37,8 @@ type Event struct {
 	SchemaVersion int `json:"schema_version"`
 
 	// Type identifies the event type; MUST be one of the §8 rows (event-model.md §8).
-	// The EventType enum is declared in a separate bead (hk-hqwn.59); this field
-	// uses string until that enum lands (non-breaking hoist).
 	// Required (non-empty).
-	Type string `json:"type"`
+	Type EventType `json:"type"`
 
 	// TimestampWall is the RFC 3339 wall-clock time at the emitter (EV-001).
 	// The emitter MUST perform exactly one wall-clock read per emission and reuse

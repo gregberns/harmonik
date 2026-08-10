@@ -27,7 +27,7 @@ func makeNotifyEvent(t *testing.T, evtType core.EventType, payload any) core.Eve
 	return core.Event{
 		EventID:         core.EventID(evID),
 		SchemaVersion:   1,
-		Type:            string(evtType),
+		Type:            evtType,
 		TimestampWall:   time.Now(),
 		SourceSubsystem: "test",
 		Payload:         json.RawMessage(b),

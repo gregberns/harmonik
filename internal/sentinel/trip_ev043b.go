@@ -419,7 +419,7 @@ func appendLegitimateHaltAck(eventsPath, ackToken, haltReason string, now time.T
 }
 
 // appendEventLine marshals one core.Event and appends it to eventsPath.
-func appendEventLine(eventsPath, evType string, now time.Time, payload interface{}) error {
+func appendEventLine(eventsPath string, evType core.EventType, now time.Time, payload interface{}) error {
 	eventUUID, err := uuid.NewV7()
 	if err != nil {
 		return fmt.Errorf("new event id: %w", err)

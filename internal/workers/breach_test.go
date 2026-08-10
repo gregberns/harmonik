@@ -109,7 +109,7 @@ func TestResourceBreach_EventTypeRegistered(t *testing.T) {
 	if core.EventTypeResourceBreach != "resource_breach" {
 		t.Fatalf("EventTypeResourceBreach = %q, want resource_breach", core.EventTypeResourceBreach)
 	}
-	ev := core.Event{Type: string(core.EventTypeResourceBreach)}
+	ev := core.Event{Type: core.EventTypeResourceBreach}
 	// A registered type decodes; an unregistered one errors. Encode a payload and
 	// confirm DecodePayload yields the right concrete type.
 	p := ResourceBreachPayload{WorkerName: "w", Kind: "breach", Signal: "swap"}

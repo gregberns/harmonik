@@ -33,7 +33,7 @@ func writeEvent(t *testing.T, path string, evType core.EventType, ts time.Time, 
 	ev := core.Event{
 		EventID:         id,
 		SchemaVersion:   1,
-		Type:            string(evType),
+		Type:            evType,
 		TimestampWall:   ts,
 		SourceSubsystem: "test",
 		Payload:         payload,

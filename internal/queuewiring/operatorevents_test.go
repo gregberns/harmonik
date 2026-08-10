@@ -187,7 +187,7 @@ func queueOpDrainFixtureSynthEvent(t *testing.T, evtType string, payload interfa
 	return core.Event{
 		EventID:         core.EventID(evID),
 		SchemaVersion:   1,
-		Type:            evtType,
+		Type:            core.EventType(evtType),
 		TimestampWall:   time.Now(),
 		SourceSubsystem: "test",
 		Payload:         json.RawMessage(payloadJSON),

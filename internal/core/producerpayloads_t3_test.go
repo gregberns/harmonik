@@ -36,7 +36,7 @@ func TestProducerPayloadsDecodeThroughRegistry(t *testing.T) {
 			if err != nil {
 				t.Fatalf("json.Marshal: %v", err)
 			}
-			decoded, err := (Event{Type: string(test.eventType), Payload: raw}).DecodePayload()
+			decoded, err := (Event{Type: test.eventType, Payload: raw}).DecodePayload()
 			if err != nil {
 				t.Fatalf("DecodePayload: %v", err)
 			}

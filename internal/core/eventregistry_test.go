@@ -19,7 +19,7 @@ import (
 // snapshot instead of clearing to empty, so parallel tests in package core_test
 // that depend on the global registry (e.g. EV-029 compat tests) see consistent
 // production entries regardless of execution order.
-var initialRegistrySnapshot map[string]typeEntry
+var initialRegistrySnapshot map[EventType]typeEntry
 
 // hermetic.Setup, not hermetic.Main, because this TestMain already has work of
 // its own. It makes this package's tests give the same answer on any machine —
@@ -28,7 +28,7 @@ func TestMain(m *testing.M) {
 	cleanup := hermetic.Setup()
 
 	globalEventRegistry.mu.Lock()
-	initialRegistrySnapshot = make(map[string]typeEntry, len(globalEventRegistry.entries))
+	initialRegistrySnapshot = make(map[EventType]typeEntry, len(globalEventRegistry.entries))
 	for k, v := range globalEventRegistry.entries {
 		initialRegistrySnapshot[k] = v
 	}
@@ -45,7 +45,7 @@ func TestMain(m *testing.M) {
 func eventRegistryReset() {
 	globalEventRegistry.mu.Lock()
 	defer globalEventRegistry.mu.Unlock()
-	globalEventRegistry.entries = make(map[string]typeEntry, len(initialRegistrySnapshot))
+	globalEventRegistry.entries = make(map[EventType]typeEntry, len(initialRegistrySnapshot))
 	for k, v := range initialRegistrySnapshot {
 		globalEventRegistry.entries[k] = v
 	}
@@ -116,7 +116,7 @@ type testPayloadBeta struct {
 
 // minimalEvent returns a valid Event with the given type and payload.
 // Helper used by multiple subtests.
-func minimalEvent(t *testing.T, typeName string, payloadJSON []byte) Event {
+func minimalEvent(t *testing.T, typeName EventType, payloadJSON []byte) Event {
 	t.Helper()
 	id, err := uuid.NewV7()
 	if err != nil {
@@ -418,7 +418,7 @@ func TestEV028_ValidateEnvelopeSchemaVersion(t *testing.T) {
 		ev := Event{
 			EventID:         EventID(id),
 			SchemaVersion:   version,
-			Type:            typeName,
+			Type:            EventType(typeName),
 			TimestampWall:   time.Now(),
 			SourceSubsystem: "test",
 			Payload:         json.RawMessage(`{}`),

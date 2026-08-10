@@ -75,7 +75,7 @@ type WorkerReportPayload struct {
 }
 
 func init() {
-	if err := core.RegisterEventType("worker_report", func() core.EventPayload { return &WorkerReportPayload{} }); err != nil {
+	if err := core.RegisterEventType(core.EventTypeWorkerReport, func() core.EventPayload { return &WorkerReportPayload{} }); err != nil {
 		panic("workers: init: register worker_report: " + err.Error())
 	}
 }

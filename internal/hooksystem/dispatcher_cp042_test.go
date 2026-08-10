@@ -171,7 +171,7 @@ func cp042BuildBusWithCollector(t *testing.T, collector *cp012FixtureEventCollec
 		EventPattern:  core.EventPattern{Wildcard: true},
 		OnPanic:       core.OnPanicRecoverAndLog,
 		Handler: func(_ context.Context, ev core.Event) error {
-			collector.record(ev.Type)
+			collector.record(string(ev.Type))
 			return nil
 		},
 	}); err != nil {

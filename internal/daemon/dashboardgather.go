@@ -158,7 +158,7 @@ func (b *DashboardBuilder) readActiveStalls(now time.Time, activeRunIDs map[stri
 	var out []DashStall
 
 	for ev := range eventbus.ScanAfter(b.eventsPath, zeroID) {
-		if ev.Type != string(core.EventTypeStallDetected) {
+		if ev.Type != core.EventTypeStallDetected {
 			continue
 		}
 		// Filter by window using the wall timestamp.

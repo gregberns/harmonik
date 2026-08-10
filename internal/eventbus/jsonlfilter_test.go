@@ -55,7 +55,7 @@ func filterFixtureEvent(t *testing.T, evType string, runID *core.RunID) core.Eve
 	return core.Event{
 		EventID:         core.EventID(id),
 		SchemaVersion:   1,
-		Type:            evType,
+		Type:            core.EventType(evType),
 		TimestampWall:   time.Now(),
 		RunID:           runID,
 		SourceSubsystem: "eventbus_test",

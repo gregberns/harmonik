@@ -172,7 +172,7 @@ func dk4CountResolved(t *testing.T, eventsPath, decisionID string) int {
 	var zeroID core.EventID
 	n := 0
 	for ev := range eventbus.ScanAfter(eventsPath, zeroID) {
-		if ev.Type != string(core.EventTypeDecisionResolved) {
+		if ev.Type != core.EventTypeDecisionResolved {
 			continue
 		}
 		var p core.DecisionResolvedPayload

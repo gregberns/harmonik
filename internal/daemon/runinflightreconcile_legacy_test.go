@@ -57,7 +57,7 @@ func TestReconcileOrphanedRunsReadsVersion1RunStarted(t *testing.T) {
 	event := core.Event{
 		EventID:         eventID,
 		SchemaVersion:   1,
-		Type:            string(core.EventTypeRunStarted),
+		Type:            core.EventTypeRunStarted,
 		TimestampWall:   time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC),
 		RunID:           &runID,
 		SourceSubsystem: "daemon",

@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 )
@@ -29,7 +30,7 @@ func claudeCodeFixtureMakeEvent(t *testing.T, eventType string, payload json.Raw
 	return handlercontract.EventEnvelope{
 		EventID:         handlercontract.EventID(uuid.MustParse("0196f500-0000-7000-8000-000000000099")),
 		SchemaVersion:   1,
-		Type:            eventType,
+		Type:            core.EventType(eventType),
 		TimestampWall:   time.Now(),
 		SourceSubsystem: "handler",
 		Payload:         payload,

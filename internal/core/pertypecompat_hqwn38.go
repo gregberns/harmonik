@@ -1,5 +1,7 @@
 package core
 
+import "fmt"
+
 // pertypecompat_hqwn38.go — Per-type N-1 compatibility window declarations
 // per EV-029 (event-model.md §4.8 EV-029).
 //
@@ -175,8 +177,8 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	// hk-l1bkp: Pi fail-closed billing guard (PI-040/042/043) — absent provider key → deny.
 	{TypeName: EventTypePiBillingGuard, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-djqc9: agent-comms typed events (agent-comms spec §1).
-	{TypeName: "agent_message", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
-	{TypeName: "agent_presence", CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: EventTypeAgentMessage, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: EventTypeAgentPresence, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-lr5t: harness-selected observability event (dispatch-time harness selection audit).
 	{TypeName: EventTypeHarnessSelected, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	// hk-eval-prog-model-on-log-bh2o7: model-selected observability event (effective model keyed on run_id).
@@ -385,6 +387,34 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	// (captain refreshed dashboard.json, or operator applied the unlock
 	// override). Payload: reason, updated_at, detected_at.
 	{TypeName: EventTypeDashboardRefreshed, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+
+	// Leaf-owned worker and governor payloads. Their packages register the
+	// constructors during startup.
+	{TypeName: EventTypeWorkerUnhealthy, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: EventTypeWorkerOffline, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: EventTypeWorkerTunnelFailed, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: EventTypeWorkerReport, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: EventTypeResourceBreach, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: EventTypeGovernorSignal, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+}
+
+// RegisterPayloadCompatEntry adds the compatibility contract for an event
+// whose payload is owned by a leaf package. Callers use it from package init,
+// next to RegisterEventType, so the payload owner declares both contracts.
+func RegisterPayloadCompatEntry(entry PayloadCompatEntry) error {
+	if !entry.TypeName.Valid() {
+		return fmt.Errorf("core: payload compatibility type must not be empty")
+	}
+	if entry.CurrentVersion < 1 {
+		return fmt.Errorf("core: payload compatibility current version must be >= 1 for %q", entry.TypeName)
+	}
+	for _, existing := range allPayloadCompatEntries {
+		if existing.TypeName == entry.TypeName {
+			return fmt.Errorf("core: payload compatibility already registered for %q", entry.TypeName)
+		}
+	}
+	allPayloadCompatEntries = append(allPayloadCompatEntries, entry)
+	return nil
 }
 
 // LookupPayloadCompatEntry returns the PayloadCompatEntry for the given

@@ -343,7 +343,7 @@ func (bs *bootState) wireStaleWatcherReapSeams(ctx context.Context, bus handlerc
 			"force-reaped: run wedged past cancel grace; concurrency slot reclaimed (hk-mdus1)",
 			handle.QueueID, handle.QueueGroupIndex, nil)
 		if handle.QueueName != "" && handle.QueueID != nil && handle.QueueGroupIndex != nil && handle.QueueItemIndex >= 0 {
-			evaluateGroupAdvanceWithOutcome(ctx, reapPort, handle.QueueName, *handle.QueueID, *handle.QueueGroupIndex, handle.QueueItemIndex, false)
+			evaluateGroupAdvanceWithOutcome(ctx, reapPort, handle.QueueName, *handle.QueueID, *handle.QueueGroupIndex, handle.QueueItemIndex, false, time.Now())
 		}
 	})
 

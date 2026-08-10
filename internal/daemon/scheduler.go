@@ -1161,7 +1161,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 								"daemon: workloop: ShowBead pre-claim (queue-path) %s failed %d times — failing queue item so the group can advance (hk-pina9): %v\n",
 								snapItemBeadID, preClaimAttempts, preClaimErr)
 							markQueueItemFailureReason(ctx, queueStore, snapQueueName, snapGroupIndex, snapItemIdx, snapItemBeadID, "show_bead_failed")
-							evaluateGroupAdvanceWithOutcome(ctx, reapPort, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false)
+							evaluateGroupAdvanceWithOutcome(ctx, reapPort, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false, time.Now())
 							continue
 						}
 						fmt.Fprintf(os.Stderr,
@@ -1197,7 +1197,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 						// deferred, pinned) remain deferred-for-ledger-dep to be re-evaluated
 						// on the next poll cycle (hk-3kq05).
 						if preClaimRecord.Status.IsTerminal() {
-							evaluateGroupAdvanceWithOutcome(ctx, reapPort, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false)
+							evaluateGroupAdvanceWithOutcome(ctx, reapPort, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false, time.Now())
 						} else {
 							// hk-l2xd1: in_progress with no active run → auto-reset to break
 							// the bead_claim_skipped live-lock that starves sibling queue items.
@@ -1404,7 +1404,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 							fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s failed at reservation: %s\n",
 								snapItemBeadID, reservation.FailureReason)
 						}
-						evaluateGroupAdvanceWithOutcome(ctx, reapPort, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false)
+						evaluateGroupAdvanceWithOutcome(ctx, reapPort, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false, time.Now())
 						continue
 
 					case reservationWriteFailed:
@@ -1674,7 +1674,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 				)
 				if disposition == orchestrator.ClaimFailureFailQueueItem {
 					fmt.Fprintf(os.Stderr, "daemon: workloop: ClaimBead %s bead is blocked (deps or status) — failing queue item (hk-n91y0)\n", beadID)
-					evaluateGroupAdvanceWithOutcome(ctx, reapPort, capturedQueueName, *queueIDField, *queueGroupIdxFd, queueItemIndex, false)
+					evaluateGroupAdvanceWithOutcome(ctx, reapPort, capturedQueueName, *queueIDField, *queueGroupIdxFd, queueItemIndex, false, time.Now())
 					continue
 				}
 			}
@@ -1843,7 +1843,7 @@ func runDispatchedBead(runCtx, daemonCtx context.Context, env runloop.RunEnv, rp
 	runOK := beadRunOne(runCtx, env, rp, handles, extraContext, preSelectedWorker, localSlotHeld)
 	if env.QueueItemIndex >= 0 && completion.queueStore != nil && env.QueueID != nil && env.QueueGroupIndex != nil && daemonCtx.Err() == nil {
 		evaluateGroupAdvanceWithOutcome(daemonCtx, completion.reapSeamPort, env.QueueName,
-			*env.QueueID, *env.QueueGroupIndex, env.QueueItemIndex, runOK)
+			*env.QueueID, *env.QueueGroupIndex, env.QueueItemIndex, runOK, time.Now())
 	}
 	if runOK && daemonCtx.Err() == nil {
 		stagedBeadGeneratorEvalWithPort(daemonCtx, completion, env.BeadRecord.BeadID, env.BeadRecord.Labels)
@@ -2292,7 +2292,7 @@ func markQueueItemFailureReason(_ context.Context, queueStore *queuewiring.Queue
 // Bead ref: hk-45ude, hk-tigaf.4.
 //
 //nolint:gocognit,cyclop,funlen,gocritic // pre-existing: Seam A moved this code out of workloop.go unchanged
-func evaluateGroupAdvanceWithOutcome(ctx context.Context, port reapSeamPort, queueName string, queueID string, groupIndex int, itemIdx int, success bool) {
+func evaluateGroupAdvanceWithOutcome(ctx context.Context, port reapSeamPort, queueName string, queueID string, groupIndex int, itemIdx int, success bool, completedAt time.Time) {
 	if port.queueStore == nil {
 		return
 	}
@@ -2332,7 +2332,8 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, port reapSeamPort, que
 	}
 
 	// Evaluate group-advance gate (EM-015f all-terminal rule).
-	newStatus, events, advErr := queue.AdvanceGroup(ctx, &q.Groups[groupPos], q.Status, queueID, time.Now())
+	completedAt = completedAt.UTC()
+	newStatus, events, advErr := queue.AdvanceGroup(ctx, &q.Groups[groupPos], q.Status, queueID, completedAt)
 	if advErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: workloop: AdvanceGroup queueID=%s groupIndex=%d: %v\n",
 			queueID, groupIndex, advErr)
@@ -2361,7 +2362,7 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, port reapSeamPort, que
 			groupStatuses[i] = string(q.Groups[i].Status)
 		}
 		if i := orchestrator.FirstPendingGroupIndex(groupStatuses); i >= 0 {
-			nextStatus, nextEvents, nextErr := queue.AdvanceGroup(ctx, &q.Groups[i], q.Status, queueID, time.Now())
+			nextStatus, nextEvents, nextErr := queue.AdvanceGroup(ctx, &q.Groups[i], q.Status, queueID, completedAt)
 			if nextErr != nil {
 				fmt.Fprintf(os.Stderr, "daemon: workloop: AdvanceGroup next group queueID=%s groupIndex=%d: %v\n",
 					queueID, q.Groups[i].GroupIndex, nextErr)

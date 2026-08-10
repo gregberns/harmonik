@@ -91,6 +91,8 @@ The core is ready for more feature work when one vertical bead path has these pr
 - `EVIDENCE.md` records current-tree facts and commands.
 - `FINDINGS.md` ranks the architectural findings.
 - `NEXT.md` gives the next review slices and the stop conditions.
+- `REPLICATION-RUNBOOK.md` defines the repeatable review process.
+- `PHASE-2-RECONCILIATION.md` records the decision and status for each detector area.
 
 ## Limits of this pass
 

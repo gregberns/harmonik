@@ -294,8 +294,8 @@ func HandlerEnvOf(deps testRuntime) []string {
 // "" for the main queue (it normalises to "main").
 //
 // Bead ref: hk-45ude, hk-tigaf.4.
-func ExportedEvaluateGroupAdvanceWithOutcome(ctx context.Context, deps testRuntime, queueName, queueID string, groupIndex, itemIdx int, success bool) {
-	evaluateGroupAdvanceWithOutcome(ctx, deps.reap(eagerRefillPort{}), queueName, queueID, groupIndex, itemIdx, success)
+func ExportedEvaluateGroupAdvanceWithOutcome(ctx context.Context, deps testRuntime, queueName, queueID string, groupIndex, itemIdx int, success bool, completedAt time.Time) {
+	evaluateGroupAdvanceWithOutcome(ctx, deps.reap(eagerRefillPort{}), queueName, queueID, groupIndex, itemIdx, success, completedAt)
 }
 
 // ExportedQueueStoreOf returns deps.queueStore. Used by tests to observe the

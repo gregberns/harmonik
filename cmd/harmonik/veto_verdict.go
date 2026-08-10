@@ -48,8 +48,11 @@ USAGE
 
 ARGUMENTS
   <run_id>  Run ID of the reconciliation run whose verdict to veto.
-            The daemon must have a pending-confirmation entry for this run_id;
-            see 'harmonik status' to list pending verdicts.
+            The daemon must have a pending-confirmation entry for this run_id.
+            No command lists pending verdicts. The daemon holds them in memory
+            only. Reconciliation run IDs appear in the daemon event stream
+            ('harmonik subscribe --types reconciliation_started'), but no event
+            reports that a run waits for an operator verdict.
 
 FLAGS
   --promote-to escalate-to-human

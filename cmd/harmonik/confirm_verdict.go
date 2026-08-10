@@ -51,8 +51,11 @@ USAGE
 
 ARGUMENTS
   <run_id>  Run ID of the reconciliation run whose verdict to confirm.
-            The daemon must have a pending-confirmation entry for this run_id;
-            see 'harmonik status' to list pending verdicts.
+            The daemon must have a pending-confirmation entry for this run_id.
+            No command lists pending verdicts. The daemon holds them in memory
+            only. Reconciliation run IDs appear in the daemon event stream
+            ('harmonik subscribe --types reconciliation_started'), but no event
+            reports that a run waits for an operator verdict.
 
 FLAGS
   --project DIR  Project directory (default: current working directory)
@@ -207,7 +210,8 @@ func sendVerdictOverrideRequest(projectDir, runID, op, promoteTo string) int {
 		// exit code 16 = operator-control-invalid-state (no pending verdict)
 		if resp.ErrorCode == 16 {
 			fmt.Fprintf(os.Stderr, "harmonik %s: no pending verdict for run %q (operator-control-invalid-state)\n", cmdName, runID)
-			fmt.Fprintf(os.Stderr, "harmonik %s: use 'harmonik status' to list reconciliation runs with pending verdicts\n", cmdName)
+			fmt.Fprintf(os.Stderr, "harmonik %s: no command lists reconciliation runs with pending verdicts\n", cmdName)
+			fmt.Fprintf(os.Stderr, "harmonik %s: the daemon holds pending verdicts in memory only\n", cmdName)
 			return 16
 		}
 		fmt.Fprintf(os.Stderr, "harmonik %s: daemon rejected request (code %d): %s\n", cmdName, resp.ErrorCode, resp.Error)

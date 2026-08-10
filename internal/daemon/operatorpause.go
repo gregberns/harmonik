@@ -27,6 +27,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -115,6 +116,10 @@ func (c *OperatorPauseController) HandleOperatorPause(ctx context.Context, queue
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if err := c.refuseUnknownQueueLocked("pause", queueName); err != nil {
+		return err
+	}
+
 	if queueName == "" {
 		// Global pause: gate with the paused flag for idempotency.
 		if c.paused {
@@ -164,6 +169,10 @@ func (c *OperatorPauseController) HandleOperatorPause(ctx context.Context, queue
 func (c *OperatorPauseController) HandleOperatorResume(ctx context.Context, queueName string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	if err := c.refuseUnknownQueueLocked("resume", queueName); err != nil {
+		return err
+	}
 
 	if err := c.refuseFailureParkedLocked(queueName); err != nil {
 		return err
@@ -240,6 +249,63 @@ func (c *OperatorPauseController) refuseFailureParkedLocked(queueName string) er
 		QueueID:        q.QueueID,
 		ObservedStatus: q.Status,
 	}
+}
+
+// queueNameLister is the optional half of QueuePauseStateReader: a reader that
+// can also enumerate the queues it holds. It is type-asserted rather than
+// folded into QueuePauseStateReader so existing implementers keep satisfying
+// that interface — the same late-addition idiom as VerdictOverrideHandler on
+// the socket dispatcher. *queuewiring.QueueStore satisfies it.
+type queueNameLister interface {
+	AllQueues() map[string]*queue.Queue
+}
+
+// refuseUnknownQueueLocked refuses an operator verb aimed at a queue that does
+// not exist.
+//
+// This is the fix for a silent wrong answer on the emergency stop. `harmonik
+// queue pause <name>` emitted operator_pause_status against whatever string it
+// was handed. The QueueOperatorEventConsumer only transitions a queue it can
+// find, so a misspelled name matched nothing, yet the operator saw "paused:
+// <name>" and exit 0 while the real queue kept dispatching. Reporting that the
+// dispatching stopped when it did not is worse than any error.
+//
+// A global pause or resume (empty queueName) is not aimed at any one queue and
+// is never refused. When no reader is wired the check cannot run, so it passes
+// rather than refusing everything.
+//
+// Caller must hold mu.
+//
+// Spec ref: specs/queue-model.md §8.3 QM-052, §8.5 QM-054.
+func (c *OperatorPauseController) refuseUnknownQueueLocked(verb, queueName string) error {
+	if queueName == "" || c.queues == nil {
+		return nil
+	}
+	normalized := queue.NormaliseQueueName(queueName)
+	if c.queues.QueueByName(normalized) != nil {
+		return nil
+	}
+	return &queue.UnknownQueueError{
+		Verb:           verb,
+		NormalizedName: normalized,
+		KnownNames:     c.knownQueueNamesLocked(),
+	}
+}
+
+// knownQueueNamesLocked returns the sorted names of the queues that exist, or
+// nil when the wired reader cannot enumerate them. Caller must hold mu.
+func (c *OperatorPauseController) knownQueueNamesLocked() []string {
+	lister, ok := c.queues.(queueNameLister)
+	if !ok {
+		return nil
+	}
+	all := lister.AllQueues()
+	names := make([]string, 0, len(all))
+	for name := range all {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // emitPauseStatusLocked emits an operator_pause_status event with the given

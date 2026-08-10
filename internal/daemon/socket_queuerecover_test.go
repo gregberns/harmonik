@@ -20,6 +20,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -253,5 +254,80 @@ func TestSocketRouting_OperatorResume_StillReleasesADrainPause(t *testing.T) {
 	}
 	if len(collectEventsByType(col, "operator_resuming")) != 1 {
 		t.Fatal("a drain release must emit exactly one operator_resuming")
+	}
+}
+
+// TestSocketRouting_OperatorPause_RefusesUnknownQueue defends the fix for the
+// silent wrong answer on the EMERGENCY STOP. Before it, a misspelled queue name
+// answered ok=true, the CLI printed "paused: <name>" and exited 0, and the real
+// queue kept dispatching — so an operator reaching for the stop during an
+// incident was told the work had halted when it had not.
+func TestSocketRouting_OperatorPause_RefusesUnknownQueue(t *testing.T) {
+	t.Parallel()
+	store, _ := recoverFixtureStore(t)
+
+	col := &stubEventCollector{}
+	ctrl := daemon.ExportedNewOperatorPauseController(col)
+	ctrl.SetQueueStates(store)
+
+	sockPath := recoverFixtureServe(t, daemon.SocketHandlers{Operator: ctrl})
+
+	// "canry" is a typo for the queue that exists, "canary".
+	resp := recoverFixtureSend(t, sockPath, map[string]string{"op": "operator-pause", "queue": "canry"})
+	if resp.Ok {
+		t.Fatal("operator-pause against a queue that does not exist reported success; the emergency stop must never claim to have stopped nothing")
+	}
+	if !strings.Contains(resp.Error, "canry") {
+		t.Errorf("refusal must name the queue the operator typed, got %q", resp.Error)
+	}
+	if !strings.Contains(resp.Error, "canary") {
+		t.Errorf("refusal must name the queues that DO exist so a near-miss is visible, got %q", resp.Error)
+	}
+	if len(collectEventsByType(col, "operator_pause_status")) != 0 {
+		t.Fatal("a refused pause must not emit operator_pause_status")
+	}
+}
+
+// TestSocketRouting_OperatorPause_StillPausesAKnownQueue pins that the refusal
+// did not break the verb it guards.
+func TestSocketRouting_OperatorPause_StillPausesAKnownQueue(t *testing.T) {
+	t.Parallel()
+	store, _ := recoverFixtureStore(t)
+
+	col := &stubEventCollector{}
+	ctrl := daemon.ExportedNewOperatorPauseController(col)
+	ctrl.SetQueueStates(store)
+
+	sockPath := recoverFixtureServe(t, daemon.SocketHandlers{Operator: ctrl})
+
+	resp := recoverFixtureSend(t, sockPath, map[string]string{"op": "operator-pause", "queue": "canary"})
+	if !resp.Ok {
+		t.Fatalf("operator-pause against a queue that exists: %q", resp.Error)
+	}
+	// pausing, then paused.
+	if got := len(collectEventsByType(col, "operator_pause_status")); got != 2 {
+		t.Fatalf("operator_pause_status events = %d, want 2 (pausing then paused)", got)
+	}
+}
+
+// TestSocketRouting_OperatorPause_GlobalIsNeverRefused pins that the refusal is
+// scoped to the per-queue form. A global pause names no queue and must keep
+// working with an empty name.
+func TestSocketRouting_OperatorPause_GlobalIsNeverRefused(t *testing.T) {
+	t.Parallel()
+	store, _ := recoverFixtureStore(t)
+
+	col := &stubEventCollector{}
+	ctrl := daemon.ExportedNewOperatorPauseController(col)
+	ctrl.SetQueueStates(store)
+
+	sockPath := recoverFixtureServe(t, daemon.SocketHandlers{Operator: ctrl})
+
+	resp := recoverFixtureSend(t, sockPath, map[string]string{"op": "operator-pause"})
+	if !resp.Ok {
+		t.Fatalf("global operator-pause: %q", resp.Error)
+	}
+	if !ctrl.IsPaused() {
+		t.Error("global pause did not set the br-ready gate")
 	}
 }

@@ -18,6 +18,7 @@ package queue
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/gregberns/harmonik/internal/core"
 )
@@ -205,4 +206,40 @@ func (e *ResumeRefusedError) Error() string {
 	return fmt.Sprintf(
 		"queue %q is %s, not %s: resume releases a drain pause only; run `harmonik queue recover %s` to re-arm the failed items",
 		e.NormalizedName, e.ObservedStatus, QueueStatusPausedByDrain, e.NormalizedName)
+}
+
+// UnknownQueueError is returned when an operator command names a queue that
+// does not exist.
+//
+// It exists because a misspelled queue name used to be a silent no-op. The
+// per-queue pause path emitted its events against whatever string it was
+// handed, no consumer matched a queue to them, and the CLI still printed
+// "paused" and exited 0. Pause is the emergency stop: an operator who types it
+// during an incident and reads success has been told the dispatching stopped
+// when it did not. A typo must be an error, not a success that changes nothing.
+//
+// KnownNames lets the message name the queues that DO exist, so a near-miss is
+// obvious without a second command.
+//
+// Spec ref: specs/queue-model.md §8.3 QM-052, §8.5 QM-054.
+type UnknownQueueError struct {
+	// Verb is the operator verb that was refused ("pause", "resume").
+	Verb string
+
+	// NormalizedName is the queue name the operator aimed at.
+	NormalizedName string
+
+	// KnownNames are the queues that exist right now, sorted. May be empty.
+	KnownNames []string
+}
+
+// Error names the queue that does not exist and the ones that do.
+func (e *UnknownQueueError) Error() string {
+	known := "none are loaded"
+	if len(e.KnownNames) > 0 {
+		known = strings.Join(e.KnownNames, ", ")
+	}
+	return fmt.Sprintf(
+		"no queue named %q: %s changed nothing and no queue was %sd; queues that exist: %s",
+		e.NormalizedName, "`harmonik queue "+e.Verb+"`", e.Verb, known)
 }

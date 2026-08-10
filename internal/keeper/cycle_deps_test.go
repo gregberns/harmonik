@@ -52,7 +52,7 @@ func TestNewCyclerWithDepsListsMissingDependenciesInStableOrder(t *testing.T) {
 	deps.Clock = nil
 	deps.Pane = nil
 	deps.Journal = nil
-	_, err := NewCyclerWithDeps(DefaultCyclePolicy(), CycleEnv{}, deps)
+	_, err := NewCyclerWithDeps(CyclePolicyFromConfig(CyclerConfig{}), CycleEnv{}, deps)
 	if err == nil || !strings.Contains(err.Error(), "Clock, Pane, Journal") {
 		t.Fatalf("error = %v", err)
 	}
@@ -62,14 +62,14 @@ func TestNewCyclerWithDepsRejectsTypedNil(t *testing.T) {
 	deps := completeCycleDeps()
 	var pane *cycleDepsStub
 	deps.Pane = pane
-	_, err := NewCyclerWithDeps(DefaultCyclePolicy(), CycleEnv{}, deps)
+	_, err := NewCyclerWithDeps(CyclePolicyFromConfig(CyclerConfig{}), CycleEnv{}, deps)
 	if err == nil || !strings.Contains(err.Error(), "Pane") {
 		t.Fatalf("typed nil error = %v", err)
 	}
 }
 
 func TestNewCyclerWithDepsAllowsNilEmitterAndRespawn(t *testing.T) {
-	c, err := NewCyclerWithDeps(DefaultCyclePolicy(), CycleEnv{}, completeCycleDeps())
+	c, err := NewCyclerWithDeps(CyclePolicyFromConfig(CyclerConfig{}), CycleEnv{}, completeCycleDeps())
 	if err != nil {
 		t.Fatal(err)
 	}

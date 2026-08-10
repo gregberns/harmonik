@@ -968,6 +968,21 @@ steps BEFORE calling `CloseBead`:
    current at dispatch time, the daemon MUST treat the run as no-change and
    proceed to step 6 (skip merge, still close bead).
 
+   A ref that does not resolve at all is a different case and MUST NOT take the
+   no-change path. Worktree creation always cuts `refs/heads/run/<run_id>`, so an
+   absent ref means the branch never reached this repository — a remote run whose
+   code sync did not deliver it, or a run pointed at the wrong repository — or
+   that something deleted it under the run. A commit exists in each of those
+   cases and is stranded. The daemon MUST fail the merge closed with reason
+   `merge_run_branch_missing` and take the EM-053 reopen path. The reason is not
+   retryable, and the failure MUST name the branch and the repository it was read
+   in, so an operator can find the work.
+
+   The distinction is load-bearing. No-change and a successful merge share one
+   close ladder in the run machine, so a missing branch reported as no-change
+   closes the bead and reports the run a success while no event mentions a merge
+   at all (hk-no-merge-silent-success-hc1jr).
+
 2. **Rebase run-branch onto main.** If the worktree directory for the run still
    exists on disk, the daemon MUST execute `git rebase main` from within the
    worktree directory immediately before the fast-forward check. This allows

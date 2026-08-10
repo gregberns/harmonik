@@ -217,8 +217,17 @@ A harness's `SessionIDPolicy()` governs how the run obtains its session id:
   `thread.started` JSONL line) — and the run MUST record it durably so `Retask` (iteration ≥ 2) can
   resume the correct session.
 
-A `Captured` harness that exits before emitting a session id MUST fail the run closed (it cannot be
-resumed without an id); silent fallback to a minted id is forbidden.
+A `Captured` harness that exits before emitting a session id leaves the run with no resume target.
+Silent fallback to a minted id is forbidden: the minted value is a harmonik-internal tracking uuid the
+harness never issued, and a `Captured` harness rejects it (codex answers `no rollout found for thread
+id …`). The run MUST NOT resume without a captured id, and MUST start a fresh turn on the
+implementer-resume back edge (iteration ≥ 2) instead.
+
+A fresh turn loses the harness-side conversation and keeps the code, because the prior pass already
+committed to the run branch. Failing the run closed here would strand a real commit on a branch nobody
+reads, which is the failure class EM-052 step 1 exists to prevent. The first pass itself is not
+affected by a missing id: per HN-009, "done with work" is decided by the shared git layer, not by
+harness internals, so a pass that never announced a session id is still judged by what it committed.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent

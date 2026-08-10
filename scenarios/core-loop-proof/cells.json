@@ -1,14 +1,18 @@
 {
   "//": "to the claude cells. gap1 is asserted everywhere (it is the T2-implemented gap).",
-  "//workflow_id": "EVERY cell asserts dispatch.workflow_id_present=false: this daemon does",
-  "//workflow_id2": "NOT emit workflow_id on run_started for ANY mode (workloopRunStartedPayload",
-  "//workflow_id3": "has no workflow_id field; the struct comment flags it as deferred). The spec",
-  "//workflow_id4": "(execution-model.md EM-015a §331, event-model.md §8.1.1) DOES require it —",
-  "//workflow_id5": "emitting it (incl. synthesizing stable ids for built-in single/review-loop",
-  "//workflow_id6": "and resolving the .dot graph id before run_started) is a tracked follow-up,",
-  "//workflow_id7": "not a core-loop gap. Cells claiming true here were a latent gap4 failure",
-  "//workflow_id8": "masked by golden run_started streams that carried a fabricated workflow_id;",
-  "//workflow_id9": "those goldens have been stripped so they mirror the daemon's real output.",
+  "//mode": "EVERY cell asserts dispatch.workflow_mode=\"dot\", and that is not a",
+  "//mode2": "mistake in the single cells. A version-2 run_started record carries \"dot\"",
+  "//mode3": "for every run, because the daemon resolves a DOT graph before it emits the",
+  "//mode4": "event (execution-model.md §4.3 EM-012a and §4.4; event-model.md §8.1). A",
+  "//mode5": "workflow:single bead label is a graph SELECTION request, not an execution",
+  "//mode6": "mode: it selects the embedded no-review-bead graph. The single-versus-",
+  "//mode7": "reviewed distinction therefore rides on review_policy and workflow_",
+  "//mode8": "selection_source, which is why every cell now asserts those two as well.",
+  "//workflow_id": "EVERY cell asserts dispatch.workflow_id_present=false. The daemon DOES",
+  "//workflow_id2": "emit workflow_id now (core.RunStartedPayload requires a valid descriptor),",
+  "//workflow_id3": "so this assertion is weaker than the spec allows, not wrong. Raising it to",
+  "//workflow_id4": "true is a tracked follow-up that wants one live run to confirm the value",
+  "//workflow_id5": "each cell resolves, not a core-loop gap.",
   "schema_version": 1,
   "cells": [
     {
@@ -28,8 +32,10 @@
         },
         "terminal": "pass",
         "dispatch": {
-          "workflow_mode": "single",
-          "workflow_id_present": false
+          "workflow_mode": "dot",
+          "workflow_id_present": false,
+          "review_policy": "reviewed",
+          "workflow_selection_source": "project_default"
         },
         "provider": {
           "enabled": true
@@ -60,8 +66,10 @@
         },
         "terminal": "pass",
         "dispatch": {
-          "workflow_mode": "single",
-          "workflow_id_present": false
+          "workflow_mode": "dot",
+          "workflow_id_present": false,
+          "review_policy": "reviewed",
+          "workflow_selection_source": "project_default"
         },
         "provider": {
           "enabled": true
@@ -77,12 +85,12 @@
       ]
     },
     {
-      "//": "pi single cell: the pi seed carries workflow:single (D3), so it resolves to",
-      "//2": "single mode (the ONLY reachable path to single) over the dot daemon-default.",
-      "//3": "single has no workflow graph => no workflow_id => workflow_id_present=false",
-      "//4": "(true is impossible in single mode and was the gap4 failure). Lands on the",
-      "//5": "per-bead integration branch (D2), git-verified by the runner (not the dead",
-      "//6": "workspace_merge_status event).",
+      "//": "pi single cell: the pi seed carries workflow:single (D3). That label is a",
+      "//2": "tier-1 GRAPH SELECTION, not an execution mode — it selects the embedded",
+      "//3": "no-review-bead graph over the dot daemon-default, so the run reports",
+      "//4": "workflow_mode=dot, review_policy=no_review, and workflow_selection_source=",
+      "//5": "legacy_single_label. Lands on the per-bead integration branch (D2), git-",
+      "//6": "verified by the runner (not the dead workspace_merge_status event).",
       "cell": "pi:local",
       "harness": "pi",
       "substrate": "local",
@@ -99,8 +107,10 @@
         },
         "terminal": "pass",
         "dispatch": {
-          "workflow_mode": "single",
-          "workflow_id_present": false
+          "workflow_mode": "dot",
+          "workflow_id_present": false,
+          "review_policy": "no_review",
+          "workflow_selection_source": "legacy_single_label"
         },
         "provider": {
           "enabled": true
@@ -136,16 +146,17 @@
           "no_leak_models": ["@foreign"]
         },
         "terminal": "pass",
-        "//dispatch": "gap4 here proves workflow_mode fidelity (dot stays dot; NOT silently",
-        "//dispatch2": "forced to review-loop). workflow_id_present=false because a project-",
-        "//dispatch3": "default dot run (workflow.dot, no queue-item workflow_ref) does NOT pin",
-        "//dispatch4": "a run_started.workflow_id in this daemon — it is null, and no other",
-        "//dispatch5": "event carries it (verified from the live capture). Same treatment as the",
-        "//dispatch6": "single cell. See final-report note: null dot workflow_id is a candidate",
-        "//dispatch7": "daemon follow-up, orthogonal to the WS4-4 round-trip ask.",
+        "//dispatch": "gap4 here proves the dot: label reached the resolver: the seed's",
+        "//dispatch2": "dot:review-loop label pins review-loop.dot, so the selection source is",
+        "//dispatch3": "explicit_ref and the policy is reviewed. Contrast the single cells, which",
+        "//dispatch4": "resolve legacy_single_label + no_review from the SAME workflow_mode value.",
+        "//dispatch5": "workflow_id_present stays false here for the same reason as every other",
+        "//dispatch6": "cell — see the file-level //workflow_id note.",
         "dispatch": {
           "workflow_mode": "dot",
-          "workflow_id_present": false
+          "workflow_id_present": false,
+          "review_policy": "reviewed",
+          "workflow_selection_source": "explicit_ref"
         },
         "provider": {
           "enabled": true
@@ -177,8 +188,10 @@
         },
         "terminal": "pass",
         "dispatch": {
-          "workflow_mode": "single",
-          "workflow_id_present": false
+          "workflow_mode": "dot",
+          "workflow_id_present": false,
+          "review_policy": "no_review",
+          "workflow_selection_source": "legacy_single_label"
         },
         "provider": {
           "enabled": true
@@ -210,8 +223,10 @@
         },
         "terminal": "pass",
         "dispatch": {
-          "workflow_mode": "single",
-          "workflow_id_present": false
+          "workflow_mode": "dot",
+          "workflow_id_present": false,
+          "review_policy": "no_review",
+          "workflow_selection_source": "legacy_single_label"
         },
         "provider": {
           "enabled": true
@@ -246,8 +261,10 @@
         },
         "terminal": "pass",
         "dispatch": {
-          "workflow_mode": "single",
-          "workflow_id_present": false
+          "workflow_mode": "dot",
+          "workflow_id_present": false,
+          "review_policy": "no_review",
+          "workflow_selection_source": "legacy_single_label"
         },
         "provider": {
           "enabled": true

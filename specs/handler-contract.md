@@ -124,7 +124,22 @@ The `shell` handler is a built-in deterministic handler bound by the reserved `h
 | timeout-kill (exceeded `timeout`) | `FAIL` | `transient` |
 | signal-kill (context cancel / operator stop / SIGKILL) | `FAIL` | `canceled` |
 
-A non-zero exit is a `FAIL` `Outcome` the cascade routes on per [execution-model.md §4.10 EM-041]; it is NOT a daemon-side error that reopens the run. The `shell` handler never emits `structural`, `budget_exhausted`, `compilation_loop`, or `partial_success`.
+A non-zero exit is a `FAIL` `Outcome` the cascade routes on per [execution-model.md §4.10 EM-041]; it is NOT a daemon-side error that reopens the run. The `shell` handler never emits `budget_exhausted`, `compilation_loop`, or `partial_success`.
+
+**HC-063-SIG — output-signature reclassification of a non-zero exit (AMENDED 2026-08-10).** The table above is the DEFAULT. The daemon MAY reclassify a non-zero exit when the command's own output carries a signature that names a cause outside the change under test. The reclassification is daemon-side per §4.5 HC-020, mechanism-tagged (no LLM, decided from bytes the daemon already holds), and MUST be derived from the output rather than from the exit code — a `make` recipe reports make's own status, so the failing command's code does not reach the daemon at all. Two signatures are recognised at v1:
+
+| Signature | `failure_class` | Why it is not the change's fault |
+|---|---|---|
+| a go build-cache TOCTOU message (`… is not in std`) | `transient` | a concurrent `go clean -cache` deleted a stdlib entry mid-build; a retry on the same tree passes |
+| the gate could not RUN — make's recipe line `] Error 127`, or a shell's `: command not found` | `structural` | a command the gate names does not exist; no implementation of the bead can create it |
+
+A reclassification MUST only ever move a FAIL between failure classes. It MUST NOT turn a FAIL into a `SUCCESS`, and there is no signature that approves work.
+
+The `structural` case exists because the default is actively harmful there. `standard-bead.dot` routes a `deterministic` gate FAIL back to the implementer, so a gate that cannot run spends the run's whole implement budget on a fault no pass can reach. Measured on the codex:local live-gate cell 2026-08-10: a scratch clone with no pinned `gofumpt` produced four implement passes, four red gates, no reviewer, about an hour of real agent time, and a terminal report of only "incomplete" (`hk-2f3v4`). `structural` matches neither back-edge condition, so the graph's unconditional fallback carries the run to `close-needs-attention` — it stops and names the reason, and no graph edit is needed.
+
+A signature that also appears in a genuine failure's output misclassifies that failure. The cost is a run that stops and reports instead of looping, which is the safer direction; the reverse — a real fault classified as un-runnable — cannot approve anything either.
+
+**Superseded sentences.** "The `shell` handler never emits `structural`" is withdrawn by the table above. The `transient_exit_codes` paragraph below keeps its reservation (no per-node author-declared exit-code attribute at v1) but its restatement "every non-zero exit is `deterministic` at v1" is superseded by this clause: it is the default, not the whole rule.
 
 **`transient_exit_codes` is reserved.** The `shell` handler classifies every non-zero exit as `deterministic` at v1. The attribute name `transient_exit_codes` (example: `transient_exit_codes="75,111"`) is NOT accepted on a tool node at v1; it is reserved for a future schema version that may let a tool-node author declare which specific exit codes are `transient` so the cascade routes them as retryable infra failures rather than deterministic ones. Every non-zero exit is `deterministic` at v1. Deferred until operator demand surfaces per [workflow-graph.md §4 WG-039]. Refs: hk-9j49t.
 

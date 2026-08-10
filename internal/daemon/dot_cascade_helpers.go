@@ -617,6 +617,24 @@ func dispatchDotToolNode(ctx context.Context, bus handlercontract.EventEmitter, 
 		return core.Outcome{Status: core.OutcomeStatusFail, FailureClass: &fc, Notes: outputTail}, nil
 	}
 
+	// The gate could not RUN — a command it names does not exist. No amount of
+	// re-implementing fixes a missing tool, so this must NOT drive the
+	// commit_gate→implement back-edge. Structural is the class that says "retry
+	// only after an approach change"; standard-bead.dot conditions its back-edges
+	// on deterministic and transient only, so its unconditional fallback carries
+	// a structural gate FAIL straight to close-needs-attention. The run stops and
+	// says why, which is the whole point. (hk-2f3v4)
+	//
+	// Measured 2026-08-10 on the codex:local cell: the scratch clone had no
+	// pinned gofumpt, every gate died on it, and the run spent four implement
+	// passes and about 60 minutes of real agent time on a fault no pass could
+	// reach. It reported only "incomplete".
+	if isGateCannotRunError(combined) {
+		fc := core.FailureClassStructural
+		fmt.Fprintf(os.Stderr, "daemon: dot tool node %q could not RUN — a command it names does not exist (%v); structural, NOT routed back to the implementer; gate log: %s\n", node.ID, err, gateLogPath)
+		return core.Outcome{Status: core.OutcomeStatusFail, FailureClass: &fc, Notes: outputTail}, nil
+	}
+
 	// Non-zero exit code (1..255) → deterministic failure. This is the gate-FAIL
 	// case that drives the commit_gate→implement back-edge; surface the diagnostic.
 	fc := core.FailureClassDeterministic
@@ -676,6 +694,28 @@ func tailString(s string, n int) string {
 //     in std". Passes immediately on retry after the cache is warm again.
 func isGateBuildCacheInfraError(output []byte) bool {
 	return strings.Contains(string(output), "is not in std")
+}
+
+// isGateCannotRunError reports whether the gate output shows the gate could not
+// RUN, as opposed to running and finding a fault in the change. The only cause
+// in this class is a command the gate names that does not exist.
+//
+// Two signatures, both meaning exit 127 from a shell:
+//
+//   - "] Error 127" — make's recipe-failure line, e.g.
+//     `make[2]: *** [fmt-check] Error 127`. make reports the recipe's own exit
+//     status, so the daemon sees make's exit 2 and never sees the 127 itself;
+//     the output line is the only place it appears. The bracket is part of
+//     make's format and keeps the match off a bare "127" in test output.
+//   - ": command not found" — the same failure when the missing name has no
+//     slash in it, so the shell reports it by name rather than by path.
+//
+// A test that prints one of these strings in its own output would be
+// misclassified. That costs a run that stops and names the reason instead of
+// looping, which is the safer direction and never approves anything.
+func isGateCannotRunError(output []byte) bool {
+	s := string(output)
+	return strings.Contains(s, "] Error 127") || strings.Contains(s, ": command not found")
 }
 
 // nodeIsReviewer reports whether an agentic node is a reviewer-class node. The

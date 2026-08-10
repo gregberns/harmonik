@@ -260,11 +260,11 @@ var zeroCountAssertions = []finding{
 		At:   "internal/workspace/lifecycleevents_wm015_test.go TestWM015_CreatedEmittedOnEntryToCreated",
 		Note: "internal/workspace contains no event emission at all, so its lifecycle-event suite asserts against a bus it never touches.",
 	},
-	{
-		Type: "workspace_merge_status",
-		At:   "internal/workspace/lifecycleevents_wm015_test.go TestWM015_DiscardedEmittedOnEntryToDiscarded closure",
-		Note: "Same package, same reason.",
-	},
+	// workspace_merge_status was here, asserted zero in
+	// lifecycleevents_wm015_test.go TestWM015_DiscardedEmittedOnEntryToDiscarded.
+	// internal/runmerge/events.go now emits the event through EmitWithRunID, so
+	// the assertion has a failing input and the row is no longer a finding.
+	// Removed 2026-08-10.
 }
 
 // recorded reports whether (typ, at) is already on list.
@@ -623,6 +623,88 @@ func scanScope(scope ast.Node, scopeName, rel string, production, inCore bool, i
 			}
 			return true
 		})
+	}
+
+	// Pass A2 — the dedicated per-type emitter. eventbus.EmitAgentMessage and
+	// eventbus.EmitAgentPresence each serve exactly one event type, so the type
+	// is baked into the method rather than passed to it, and the envelope is
+	// built by hand:
+	//
+	//     const agentMessageType = core.EventTypeAgentMessage
+	//     evt := core.Event{Type: agentMessageType, ...}
+	//     b.jsonlWriter.Append(envelopeBytes, true)
+	//
+	// The constant never reaches an emitter's argument list, so Pass A and Pass
+	// B both miss it and agent_message reads as consumed-but-never-produced
+	// while eight consumers read it off a bus it really does arrive on.
+	//
+	// As in Pass B2, two conditions must BOTH hold, because either one alone is
+	// forgeable. The literal must be a core.Event envelope carrying a Type
+	// field, and the function building it must be an emitter by name. Building
+	// an envelope inside an emitter IS the emission — the Append that follows
+	// takes no event type and can never be matched by a name-based rule.
+	if production && emitterFuncRe.MatchString(scopeName) {
+		// The Type field is a constant here and a local there, so this collects
+		// the field's own value AND the names it might be reading, then resolves
+		// those names against the scope's declarations the way Pass B does.
+		enveloped := map[string]bool{}
+		var site ast.Node
+		forEachCompositeLit(scope, func(cl *ast.CompositeLit, _ string) {
+			// The envelope must be core's, spelled out. internal/keeper declares
+			// its own `Event` for the cycle state machine and builds one inside
+			// functions this pass would otherwise accept, so matching on the
+			// short name alone would credit a producer from a type that never
+			// reaches a bus.
+			if lit := exprString(cl.Type); lit != "core.Event" && (!inCore || lit != "Event") {
+				return
+			}
+			for _, elt := range cl.Elts {
+				kv, ok := elt.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				if key, isIdent := kv.Key.(*ast.Ident); !isIdent || key.Name != "Type" {
+					continue
+				}
+				site = cl
+				for _, v := range eventValuesIn(kv.Value, inCore, idx.known) {
+					idx.producers[v] = append(idx.producers[v], at(cl))
+				}
+				for _, id := range identsIn(kv.Value) {
+					enveloped[id] = true
+				}
+			}
+		})
+		if len(enveloped) > 0 {
+			inspectScope(scope, func(n ast.Node) bool {
+				var lhs []ast.Expr
+				var rhs []ast.Expr
+				switch x := n.(type) {
+				case *ast.AssignStmt:
+					lhs, rhs = x.Lhs, x.Rhs
+				case *ast.ValueSpec:
+					for _, nm := range x.Names {
+						lhs = append(lhs, nm)
+					}
+					rhs = x.Values
+				default:
+					return true
+				}
+				for i, r := range rhs {
+					if i >= len(lhs) {
+						break
+					}
+					target, ok := lhs[i].(*ast.Ident)
+					if !ok || !enveloped[target.Name] {
+						continue
+					}
+					for _, v := range eventValuesIn(r, inCore, idx.known) {
+						idx.producers[v] = append(idx.producers[v], at(site))
+					}
+				}
+				return true
+			})
+		}
 	}
 
 	// Pass B2 — the reactor/shell emission idiom. A pure reactor never touches

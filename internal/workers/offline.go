@@ -40,6 +40,14 @@ func init() {
 	if err := core.RegisterEventType(core.EventTypeWorkerOffline, func() core.EventPayload { return &WorkerOfflinePayload{} }); err != nil {
 		panic("workers: init: register worker_offline: " + err.Error())
 	}
+	if err := core.RegisterPayloadCompatEntry(core.PayloadCompatEntry{
+		TypeName:          core.EventTypeWorkerOffline,
+		CurrentVersion:    1,
+		CompatWindowHolds: true,
+		AdditiveOnly:      true,
+	}); err != nil {
+		panic("workers: init: register worker_offline compatibility: " + err.Error()) //nolint:forbidigo // init-time registry wiring: a duplicate or bad registration is a build-time bug, and there is no caller to return an error to.
+	}
 }
 
 // EmitWorkerOfflineEvent marshals and emits a worker_offline event via emit.

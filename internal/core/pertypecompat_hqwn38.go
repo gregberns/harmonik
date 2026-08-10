@@ -388,14 +388,14 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	// override). Payload: reason, updated_at, detected_at.
 	{TypeName: EventTypeDashboardRefreshed, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
-	// Leaf-owned worker and governor payloads. Their packages register the
-	// constructors during startup.
-	{TypeName: EventTypeWorkerUnhealthy, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
-	{TypeName: EventTypeWorkerOffline, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
-	{TypeName: EventTypeWorkerTunnelFailed, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
-	{TypeName: EventTypeWorkerReport, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
-	{TypeName: EventTypeResourceBreach, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
-	{TypeName: EventTypeGovernorSignal, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	// The six leaf-owned worker and governor payloads are NOT listed here.
+	// internal/workers and internal/daemon register their constructors during
+	// startup, and this table is compiled into core, which those packages
+	// import. A static entry here therefore declares a contract for a type that
+	// core's own test binary never registers, and
+	// TestEV029_CompatTableCoversAllRegisteredTypes reads that — correctly — as
+	// a stale entry. Each owner calls RegisterPayloadCompatEntry next to its
+	// RegisterEventType instead, so both contracts arrive together.
 }
 
 // RegisterPayloadCompatEntry adds the compatibility contract for an event

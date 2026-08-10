@@ -43,6 +43,14 @@ func init() {
 	if err := core.RegisterEventType(core.EventTypeWorkerTunnelFailed, func() core.EventPayload { return &WorkerTunnelFailedPayload{} }); err != nil {
 		panic("workers: init: register worker_tunnel_failed: " + err.Error())
 	}
+	if err := core.RegisterPayloadCompatEntry(core.PayloadCompatEntry{
+		TypeName:          core.EventTypeWorkerTunnelFailed,
+		CurrentVersion:    1,
+		CompatWindowHolds: true,
+		AdditiveOnly:      true,
+	}); err != nil {
+		panic("workers: init: register worker_tunnel_failed compatibility: " + err.Error()) //nolint:forbidigo // init-time registry wiring: a duplicate or bad registration is a build-time bug, and there is no caller to return an error to.
+	}
 }
 
 // EmitWorkerTunnelFailedEvent marshals and emits a worker_tunnel_failed event

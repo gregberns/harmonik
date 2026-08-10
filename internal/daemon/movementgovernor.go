@@ -54,6 +54,14 @@ func init() {
 	if err := core.RegisterEventType(core.EventTypeGovernorSignal, func() core.EventPayload { return &sentinel.GovernorSignal{} }); err != nil {
 		panic("daemon: register governor_signal: " + err.Error()) //nolint:forbidigo // init-time registry wiring: a duplicate or bad registration is a build-time bug, and there is no caller to return an error to.
 	}
+	if err := core.RegisterPayloadCompatEntry(core.PayloadCompatEntry{
+		TypeName:          core.EventTypeGovernorSignal,
+		CurrentVersion:    1,
+		CompatWindowHolds: true,
+		AdditiveOnly:      true,
+	}); err != nil {
+		panic("daemon: register governor_signal compatibility: " + err.Error()) //nolint:forbidigo // init-time registry wiring: a duplicate or bad registration is a build-time bug, and there is no caller to return an error to.
+	}
 }
 
 // governorPort is the movement governor's configuration and per-daemon mutable

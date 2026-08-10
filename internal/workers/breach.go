@@ -86,6 +86,14 @@ func init() {
 	if err := core.RegisterEventType(core.EventTypeResourceBreach, func() core.EventPayload { return &ResourceBreachPayload{} }); err != nil {
 		panic("workers: init: register resource_breach: " + err.Error())
 	}
+	if err := core.RegisterPayloadCompatEntry(core.PayloadCompatEntry{
+		TypeName:          core.EventTypeResourceBreach,
+		CurrentVersion:    1,
+		CompatWindowHolds: true,
+		AdditiveOnly:      true,
+	}); err != nil {
+		panic("workers: init: register resource_breach compatibility: " + err.Error()) //nolint:forbidigo // init-time registry wiring: a duplicate or bad registration is a build-time bug, and there is no caller to return an error to.
+	}
 }
 
 // ---------------------------------------------------------------------------

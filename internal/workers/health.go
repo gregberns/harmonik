@@ -46,6 +46,14 @@ func init() {
 	if err := core.RegisterEventType(core.EventTypeWorkerUnhealthy, func() core.EventPayload { return &WorkerUnhealthyPayload{} }); err != nil {
 		panic("workers: init: register worker_unhealthy: " + err.Error())
 	}
+	if err := core.RegisterPayloadCompatEntry(core.PayloadCompatEntry{
+		TypeName:          core.EventTypeWorkerUnhealthy,
+		CurrentVersion:    1,
+		CompatWindowHolds: true,
+		AdditiveOnly:      true,
+	}); err != nil {
+		panic("workers: init: register worker_unhealthy compatibility: " + err.Error()) //nolint:forbidigo // init-time registry wiring: a duplicate or bad registration is a build-time bug, and there is no caller to return an error to.
+	}
 }
 
 // RunHealthCheck runs four health probes against each enabled worker in cfg

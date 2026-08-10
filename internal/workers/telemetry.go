@@ -78,6 +78,14 @@ func init() {
 	if err := core.RegisterEventType(core.EventTypeWorkerReport, func() core.EventPayload { return &WorkerReportPayload{} }); err != nil {
 		panic("workers: init: register worker_report: " + err.Error())
 	}
+	if err := core.RegisterPayloadCompatEntry(core.PayloadCompatEntry{
+		TypeName:          core.EventTypeWorkerReport,
+		CurrentVersion:    1,
+		CompatWindowHolds: true,
+		AdditiveOnly:      true,
+	}); err != nil {
+		panic("workers: init: register worker_report compatibility: " + err.Error()) //nolint:forbidigo // init-time registry wiring: a duplicate or bad registration is a build-time bug, and there is no caller to return an error to.
+	}
 }
 
 // darwinCollectorScript builds the inline `sh -c` collector body for a worker,

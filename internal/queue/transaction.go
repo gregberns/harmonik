@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -64,7 +65,86 @@ const (
 	OperationBootstrap       OperationKind = "bootstrap"
 	OperationCrewPlaceholder OperationKind = "crew-placeholder"
 	OperationCancellation    OperationKind = "cancellation"
+	OperationCompletion      OperationKind = "completion"
 )
+
+// CompletionReceiptBinding fixes the exact immutable completion receipt before
+// the completed queue candidate reaches namespace I/O.
+type CompletionReceiptBinding struct {
+	ReceiptID            string `json:"receipt_id"`
+	Basename             string `json:"basename"`
+	SchemaVersion        int    `json:"schema_version"`
+	CanonicalBytesBase64 string `json:"canonical_bytes_base64"`
+	SHA256               string `json:"sha256"`
+}
+
+// CompletionReceipt is the immutable final-success authority from QM-005.
+type CompletionReceipt struct {
+	SchemaVersion        int    `json:"schema_version"`
+	QueueID              string `json:"queue_id"`
+	ReceiptID            string `json:"receipt_id"`
+	TransactionID        string `json:"transaction_id"`
+	NormalizedName       string `json:"normalized_name"`
+	FinalGroupIndex      int    `json:"final_group_index"`
+	FinalStatus          string `json:"final_status"`
+	SuccessCount         int    `json:"success_count"`
+	FailCount            int    `json:"fail_count"`
+	CompletedAt          string `json:"completed_at"`
+	CompletedQueueSHA256 string `json:"completed_queue_sha256"`
+}
+
+// CompletionReleaseMarker is the immutable retention anchor from QM-006.
+type CompletionReleaseMarker struct {
+	RecordType           string `json:"record_type"`
+	SchemaVersion        int    `json:"schema_version"`
+	QueueID              string `json:"queue_id"`
+	ReceiptID            string `json:"receipt_id"`
+	TransactionID        string `json:"transaction_id"`
+	ReceiptSHA256        string `json:"receipt_sha256"`
+	CompletedQueueSHA256 string `json:"completed_queue_sha256"`
+	ReleasedAt           string `json:"released_at"`
+	GCNotBefore          string `json:"gc_not_before"`
+}
+
+// CompletionPlan contains the exact completed candidate and receipt binding.
+// It is a value-only result. Callers execute it through the queue transaction
+// owner in a later step.
+type CompletionPlan struct {
+	TransactionID  string
+	Candidate      Queue
+	CandidateBytes []byte
+	Receipt        CompletionReceipt
+	ReceiptBytes   []byte
+	Binding        *CompletionReceiptBinding
+	MarkerInputs   CompletionReleaseMarkerInputs
+}
+
+// CompletionReleaseMarkerInputs are the facts fixed before release. The later
+// release step supplies only its trusted timestamp.
+type CompletionReleaseMarkerInputs struct {
+	QueueID              string
+	ReceiptID            string
+	TransactionID        string
+	ReceiptSHA256        string
+	CompletedQueueSHA256 string
+}
+
+// CompletionReceiptBasename returns the exact flat-root receipt name.
+func CompletionReceiptBasename(queueID, receiptID string) (string, error) {
+	if validateUUIDv7(queueID) != nil || validateUUIDv7(receiptID) != nil {
+		return "", errors.New("invalid completion receipt identity")
+	}
+	return queueID + "--" + receiptID + ".json", nil
+}
+
+// CompletionReleaseMarkerBasename returns the exact marker name for a receipt.
+func CompletionReleaseMarkerBasename(queueID, receiptID string) (string, error) {
+	basename, err := CompletionReceiptBasename(queueID, receiptID)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSuffix(basename, ".json") + ".release-v1.json", nil
+}
 
 // ArchiveHandoff prebinds a cancelled replacement to one exact successor
 // archive intent. CQ-02I stores the facts; cancellation callers are downstream.
@@ -91,7 +171,7 @@ type ReplaceIntentV1 struct {
 	CandidateSHA256              string                        `json:"candidate_sha256"`
 	CandidateTempBasename        string                        `json:"candidate_temp_basename"`
 	WakeRequired                 bool                          `json:"wake_required"`
-	CompletionReceiptBinding     any                           `json:"completion_receipt_binding,omitempty"`
+	CompletionReceiptBinding     *CompletionReceiptBinding     `json:"completion_receipt_binding,omitempty"`
 	FailedRecoveryReceiptBinding *FailedRecoveryReceiptBinding `json:"failed_recovery_receipt_binding,omitempty"`
 	ArchiveHandoffBinding        *ArchiveHandoff               `json:"archive_handoff_binding,omitempty"`
 }
@@ -186,6 +266,7 @@ type ReplacementPlan struct {
 	WakeRequired                 bool
 	ArchiveHandoff               *ArchiveHandoffPlan
 	FailedRecoveryReceiptBinding *FailedRecoveryReceiptBinding
+	CompletionReceiptBinding     *CompletionReceiptBinding
 }
 
 // ReplacementCommit is returned after executing a replacement plan.
@@ -417,6 +498,7 @@ func prepareReplacement(plan ReplacementPlan) (ReplaceIntentV1, []byte, error) {
 // explicit and gives tests a deterministic seam. Production callers use
 // prepareReplacement, which allocates canonical UUIDv7 values first.
 func prepareReplacementWithIDs(plan ReplacementPlan, transactionID, successorID string) (ReplaceIntentV1, []byte, error) {
+	plan.TransactionID = transactionID
 	name := NormaliseQueueName(plan.NormalizedName)
 	if ok, detail := ValidateQueueName(name); !ok {
 		return ReplaceIntentV1{}, nil, fmt.Errorf("invalid normalized name: %s", detail)
@@ -469,6 +551,9 @@ func prepareReplacementWithIDs(plan ReplacementPlan, transactionID, successorID 
 		return ReplaceIntentV1{}, nil, err
 	}
 	candidateDigest := digestHex(plan.CandidateBytes)
+	if err := validateCompletionPlan(plan, candidate, candidateDigest); err != nil {
+		return ReplaceIntentV1{}, nil, err
+	}
 	candidateBase := fmt.Sprintf("%s.candidate-%s", name, transactionID)
 	handoff, err := prepareArchiveHandoff(
 		plan.ArchiveHandoff,
@@ -492,6 +577,7 @@ func prepareReplacementWithIDs(plan ReplacementPlan, transactionID, successorID 
 		CandidateTempBasename:        candidateBase,
 		WakeRequired:                 plan.WakeRequired,
 		FailedRecoveryReceiptBinding: plan.FailedRecoveryReceiptBinding,
+		CompletionReceiptBinding:     plan.CompletionReceiptBinding,
 		ArchiveHandoffBinding:        handoff,
 	}
 	if err := validateReplaceIntent(intent); err != nil {
@@ -543,6 +629,237 @@ func validateFailedRecoveryPlan(
 		priorSHA256,
 		candidateSHA256,
 	)
+}
+
+func validateCompletionPlan(plan ReplacementPlan, candidate Queue, candidateSHA256 string) error {
+	binding := plan.CompletionReceiptBinding
+	if plan.OperationKind != OperationCompletion {
+		if binding != nil {
+			return errors.New("completion receipt binding requires completion operation")
+		}
+		return nil
+	}
+	if binding == nil {
+		return errors.New("completion operation requires receipt binding")
+	}
+	if candidate.Status != QueueStatusCompleted {
+		return errors.New("completion candidate must have completed status")
+	}
+	if len(candidate.Groups) == 0 {
+		return errors.New("completion candidate requires a final group")
+	}
+	if err := validateCompletionReceiptBinding(
+		binding,
+		candidate.QueueID,
+		plan.TransactionID,
+		plan.NormalizedName,
+		candidateSHA256,
+	); err != nil {
+		return err
+	}
+	data, _ := base64.StdEncoding.DecodeString(binding.CanonicalBytesBase64)
+	receipt, err := DecodeCompletionReceipt(data)
+	if err != nil {
+		return err
+	}
+	finalGroup := candidate.Groups[len(candidate.Groups)-1]
+	if finalGroup.GroupIndex != receipt.FinalGroupIndex ||
+		len(finalGroup.Items) != receipt.SuccessCount ||
+		finalGroup.CompletedAt == nil ||
+		finalGroup.CompletedAt.UTC().Truncate(time.Millisecond).Format("2006-01-02T15:04:05.000Z") != receipt.CompletedAt {
+		return errors.New("completion receipt final group facts do not match candidate")
+	}
+	for _, item := range finalGroup.Items {
+		if item.Status != ItemStatusCompleted {
+			return errors.New("completion receipt candidate contains non-completed final item")
+		}
+	}
+	return nil
+}
+
+func validateCompletionReceiptBinding(
+	binding *CompletionReceiptBinding,
+	queueID, transactionID, normalizedName, completedQueueSHA256 string,
+) error {
+	if binding == nil || binding.SchemaVersion != 1 ||
+		validateUUIDv7(binding.ReceiptID) != nil ||
+		binding.Basename != queueID+"--"+binding.ReceiptID+".json" ||
+		!validSHA256(binding.SHA256) ||
+		!validSHA256(completedQueueSHA256) {
+		return errors.New("invalid completion receipt binding")
+	}
+	data, err := base64.StdEncoding.DecodeString(binding.CanonicalBytesBase64)
+	if err != nil || len(data) == 0 || digestHex(data) != binding.SHA256 {
+		return errors.New("invalid completion receipt bytes")
+	}
+	receipt, err := DecodeCompletionReceipt(data)
+	if err != nil || receipt.SchemaVersion != binding.SchemaVersion ||
+		receipt.QueueID != queueID ||
+		receipt.ReceiptID != binding.ReceiptID ||
+		receipt.TransactionID != transactionID ||
+		receipt.NormalizedName != normalizedName ||
+		receipt.CompletedQueueSHA256 != completedQueueSHA256 {
+		return errors.New("completion receipt does not match binding")
+	}
+	return nil
+}
+
+// DecodeCompletionReceipt accepts only canonical receipt v1 bytes.
+func DecodeCompletionReceipt(data []byte) (CompletionReceipt, error) {
+	var receipt CompletionReceipt
+	if err := strictJSON(data, &receipt); err != nil {
+		return CompletionReceipt{}, fmt.Errorf("completion receipt: %w", err)
+	}
+	canonical, err := json.Marshal(receipt)
+	if err != nil || !bytes.Equal(canonical, data) {
+		return CompletionReceipt{}, errors.New("completion receipt bytes are not canonical")
+	}
+	if receipt.SchemaVersion != 1 ||
+		validateUUIDv7(receipt.QueueID) != nil ||
+		validateUUIDv7(receipt.ReceiptID) != nil ||
+		validateUUIDv7(receipt.TransactionID) != nil ||
+		receipt.NormalizedName == "" ||
+		NormaliseQueueName(receipt.NormalizedName) != receipt.NormalizedName ||
+		receipt.FinalGroupIndex < 0 ||
+		receipt.FinalStatus != string(GroupStatusCompleteSuccess) ||
+		receipt.SuccessCount < 0 || receipt.FailCount != 0 ||
+		!validRecoveryTimestamp(receipt.CompletedAt) ||
+		!validSHA256(receipt.CompletedQueueSHA256) {
+		return CompletionReceipt{}, errors.New("invalid or unsupported completion receipt")
+	}
+	if ok, _ := ValidateQueueName(receipt.NormalizedName); !ok {
+		return CompletionReceipt{}, errors.New("invalid completion receipt queue name")
+	}
+	return receipt, nil
+}
+
+func validateCompletionReleaseMarker(marker CompletionReleaseMarker) error {
+	if marker.RecordType != "completion-release" || marker.SchemaVersion != 1 ||
+		validateUUIDv7(marker.QueueID) != nil ||
+		validateUUIDv7(marker.ReceiptID) != nil ||
+		validateUUIDv7(marker.TransactionID) != nil ||
+		!validSHA256(marker.ReceiptSHA256) ||
+		!validSHA256(marker.CompletedQueueSHA256) ||
+		!validRecoveryTimestamp(marker.ReleasedAt) ||
+		!validRecoveryTimestamp(marker.GCNotBefore) {
+		return errors.New("invalid completion release marker")
+	}
+	releasedAt, _ := time.Parse("2006-01-02T15:04:05.000Z", marker.ReleasedAt)
+	gcNotBefore, _ := time.Parse("2006-01-02T15:04:05.000Z", marker.GCNotBefore)
+	want := releasedAt.Add(720 * time.Hour)
+	if want.Before(releasedAt) || !gcNotBefore.Equal(want) {
+		return errors.New("invalid completion release retention interval")
+	}
+	return nil
+}
+
+// DecodeCompletionReleaseMarker accepts only canonical marker v1 bytes.
+func DecodeCompletionReleaseMarker(data []byte) (CompletionReleaseMarker, error) {
+	var marker CompletionReleaseMarker
+	if err := strictJSON(data, &marker); err != nil {
+		return CompletionReleaseMarker{}, fmt.Errorf("completion release marker: %w", err)
+	}
+	canonical, err := json.Marshal(marker)
+	if err != nil || !bytes.Equal(canonical, data) {
+		return CompletionReleaseMarker{}, errors.New("completion release marker bytes are not canonical")
+	}
+	if err := validateCompletionReleaseMarker(marker); err != nil {
+		return CompletionReleaseMarker{}, err
+	}
+	return marker, nil
+}
+
+// PrepareCompletion builds exact completed queue and receipt bytes from
+// supplied identities and time. It performs no clock, UUID, or filesystem I/O.
+func PrepareCompletion(
+	prior Queue,
+	transactionID, receiptID string,
+	completedAt time.Time,
+) (CompletionPlan, error) {
+	if err := validateUUIDv7(transactionID); err != nil {
+		return CompletionPlan{}, fmt.Errorf("completion transaction id: %w", err)
+	}
+	if err := validateUUIDv7(receiptID); err != nil {
+		return CompletionPlan{}, fmt.Errorf("completion receipt id: %w", err)
+	}
+	if len(prior.Groups) == 0 {
+		return CompletionPlan{}, errors.New("completion requires at least one group")
+	}
+	priorBytes, err := json.Marshal(prior)
+	if err != nil {
+		return CompletionPlan{}, fmt.Errorf("marshal completion prior: %w", err)
+	}
+	var candidate Queue
+	if err := strictJSON(priorBytes, &candidate); err != nil {
+		return CompletionPlan{}, fmt.Errorf("clone completion queue: %w", err)
+	}
+	candidate.Name = NormaliseQueueName(candidate.Name)
+	if err := CompleteQueue(&candidate); err != nil {
+		return CompletionPlan{}, fmt.Errorf("complete queue: %w", err)
+	}
+	completedAt = completedAt.UTC().Truncate(time.Millisecond)
+	finalGroup := &candidate.Groups[len(candidate.Groups)-1]
+	if finalGroup.CompletedAt == nil || !finalGroup.CompletedAt.UTC().Truncate(time.Millisecond).Equal(completedAt) {
+		return CompletionPlan{}, errors.New("completion time does not match final group")
+	}
+	for _, item := range finalGroup.Items {
+		if item.Status != ItemStatusCompleted {
+			return CompletionPlan{}, errors.New("completion final group contains non-completed item")
+		}
+	}
+	finalGroup.CompletedAt = &completedAt
+	candidateBytes, err := json.Marshal(candidate)
+	if err != nil {
+		return CompletionPlan{}, fmt.Errorf("marshal completed queue: %w", err)
+	}
+	receipt := CompletionReceipt{
+		SchemaVersion:        1,
+		QueueID:              candidate.QueueID,
+		ReceiptID:            receiptID,
+		TransactionID:        transactionID,
+		NormalizedName:       candidate.Name,
+		FinalGroupIndex:      finalGroup.GroupIndex,
+		FinalStatus:          string(GroupStatusCompleteSuccess),
+		SuccessCount:         len(finalGroup.Items),
+		FailCount:            0,
+		CompletedAt:          completedAt.Format("2006-01-02T15:04:05.000Z"),
+		CompletedQueueSHA256: digestHex(candidateBytes),
+	}
+	receiptBytes, err := json.Marshal(receipt)
+	if err != nil {
+		return CompletionPlan{}, fmt.Errorf("marshal completion receipt: %w", err)
+	}
+	binding := &CompletionReceiptBinding{
+		ReceiptID:            receiptID,
+		Basename:             candidate.QueueID + "--" + receiptID + ".json",
+		SchemaVersion:        1,
+		CanonicalBytesBase64: base64.StdEncoding.EncodeToString(receiptBytes),
+		SHA256:               digestHex(receiptBytes),
+	}
+	if err := validateCompletionReceiptBinding(
+		binding,
+		candidate.QueueID,
+		transactionID,
+		candidate.Name,
+		digestHex(candidateBytes),
+	); err != nil {
+		return CompletionPlan{}, err
+	}
+	return CompletionPlan{
+		TransactionID:  transactionID,
+		Candidate:      candidate,
+		CandidateBytes: append([]byte(nil), candidateBytes...),
+		Receipt:        receipt,
+		ReceiptBytes:   append([]byte(nil), receiptBytes...),
+		Binding:        binding,
+		MarkerInputs: CompletionReleaseMarkerInputs{
+			QueueID:              candidate.QueueID,
+			ReceiptID:            receiptID,
+			TransactionID:        transactionID,
+			ReceiptSHA256:        binding.SHA256,
+			CompletedQueueSHA256: receipt.CompletedQueueSHA256,
+		},
+	}, nil
 }
 
 func validateFailedRecoveryReceiptBinding(
@@ -1200,6 +1517,9 @@ func validateReplaceIntent(intent ReplaceIntentV1) error {
 	if err := validateFailedRecoveryIntentCoupling(intent); err != nil {
 		return err
 	}
+	if err := validateCompletionIntentCoupling(intent); err != nil {
+		return err
+	}
 	if (intent.OperationKind == OperationCancellation) != (intent.ArchiveHandoffBinding != nil) {
 		return errors.New("invalid cancellation/archive handoff coupling")
 	}
@@ -1224,9 +1544,6 @@ func validateFailedRecoveryIntentCoupling(intent ReplaceIntentV1) error {
 		if binding != nil {
 			return errors.New("failed recovery receipt binding requires failed-recovery operation")
 		}
-		if intent.CompletionReceiptBinding != nil {
-			return errors.New("completion receipt binding is not supported")
-		}
 		return nil
 	}
 	if intent.CompletionReceiptBinding != nil || intent.ArchiveHandoffBinding != nil {
@@ -1238,6 +1555,25 @@ func validateFailedRecoveryIntentCoupling(intent ReplaceIntentV1) error {
 		intent.TransactionID,
 		intent.NormalizedName,
 		intent.PriorState,
+		intent.CandidateSHA256,
+	)
+}
+
+func validateCompletionIntentCoupling(intent ReplaceIntentV1) error {
+	if intent.OperationKind != OperationCompletion {
+		if intent.CompletionReceiptBinding != nil {
+			return errors.New("completion receipt binding requires completion operation")
+		}
+		return nil
+	}
+	if intent.FailedRecoveryReceiptBinding != nil || intent.ArchiveHandoffBinding != nil {
+		return errors.New("completion intent has incompatible binding")
+	}
+	return validateCompletionReceiptBinding(
+		intent.CompletionReceiptBinding,
+		intent.QueueID,
+		intent.TransactionID,
+		intent.NormalizedName,
 		intent.CandidateSHA256,
 	)
 }
@@ -1274,7 +1610,8 @@ func validOperationKind(kind OperationKind) bool {
 		OperationInline,
 		OperationBootstrap,
 		OperationCrewPlaceholder,
-		OperationCancellation:
+		OperationCancellation,
+		OperationCompletion:
 		return true
 	default:
 		return false

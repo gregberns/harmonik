@@ -24,6 +24,7 @@ type TransactionRequest struct {
 	WakeRequired                 bool
 	ArchiveHandoff               *ArchiveHandoffPlan
 	FailedRecoveryReceiptBinding *FailedRecoveryReceiptBinding
+	CompletionReceiptBinding     *CompletionReceiptBinding
 	Mutate                       func(*Queue) error
 
 	// Precondition, when non-nil, runs under the live registry write lock after

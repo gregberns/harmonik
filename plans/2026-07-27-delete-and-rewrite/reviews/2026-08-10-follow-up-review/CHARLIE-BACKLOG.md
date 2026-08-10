@@ -10,14 +10,25 @@ Charlie must deliberately break each new claim test before accepting it.
 Updated: 2026-08-10
 
 - Owner: Charlie.
-- Active slice: C01 through C04.
+- Active slice: C05 through C07.
 - Start revision: `b49210d67` on `work/alpha-integration-merge`.
 - State: C01 through C04 are complete and independently approved.
 - Implementation commit: `de0a6ca3`.
 - Integration reconciliation commit: `b0cac51a`.
-- Stop gate: satisfied. Charlie stopped before C05.
+- Stop gate: C05 through C07 received independent approval before C08.
 - Coordination note: the queue RPC overlap retained both the active-run status work and the event-intent path.
-- Later tasks: C05 through C31 remain unstarted.
+- Later tasks: C08 through C31 remain unstarted.
+
+### C05 through C07 evidence
+
+- C05 adds strict completion receipt, binding, and release-marker values.
+- C06 fixes detached candidate bytes, receipt bytes, identities, time, and marker inputs before I/O.
+- C07 permits the binding only on a completion replace intent.
+- Focused queue and queue-store tests pass with `-count=1`.
+- Repository compilation and `go vet ./...` pass.
+- Removing candidate timestamp normalization fails the exact-byte test.
+- Removing intent coupling lets an append intent accept a completion binding and fails its test.
+- Independent reviewer verdict: `APPROVE` after two correction rounds.
 
 ### C01 through C04 evidence
 

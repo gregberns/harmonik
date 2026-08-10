@@ -613,7 +613,8 @@ func (s *QueueStore) Transact(ctx context.Context, req TransactionRequest) Trans
 	if bytes.Equal(priorBytes, candidateBytes) {
 		if req.OperationKind == queue.OperationCancellation ||
 			req.ArchiveHandoff != nil ||
-			req.OperationKind == queue.OperationFailedRecovery {
+			req.OperationKind == queue.OperationFailedRecovery ||
+			req.OperationKind == queue.OperationCompletion {
 			s.queueMu.Unlock()
 			return rejectedTransaction(errors.New("receipt-bearing transaction cannot collapse as no-op"))
 		}
@@ -639,6 +640,7 @@ func (s *QueueStore) Transact(ctx context.Context, req TransactionRequest) Trans
 		WakeRequired:                 req.WakeRequired,
 		ArchiveHandoff:               req.ArchiveHandoff,
 		FailedRecoveryReceiptBinding: req.FailedRecoveryReceiptBinding,
+		CompletionReceiptBinding:     req.CompletionReceiptBinding,
 	})
 	if !commit.Committed() {
 		// QM-001: on ANY I/O error in the atomic-write sequence the daemon MUST

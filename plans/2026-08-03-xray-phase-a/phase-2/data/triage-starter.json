@@ -1,0 +1,61 @@
+{
+  "_comment": [
+    "Starter selection document for codebase-organism's refactor/cmd/plan:",
+    "  go run ./refactor/cmd/plan -in findings.json -select triage-starter.json -out plan.json",
+    "",
+    "This is NOT a triaged plan. It carries forward the rules that four executed waves",
+    "already established, plus the two suppressions this directory's areas argue for.",
+    "Everything else is still untriaged, and `plan` will stamp \"triaged\": false until a",
+    "real judgement pass exists. Allow lists restrict first; deny lists remove after.",
+    "",
+    "Edit allow_issues to scope a wave to ONE class -- one class per wave keeps a",
+    "regression attributable."
+  ],
+
+  "allow_issues": ["A1", "A2", "A4"],
+
+  "deny_paths": [
+    "cmd/harmonik-twin-claude/**"
+  ],
+  "_deny_paths_why": [
+    "The twin binary imports no harmonik package at all, which is what makes every one",
+    "of its 156 literals a cross-package finding. There is a standing argument that the",
+    "decoupling is deliberate: a test twin that imported the code under test would stop",
+    "being an independent check of the wire format. Carried forward from the first",
+    "executed wave (../report.md). Overturn this deliberately or not at all."
+  ],
+
+  "deny_findings": [
+    "A1@internal/core/eventreg_hqwn59.go:567",
+    "A1@internal/core/eventreg_hqwn59.go:568"
+  ],
+  "_deny_findings_why": [
+    "NOTE: these two line numbers are from the 2026-08-04 wave and the schema has no",
+    "stable finding id -- `plan` synthesises issue@file:line, which survives re-detection",
+    "only while the line has not moved. Re-verify against a fresh findings.json before",
+    "trusting them.",
+    "",
+    "The original judgement: the CONSUMER sites for \"agent_input_acked\" and",
+    "\"agent_input_stale\" would make internal/core -- 48 dependents, no dependencies,",
+    "D = 0.98 -- import a leaf package. Area 2 argues the DECLARATION-side literals",
+    "inside internal/core itself do not share that objection and should be fixed."
+  ],
+
+  "_not_yet_expressible": [
+    "Three suppressions these areas argue for that this schema cannot state today:",
+    "",
+    "1. A2 struct tags (233 values / 1,913 sites). Not fixable in Go -- tags must be",
+    "   compile-time literals. The right fix is in the detector (area 8, item 4), not",
+    "   here; a deny list of 233 values would be a workaround that hides a defect.",
+    "",
+    "2. A1's ambiguous bucket (724 findings, 53% of the class). These need a per-site",
+    "   human decision about which of two vocabularies the site means. There is no",
+    "   'defer for judgement' state -- a finding is either work or it is denied, and",
+    "   neither is true of these.",
+    "",
+    "3. A2 findings naming more than one file (550 of 653). Unsafe to schedule until",
+    "   Finding carries files[] (area 8, item 1). Denying them all would be honest but",
+    "   would empty the class; restricting a wave to one A2 op at a time is the",
+    "   workaround, and the scheduler has no way to be told that."
+  ]
+}

@@ -1,0 +1,5232 @@
+{
+ "repo": "harmonik",
+ "revision": "d5a12348f",
+ "count": 653,
+ "note": "One row per repeated value = one decision. WARNING: the Finding schema has no files[] field, so a per-file lock for A2 under-declares. Two A2 operations may collide. Serialise A2 or fix the schema first.",
+ "values": [
+  {
+   "value": "json:\\\"run_id\\\"",
+   "sites": 151,
+   "files_named_by_detector": 68,
+   "reported_at": [
+    "internal/run/registry.go:32"
+   ]
+  },
+  {
+   "value": "--project=",
+   "sites": 122,
+   "files_named_by_detector": 42,
+   "reported_at": [
+    "internal/queue/cli/helpers.go:46"
+   ]
+  },
+  {
+   "value": "--help",
+   "sites": 87,
+   "files_named_by_detector": 51,
+   "reported_at": [
+    "cmd/harmonik/supervise/stop.go:33"
+   ]
+  },
+  {
+   "value": "json:\\\"type\\\"",
+   "sites": 77,
+   "files_named_by_detector": 37,
+   "reported_at": [
+    "internal/codexreactor/reactor.go:69"
+   ]
+  },
+  {
+   "value": "--project",
+   "sites": 75,
+   "files_named_by_detector": 48,
+   "reported_at": [
+    "internal/agentlaunch/keeperargv.go:119"
+   ]
+  },
+  {
+   "value": "session_id",
+   "sites": 72,
+   "files_named_by_detector": 9,
+   "reported_at": [
+    "internal/hookrelay/hookrelay.go:297"
+   ]
+  },
+  {
+   "value": "run_id",
+   "sites": 65,
+   "files_named_by_detector": 11,
+   "reported_at": [
+    "cmd/harmonik-twin-claude/scenarios.go:109"
+   ]
+  },
+  {
+   "value": "json:\\\"session_id\\\"",
+   "sites": 65,
+   "files_named_by_detector": 27,
+   "reported_at": [
+    "internal/hookrelay/hookrelay.go:45"
+   ]
+  },
+  {
+   "value": "json:\\\"bead_id\\\"",
+   "sites": 60,
+   "files_named_by_detector": 43,
+   "reported_at": [
+    "internal/run/registry.go:33"
+   ]
+  },
+  {
+   "value": "tmux",
+   "sites": 58,
+   "files_named_by_detector": 25,
+   "reported_at": [
+    "internal/lifecycle/tmux/osadapter.go:60"
+   ]
+  },
+  {
+   "value": "json:\\\"status\\\"",
+   "sites": 57,
+   "files_named_by_detector": 37,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:959"
+   ]
+  },
+  {
+   "value": "path",
+   "sites": 56,
+   "files_named_by_detector": 27,
+   "reported_at": [
+    "internal/sessiondata/sessiondata.go:389"
+   ]
+  },
+  {
+   "value": "json:\\\"schema_version\\\"",
+   "sites": 54,
+   "files_named_by_detector": 46,
+   "reported_at": [
+    "internal/run/registry.go:31"
+   ]
+  },
+  {
+   "value": "json:\\\"reason\\\"",
+   "sites": 44,
+   "files_named_by_detector": 30,
+   "reported_at": [
+    "cmd/harmonik-twin-generic/wire.go:434"
+   ]
+  },
+  {
+   "value": "bead_id",
+   "sites": 44,
+   "files_named_by_detector": 14,
+   "reported_at": [
+    "internal/core/event_payload.go:22"
+   ]
+  },
+  {
+   "value": "reason",
+   "sites": 43,
+   "files_named_by_detector": 16,
+   "reported_at": [
+    "cmd/harmonik-twin-claude/scenarios.go:516"
+   ]
+  },
+  {
+   "value": "internal_error",
+   "sites": 41,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/queue/rpc.go:217"
+   ]
+  },
+  {
+   "value": "--json",
+   "sites": 34,
+   "files_named_by_detector": 25,
+   "reported_at": [
+    "internal/brcli/audit.go:91"
+   ]
+  },
+  {
+   "value": "json:\\\"-\\\"",
+   "sites": 33,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:523"
+   ]
+  },
+  {
+   "value": "json:\\\"name\\\"",
+   "sites": 31,
+   "files_named_by_detector": 22,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:551"
+   ]
+  },
+  {
+   "value": "type",
+   "sites": 30,
+   "files_named_by_detector": 17,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:690"
+   ]
+  },
+  {
+   "value": "unix",
+   "sites": 29,
+   "files_named_by_detector": 17,
+   "reported_at": [
+    "internal/hookrelay/hookrelay.go:513"
+   ]
+  },
+  {
+   "value": ".json",
+   "sites": 28,
+   "files_named_by_detector": 13,
+   "reported_at": [
+    "internal/run/registry.go:47"
+   ]
+  },
+  {
+   "value": "json:\\\"queue_id\\\"",
+   "sites": 27,
+   "files_named_by_detector": 10,
+   "reported_at": [
+    "internal/run/registry.go:35"
+   ]
+  },
+  {
+   "value": "--socket=",
+   "sites": 26,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "cmd/harmonik/subscribe.go:122"
+   ]
+  },
+  {
+   "value": "json:\\\"node_id\\\"",
+   "sites": 24,
+   "files_named_by_detector": 16,
+   "reported_at": [
+    "cmd/harmonik-twin-generic/wire.go:126"
+   ]
+  },
+  {
+   "value": "status",
+   "sites": 23,
+   "files_named_by_detector": 13,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:861"
+   ]
+  },
+  {
+   "value": "json:\\\"agent_name\\\"",
+   "sites": 23,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/core/keeperevents.go:21"
+   ]
+  },
+  {
+   "value": "worktree",
+   "sites": 23,
+   "files_named_by_detector": 12,
+   "reported_at": [
+    "internal/runlease/disposition.go:62"
+   ]
+  },
+  {
+   "value": "rev-parse",
+   "sites": 22,
+   "files_named_by_detector": 16,
+   "reported_at": [
+    "cmd/harmonik-twin-claude/scriptdriver.go:559"
+   ]
+  },
+  {
+   "value": "json:\\\"session_id,omitempty\\\"",
+   "sites": 22,
+   "files_named_by_detector": 8,
+   "reported_at": [
+    "internal/core/agentinputevents.go:63"
+   ]
+  },
+  {
+   "value": "json:\\\"kind\\\"",
+   "sites": 22,
+   "files_named_by_detector": 19,
+   "reported_at": [
+    "internal/core/controlpoint.go:48"
+   ]
+  },
+  {
+   "value": "node_id",
+   "sites": 21,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik-twin-claude/scenarios.go:121"
+   ]
+  },
+  {
+   "value": "json:\\\"event_id\\\"",
+   "sites": 21,
+   "files_named_by_detector": 13,
+   "reported_at": [
+    "internal/core/busevents_hqwn59.go:111"
+   ]
+  },
+  {
+   "value": "harmonik",
+   "sites": 21,
+   "files_named_by_detector": 15,
+   "reported_at": [
+    "internal/lifecycle/agentwatcherreap.go:90"
+   ]
+  },
+  {
+   "value": "--force",
+   "sites": 21,
+   "files_named_by_detector": 13,
+   "reported_at": [
+    "internal/workspace/createworktree.go:73"
+   ]
+  },
+  {
+   "value": "json:\\\"op\\\"",
+   "sites": 20,
+   "files_named_by_detector": 18,
+   "reported_at": [
+    "internal/core/reconciliationevents_hqwn59.go:815"
+   ]
+  },
+  {
+   "value": "--queue=",
+   "sites": 20,
+   "files_named_by_detector": 10,
+   "reported_at": [
+    "internal/queue/cli/resume.go:36"
+   ]
+  },
+  {
+   "value": "WG-024",
+   "sites": 20,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/workflow/dot/validator.go:175"
+   ]
+  },
+  {
+   "value": "json:\\\"reason,omitempty\\\"",
+   "sites": 19,
+   "files_named_by_detector": 16,
+   "reported_at": [
+    "internal/codexinput/reactor.go:194"
+   ]
+  },
+  {
+   "value": "json:\\\"run_id,omitempty\\\"",
+   "sites": 19,
+   "files_named_by_detector": 14,
+   "reported_at": [
+    "internal/core/busevents_hqwn59.go:335"
+   ]
+  },
+  {
+   "value": "json:\\\"started_at\\\"",
+   "sites": 19,
+   "files_named_by_detector": 16,
+   "reported_at": [
+    "internal/run/registry.go:39"
+   ]
+  },
+  {
+   "value": "json:\\\"topic,omitempty\\\"",
+   "sites": 18,
+   "files_named_by_detector": 12,
+   "reported_at": [
+    "internal/core/agentcommspayloads_djqc9.go:91"
+   ]
+  },
+  {
+   "value": "json:\\\"ok\\\"",
+   "sites": 18,
+   "files_named_by_detector": 12,
+   "reported_at": [
+    "internal/queue/cli/client.go:64"
+   ]
+  },
+  {
+   "value": "json:\\\"id\\\"",
+   "sites": 17,
+   "files_named_by_detector": 13,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:184"
+   ]
+  },
+  {
+   "value": "events.jsonl",
+   "sites": 17,
+   "files_named_by_detector": 14,
+   "reported_at": [
+    "internal/sessiondata/sessiondata.go:164"
+   ]
+  },
+  {
+   "value": "json:\\\"agent_type\\\"",
+   "sites": 16,
+   "files_named_by_detector": 10,
+   "reported_at": [
+    "cmd/harmonik-twin-generic/wire.go:127"
+   ]
+  },
+  {
+   "value": "json:\\\"payload\\\"",
+   "sites": 16,
+   "files_named_by_detector": 14,
+   "reported_at": [
+    "internal/hook/sessionstore.go:58"
+   ]
+  },
+  {
+   "value": "json:\\\"error\\\"",
+   "sites": 15,
+   "files_named_by_detector": 10,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:188"
+   ]
+  },
+  {
+   "value": "json:\\\"error,omitempty\\\"",
+   "sites": 15,
+   "files_named_by_detector": 10,
+   "reported_at": [
+    "internal/core/keeperevents.go:186"
+   ]
+  },
+  {
+   "value": "hooks",
+   "sites": 15,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/core/policydocument.go:223"
+   ]
+  },
+  {
+   "value": "json:\\\"queue\\\"",
+   "sites": 15,
+   "files_named_by_detector": 13,
+   "reported_at": [
+    "internal/crew/registry.go:47"
+   ]
+  },
+  {
+   "value": "json:\\\"group_index\\\"",
+   "sites": 15,
+   "files_named_by_detector": 6,
+   "reported_at": [
+    "internal/run/registry.go:36"
+   ]
+  },
+  {
+   "value": "agent_type",
+   "sites": 14,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik-twin-claude/scenarios.go:122"
+   ]
+  },
+  {
+   "value": "--from=",
+   "sites": 14,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik/subscribe.go:112"
+   ]
+  },
+  {
+   "value": "refs/heads/",
+   "sites": 14,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/workspace/gitignorehygiene.go:319"
+   ]
+  },
+  {
+   "value": ".claude",
+   "sites": 13,
+   "files_named_by_detector": 11,
+   "reported_at": [
+    "cmd/harmonik-twin-claude/settings.go:80"
+   ]
+  },
+  {
+   "value": "json:\\\"bead_id,omitempty\\\"",
+   "sites": 13,
+   "files_named_by_detector": 11,
+   "reported_at": [
+    "cmd/harmonik-twin-generic/wire.go:130"
+   ]
+  },
+  {
+   "value": "--socket",
+   "sites": 13,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "cmd/harmonik/subscribe.go:119"
+   ]
+  },
+  {
+   "value": "json:\\\"detected_at\\\"",
+   "sites": 13,
+   "files_named_by_detector": 12,
+   "reported_at": [
+    "internal/core/agentlifecyclepayloads_gjyks.go:586"
+   ]
+  },
+  {
+   "value": "group_index",
+   "sites": 13,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/queue/validation.go:358"
+   ]
+  },
+  {
+   "value": "--topic=",
+   "sites": 12,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik/subscribe.go:117"
+   ]
+  },
+  {
+   "value": "capabilities",
+   "sites": 12,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:526"
+   ]
+  },
+  {
+   "value": "json:\\\"queue_id,omitempty\\\"",
+   "sites": 12,
+   "files_named_by_detector": 9,
+   "reported_at": [
+    "internal/core/runterminalpayload.go:56"
+   ]
+  },
+  {
+   "value": "kind",
+   "sites": 12,
+   "files_named_by_detector": 6,
+   "reported_at": [
+    "internal/hookrelay/hookrelay.go:359"
+   ]
+  },
+  {
+   "value": "--from",
+   "sites": 12,
+   "files_named_by_detector": 9,
+   "reported_at": [
+    "internal/keeper/delivery_decision_0nlqs.go:57"
+   ]
+  },
+  {
+   "value": "config",
+   "sites": 12,
+   "files_named_by_detector": 7,
+   "reported_at": [
+    "internal/projectconfig/projectconfig.go:207"
+   ]
+  },
+  {
+   "value": "--queue",
+   "sites": 12,
+   "files_named_by_detector": 11,
+   "reported_at": [
+    "internal/queue/cli/resume.go:33"
+   ]
+  },
+  {
+   "value": "protocol_versions_supported",
+   "sites": 11,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "cmd/harmonik-twin-claude/scenarios.go:111"
+   ]
+  },
+  {
+   "value": "json:\\\"ended_at\\\"",
+   "sites": 11,
+   "files_named_by_detector": 7,
+   "reported_at": [
+    "cmd/harmonik-twin-generic/wire.go:400"
+   ]
+  },
+  {
+   "value": "project",
+   "sites": 11,
+   "files_named_by_detector": 11,
+   "reported_at": [
+    "cmd/harmonik-twin-session/main.go:220"
+   ]
+  },
+  {
+   "value": "--status",
+   "sites": 11,
+   "files_named_by_detector": 7,
+   "reported_at": [
+    "internal/brcli/listbystatus_em031a.go:46"
+   ]
+  },
+  {
+   "value": "name",
+   "sites": 11,
+   "files_named_by_detector": 8,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:557"
+   ]
+  },
+  {
+   "value": "threadId",
+   "sites": 11,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:625"
+   ]
+  },
+  {
+   "value": "json:\\\"from\\\"",
+   "sites": 11,
+   "files_named_by_detector": 7,
+   "reported_at": [
+    "internal/core/agentcommspayloads_djqc9.go:83"
+   ]
+  },
+  {
+   "value": "json:\\\"body\\\"",
+   "sites": 11,
+   "files_named_by_detector": 7,
+   "reported_at": [
+    "internal/core/agentcommspayloads_djqc9.go:96"
+   ]
+  },
+  {
+   "value": "json:\\\"cycle_id\\\"",
+   "sites": 11,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/keeperevents.go:62"
+   ]
+  },
+  {
+   "value": "PATH",
+   "sites": 11,
+   "files_named_by_detector": 7,
+   "reported_at": [
+    "internal/lifecycle/tmux/subcommand.go:325"
+   ]
+  },
+  {
+   "value": "payload",
+   "sites": 11,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/sessiondata/sessiondata.go:469"
+   ]
+  },
+  {
+   "value": "worktrees",
+   "sites": 11,
+   "files_named_by_detector": 10,
+   "reported_at": [
+    "internal/testhelpers/testenv.go:49"
+   ]
+  },
+  {
+   "value": "remove",
+   "sites": 11,
+   "files_named_by_detector": 10,
+   "reported_at": [
+    "internal/workspace/createworktree.go:73"
+   ]
+  },
+  {
+   "value": "claude-twin-claude",
+   "sites": 10,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "cmd/harmonik-twin-claude/scenarios.go:98"
+   ]
+  },
+  {
+   "value": ".jsonl",
+   "sites": 10,
+   "files_named_by_detector": 8,
+   "reported_at": [
+    "cmd/harmonik-twin-claude/scenarios.go:100"
+   ]
+  },
+  {
+   "value": "started_at",
+   "sites": 10,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik-twin-claude/scenarios.go:153"
+   ]
+  },
+  {
+   "value": "--agent=",
+   "sites": 10,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik/agent.go:76"
+   ]
+  },
+  {
+   "value": "json:\\\"title\\\"",
+   "sites": 10,
+   "files_named_by_detector": 9,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:552"
+   ]
+  },
+  {
+   "value": "version",
+   "sites": 10,
+   "files_named_by_detector": 10,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:557"
+   ]
+  },
+  {
+   "value": "json:\\\"threadId\\\"",
+   "sites": 10,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:621"
+   ]
+  },
+  {
+   "value": "json:\\\"agent\\\"",
+   "sites": 10,
+   "files_named_by_detector": 9,
+   "reported_at": [
+    "internal/core/agentcommspayloads_djqc9.go:150"
+   ]
+  },
+  {
+   "value": "WORK_COMPLETE",
+   "sites": 10,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/hookrelay/hookrelay.go:378"
+   ]
+  },
+  {
+   "value": "phase",
+   "sites": 10,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/hookrelay/hookrelay.go:486"
+   ]
+  },
+  {
+   "value": "--topic",
+   "sites": 10,
+   "files_named_by_detector": 8,
+   "reported_at": [
+    "internal/keeper/delivery_decision_0nlqs.go:57"
+   ]
+  },
+  {
+   "value": "display-message",
+   "sites": 10,
+   "files_named_by_detector": 6,
+   "reported_at": [
+    "internal/lifecycle/tmux/osadapter.go:207"
+   ]
+  },
+  {
+   "value": "--queue-id=",
+   "sites": 10,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/queue/cli/cancel.go:88"
+   ]
+  },
+  {
+   "value": "--format=",
+   "sites": 10,
+   "files_named_by_detector": 6,
+   "reported_at": [
+    "internal/queue/cli/helpers.go:56"
+   ]
+  },
+  {
+   "value": "/daemon.sock)",
+   "sites": 10,
+   "files_named_by_detector": 10,
+   "reported_at": [
+    "internal/queue/cli/worker.go:76"
+   ]
+  },
+  {
+   "value": "json:\\\"ts\\\"",
+   "sites": 10,
+   "files_named_by_detector": 7,
+   "reported_at": [
+    "internal/structuredlog/record.go:41"
+   ]
+  },
+  {
+   "value": "projects",
+   "sites": 10,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/workspace/claudetrust_wm040b.go:170"
+   ]
+  },
+  {
+   "value": "diff",
+   "sites": 10,
+   "files_named_by_detector": 6,
+   "reported_at": [
+    "internal/workspace/diffhash.go:33"
+   ]
+  },
+  {
+   "value": "--porcelain",
+   "sites": 10,
+   "files_named_by_detector": 7,
+   "reported_at": [
+    "internal/workspace/mergedispatch_wm018a.go:166"
+   ]
+  },
+  {
+   "value": "usage",
+   "sites": 9,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "cmd/harmonik-twin-codex/emit.go:62"
+   ]
+  },
+  {
+   "value": "statusLine",
+   "sites": 9,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "cmd/harmonik/keeper_enable_doctor_cmd.go:662"
+   ]
+  },
+  {
+   "value": "use of closed",
+   "sites": 9,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "cmd/harmonik/subscribe.go:264"
+   ]
+  },
+  {
+   "value": "--agent",
+   "sites": 9,
+   "files_named_by_detector": 6,
+   "reported_at": [
+    "internal/agentlaunch/keeperargv.go:104"
+   ]
+  },
+  {
+   "value": "json:\\\"message\\\"",
+   "sites": 9,
+   "files_named_by_detector": 9,
+   "reported_at": [
+    "internal/brcli/listdependencies.go:45"
+   ]
+  },
+  {
+   "value": "show",
+   "sites": 9,
+   "files_named_by_detector": 8,
+   "reported_at": [
+    "internal/brcli/show.go:94"
+   ]
+  },
+  {
+   "value": "model",
+   "sites": 9,
+   "files_named_by_detector": 8,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:774"
+   ]
+  },
+  {
+   "value": "json:\\\"to\\\"",
+   "sites": 9,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/core/agentcommspayloads_djqc9.go:87"
+   ]
+  },
+  {
+   "value": "json:\\\"in_reply_to,omitempty\\\"",
+   "sites": 9,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/core/agentcommspayloads_djqc9.go:101"
+   ]
+  },
+  {
+   "value": "json:\\\"decision_id\\\"",
+   "sites": 9,
+   "files_named_by_detector": 6,
+   "reported_at": [
+    "internal/core/decisionpayloads_33p.go:191"
+   ]
+  },
+  {
+   "value": "json:\\\"paused_epoch\\\"",
+   "sites": 9,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/core/handlerpauseevents_ifqnj.go:121"
+   ]
+  },
+  {
+   "value": "yaml:\\\"name\\\"",
+   "sites": 9,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/core/policydocument.go:67"
+   ]
+  },
+  {
+   "value": "json:\\\"name,omitempty\\\"",
+   "sites": 9,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/core/trigger.go:27"
+   ]
+  },
+  {
+   "value": "live",
+   "sites": 9,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/daemon/stategather.go:154"
+   ]
+  },
+  {
+   "value": "context",
+   "sites": 9,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/dashboard/unlock.go:35"
+   ]
+  },
+  {
+   "value": "config.yaml",
+   "sites": 9,
+   "files_named_by_detector": 8,
+   "reported_at": [
+    "internal/digest/dashboardgateconfig.go:90"
+   ]
+  },
+  {
+   "value": "json:\\\"claude_session_id\\\"",
+   "sites": 9,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/hook/sessionstore.go:46"
+   ]
+  },
+  {
+   "value": "keeper: restart-now: aborted",
+   "sites": 9,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/keeper/restartnow.go:110"
+   ]
+  },
+  {
+   "value": "subscribe",
+   "sites": 9,
+   "files_named_by_detector": 8,
+   "reported_at": [
+    "internal/lifecycle/agentwatcherreap.go:94"
+   ]
+  },
+  {
+   "value": "--to",
+   "sites": 9,
+   "files_named_by_detector": 7,
+   "reported_at": [
+    "internal/lifecycle/agentwatcherreap.go:102"
+   ]
+  },
+  {
+   "value": "absent",
+   "sites": 9,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/queue/transaction.go:443"
+   ]
+  },
+  {
+   "value": "json:\\\"usage\\\"",
+   "sites": 9,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/usage/usage.go:53"
+   ]
+  },
+  {
+   "value": "WG-027",
+   "sites": 9,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/workflow/dot/validator.go:316"
+   ]
+  },
+  {
+   "value": ".lock",
+   "sites": 9,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/workspace/claudetrust_wm040b.go:497"
+   ]
+  },
+  {
+   "value": "event_type",
+   "sites": 8,
+   "files_named_by_detector": 7,
+   "reported_at": [
+    "cmd/harmonik-twin-claude/replaydriver.go:161"
+   ]
+  },
+  {
+   "value": "ended_at",
+   "sites": 8,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "cmd/harmonik-twin-claude/scenarios.go:201"
+   ]
+  },
+  {
+   "value": "json:\\\"phase\\\"",
+   "sites": 8,
+   "files_named_by_detector": 8,
+   "reported_at": [
+    "cmd/harmonik-twin-generic/wire.go:266"
+   ]
+  },
+  {
+   "value": "json:\\\"changed_at\\\"",
+   "sites": 8,
+   "files_named_by_detector": 6,
+   "reported_at": [
+    "cmd/harmonik-twin-generic/wire.go:322"
+   ]
+  },
+  {
+   "value": "--reason=",
+   "sites": 8,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik/comms.go:927"
+   ]
+  },
+  {
+   "value": "null",
+   "sites": 8,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:265"
+   ]
+  },
+  {
+   "value": "json:\\\"ack_token\\\"",
+   "sites": 8,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/core/eventpayloads_u3q6o.go:247"
+   ]
+  },
+  {
+   "value": "json:\\\"timestamp\\\"",
+   "sites": 8,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/core/eventpayloads_u3q6o.go:356"
+   ]
+  },
+  {
+   "value": "json:\\\"workflow_mode\\\"",
+   "sites": 8,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/core/reviewloopevents_hk7om2q4.go:136"
+   ]
+  },
+  {
+   "value": "json:\\\"workspace_id\\\"",
+   "sites": 8,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/workspaceevents_hqwn59.go:38"
+   ]
+  },
+  {
+   "value": "bad_envelope",
+   "sites": 8,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/hook/sessionstore.go:347"
+   ]
+  },
+  {
+   "value": "restart",
+   "sites": 8,
+   "files_named_by_detector": 7,
+   "reported_at": [
+    "internal/projectconfig/projectconfig.go:1801"
+   ]
+  },
+  {
+   "value": "json:\\\"result,omitempty\\\"",
+   "sites": 8,
+   "files_named_by_detector": 6,
+   "reported_at": [
+    "internal/queue/cli/client.go:65"
+   ]
+  },
+  {
+   "value": "json:\\\"groups\\\"",
+   "sites": 8,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/queue/types.go:365"
+   ]
+  },
+  {
+   "value": "actual_status",
+   "sites": 8,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/queue/validation.go:360"
+   ]
+  },
+  {
+   "value": "HARMONIK_AGENT",
+   "sites": 8,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/testhelpers/hermetic/hermetic.go:172"
+   ]
+  },
+  {
+   "value": "origin",
+   "sites": 8,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/transport/codesync/codesync.go:82"
+   ]
+  },
+  {
+   "value": "from",
+   "sites": 8,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/watch/markers.go:157"
+   ]
+  },
+  {
+   "value": "json:\\\"outcome_status\\\"",
+   "sites": 7,
+   "files_named_by_detector": 7,
+   "reported_at": [
+    "cmd/harmonik-twin-generic/wire.go:375"
+   ]
+  },
+  {
+   "value": "json:\\\"exit_code\\\"",
+   "sites": 7,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "cmd/harmonik-twin-generic/wire.go:401"
+   ]
+  },
+  {
+   "value": "HARMONIK_AGENT=",
+   "sites": 7,
+   "files_named_by_detector": 6,
+   "reported_at": [
+    "cmd/harmonik-twin-session/main.go:509"
+   ]
+  },
+  {
+   "value": "help",
+   "sites": 7,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik/ops_monitor_cmd.go:93"
+   ]
+  },
+  {
+   "value": "scripts",
+   "sites": 7,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik/ops_monitor_cmd.go:180"
+   ]
+  },
+  {
+   "value": "topic",
+   "sites": 7,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik/subscribe.go:189"
+   ]
+  },
+  {
+   "value": "--watch-restart",
+   "sites": 7,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "cmd/harmonik/supervise/restart.go:32"
+   ]
+  },
+  {
+   "value": "--format",
+   "sites": 7,
+   "files_named_by_detector": 7,
+   "reported_at": [
+    "internal/brcli/adapter.go:216"
+   ]
+  },
+  {
+   "value": "beads-adapter",
+   "sites": 7,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/brcli/classifyreconciliation_bi031b.go:104"
+   ]
+  },
+  {
+   "value": "subsystem",
+   "sites": 7,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/brcli/classifyreconciliation_bi031b.go:104"
+   ]
+  },
+  {
+   "value": "update",
+   "sites": 7,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/brcli/reissueintent_bi031.go:61"
+   ]
+  },
+  {
+   "value": "json:\\\"items\\\"",
+   "sites": 7,
+   "files_named_by_detector": 6,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:850"
+   ]
+  },
+  {
+   "value": "json:\\\"iteration_count\\\"",
+   "sites": 7,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/core/agentevents_hqwn59.go:286"
+   ]
+  },
+  {
+   "value": "json:\\\"cause\\\"",
+   "sites": 7,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/core/daemonevents_hqwn59.go:1122"
+   ]
+  },
+  {
+   "value": "json:\\\"workflow_mode,omitempty\\\"",
+   "sites": 7,
+   "files_named_by_detector": 6,
+   "reported_at": [
+    "internal/core/daemonevents_hqwn59.go:1190"
+   ]
+  },
+  {
+   "value": "json:\\\"gate_name\\\"",
+   "sites": 7,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/core/gateevents_hqwn59.go:41"
+   ]
+  },
+  {
+   "value": "json:\\\"source\\\"",
+   "sites": 7,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/core/keeperevents.go:486"
+   ]
+  },
+  {
+   "value": "json:\\\"outcome\\\"",
+   "sites": 7,
+   "files_named_by_detector": 6,
+   "reported_at": [
+    "internal/core/pibillingguard.go:88"
+   ]
+  },
+  {
+   "value": "json:\\\"worker_name\\\"",
+   "sites": 7,
+   "files_named_by_detector": 7,
+   "reported_at": [
+    "internal/core/runstartedpayload.go:24"
+   ]
+  },
+  {
+   "value": "json:\\\"lane\\\"",
+   "sites": 7,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/dashboard/types.go:40"
+   ]
+  },
+  {
+   "value": "Stop",
+   "sites": 7,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/hookrelay/hookrelay.go:37"
+   ]
+  },
+  {
+   "value": ".managed",
+   "sites": 7,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/keeper/keeper.go:162"
+   ]
+  },
+  {
+   "value": "new-session",
+   "sites": 7,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/lifecycle/tmux/osadapter.go:280"
+   ]
+  },
+  {
+   "value": "send-keys",
+   "sites": 7,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/lifecycle/tmux/osadapter.go:432"
+   ]
+  },
+  {
+   "value": "actual_kind",
+   "sites": 7,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/queue/validation.go:359"
+   ]
+  },
+  {
+   "value": "state",
+   "sites": 7,
+   "files_named_by_detector": 6,
+   "reported_at": [
+    "internal/release/lastgood.go:33"
+   ]
+  },
+  {
+   "value": ".tmp",
+   "sites": 7,
+   "files_named_by_detector": 6,
+   "reported_at": [
+    "internal/run/registry.go:61"
+   ]
+  },
+  {
+   "value": "queue_name",
+   "sites": 7,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/watch/markers.go:178"
+   ]
+  },
+  {
+   "value": "prune",
+   "sites": 7,
+   "files_named_by_detector": 6,
+   "reported_at": [
+    "internal/workspace/createworktree.go:77"
+   ]
+  },
+  {
+   "value": "go.mod",
+   "sites": 7,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "tools/forbid-import/main.go:181"
+   ]
+  },
+  {
+   "value": "outcome_status",
+   "sites": 6,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik-twin-claude/scenarios.go:192"
+   ]
+  },
+  {
+   "value": "json:\\\"command\\\"",
+   "sites": 6,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik-twin-claude/settings.go:45"
+   ]
+  },
+  {
+   "value": "settings.json",
+   "sites": 6,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "cmd/harmonik-twin-claude/settings.go:80"
+   ]
+  },
+  {
+   "value": "input_tokens",
+   "sites": 6,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik-twin-codex/emit.go:63"
+   ]
+  },
+  {
+   "value": "output_tokens",
+   "sites": 6,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik-twin-codex/emit.go:64"
+   ]
+  },
+  {
+   "value": "message",
+   "sites": 6,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "cmd/harmonik-twin-codex/emit.go:77"
+   ]
+  },
+  {
+   "value": "json:\\\"error_category\\\"",
+   "sites": 6,
+   "files_named_by_detector": 6,
+   "reported_at": [
+    "cmd/harmonik-twin-generic/wire.go:433"
+   ]
+  },
+  {
+   "value": "assistant",
+   "sites": 6,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "cmd/harmonik-twin-pi/emit.go:100"
+   ]
+  },
+  {
+   "value": "HARMONIK_PROJECT=",
+   "sites": 6,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik-twin-session/main.go:508"
+   ]
+  },
+  {
+   "value": "--since=",
+   "sites": 6,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "cmd/harmonik/comms.go:633"
+   ]
+  },
+  {
+   "value": "--name",
+   "sites": 6,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik/crew.go:156"
+   ]
+  },
+  {
+   "value": "--target-branch=",
+   "sites": 6,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "cmd/harmonik/init_cmd.go:111"
+   ]
+  },
+  {
+   "value": "start",
+   "sites": 6,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "cmd/harmonik/init_cmd.go:923"
+   ]
+  },
+  {
+   "value": "keeper-statusline.sh",
+   "sites": 6,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "cmd/harmonik/keeper_enable_doctor_cmd.go:266"
+   ]
+  },
+  {
+   "value": "--to=",
+   "sites": 6,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik/subscribe.go:107"
+   ]
+  },
+  {
+   "value": "heartbeat_seconds",
+   "sites": 6,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "cmd/harmonik/subscribe.go:177"
+   ]
+  },
+  {
+   "value": "types",
+   "sites": 6,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "cmd/harmonik/subscribe.go:180"
+   ]
+  },
+  {
+   "value": "json:\\\"transition_id\\\"",
+   "sites": 6,
+   "files_named_by_detector": 6,
+   "reported_at": [
+    "internal/core/checkpointwrittenpayload.go:38"
+   ]
+  },
+  {
+   "value": "json:\\\"timestamp_wall\\\"",
+   "sites": 6,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/core/event.go:62"
+   ]
+  },
+  {
+   "value": "agent_presence",
+   "sites": 6,
+   "files_named_by_detector": 6,
+   "reported_at": [
+    "internal/core/pertypecompat_hqwn38.go:179"
+   ]
+  },
+  {
+   "value": "json:\\\"workflow_id\\\"",
+   "sites": 6,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/core/runstartedpayload.go:15"
+   ]
+  },
+  {
+   "value": "true",
+   "sites": 6,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/core/trailers.go:173"
+   ]
+  },
+  {
+   "value": "init",
+   "sites": 6,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/daemon/scenariotest/concurrent_merge.go:419"
+   ]
+  },
+  {
+   "value": ".dot",
+   "sites": 6,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/daemon/sub_workflow_runner.go:432"
+   ]
+  },
+  {
+   "value": ".beads",
+   "sites": 6,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/daemon/walcheckpoint.go:70"
+   ]
+  },
+  {
+   "value": "--model",
+   "sites": 6,
+   "files_named_by_detector": 6,
+   "reported_at": [
+    "internal/harness/claude/launchspec.go:318"
+   ]
+  },
+  {
+   "value": "json:\\\"verdict\\\"",
+   "sites": 6,
+   "files_named_by_detector": 6,
+   "reported_at": [
+    "internal/hookrelay/hookrelay.go:62"
+   ]
+  },
+  {
+   "value": "json:\\\"notes\\\"",
+   "sites": 6,
+   "files_named_by_detector": 6,
+   "reported_at": [
+    "internal/hookrelay/hookrelay.go:64"
+   ]
+  },
+  {
+   "value": "REVIEWER_VERDICT",
+   "sites": 6,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/hookrelay/hookrelay.go:359"
+   ]
+  },
+  {
+   "value": "schema_version",
+   "sites": 6,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/hookrelay/hookrelay.go:361"
+   ]
+  },
+  {
+   "value": "nonce",
+   "sites": 6,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/keeper/awaitack.go:117"
+   ]
+  },
+  {
+   "value": "--name-only",
+   "sites": 6,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/lifecycle/orphansweepbeads.go:359"
+   ]
+  },
+  {
+   "value": "label",
+   "sites": 6,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/mergeq/mergeq.go:163"
+   ]
+  },
+  {
+   "value": "yaml:\\\"model\\\"",
+   "sites": 6,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/projectconfig/projectconfig.go:853"
+   ]
+  },
+  {
+   "value": "--beads=",
+   "sites": 6,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/queue/cli/dryrun.go:56"
+   ]
+  },
+  {
+   "value": "--workflow-mode=",
+   "sites": 6,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/queue/cli/dryrun.go:68"
+   ]
+  },
+  {
+   "value": "json:\\\"detail\\\"",
+   "sites": 6,
+   "files_named_by_detector": 6,
+   "reported_at": [
+    "internal/queue/readiness/validate.go:153"
+   ]
+  },
+  {
+   "value": "2006-01-02T15:04:05.000Z",
+   "sites": 6,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/queue/transaction.go:589"
+   ]
+  },
+  {
+   "value": "queue_id",
+   "sites": 6,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/sessiondata/sessiondata.go:480"
+   ]
+  },
+  {
+   "value": ".claude.json",
+   "sites": 6,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/testhelpers/hermetic/hermetic.go:252"
+   ]
+  },
+  {
+   "value": "json:\\\"cost_usd\\\"",
+   "sites": 6,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/usage/usage.go:54"
+   ]
+  },
+  {
+   "value": "harness",
+   "sites": 6,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/workflow/dot/parser.go:776"
+   ]
+  },
+  {
+   "value": "agent-task.md",
+   "sites": 6,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/workspace/agenttask_chb028.go:127"
+   ]
+  },
+  {
+   "value": "Persist",
+   "sites": 6,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "scripts/queue-status-writer-ratchet.go:43"
+   ]
+  },
+  {
+   "value": "output",
+   "sites": 6,
+   "files_named_by_detector": 6,
+   "reported_at": [
+    "tools/testreport/main.go:126"
+   ]
+  },
+  {
+   "value": "timestamp",
+   "sites": 5,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik-twin-claude/replaydriver.go:176"
+   ]
+  },
+  {
+   "value": "outcome_ref",
+   "sites": 5,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "cmd/harmonik-twin-claude/scenarios.go:203"
+   ]
+  },
+  {
+   "value": "/outcome",
+   "sites": 5,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "cmd/harmonik-twin-claude/scenarios.go:203"
+   ]
+  },
+  {
+   "value": "error_category",
+   "sites": 5,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "cmd/harmonik-twin-claude/scenarios.go:515"
+   ]
+  },
+  {
+   "value": "json:\\\"skills\\\"",
+   "sites": 5,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "cmd/harmonik-twin-generic/wire.go:165"
+   ]
+  },
+  {
+   "value": "json:\\\"retry_after_seconds,omitempty\\\"",
+   "sites": 5,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "cmd/harmonik-twin-generic/wire.go:321"
+   ]
+  },
+  {
+   "value": "json:\\\"model\\\"",
+   "sites": 5,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik-twin-session/main.go:298"
+   ]
+  },
+  {
+   "value": "--dry-run",
+   "sites": 5,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "cmd/harmonik/branch_reap_cmd.go:43"
+   ]
+  },
+  {
+   "value": "--reason",
+   "sites": 5,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "cmd/harmonik/comms.go:924"
+   ]
+  },
+  {
+   "value": "  (none)",
+   "sites": 5,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik/digest/watch.go:136"
+   ]
+  },
+  {
+   "value": "goal-keeper",
+   "sites": 5,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "cmd/harmonik/init_cmd.go:1018"
+   ]
+  },
+  {
+   "value": "keeper-stop-hook.sh",
+   "sites": 5,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "cmd/harmonik/keeper_enable_doctor_cmd.go:267"
+   ]
+  },
+  {
+   "value": "keeper-precompact-hook.sh",
+   "sites": 5,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "cmd/harmonik/keeper_enable_doctor_cmd.go:268"
+   ]
+  },
+  {
+   "value": "keeper-sessionstart-hook.sh",
+   "sites": 5,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "cmd/harmonik/keeper_enable_doctor_cmd.go:269"
+   ]
+  },
+  {
+   "value": ".harmonik-new",
+   "sites": 5,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "cmd/harmonik/sync_assets_cmd.go:507"
+   ]
+  },
+  {
+   "value": "yaml:\\\"enabled\\\"",
+   "sites": 5,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/agentmanifest/manifest.go:93"
+   ]
+  },
+  {
+   "value": "file",
+   "sites": 5,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/branching/branching.go:179"
+   ]
+  },
+  {
+   "value": "json:\\\"code\\\"",
+   "sites": 5,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/brcli/listdependencies.go:44"
+   ]
+  },
+  {
+   "value": "json:\\\"labels\\\"",
+   "sites": 5,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/brcli/listinflight.go:38"
+   ]
+  },
+  {
+   "value": "json:\\\"status,omitempty\\\"",
+   "sites": 5,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/codexreactor/reactor.go:74"
+   ]
+  },
+  {
+   "value": "json:\\\"capabilities\\\"",
+   "sites": 5,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:522"
+   ]
+  },
+  {
+   "value": "text",
+   "sites": 5,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:690"
+   ]
+  },
+  {
+   "value": "turnId",
+   "sites": 5,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:1145"
+   ]
+  },
+  {
+   "value": "json:\\\"phase,omitempty\\\"",
+   "sites": 5,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/core/agentevents_hqwn59.go:185"
+   ]
+  },
+  {
+   "value": "json:\\\"event_type\\\"",
+   "sites": 5,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/core/busevents_hqwn59.go:107"
+   ]
+  },
+  {
+   "value": "json:\\\"commit_hash\\\"",
+   "sites": 5,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/core/checkpointwrittenpayload.go:43"
+   ]
+  },
+  {
+   "value": "json:\\\"failure_class\\\"",
+   "sites": 5,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/core/daemonevents_hqwn59.go:987"
+   ]
+  },
+  {
+   "value": "json:\\\"question\\\"",
+   "sites": 5,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/core/decisionpayloads_33p.go:118"
+   ]
+  },
+  {
+   "value": "json:\\\"options\\\"",
+   "sites": 5,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/core/decisionpayloads_33p.go:122"
+   ]
+  },
+  {
+   "value": "json:\\\"context_link,omitempty\\\"",
+   "sites": 5,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/core/decisionpayloads_33p.go:126"
+   ]
+  },
+  {
+   "value": "json:\\\"blocked_agent,omitempty\\\"",
+   "sites": 5,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/core/decisionpayloads_33p.go:130"
+   ]
+  },
+  {
+   "value": "json:\\\"value_requested,omitempty\\\"",
+   "sites": 5,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/core/decisionpayloads_33p.go:134"
+   ]
+  },
+  {
+   "value": "json:\\\"urgency,omitempty\\\"",
+   "sites": 5,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/core/decisionpayloads_33p.go:146"
+   ]
+  },
+  {
+   "value": "json:\\\"owning_epic_id,omitempty\\\"",
+   "sites": 5,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/core/eventreg_wkzlc.go:77"
+   ]
+  },
+  {
+   "value": "json:\\\"owning_epic_assignee,omitempty\\\"",
+   "sites": 5,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/core/eventreg_wkzlc.go:82"
+   ]
+  },
+  {
+   "value": "json:\\\"requested_at\\\"",
+   "sites": 5,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/core/intentlogentry.go:69"
+   ]
+  },
+  {
+   "value": "json:\\\"tokens\\\"",
+   "sites": 5,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/keeperevents.go:330"
+   ]
+  },
+  {
+   "value": "json:\\\"idempotency_key\\\"",
+   "sites": 5,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/core/reconciliationevents_hqwn59.go:819"
+   ]
+  },
+  {
+   "value": "json:\\\"bead_ids\\\"",
+   "sites": 5,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/core/reviewgateanomaly_hktnmjy.go:42"
+   ]
+  },
+  {
+   "value": "json:\\\"queue_group_index,omitempty\\\"",
+   "sites": 5,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/core/runterminalpayload.go:61"
+   ]
+  },
+  {
+   "value": "json:\\\"elapsed_ms\\\"",
+   "sites": 5,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/core/stalldetected_hkl087e.go:65"
+   ]
+  },
+  {
+   "value": "execution-model",
+   "sites": 5,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/core/trailers.go:102"
+   ]
+  },
+  {
+   "value": "json:\\\"type,omitempty\\\"",
+   "sites": 5,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/crew/registry.go:45"
+   ]
+  },
+  {
+   "value": "crew-",
+   "sites": 5,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/daemon/orphansweep.go:763"
+   ]
+  },
+  {
+   "value": "workflow.dot",
+   "sites": 5,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/daemon/workloop_runplan.go:342"
+   ]
+  },
+  {
+   "value": "stale",
+   "sites": 5,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/digest/builder.go:218"
+   ]
+  },
+  {
+   "value": "eventbus",
+   "sites": 5,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/eventbus/busimpl.go:485"
+   ]
+  },
+  {
+   "value": "observer_panic",
+   "sites": 5,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/eventbus/busimpl.go:547"
+   ]
+  },
+  {
+   "value": "consumer_error",
+   "sites": 5,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/eventbus/busimpl.go:555"
+   ]
+  },
+  {
+   "value": "ANTHROPIC_API_KEY",
+   "sites": 5,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/handler/claudehandler_chb006_024.go:203"
+   ]
+  },
+  {
+   "value": "ANTHROPIC_API_KEY=",
+   "sites": 5,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/handler/claudehandler_chb006_024.go:369"
+   ]
+  },
+  {
+   "value": "--dangerously-skip-permissions",
+   "sites": 5,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/harness/claude/launchspec.go:329"
+   ]
+  },
+  {
+   "value": ":(exclude).claude",
+   "sites": 5,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/harness/shared/refstrailer.go:183"
+   ]
+  },
+  {
+   "value": ":(exclude).harmonik",
+   "sites": 5,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/harness/shared/refstrailer.go:183"
+   ]
+  },
+  {
+   "value": "SessionStart",
+   "sites": 5,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/hookrelay/hookrelay.go:36"
+   ]
+  },
+  {
+   "value": "verdict",
+   "sites": 5,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/hookrelay/hookrelay.go:360"
+   ]
+  },
+  {
+   "value": "ping",
+   "sites": 5,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/keeper/awaitack.go:114"
+   ]
+  },
+  {
+   "value": "send",
+   "sites": 5,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/keeper/delivery_decision_0nlqs.go:57"
+   ]
+  },
+  {
+   "value": "user",
+   "sites": 5,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/keeper/ports.go:198"
+   ]
+  },
+  {
+   "value": "complete",
+   "sites": 5,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/keeper/step.go:787"
+   ]
+  },
+  {
+   "value": "--grep",
+   "sites": 5,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/lifecycle/orphansweepbeads.go:415"
+   ]
+  },
+  {
+   "value": "kill-session",
+   "sites": 5,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/lifecycle/tmux/osadapter.go:255"
+   ]
+  },
+  {
+   "value": "alarm",
+   "sites": 5,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/projectconfig/projectconfig.go:1801"
+   ]
+  },
+  {
+   "value": "enable",
+   "sites": 5,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/queue/cli/worker.go:40"
+   ]
+  },
+  {
+   "value": "json:\\\"enabled\\\"",
+   "sites": 5,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/queue/types.go:646"
+   ]
+  },
+  {
+   "value": "json:\\\"description\\\" yaml:\\\"description\\\"",
+   "sites": 5,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/scenario/workspacepredicate.go:84"
+   ]
+  },
+  {
+   "value": "json:\\\"crew,omitempty\\\"",
+   "sites": 5,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/schedule/types.go:106"
+   ]
+  },
+  {
+   "value": "json:\\\"queue,omitempty\\\"",
+   "sites": 5,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/schedule/types.go:108"
+   ]
+  },
+  {
+   "value": "sessions",
+   "sites": 5,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/sessioncapture/sessioncapture.go:115"
+   ]
+  },
+  {
+   "value": "json:\\\"started_at,omitempty\\\"",
+   "sites": 5,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/sessiondata/sessiondata.go:126"
+   ]
+  },
+  {
+   "value": ".tmp-",
+   "sites": 5,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/testhelpers/crashharness.go:255"
+   ]
+  },
+  {
+   "value": "fetch",
+   "sites": 5,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/transport/codesync/codesync.go:82"
+   ]
+  },
+  {
+   "value": "ControlMaster=no",
+   "sites": 5,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/transport/tunnel/tunnel.go:297"
+   ]
+  },
+  {
+   "value": "ControlPath=none",
+   "sites": 5,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/transport/tunnel/tunnel.go:301"
+   ]
+  },
+  {
+   "value": "worker event emit failed",
+   "sites": 5,
+   "files_named_by_detector": 5,
+   "reported_at": [
+    "internal/workers/health.go:142"
+   ]
+  },
+  {
+   "value": "capped:",
+   "sites": 5,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/workflow/dot/parser.go:1202"
+   ]
+  },
+  {
+   "value": "skills",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "cmd/harmonik-twin-claude/scenarios.go:133"
+   ]
+  },
+  {
+   "value": "print the build-time commit hash and exit (HC-043)",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik-twin-codex/main.go:58"
+   ]
+  },
+  {
+   "value": "scenario",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik-twin-codex/main.go:59"
+   ]
+  },
+  {
+   "value": "(unstamped)",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik-twin-codex/version.go:51"
+   ]
+  },
+  {
+   "value": "socket-path",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik-twin-generic/main.go:78"
+   ]
+  },
+  {
+   "value": "json:\\\"log_path\\\"",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik-twin-generic/wire.go:128"
+   ]
+  },
+  {
+   "value": "json:\\\"log_format\\\"",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik-twin-generic/wire.go:129"
+   ]
+  },
+  {
+   "value": "json:\\\"source_path\\\"",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik-twin-generic/wire.go:149"
+   ]
+  },
+  {
+   "value": "json:\\\"version,omitempty\\\"",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik-twin-generic/wire.go:150"
+   ]
+  },
+  {
+   "value": "json:\\\"chunk_index\\\"",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik-twin-generic/wire.go:290"
+   ]
+  },
+  {
+   "value": "json:\\\"bytes_emitted\\\"",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik-twin-generic/wire.go:291"
+   ]
+  },
+  {
+   "value": "session",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik-twin-pi/emit.go:51"
+   ]
+  },
+  {
+   "value": "window",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik-twin-session/main.go:227"
+   ]
+  },
+  {
+   "value": "labels",
+   "sites": 4,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "cmd/harmonik/beadsmerge.go:314"
+   ]
+  },
+  {
+   "value": "dependencies",
+   "sites": 4,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "cmd/harmonik/beadsmerge.go:325"
+   ]
+  },
+  {
+   "value": "--target=",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik/branch_reap_cmd.go:55"
+   ]
+  },
+  {
+   "value": "wake",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "cmd/harmonik/comms.go:487"
+   ]
+  },
+  {
+   "value": "--since",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik/comms.go:630"
+   ]
+  },
+  {
+   "value": "--timeout=",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik/comms.go:1326"
+   ]
+  },
+  {
+   "value": "--name=",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik/crew.go:159"
+   ]
+  },
+  {
+   "value": "--context=",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik/decisions.go:129"
+   ]
+  },
+  {
+   "value": "--type=",
+   "sites": 4,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "cmd/harmonik/handler.go:311"
+   ]
+  },
+  {
+   "value": "AGENTS.md",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik/init_cmd.go:663"
+   ]
+  },
+  {
+   "value": "project directory (default: current working directory)",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik/keeper_cmd.go:617"
+   ]
+  },
+  {
+   "value": "binary",
+   "sites": 4,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "cmd/harmonik/keeper_enable_doctor_cmd.go:639"
+   ]
+  },
+  {
+   "value": "tmux-pane",
+   "sites": 4,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "cmd/harmonik/keeper_enable_doctor_cmd.go:868"
+   ]
+  },
+  {
+   "value": "launchctl",
+   "sites": 4,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "cmd/harmonik/ops_monitor_cmd.go:259"
+   ]
+  },
+  {
+   "value": "--bead=",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik/promote_cmd.go:213"
+   ]
+  },
+  {
+   "value": "--protect-branch=",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik/promote_cmd.go:237"
+   ]
+  },
+  {
+   "value": "<project>",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik/resolve_keeper_config.go:119"
+   ]
+  },
+  {
+   "value": "since_event_id",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik/subscribe.go:198"
+   ]
+  },
+  {
+   "value": "supervisor.pid",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "cmd/harmonik/supervise/config.go:43"
+   ]
+  },
+  {
+   "value": "flywheel",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "cmd/harmonik/supervise/ps.go:182"
+   ]
+  },
+  {
+   "value": "supervise",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "cmd/harmonik/supervise/start.go:232"
+   ]
+  },
+  {
+   "value": "pgrep",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik/supervise/status.go:232"
+   ]
+  },
+  {
+   "value": "json:\\\"timeout\\\"",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "evaltasks/eval-json-roundtrip/roundtrip.go:16"
+   ]
+  },
+  {
+   "value": "--tmux",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/agentlaunch/keeperargv.go:105"
+   ]
+  },
+  {
+   "value": "retrieved",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/agentmanifest/manifest.go:260"
+   ]
+  },
+  {
+   "value": "--version",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/brcli/brrunnable.go:50"
+   ]
+  },
+  {
+   "value": "json:\\\"priority\\\"",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/brcli/listdependencies.go:37"
+   ]
+  },
+  {
+   "value": "json:\\\"description\\\"",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/brcli/listinflight.go:35"
+   ]
+  },
+  {
+   "value": "json:\\\"turn_id,omitempty\\\"",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/codexreactor/reactor.go:71"
+   ]
+  },
+  {
+   "value": "method",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:369"
+   ]
+  },
+  {
+   "value": "json:\\\"model,omitempty\\\"",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:758"
+   ]
+  },
+  {
+   "value": "summary",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:932"
+   ]
+  },
+  {
+   "value": "json:\\\"turnId\\\"",
+   "sites": 4,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:1139"
+   ]
+  },
+  {
+   "value": "json:\\\"claude_session_id,omitempty\\\"",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/agentevents_hqwn59.go:127"
+   ]
+  },
+  {
+   "value": "json:\\\"consumer_name\\\"",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/core/busevents_hqwn59.go:103"
+   ]
+  },
+  {
+   "value": "json:\\\"failed_at\\\"",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/core/busevents_hqwn59.go:121"
+   ]
+  },
+  {
+   "value": "json:\\\"trigger\\\"",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/controlpoint.go:52"
+   ]
+  },
+  {
+   "value": "json:\\\"control_point_name\\\"",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/cp017_hook_cognition_s05.go:136"
+   ]
+  },
+  {
+   "value": "json:\\\"triggering_event_id\\\"",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/cp017_hook_cognition_s05.go:138"
+   ]
+  },
+  {
+   "value": "json:\\\"count\\\"",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/cpevents_hqwn59.go:36"
+   ]
+  },
+  {
+   "value": "json:\\\"io_determinism\\\"",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/cpevents_hqwn59.go:295"
+   ]
+  },
+  {
+   "value": "json:\\\"mode\\\"",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/daemonevents_hqwn59.go:227"
+   ]
+  },
+  {
+   "value": "json:\\\"completed_at\\\"",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/core/daemonevents_hqwn59.go:536"
+   ]
+  },
+  {
+   "value": "json:\\\"node_id,omitempty\\\"",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/daemonevents_hqwn59.go:684"
+   ]
+  },
+  {
+   "value": "json:\\\"by,omitempty\\\"",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/core/decisionpayloads_33p.go:251"
+   ]
+  },
+  {
+   "value": "beads-cli",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/core/defaultroles_hka8bg29.go:36"
+   ]
+  },
+  {
+   "value": "json:\\\"source_subsystem\\\"",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/event.go:85"
+   ]
+  },
+  {
+   "value": "json:\\\"subject\\\"",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/eventpayloads_u3q6o.go:231"
+   ]
+  },
+  {
+   "value": "sonnet",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/freedomprofiletightest_hka8bg33.go:12"
+   ]
+  },
+  {
+   "value": "json:\\\"hook_name\\\"",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/core/hookverdictrecord.go:43"
+   ]
+  },
+  {
+   "value": "json:\\\"gate,omitempty\\\"",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/kindpayload.go:18"
+   ]
+  },
+  {
+   "value": "yaml:\\\"mode\\\"",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/policydocument.go:127"
+   ]
+  },
+  {
+   "value": "json:\\\"item_count\\\"",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/core/queueevents_extqueue.go:123"
+   ]
+  },
+  {
+   "value": "json:\\\"target_run_id\\\"",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/core/reconciliationevents_hqwn59.go:194"
+   ]
+  },
+  {
+   "value": "Migration release.",
+   "sites": 4,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/core/schemachangekind_hqwn39.go:128"
+   ]
+  },
+  {
+   "value": "json:\\\"state_id\\\"",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/statelifecyclepayload.go:30"
+   ]
+  },
+  {
+   "value": "--remote-control",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/crewrun/launchspec.go:173"
+   ]
+  },
+  {
+   "value": ".git",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/daemon/agentlaunch.go:427"
+   ]
+  },
+  {
+   "value": "agents",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/daemon/bootsocket.go:385"
+   ]
+  },
+  {
+   "value": "--type",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/daemon/eagerfill_em063.go:482"
+   ]
+  },
+  {
+   "value": "json:\\\"in_flight_at_pause\\\"",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/daemon/handlerpause_persist_m0k0a.go:85"
+   ]
+  },
+  {
+   "value": "task",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/daemon/pasteinject.go:1575"
+   ]
+  },
+  {
+   "value": "refs",
+   "sites": 4,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/daemon/sandboxprofile.go:247"
+   ]
+  },
+  {
+   "value": "heads",
+   "sites": 4,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/daemon/sandboxprofile.go:247"
+   ]
+  },
+  {
+   "value": "daemon: DecisionsHandler not registered",
+   "sites": 4,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/daemon/socketdispatch.go:197"
+   ]
+  },
+  {
+   "value": "confirm_verdict",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/daemon/socketdispatch.go:283"
+   ]
+  },
+  {
+   "value": "comms-presence",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/daemon/socketdispatch.go:422"
+   ]
+  },
+  {
+   "value": "gauge",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/daemon/stategather.go:327"
+   ]
+  },
+  {
+   "value": "wal_path",
+   "sites": 4,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/daemon/walcheckpoint.go:83"
+   ]
+  },
+  {
+   "value": "--session-id",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/harness/claude/launchspec.go:315"
+   ]
+  },
+  {
+   "value": "outcome",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/harness/pi/billingguard.go:150"
+   ]
+  },
+  {
+   "value": "Refs: ",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/harness/shared/refstrailer.go:99"
+   ]
+  },
+  {
+   "value": "--amend",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/harness/shared/refstrailer.go:272"
+   ]
+  },
+  {
+   "value": "FAILURE_SIGNAL",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/hookrelay/hookrelay.go:449"
+   ]
+  },
+  {
+   "value": "no_tmux_target",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/keeper/awaitack.go:123"
+   ]
+  },
+  {
+   "value": "json:\\\"input_tokens\\\"",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/keeper/heartbeat.go:105"
+   ]
+  },
+  {
+   "value": "json:\\\"output_tokens\\\"",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/keeper/heartbeat.go:108"
+   ]
+  },
+  {
+   "value": "has-session",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/keeper/tmuxresolve.go:170"
+   ]
+  },
+  {
+   "value": "bash",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/lifecycle/tmux/orphansession.go:169"
+   ]
+  },
+  {
+   "value": "#{session_name}",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/lifecycle/tmux/osadapter.go:89"
+   ]
+  },
+  {
+   "value": "list-sessions",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/lifecycle/tmux/osadapter.go:89"
+   ]
+  },
+  {
+   "value": "load-buffer",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/lifecycle/tmux/osadapter.go:376"
+   ]
+  },
+  {
+   "value": "paste-buffer",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/lifecycle/tmux/osadapter.go:401"
+   ]
+  },
+  {
+   "value": "Enter",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/lifecycle/tmux/osadapter.go:455"
+   ]
+  },
+  {
+   "value": "capture-pane",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/lifecycle/tmux/osadapter.go:505"
+   ]
+  },
+  {
+   "value": "json:\\\"error_code,omitempty\\\"",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/queue/cli/client.go:67"
+   ]
+  },
+  {
+   "value": "--beads",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/queue/cli/dryrun.go:53"
+   ]
+  },
+  {
+   "value": "operator-pause",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/queue/cli/pause.go:58"
+   ]
+  },
+  {
+   "value": "operator-resume",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/queue/cli/resume.go:58"
+   ]
+  },
+  {
+   "value": "disable",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/queue/cli/worker.go:42"
+   ]
+  },
+  {
+   "value": "json:\\\"created_at\\\"",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/queue/types.go:231"
+   ]
+  },
+  {
+   "value": "json:\\\"timer,omitempty\\\"",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/runexec/vocab.go:172"
+   ]
+  },
+  {
+   "value": ".tools",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/runmerge/fmtgate.go:68"
+   ]
+  },
+  {
+   "value": "pfctl",
+   "sites": 4,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/scenario/networksandbox_darwin.go:47"
+   ]
+  },
+  {
+   "value": "json:\\\"subject_kind\\\"",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/sentinel/trip_ev043b.go:63"
+   ]
+  },
+  {
+   "value": "json:\\\"subject_id\\\"",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/sentinel/trip_ev043b.go:64"
+   ]
+  },
+  {
+   "value": "json:\\\"success\\\"",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/sessiondata/sessiondata.go:125"
+   ]
+  },
+  {
+   "value": "logs",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/structuredlog/handler.go:117"
+   ]
+  },
+  {
+   "value": "json:\\\"event_id,omitempty\\\"",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/structuredlog/record.go:68"
+   ]
+  },
+  {
+   "value": "json:\\\"event\\\"",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/supervise/reap.go:62"
+   ]
+  },
+  {
+   "value": "max_revives",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/supervise/supervisor_watchdog.go:96"
+   ]
+  },
+  {
+   "value": "attempt",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/supervise/supervisor_watchdog.go:132"
+   ]
+  },
+  {
+   "value": "TMUX",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/testhelpers/hermetic/hermetic.go:167"
+   ]
+  },
+  {
+   "value": "HARMONIK_CLAUDE_CONFIG_PATH",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/testhelpers/hermetic/hermetic.go:252"
+   ]
+  },
+  {
+   "value": "push",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/transport/codesync/codesync.go:119"
+   ]
+  },
+  {
+   "value": "json:\\\"models\\\"",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/usage/usage.go:51"
+   ]
+  },
+  {
+   "value": "target",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/watch/markers.go:178"
+   ]
+  },
+  {
+   "value": "CP-056",
+   "sites": 4,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/workflow/dot/validator.go:150"
+   ]
+  },
+  {
+   "value": "shell",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/workflow/dot/validator.go:223"
+   ]
+  },
+  {
+   "value": "traversal_cap",
+   "sites": 4,
+   "files_named_by_detector": 4,
+   "reported_at": [
+    "internal/workflow/dot/validator.go:452"
+   ]
+  },
+  {
+   "value": "internal/lifecycle/startup_pl005_qm002.go",
+   "sites": 4,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "scripts/queue-status-writer-ratchet.go:44"
+   ]
+  },
+  {
+   "value": "_test.go",
+   "sites": 4,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "scripts/queue-status-writer-ratchet.go:136"
+   ]
+  },
+  {
+   "value": "transitioned_at",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik-twin-claude/replaydriver.go:176"
+   ]
+  },
+  {
+   "value": "emitted_at",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik-twin-claude/replaydriver.go:176"
+   ]
+  },
+  {
+   "value": "log_path",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik-twin-claude/scenarios.go:123"
+   ]
+  },
+  {
+   "value": "json:\\\"hooks\\\"",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik-twin-claude/settings.go:55"
+   ]
+  },
+  {
+   "value": "json:\\\"commit_sha\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "cmd/harmonik-twin-claude/wire.go:533"
+   ]
+  },
+  {
+   "value": "thread.started",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik-twin-codex/emit.go:50"
+   ]
+  },
+  {
+   "value": "turn.completed",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik-twin-codex/emit.go:61"
+   ]
+  },
+  {
+   "value": "turn.failed",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik-twin-codex/emit.go:75"
+   ]
+  },
+  {
+   "value": "exec",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik-twin-codex/main.go:123"
+   ]
+  },
+  {
+   "value": "json:\\\"protocol_versions_supported\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "cmd/harmonik-twin-generic/wire.go:100"
+   ]
+  },
+  {
+   "value": "json:\\\"chunk_digest,omitempty\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "cmd/harmonik-twin-generic/wire.go:292"
+   ]
+  },
+  {
+   "value": "json:\\\"rate_limit_source,omitempty\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "cmd/harmonik-twin-generic/wire.go:320"
+   ]
+  },
+  {
+   "value": "json:\\\"outcome_ref\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "cmd/harmonik-twin-generic/wire.go:402"
+   ]
+  },
+  {
+   "value": "json:\\\"sub_reason,omitempty\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "cmd/harmonik-twin-generic/wire.go:435"
+   ]
+  },
+  {
+   "value": "role",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "cmd/harmonik-twin-pi/emit.go:100"
+   ]
+  },
+  {
+   "value": "/clear",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "cmd/harmonik-twin-session/main.go:396"
+   ]
+  },
+  {
+   "value": "markdown",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "cmd/harmonik/agent.go:107"
+   ]
+  },
+  {
+   "value": "skills/",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik/asset_manifest.go:91"
+   ]
+  },
+  {
+   "value": "context/",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik/asset_manifest.go:97"
+   ]
+  },
+  {
+   "value": "scaffolds/",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik/asset_manifest.go:99"
+   ]
+  },
+  {
+   "value": "raise",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "cmd/harmonik/decisions.go:74"
+   ]
+  },
+  {
+   "value": "withdraw",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "cmd/harmonik/decisions.go:78"
+   ]
+  },
+  {
+   "value": "answer",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik/decisions.go:85"
+   ]
+  },
+  {
+   "value": "decision_id",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik/decisions.go:360"
+   ]
+  },
+  {
+   "value": "json:\\\"difficulty\\\"",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik/eval_report_cmd.go:51"
+   ]
+  },
+  {
+   "value": "; teardown: ",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "cmd/harmonik/harness.go:465"
+   ]
+  },
+  {
+   "value": "--target-branch",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "cmd/harmonik/init_cmd.go:108"
+   ]
+  },
+  {
+   "value": "branching.yaml",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik/init_cmd.go:580"
+   ]
+  },
+  {
+   "value": "HANDOFF.md",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik/init_cmd.go:838"
+   ]
+  },
+  {
+   "value": "warn-abs-tokens",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik/keeper_cmd.go:212"
+   ]
+  },
+  {
+   "value": "act-abs-tokens",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik/keeper_cmd.go:213"
+   ]
+  },
+  {
+   "value": "settings.json absent \u2014 run: harmonik keeper enable ",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "cmd/harmonik/keeper_enable_doctor_cmd.go:690"
+   ]
+  },
+  {
+   "value": "Stop hook",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "cmd/harmonik/keeper_enable_doctor_cmd.go:690"
+   ]
+  },
+  {
+   "value": "PreCompact hook",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "cmd/harmonik/keeper_enable_doctor_cmd.go:704"
+   ]
+  },
+  {
+   "value": "SessionStart hook",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "cmd/harmonik/keeper_enable_doctor_cmd.go:721"
+   ]
+  },
+  {
+   "value": "sid channel",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "cmd/harmonik/keeper_enable_doctor_cmd.go:760"
+   ]
+  },
+  {
+   "value": "sleep",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik/main.go:434"
+   ]
+  },
+  {
+   "value": "release",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik/main.go:624"
+   ]
+  },
+  {
+   "value": "--title",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "cmd/harmonik/promote_cmd.go:222"
+   ]
+  },
+  {
+   "value": "json:\\\"pause_reason,omitempty\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "cmd/harmonik/supervise/loopstatus.go:92"
+   ]
+  },
+  {
+   "value": "yaml:\\\"type\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/agentmanifest/manifest.go:139"
+   ]
+  },
+  {
+   "value": "yaml:\\\"harness\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/agentmanifest/manifest.go:142"
+   ]
+  },
+  {
+   "value": "yaml:\\\"role\\\"",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/agentmanifest/manifest.go:149"
+   ]
+  },
+  {
+   "value": "yaml:\\\"keeper\\\"",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/agentmanifest/manifest.go:154"
+   ]
+  },
+  {
+   "value": "yaml:\\\"version\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/branching/branching.go:90"
+   ]
+  },
+  {
+   "value": "lands_on",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/branching/branching.go:170"
+   ]
+  },
+  {
+   "value": "ISSUE_NOT_FOUND",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/brcli/audit.go:99"
+   ]
+  },
+  {
+   "value": "evidence_ref",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/brcli/classifyreconciliation_bi031b.go:105"
+   ]
+  },
+  {
+   "value": "detected_at",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/brcli/classifyreconciliation_bi031b.go:108"
+   ]
+  },
+  {
+   "value": "both",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/brcli/listdependencies.go:64"
+   ]
+  },
+  {
+   "value": "json:\\\"issue_type\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/brcli/listinflight.go:37"
+   ]
+  },
+  {
+   "value": "json:\\\"issues\\\"",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/brcli/listinflight.go:46"
+   ]
+  },
+  {
+   "value": "--limit",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/brcli/ready.go:121"
+   ]
+  },
+  {
+   "value": "sync",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/brcli/syncflushonly.go:30"
+   ]
+  },
+  {
+   "value": "conflicting_labels",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/brcli/workflowlabelconflict.go:168"
+   ]
+  },
+  {
+   "value": "json:\\\"input_seq,omitempty\\\"",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/codexinput/reactor.go:187"
+   ]
+  },
+  {
+   "value": "json:\\\"payload,omitempty\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/codexinput/reactor.go:233"
+   ]
+  },
+  {
+   "value": "json:\\\"message,omitempty\\\"",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/codexreactor/reactor.go:77"
+   ]
+  },
+  {
+   "value": "thread/start",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:107"
+   ]
+  },
+  {
+   "value": "thread/resume",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:112"
+   ]
+  },
+  {
+   "value": "turn/started",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:148"
+   ]
+  },
+  {
+   "value": "item/agentMessage/delta",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:160"
+   ]
+  },
+  {
+   "value": "turn/completed",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:172"
+   ]
+  },
+  {
+   "value": "json:\\\"result\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:187"
+   ]
+  },
+  {
+   "value": "params",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:371"
+   ]
+  },
+  {
+   "value": "json:\\\"thread\\\"",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:757"
+   ]
+  },
+  {
+   "value": "sandbox",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:776"
+   ]
+  },
+  {
+   "value": "json:\\\"turn\\\"",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:815"
+   ]
+  },
+  {
+   "value": "turn",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:819"
+   ]
+  },
+  {
+   "value": "json:\\\"summary\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/codexwire/codexwire.go:927"
+   ]
+  },
+  {
+   "value": "json:\\\"harness\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/agentevents_hqwn59.go:882"
+   ]
+  },
+  {
+   "value": "json:\\\"exit_code,omitempty\\\"",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/core/agentlifecyclepayloads_gjyks.go:58"
+   ]
+  },
+  {
+   "value": "json:\\\"threshold_seconds\\\"",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/core/agentlifecyclepayloads_gjyks.go:164"
+   ]
+  },
+  {
+   "value": "json:\\\"epic_id\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/agentlifecyclepayloads_gjyks.go:391"
+   ]
+  },
+  {
+   "value": "json:\\\"value\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/busevents_hqwn59.go:55"
+   ]
+  },
+  {
+   "value": "json:\\\"labels,omitempty\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/busevents_hqwn59.go:63"
+   ]
+  },
+  {
+   "value": "json:\\\"delegation_path\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/cognitionmeta.go:21"
+   ]
+  },
+  {
+   "value": "json:\\\"pid\\\"",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/core/daemonevents_hqwn59.go:113"
+   ]
+  },
+  {
+   "value": "json:\\\"queue_name,omitempty\\\"",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/core/daemonevents_hqwn59.go:385"
+   ]
+  },
+  {
+   "value": "json:\\\"target_run_id,omitempty\\\"",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/core/daemonevents_hqwn59.go:1042"
+   ]
+  },
+  {
+   "value": "json:\\\"updated_at,omitempty\\\"",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/core/dashboardgatepayload_hkxg6rw.go:24"
+   ]
+  },
+  {
+   "value": "json:\\\"value,omitempty\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/decisionpayloads_33p.go:199"
+   ]
+  },
+  {
+   "value": "Read",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/core/defaultroles_hka8bg29.go:34"
+   ]
+  },
+  {
+   "value": "Bash",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/core/defaultroles_hka8bg29.go:34"
+   ]
+  },
+  {
+   "value": "json:\\\"types\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/eventpattern.go:58"
+   ]
+  },
+  {
+   "value": "json:\\\"age_seconds\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/eventreg_wkzlc.go:51"
+   ]
+  },
+  {
+   "value": "haiku",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/core/freedomprofiletightest_hka8bg33.go:11"
+   ]
+  },
+  {
+   "value": "json:\\\"decision\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/gatedecisionpayload_2fknq.go:37"
+   ]
+  },
+  {
+   "value": "json:\\\"action\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/gateverdictrecord.go:37"
+   ]
+  },
+  {
+   "value": "json:\\\"by\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/handlerpauseevents_ifqnj.go:217"
+   ]
+  },
+  {
+   "value": "json:\\\"duration_seconds\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/implementernowork_hk368i4.go:46"
+   ]
+  },
+  {
+   "value": "json:\\\"intended_post_state\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/intentlogentry.go:65"
+   ]
+  },
+  {
+   "value": "json:\\\"pct\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/keeperevents.go:24"
+   ]
+  },
+  {
+   "value": "session_keeper_config_rejected",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/pertypecompat_hqwn38.go:300"
+   ]
+  },
+  {
+   "value": "yaml:\\\"evaluator\\\"",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/core/policydocument.go:148"
+   ]
+  },
+  {
+   "value": "metadata",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/core/policydocument.go:219"
+   ]
+  },
+  {
+   "value": "roles",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/core/policydocument.go:220"
+   ]
+  },
+  {
+   "value": "freedom_profiles",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/core/policydocument.go:221"
+   ]
+  },
+  {
+   "value": "gates",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/core/policydocument.go:222"
+   ]
+  },
+  {
+   "value": "guards",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/core/policydocument.go:224"
+   ]
+  },
+  {
+   "value": "budgets",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/core/policydocument.go:225"
+   ]
+  },
+  {
+   "value": "json:\\\"group_count\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/queueevents_extqueue.go:53"
+   ]
+  },
+  {
+   "value": "json:\\\"fail_count\\\"",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/core/queueevents_extqueue.go:193"
+   ]
+  },
+  {
+   "value": "json:\\\"blocker_bead_id\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/queueevents_extqueue.go:394"
+   ]
+  },
+  {
+   "value": "bead_inprogress_queue_absent",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/queueevents_extqueue.go:565"
+   ]
+  },
+  {
+   "value": "json:\\\"reconciliation_run_id\\\"",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/core/reconciliationevents_hqwn59.go:82"
+   ]
+  },
+  {
+   "value": "json:\\\"evidence_ref\\\"",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/core/reconciliationevents_hqwn59.go:140"
+   ]
+  },
+  {
+   "value": "json:\\\"attempt\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/reconciliationevents_hqwn59.go:676"
+   ]
+  },
+  {
+   "value": "json:\\\"beads_closed\\\"",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/core/reconciliationevents_hqwn59.go:732"
+   ]
+  },
+  {
+   "value": "json:\\\"threshold\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/reviewgateanomaly_hktnmjy.go:36"
+   ]
+  },
+  {
+   "value": "json:\\\"workspace_path\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/runstartedpayload.go:21"
+   ]
+  },
+  {
+   "value": "json:\\\"entered_at\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/statelifecyclepayload.go:39"
+   ]
+  },
+  {
+   "value": "json:\\\"sub_workflow_version\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/core/subworkflowenteredpayload.go:60"
+   ]
+  },
+  {
+   "value": "merge.",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/daemon/beadsmergedriver.go:56"
+   ]
+  },
+  {
+   "value": "--local",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/daemon/beadsmergedriver.go:56"
+   ]
+  },
+  {
+   "value": "driver",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/daemon/beadsmergedriver.go:70"
+   ]
+  },
+  {
+   "value": "br_history_rotation_skipped",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/daemon/brhistoryrotate.go:114"
+   ]
+  },
+  {
+   "value": "crew-init",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/daemon/crewstart.go:461"
+   ]
+  },
+  {
+   "value": "/bin/sh",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/daemon/dot_cascade_helpers.go:350"
+   ]
+  },
+  {
+   "value": "origin/",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/daemon/eagerfill_em063.go:294"
+   ]
+  },
+  {
+   "value": "--fixed-strings",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/daemon/eagerfill_em063.go:299"
+   ]
+  },
+  {
+   "value": "--label",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/daemon/eagerfill_em063.go:484"
+   ]
+  },
+  {
+   "value": "json:\\\"dispatched_at\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/daemon/handlerpause_9hwbw.go:88"
+   ]
+  },
+  {
+   "value": "json:\\\"handlers\\\"",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/daemon/handlerpause_persist_m0k0a.go:78"
+   ]
+  },
+  {
+   "value": "captain.pid",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/daemon/orphansweep.go:539"
+   ]
+  },
+  {
+   "value": "comm=",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/daemon/pasteinject.go:392"
+   ]
+  },
+  {
+   "value": "unlimited",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/daemon/perqueuespendmeter_tigaf11.go:338"
+   ]
+  },
+  {
+   "value": "--prefix",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/daemon/scenariotest/concurrent_merge.go:475"
+   ]
+  },
+  {
+   "value": "max_attempts_exceeded",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/daemon/scheduler.go:1401"
+   ]
+  },
+  {
+   "value": "veto_verdict",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/daemon/socketdispatch.go:287"
+   ]
+  },
+  {
+   "value": "dashboard",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/daemon/socketdispatch.go:437"
+   ]
+  },
+  {
+   "value": "keeper.context_thresholds.warn_abs_tokens",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/daemon/stategather.go:360"
+   ]
+  },
+  {
+   "value": "2006-01-02T15:04:05Z",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/daemon/statetypes.go:165"
+   ]
+  },
+  {
+   "value": "json:\\\"last_event_id\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/daemon/subscribe.go:683"
+   ]
+  },
+  {
+   "value": "daemon: tmux substrate: resolve pane PID",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/daemon/tmuxsubstrate.go:1903"
+   ]
+  },
+  {
+   "value": "hk-bl2k6",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/daemon/tmuxsubstrate.go:2868"
+   ]
+  },
+  {
+   "value": "review_policy",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/daemon/workloop_runplan.go:371"
+   ]
+  },
+  {
+   "value": "json:\\\"epic_id,omitempty\\\"",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/dashboard/types.go:41"
+   ]
+  },
+  {
+   "value": "json:\\\"headline\\\"",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/dashboard/types.go:43"
+   ]
+  },
+  {
+   "value": "intent",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/goalstate/types.go:47"
+   ]
+  },
+  {
+   "value": "PATH=",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/handler/claudehandler_chb006_024.go:290"
+   ]
+  },
+  {
+   "value": "DISABLE_AUTO_UPDATE=true",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/handler/claudehandler_chb006_024.go:339"
+   ]
+  },
+  {
+   "value": "DISABLE_UPDATE_PROMPT=true",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/handler/claudehandler_chb006_024.go:340"
+   ]
+  },
+  {
+   "value": "--resume",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/harness/claude/launchspec.go:313"
+   ]
+  },
+  {
+   "value": "Pi harness: refusing to start \u2014 harnesses.pi config is absent or incomplete; ",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/harness/pi/launchspec.go:54"
+   ]
+  },
+  {
+   "value": "Fix: run 'harmonik pi config --example' to print a complete harnesses.pi: block, ",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/harness/pi/launchspec.go:56"
+   ]
+  },
+  {
+   "value": "json:\\\"messages\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/harness/pi/ndjsonparser.go:137"
+   ]
+  },
+  {
+   "value": "SessionEnd",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/hookrelay/hookrelay.go:38"
+   ]
+  },
+  {
+   "value": "StopFailure",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/hookrelay/hookrelay.go:39"
+   ]
+  },
+  {
+   "value": "Notification",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/hookrelay/hookrelay.go:40"
+   ]
+  },
+  {
+   "value": "json:\\\"flags\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/hookrelay/hookrelay.go:63"
+   ]
+  },
+  {
+   "value": "HARMONIK_RUN_ID",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/hookrelay/hookrelay.go:104"
+   ]
+  },
+  {
+   "value": "review.json",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/hookrelay/hookrelay.go:315"
+   ]
+  },
+  {
+   "value": "malformed_review_file",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/hookrelay/hookrelay.go:329"
+   ]
+  },
+  {
+   "value": "notes",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/hookrelay/hookrelay.go:364"
+   ]
+  },
+  {
+   "value": "sub_reason",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/hookrelay/hookrelay.go:451"
+   ]
+  },
+  {
+   "value": ".sid",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/keeper/sessionid.go:13"
+   ]
+  },
+  {
+   "value": "opened",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/keeper/shell.go:76"
+   ]
+  },
+  {
+   "value": "confirmed",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/keeper/step.go:321"
+   ]
+  },
+  {
+   "value": "resumed",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/keeper/step.go:795"
+   ]
+  },
+  {
+   "value": "for-each-ref",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/lifecycle/activerun_em031a.go:197"
+   ]
+  },
+  {
+   "value": "--follow",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/lifecycle/agentwatcherreap.go:90"
+   ]
+  },
+  {
+   "value": "#{pane_id}",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/lifecycle/tmux/osadapter.go:237"
+   ]
+  },
+  {
+   "value": "no server running",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/lifecycle/tmux/osadapter.go:679"
+   ]
+  },
+  {
+   "value": "-flywheel",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/lifecycle/tmux/subcommand.go:227"
+   ]
+  },
+  {
+   "value": "wait_ms",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/mergeq/mergeq.go:163"
+   ]
+  },
+  {
+   "value": "yaml:\\\"harnesses\\\"",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/projectconfig/projectconfig.go:732"
+   ]
+  },
+  {
+   "value": "yaml:\\\"provider\\\"",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/projectconfig/projectconfig.go:852"
+   ]
+  },
+  {
+   "value": "yaml:\\\"api_key_env\\\"",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/projectconfig/projectconfig.go:854"
+   ]
+  },
+  {
+   "value": "yaml",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/projectconfig/projectconfig.go:1667"
+   ]
+  },
+  {
+   "value": "queue-append",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/queue/cli/append.go:82"
+   ]
+  },
+  {
+   "value": "--queue-id",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/queue/cli/cancel.go:85"
+   ]
+  },
+  {
+   "value": "--workflow-mode",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/queue/cli/dryrun.go:65"
+   ]
+  },
+  {
+   "value": "dry-run",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/queue/cli/dryrun.go:92"
+   ]
+  },
+  {
+   "value": "accepted",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/queue/cli/recover.go:119"
+   ]
+  },
+  {
+   "value": "queue-status",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/queue/cli/status.go:68"
+   ]
+  },
+  {
+   "value": "queue-submit",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/queue/cli/submit.go:106"
+   ]
+  },
+  {
+   "value": ".cancelled-",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/queue/persistence.go:338"
+   ]
+  },
+  {
+   "value": "json:\\\"captured_at\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/queue/readiness/snapshot.go:213"
+   ]
+  },
+  {
+   "value": "json:\\\"transaction_id\\\"",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/queue/transaction.go:85"
+   ]
+  },
+  {
+   "value": "json:\\\"normalized_name\\\"",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/queue/transaction.go:87"
+   ]
+  },
+  {
+   "value": "json:\\\"max_concurrent,omitempty\\\"",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/queue/types.go:524"
+   ]
+  },
+  {
+   "value": "json:\\\"queues\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/queue/types.go:577"
+   ]
+  },
+  {
+   "value": "json:\\\"n\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/queue/types.go:592"
+   ]
+  },
+  {
+   "value": "queue_status",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/queue/validation.go:372"
+   ]
+  },
+  {
+   "value": "json:\\\"sha256\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/release/manifest.go:74"
+   ]
+  },
+  {
+   "value": "reopened",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/runexec/run.go:423"
+   ]
+  },
+  {
+   "value": "json:\\\"detail,omitempty\\\"",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/runexec/vocab.go:161"
+   ]
+  },
+  {
+   "value": "commit-merge",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/runmerge/merge.go:235"
+   ]
+  },
+  {
+   "value": "--abort",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/runmerge/merge.go:414"
+   ]
+  },
+  {
+   "value": "build",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/runmerge/merge.go:436"
+   ]
+  },
+  {
+   "value": "update-ref",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/runmerge/merge.go:547"
+   ]
+  },
+  {
+   "value": ".beads/issues.jsonl",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/runmerge/worktreestate.go:391"
+   ]
+  },
+  {
+   "value": ".yaml",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/scenario/scenariofile.go:63"
+   ]
+  },
+  {
+   "value": "json:\\\"from,omitempty\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/schedule/types.go:114"
+   ]
+  },
+  {
+   "value": "origin/main",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/sentinel/governor.go:415"
+   ]
+  },
+  {
+   "value": "--oneline",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/sentinel/governor.go:416"
+   ]
+  },
+  {
+   "value": "decision_acks",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/sentinel/trip_ev043b.go:329"
+   ]
+  },
+  {
+   "value": "subject",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/sentinel/trip_ev043b.go:385"
+   ]
+  },
+  {
+   "value": "ack_token",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/sentinel/trip_ev043b.go:389"
+   ]
+  },
+  {
+   "value": "json:\\\"harness,omitempty\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/sessiondata/sessiondata.go:123"
+   ]
+  },
+  {
+   "value": "json:\\\"turn_count\\\"",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/sessiondata/sessiondata.go:132"
+   ]
+  },
+  {
+   "value": "implement",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/sessiondata/sessiondata.go:216"
+   ]
+  },
+  {
+   "value": "event_id",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/structuredlog/handler.go:246"
+   ]
+  },
+  {
+   "value": "json:\\\"level\\\"",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/structuredlog/record.go:47"
+   ]
+  },
+  {
+   "value": "2006-01-02T15:04:05.000Z07:00",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/structuredlog/record.go:80"
+   ]
+  },
+  {
+   "value": "json:\\\"session\\\"",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/supervise/reap.go:63"
+   ]
+  },
+  {
+   "value": "pidfile",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/supervise/supervisor_watchdog.go:94"
+   ]
+  },
+  {
+   "value": "CLAUDE_CONFIG_HOME",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/testhelpers/hermetic/hermetic.go:192"
+   ]
+  },
+  {
+   "value": "github.com/gregberns/harmonik/internal/orchestrator",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/testhelpers/jsonlfixture.go:96"
+   ]
+  },
+  {
+   "value": "{\\\"run_id\\\":\\\"",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/testhelpers/jsonlfixture.go:97"
+   ]
+  },
+  {
+   "value": "127.0.0.1",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/transport/tunnel/tunnel.go:113"
+   ]
+  },
+  {
+   "value": "json:\\\"dominant_model\\\"",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/usage/usage.go:52"
+   ]
+  },
+  {
+   "value": "json:\\\"run_count\\\"",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/usage/usage.go:61"
+   ]
+  },
+  {
+   "value": "latest.json",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/watch/ledger.go:96"
+   ]
+  },
+  {
+   "value": "disk",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/workers/telemetry.go:488"
+   ]
+  },
+  {
+   "value": "graph",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/workflow/dot/parser.go:392"
+   ]
+  },
+  {
+   "value": "^[A-Za-z0-9._:/-]+$",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/workflow/dot/parser.go:514"
+   ]
+  },
+  {
+   "value": "medium",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/workflow/dot/parser.go:526"
+   ]
+  },
+  {
+   "value": "workflow_id",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/workflow/dot/parser.go:560"
+   ]
+  },
+  {
+   "value": "goal",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/workflow/dot/parser.go:586"
+   ]
+  },
+  {
+   "value": "Replace it with the typed successor: gate_ref, skills_ref, or freedom_profile_ref (CP-055).\\n",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/workflow/loader.go:93"
+   ]
+  },
+  {
+   "value": "review-target.md",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/workspace/agenttask_chb028.go:144"
+   ]
+  },
+  {
+   "value": "hasTrustDialogAccepted",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/workspace/claudetrust_wm040b.go:532"
+   ]
+  },
+  {
+   "value": "theme",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/workspace/claudetrust_wm040b.go:657"
+   ]
+  },
+  {
+   "value": "worktree ",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/workspace/discoverworktrees.go:212"
+   ]
+  },
+  {
+   "value": "2006-01-02T15:04:05Z07:00",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/workspace/discoverworktrees.go:234"
+   ]
+  },
+  {
+   "value": "--verify",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/workspace/gitignorehygiene.go:319"
+   ]
+  },
+  {
+   "value": "harmonik.meta.json",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "internal/workspace/implementerref_wm022.go:81"
+   ]
+  },
+  {
+   "value": "--strategy=ort",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "internal/workspace/mergedispatch_wm018a.go:144"
+   ]
+  },
+  {
+   "value": "python3",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "internal/workspace/remotematerialize.go:286"
+   ]
+  },
+  {
+   "value": "HandleQueueSubmit",
+   "sites": 3,
+   "files_named_by_detector": 2,
+   "reported_at": [
+    "scripts/queue-status-writer-ratchet.go:43"
+   ]
+  },
+  {
+   "value": "Status",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "scripts/queue-status-writer-ratchet.go:258"
+   ]
+  },
+  {
+   "value": "-json",
+   "sites": 3,
+   "files_named_by_detector": 3,
+   "reported_at": [
+    "tools/forbid-import/main.go:150"
+   ]
+  },
+  {
+   "value": "lintreport:",
+   "sites": 3,
+   "files_named_by_detector": 1,
+   "reported_at": [
+    "tools/lintreport/main.go:75"
+   ]
+  }
+ ]
+}

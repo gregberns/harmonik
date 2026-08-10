@@ -1,0 +1,1618 @@
+{
+ "repo": "harmonik",
+ "revision": "d5a12348f",
+ "generated_by": "codebase-organism refactor/cmd/detect @ 5e16c72",
+ "count": 161,
+ "findings": [
+  {
+   "issue": "B2",
+   "node": "harmonik-twin-claude.run",
+   "file": "cmd/harmonik-twin-claude/main.go",
+   "line": 80,
+   "evidence": "complexity 28 with 6 direct effectful call(s): fmt.Fprintf, fmt.Fprintln, net.Close, os.Stat, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik-twin-claude"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik-twin-claude.runScript",
+   "file": "cmd/harmonik-twin-claude/scriptdriver.go",
+   "line": 342,
+   "evidence": "complexity 22 with 1 direct effectful call(s): time.After",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik-twin-claude"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runAgentBrief",
+   "file": "cmd/harmonik/agent.go",
+   "line": 110,
+   "evidence": "complexity 21 with 3 direct effectful call(s): fmt.Fprintf, os.Getenv, os.Getwd",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runBranchReapSubcommand",
+   "file": "cmd/harmonik/branch_reap_cmd.go",
+   "line": 27,
+   "evidence": "complexity 35 with 4 direct effectful call(s): fmt.Fprintf, fmt.Fprintln, io.WriteString, os.Getwd",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runCaptainLaunchWithOps",
+   "file": "cmd/harmonik/captain.go",
+   "line": 402,
+   "evidence": "complexity 25 with 5 direct effectful call(s): fmt.Fprintf, fmt.Fprintln, fmt.Printf, os.Executable, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runCaptainRespawn",
+   "file": "cmd/harmonik/captain_respawn.go",
+   "line": 137,
+   "evidence": "complexity 21 with 3 direct effectful call(s): fmt.Fprintf, fmt.Fprintln, os.Getwd",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runCommsSendSubcommand",
+   "file": "cmd/harmonik/comms.go",
+   "line": 131,
+   "evidence": "complexity 67 with 10 direct effectful call(s): fmt.Fprintf, fmt.Println, io.ReadAll, log.Printf, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runCommsLogSubcommand",
+   "file": "cmd/harmonik/comms.go",
+   "line": 616,
+   "evidence": "complexity 44 with 6 direct effectful call(s): fmt.Fprintf, fmt.Fprintln, fmt.Printf, fmt.Println, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runCommsPresenceSubcommand",
+   "file": "cmd/harmonik/comms.go",
+   "line": 907,
+   "evidence": "complexity 42 with 9 direct effectful call(s): fmt.Fprintf, fmt.Println, log.Printf, net.Close, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runCommsWhoSubcommand",
+   "file": "cmd/harmonik/comms.go",
+   "line": 1100,
+   "evidence": "complexity 24 with 6 direct effectful call(s): fmt.Fprintf, fmt.Fprintln, fmt.Printf, fmt.Println, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runCommsRecvSubcommand",
+   "file": "cmd/harmonik/comms.go",
+   "line": 1282,
+   "evidence": "complexity 62 with 9 direct effectful call(s): fmt.Fprintf, fmt.Fprintln, log.Printf, net.Close, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runCommsRecvFollowIO",
+   "file": "cmd/harmonik/comms.go",
+   "line": 1693,
+   "evidence": "complexity 61 with 9 direct effectful call(s): fmt.Fprintf, fmt.Fprintln, log.Printf, net.Close, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runCommsRecvWait",
+   "file": "cmd/harmonik/comms.go",
+   "line": 2041,
+   "evidence": "complexity 21 with 6 direct effectful call(s): fmt.Fprintf, log.Printf, net.Close, net.DialContext, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runCrewStartCoreWith",
+   "file": "cmd/harmonik/crew.go",
+   "line": 289,
+   "evidence": "complexity 17 with 4 direct effectful call(s): fmt.Fprintf, fmt.Fprintln, fmt.Println, os.Getwd",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runCrewStopSubcommand",
+   "file": "cmd/harmonik/crew.go",
+   "line": 441,
+   "evidence": "complexity 17 with 2 direct effectful call(s): fmt.Fprintf, fmt.Printf",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runCrewListSubcommand",
+   "file": "cmd/harmonik/crew.go",
+   "line": 520,
+   "evidence": "complexity 19 with 5 direct effectful call(s): fmt.Fprintf, fmt.Fprintln, fmt.Printf, fmt.Println, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runDashboardSubcommand",
+   "file": "cmd/harmonik/dashboard_cmd.go",
+   "line": 52,
+   "evidence": "complexity 17 with 1 direct effectful call(s): fmt.Fprintf",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runDecisionsRaiseSubcommand",
+   "file": "cmd/harmonik/decisions.go",
+   "line": 99,
+   "evidence": "complexity 43 with 3 direct effectful call(s): fmt.Fprintf, fmt.Println, os.Getenv",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runDecisionsWithdrawSubcommand",
+   "file": "cmd/harmonik/decisions.go",
+   "line": 293,
+   "evidence": "complexity 24 with 3 direct effectful call(s): fmt.Fprintf, fmt.Println, os.Getenv",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runDecisionsListOrShow",
+   "file": "cmd/harmonik/decisions_k4.go",
+   "line": 198,
+   "evidence": "complexity 15 with 1 direct effectful call(s): fmt.Fprintf",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runDecisionsListOrShowParsed",
+   "file": "cmd/harmonik/decisions_k4.go",
+   "line": 243,
+   "evidence": "complexity 15 with 2 direct effectful call(s): fmt.Fprintf, fmt.Println",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runDecisionsAnswerSubcommand",
+   "file": "cmd/harmonik/decisions_k4.go",
+   "line": 380,
+   "evidence": "complexity 24 with 3 direct effectful call(s): fmt.Fprintf, fmt.Printf, fmt.Println",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runDigestSubcommand",
+   "file": "cmd/harmonik/digest.go",
+   "line": 30,
+   "evidence": "complexity 25 with 5 direct effectful call(s): fmt.Fprintf, fmt.Print, fmt.Printf, os.Getwd, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.printHumanDigest",
+   "file": "cmd/harmonik/digest.go",
+   "line": 176,
+   "evidence": "complexity 35 with 2 direct effectful call(s): fmt.Printf, fmt.Println",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "digest.renderWatchFrame",
+   "file": "cmd/harmonik/digest/watch.go",
+   "line": 72,
+   "evidence": "complexity 22 with 1 direct effectful call(s): time.Now",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik/digest"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runEvalCollect",
+   "file": "cmd/harmonik/eval_cmd.go",
+   "line": 133,
+   "evidence": "complexity 23 with 4 direct effectful call(s): fmt.Fprint, fmt.Fprintf, os.Close, os.OpenFile",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.evalReadEvents",
+   "file": "cmd/harmonik/eval_cmd.go",
+   "line": 314,
+   "evidence": "complexity 31 with 8 direct effectful call(s): bufio.Buffer, bufio.Bytes, bufio.Err, bufio.NewScanner, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runEvalMetrics",
+   "file": "cmd/harmonik/eval_metrics_cmd.go",
+   "line": 90,
+   "evidence": "complexity 17 with 3 direct effectful call(s): fmt.Fprint, fmt.Fprintf, os.WriteFile",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runEvalReport",
+   "file": "cmd/harmonik/eval_report_cmd.go",
+   "line": 72,
+   "evidence": "complexity 20 with 2 direct effectful call(s): fmt.Fprint, fmt.Fprintf",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runGreenlightSubcommand",
+   "file": "cmd/harmonik/greenlight_cmd.go",
+   "line": 34,
+   "evidence": "complexity 15 with 5 direct effectful call(s): exec.CommandContext, exec.LookPath, exec.Run, fmt.Fprintf, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runHandlerResume",
+   "file": "cmd/harmonik/handler.go",
+   "line": 293,
+   "evidence": "complexity 34 with 3 direct effectful call(s): fmt.Fprintf, fmt.Fprintln, os.Getwd",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runHandlerStatus",
+   "file": "cmd/harmonik/handler.go",
+   "line": 642,
+   "evidence": "complexity 30 with 2 direct effectful call(s): fmt.Fprintf, os.Getwd",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.printHandlerTextEntry",
+   "file": "cmd/harmonik/handler.go",
+   "line": 861,
+   "evidence": "complexity 19 with 2 direct effectful call(s): fmt.Fprintf, fmt.Fprintln",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runHarnessWithSigs",
+   "file": "cmd/harmonik/harness.go",
+   "line": 144,
+   "evidence": "complexity 93 with 7 direct effectful call(s): fmt.Fprintf, os.Exit, os.Getenv, os.Getwd, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runInit",
+   "file": "cmd/harmonik/init_cmd.go",
+   "line": 85,
+   "evidence": "complexity 48 with 1 direct effectful call(s): os.Getwd",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.provisionSkills",
+   "file": "cmd/harmonik/init_cmd.go",
+   "line": 699,
+   "evidence": "complexity 20 with 3 direct effectful call(s): os.MkdirAll, os.Stat, os.WriteFile",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runKeeperSubcommand",
+   "file": "cmd/harmonik/keeper_cmd.go",
+   "line": 173,
+   "evidence": "complexity 37 with 4 direct effectful call(s): fmt.Fprintf, os.Getwd, os.UserHomeDir, signal.NotifyContext",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.parseKeeperEnableArgs",
+   "file": "cmd/harmonik/keeper_enable_doctor_cmd.go",
+   "line": 87,
+   "evidence": "complexity 27 with 3 direct effectful call(s): fmt.Fprint, fmt.Fprintf, fmt.Fprintln",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runKeeperEnable",
+   "file": "cmd/harmonik/keeper_enable_doctor_cmd.go",
+   "line": 228,
+   "evidence": "complexity 48 with 7 direct effectful call(s): fmt.Fprintf, fmt.Fprintln, os.IsNotExist, os.MkdirAll, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runKeeperDoctor",
+   "file": "cmd/harmonik/keeper_enable_doctor_cmd.go",
+   "line": 603,
+   "evidence": "complexity 51 with 5 direct effectful call(s): exec.LookPath, fmt.Fprintf, os.Getenv, os.Stat, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.run",
+   "file": "cmd/harmonik/main.go",
+   "line": 160,
+   "evidence": "complexity 216 with 11 direct effectful call(s): fmt.Fprint, fmt.Fprintf, fmt.Fprintln, fmt.Print, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runMigrateRCPrefix",
+   "file": "cmd/harmonik/migrate_rc_prefix_cmd.go",
+   "line": 42,
+   "evidence": "complexity 32 with 7 direct effectful call(s): bufio.NewScanner, bufio.Scan, bufio.Text, fmt.Fprint, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runPromoteSubcommand",
+   "file": "cmd/harmonik/promote_cmd.go",
+   "line": 104,
+   "evidence": "complexity 18 with 4 direct effectful call(s): fmt.Fprintf, fmt.Print, os.Getenv, os.Getwd",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runPromotePush",
+   "file": "cmd/harmonik/promote_cmd.go",
+   "line": 265,
+   "evidence": "complexity 29 with 10 direct effectful call(s): exec.CombinedOutput, exec.CommandContext, exec.Output, exec.Run, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runReconcileSubcommandIO",
+   "file": "cmd/harmonik/reconcile.go",
+   "line": 106,
+   "evidence": "complexity 30 with 5 direct effectful call(s): exec.LookPath, fmt.Fprintf, fmt.Fprintln, os.Getwd, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.parseReleaseFlags",
+   "file": "cmd/harmonik/release_cmd.go",
+   "line": 110,
+   "evidence": "complexity 23 with 1 direct effectful call(s): os.Getwd",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runBeadSubcommandIO",
+   "file": "cmd/harmonik/run.go",
+   "line": 114,
+   "evidence": "complexity 124 with 16 direct effectful call(s): exec.LookPath, fmt.Fprintf, fmt.Fprintln, os.Close, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.viaWatchGroupCompletion",
+   "file": "cmd/harmonik/run_via_daemon.go",
+   "line": 340,
+   "evidence": "complexity 35 with 5 direct effectful call(s): bufio.Bytes, bufio.Err, bufio.NewScanner, bufio.Scan, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runScheduleAdd",
+   "file": "cmd/harmonik/schedule.go",
+   "line": 144,
+   "evidence": "complexity 40 with 3 direct effectful call(s): fmt.Fprintf, fmt.Fprintln, fmt.Printf",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runScheduleList",
+   "file": "cmd/harmonik/schedule.go",
+   "line": 290,
+   "evidence": "complexity 16 with 4 direct effectful call(s): fmt.Fprintf, fmt.Printf, fmt.Println, time.Now",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runSentinelEmitTrip",
+   "file": "cmd/harmonik/sentinel_cmd.go",
+   "line": 84,
+   "evidence": "complexity 20 with 4 direct effectful call(s): fmt.Fprintf, fmt.Println, os.Getwd, time.Now",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runSentinelRecordHalt",
+   "file": "cmd/harmonik/sentinel_cmd.go",
+   "line": 239,
+   "evidence": "complexity 19 with 5 direct effectful call(s): fmt.Fprintf, fmt.Fprintln, fmt.Println, os.Getwd, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runSleepSubcommand",
+   "file": "cmd/harmonik/sleepwake.go",
+   "line": 53,
+   "evidence": "complexity 17 with 2 direct effectful call(s): fmt.Fprintf, fmt.Fprintln",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runWakeSubcommand",
+   "file": "cmd/harmonik/sleepwake.go",
+   "line": 122,
+   "evidence": "complexity 26 with 2 direct effectful call(s): fmt.Fprintf, fmt.Fprintln",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runSmoke",
+   "file": "cmd/harmonik/smoke.go",
+   "line": 79,
+   "evidence": "complexity 45 with 4 direct effectful call(s): fmt.Fprint, fmt.Fprintf, fmt.Fprintln, os.Getwd",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.smokeWatchSignals",
+   "file": "cmd/harmonik/smoke.go",
+   "line": 367,
+   "evidence": "complexity 60 with 8 direct effectful call(s): bufio.Bytes, bufio.Err, bufio.NewScanner, bufio.Scan, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runStartWith",
+   "file": "cmd/harmonik/start.go",
+   "line": 66,
+   "evidence": "complexity 15 with 2 direct effectful call(s): fmt.Fprintf, fmt.Fprintln",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runSubscribeSubcommand",
+   "file": "cmd/harmonik/subscribe.go",
+   "line": 59,
+   "evidence": "complexity 62 with 9 direct effectful call(s): bufio.NewReader, bufio.ReadBytes, fmt.Fprintf, io.Copy, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runSubscribeFollowIO",
+   "file": "cmd/harmonik/subscribe.go",
+   "line": 302,
+   "evidence": "complexity 37 with 6 direct effectful call(s): fmt.Fprintf, fmt.Fprintln, net.DialContext, net.Write, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "supervise.maybeAutoApply",
+   "file": "cmd/harmonik/supervise/assetskew.go",
+   "line": 167,
+   "evidence": "complexity 17 with 3 direct effectful call(s): slog.DebugContext, slog.InfoContext, slog.WarnContext",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik/supervise"
+  },
+  {
+   "issue": "B2",
+   "node": "supervise.RunAttach",
+   "file": "cmd/harmonik/supervise/attach.go",
+   "line": 24,
+   "evidence": "complexity 15 with 6 direct effectful call(s): exec.LookPath, fmt.Fprintf, io.WriteString, os.Environ, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik/supervise"
+  },
+  {
+   "issue": "B2",
+   "node": "supervise.WriteConfigAtomic",
+   "file": "cmd/harmonik/supervise/config.go",
+   "line": 129,
+   "evidence": "complexity 18 with 9 direct effectful call(s): os.Close, os.CreateTemp, os.MkdirAll, os.Name, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik/supervise"
+  },
+  {
+   "issue": "B2",
+   "node": "supervise.RunLogs",
+   "file": "cmd/harmonik/supervise/logs.go",
+   "line": 23,
+   "evidence": "complexity 22 with 6 direct effectful call(s): exec.CommandContext, exec.Run, fmt.Fprint, fmt.Fprintf, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik/supervise"
+  },
+  {
+   "issue": "B2",
+   "node": "supervise.WriteLoopStatusAtomic",
+   "file": "cmd/harmonik/supervise/loopstatus.go",
+   "line": 120,
+   "evidence": "complexity 18 with 9 direct effectful call(s): os.Close, os.CreateTemp, os.MkdirAll, os.Name, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik/supervise"
+  },
+  {
+   "issue": "B2",
+   "node": "supervise.RunPs",
+   "file": "cmd/harmonik/supervise/ps.go",
+   "line": 48,
+   "evidence": "complexity 19 with 3 direct effectful call(s): fmt.Fprint, fmt.Fprintf, os.Getwd",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik/supervise"
+  },
+  {
+   "issue": "B2",
+   "node": "supervise.RunReap",
+   "file": "cmd/harmonik/supervise/reap.go",
+   "line": 32,
+   "evidence": "complexity 24 with 4 direct effectful call(s): fmt.Fprint, fmt.Fprintf, fmt.Fprintln, os.Getwd",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik/supervise"
+  },
+  {
+   "issue": "B2",
+   "node": "supervise.RunRestart",
+   "file": "cmd/harmonik/supervise/restart.go",
+   "line": 21,
+   "evidence": "complexity 20 with 5 direct effectful call(s): fmt.Fprint, fmt.Fprintf, os.Getwd, os.IsNotExist, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik/supervise"
+  },
+  {
+   "issue": "B2",
+   "node": "supervise.RunShim",
+   "file": "cmd/harmonik/supervise/shim.go",
+   "line": 36,
+   "evidence": "complexity 20 with 5 direct effectful call(s): os.Close, os.Fd, os.Getpid, os.OpenFile, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik/supervise"
+  },
+  {
+   "issue": "B2",
+   "node": "supervise.RunStart",
+   "file": "cmd/harmonik/supervise/start.go",
+   "line": 45,
+   "evidence": "complexity 59 with 13 direct effectful call(s): exec.CombinedOutput, exec.CommandContext, exec.Run, fmt.Fprint, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik/supervise"
+  },
+  {
+   "issue": "B2",
+   "node": "supervise.RunStatus",
+   "file": "cmd/harmonik/supervise/status.go",
+   "line": 54,
+   "evidence": "complexity 32 with 3 direct effectful call(s): fmt.Fprint, fmt.Fprintf, os.Getwd",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik/supervise"
+  },
+  {
+   "issue": "B2",
+   "node": "supervise.RunStop",
+   "file": "cmd/harmonik/supervise/stop.go",
+   "line": 27,
+   "evidence": "complexity 34 with 10 direct effectful call(s): exec.CommandContext, exec.Run, fmt.Fprint, fmt.Fprintf, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik/supervise"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runSuperviseSubcommand",
+   "file": "cmd/harmonik/supervise_cmd.go",
+   "line": 25,
+   "evidence": "complexity 17 with 2 direct effectful call(s): fmt.Fprintf, fmt.Print",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runSyncAssets",
+   "file": "cmd/harmonik/sync_assets_cmd.go",
+   "line": 198,
+   "evidence": "complexity 47 with 3 direct effectful call(s): fmt.Fprintln, os.Getwd, os.Stat",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.applyManagedRegion",
+   "file": "cmd/harmonik/sync_assets_cmd.go",
+   "line": 531,
+   "evidence": "complexity 15 with 2 direct effectful call(s): os.IsNotExist, os.ReadFile",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.applyContentOwned",
+   "file": "cmd/harmonik/sync_assets_cmd.go",
+   "line": 606,
+   "evidence": "complexity 17 with 2 direct effectful call(s): os.IsNotExist, os.ReadFile",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.commitSync",
+   "file": "cmd/harmonik/sync_assets_cmd.go",
+   "line": 1045,
+   "evidence": "complexity 16 with 2 direct effectful call(s): exec.CommandContext, exec.Run",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runUsageSubcommand",
+   "file": "cmd/harmonik/usage_cmd.go",
+   "line": 46,
+   "evidence": "complexity 35 with 5 direct effectful call(s): fmt.Fprintf, fmt.Fprintln, fmt.Print, os.Getwd, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runVetoVerdictSubcommand",
+   "file": "cmd/harmonik/veto_verdict.go",
+   "line": 97,
+   "evidence": "complexity 18 with 4 direct effectful call(s): fmt.Fprintf, fmt.Fprintln, os.Getwd, os.Stat",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "harmonik.runWriteReviewVerdictSubcommand",
+   "file": "cmd/harmonik/write_review_verdict_cmd.go",
+   "line": 70,
+   "evidence": "complexity 25 with 4 direct effectful call(s): fmt.Fprintf, fmt.Fprintln, fmt.Printf, os.Getwd",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/branching.parse",
+   "file": "internal/branching/branching.go",
+   "line": 150,
+   "evidence": "complexity 16 with 1 direct effectful call(s): slog.WarnContext",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/branching"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/brcli.Adapter.runWithDBLockedRetryTimeoutKills",
+   "file": "internal/brcli/dblockretry.go",
+   "line": 139,
+   "evidence": "complexity 18 with 2 direct effectful call(s): rand.Int63n, time.After",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/brcli"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/brcli.Adapter.terminalTransitionWrite",
+   "file": "internal/brcli/terminaltransition_bi010.go",
+   "line": 161,
+   "evidence": "complexity 15 with 1 direct effectful call(s): time.Now",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/brcli"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.runAgentLaunch",
+   "file": "internal/daemon/agentlaunch.go",
+   "line": 341,
+   "evidence": "complexity 66 with 4 direct effectful call(s): io.TeeReader, os.Close, os.Create, os.MkdirAll",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.bootState.launchWorkLoop",
+   "file": "internal/daemon/bootworkloop.go",
+   "line": 38,
+   "evidence": "complexity 21 with 1 direct effectful call(s): log.Printf",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.pruneBrHistoryArchive",
+   "file": "internal/daemon/brhistoryrotate.go",
+   "line": 240,
+   "evidence": "complexity 27 with 7 direct effectful call(s): os.IsNotExist, os.ReadDir, os.Remove, os.Stat, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.SweepClaudeWorktrees",
+   "file": "internal/daemon/claudeworktreesweep.go",
+   "line": 89,
+   "evidence": "complexity 32 with 8 direct effectful call(s): exec.CombinedOutput, exec.CommandContext, log.Printf, os.Getenv, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.CursorStore.Advance",
+   "file": "internal/daemon/commscursor.go",
+   "line": 153,
+   "evidence": "complexity 20 with 11 direct effectful call(s): fmt.Fprintln, os.Close, os.CreateTemp, os.Fd, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.crewHandlerImpl.HandleCrewStart",
+   "file": "internal/daemon/crewstart.go",
+   "line": 181,
+   "evidence": "complexity 23 with 2 direct effectful call(s): fmt.Fprintf, time.Now",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.crewHandlerImpl.HandleCrewStop",
+   "file": "internal/daemon/crewstart.go",
+   "line": 664,
+   "evidence": "complexity 20 with 3 direct effectful call(s): fmt.Fprintf, os.IsNotExist, os.Remove",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.startWithHooks",
+   "file": "internal/daemon/daemon.go",
+   "line": 931,
+   "evidence": "complexity 19 with 2 direct effectful call(s): log.Printf, time.Now",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.DashboardBuilder.readThroughput",
+   "file": "internal/daemon/dashboardgather.go",
+   "line": 194,
+   "evidence": "complexity 26 with 1 direct effectful call(s): os.Stat",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.driveDotWorkflow",
+   "file": "internal/daemon/dot_cascade_core.go",
+   "line": 106,
+   "evidence": "complexity 93 with 1 direct effectful call(s): fmt.Fprintf",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.dispatchDotAgenticNode",
+   "file": "internal/daemon/dot_cascade_core.go",
+   "line": 1126,
+   "evidence": "complexity 68 with 1 direct effectful call(s): fmt.Fprintf",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.executeCognitionGate",
+   "file": "internal/daemon/dot_gate.go",
+   "line": 241,
+   "evidence": "complexity 22 with 1 direct effectful call(s): fmt.Fprintf",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.pasteInjectQuitOnGateFile",
+   "file": "internal/daemon/dot_gate.go",
+   "line": 720,
+   "evidence": "complexity 21 with 2 direct effectful call(s): fmt.Fprintf, time.After",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.DrainDetector.GatherDrainFacts",
+   "file": "internal/daemon/draindetect.go",
+   "line": 263,
+   "evidence": "complexity 19 with 1 direct effectful call(s): time.Now",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.stagedBeadGeneratorEvalWithPort",
+   "file": "internal/daemon/eagerfill_em063.go",
+   "line": 404,
+   "evidence": "complexity 20 with 3 direct effectful call(s): exec.CommandContext, exec.Output, fmt.Fprintf",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.LoadHandlerPauseState",
+   "file": "internal/daemon/handlerpause_persist_m0k0a.go",
+   "line": 263,
+   "evidence": "complexity 21 with 2 direct effectful call(s): os.IsNotExist, os.ReadFile",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.probeCrewRegistrySessions",
+   "file": "internal/daemon/orphansweep.go",
+   "line": 739,
+   "evidence": "complexity 22 with 2 direct effectful call(s): log.Printf, syscall.Kill",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.RunOrphanSweep",
+   "file": "internal/daemon/orphansweep.go",
+   "line": 854,
+   "evidence": "complexity 33 with 2 direct effectful call(s): log.Printf, time.Now",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.pasteInjectQuitOnCommit",
+   "file": "internal/daemon/pasteinject.go",
+   "line": 802,
+   "evidence": "complexity 85 with 2 direct effectful call(s): fmt.Fprintf, time.After",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.pasteInjectQuitOnReviewFile",
+   "file": "internal/daemon/pasteinject.go",
+   "line": 2374,
+   "evidence": "complexity 56 with 2 direct effectful call(s): fmt.Fprintf, time.After",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.QuiesceArbiter.reconcileOrphanedMarkers",
+   "file": "internal/daemon/quiesce.go",
+   "line": 325,
+   "evidence": "complexity 19 with 4 direct effectful call(s): fmt.Fprintf, os.IsNotExist, os.ReadDir, time.Now",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.RunCatBL1StartupSweep",
+   "file": "internal/daemon/reconciliation.go",
+   "line": 127,
+   "evidence": "complexity 17 with 1 direct effectful call(s): fmt.Fprintf",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.RunCatBL3StartupSweep",
+   "file": "internal/daemon/reconciliation.go",
+   "line": 311,
+   "evidence": "complexity 15 with 8 direct effectful call(s): fmt.Fprintf, os.Close, os.IsNotExist, os.Open, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.runScheduledClassBRepair",
+   "file": "internal/daemon/reconciliationcadence_rc020a.go",
+   "line": 276,
+   "evidence": "complexity 17 with 2 direct effectful call(s): fmt.Fprintf, time.Now",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon/scenariotest.RunConcurrentMerge",
+   "file": "internal/daemon/scenariotest/concurrent_merge.go",
+   "line": 181,
+   "evidence": "complexity 25 with 3 direct effectful call(s): os.Setenv, os.Unsetenv, time.Sleep",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon/scenariotest"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.runWorkLoop",
+   "file": "internal/daemon/scheduler.go",
+   "line": 484,
+   "evidence": "complexity 158 with 4 direct effectful call(s): fmt.Fprint, fmt.Fprintf, time.After, time.Now",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.evaluateGroupAdvanceWithOutcome",
+   "file": "internal/daemon/scheduler.go",
+   "line": 2297,
+   "evidence": "complexity 25 with 2 direct effectful call(s): fmt.Fprintf, time.Now",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.StaleWatcher.checkRun",
+   "file": "internal/daemon/stalewatch.go",
+   "line": 803,
+   "evidence": "complexity 55 with 1 direct effectful call(s): fmt.Fprintf",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.SubscribeHub.HandleSubscribe",
+   "file": "internal/daemon/subscribe.go",
+   "line": 325,
+   "evidence": "complexity 58 with 5 direct effectful call(s): fmt.Fprintf, net.Read, net.SetWriteDeadline, slog.WarnContext, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.ExecuteVerdict",
+   "file": "internal/daemon/verdictexecutor_rc025a.go",
+   "line": 105,
+   "evidence": "complexity 23 with 1 direct effectful call(s): time.Now",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/daemon.beadRunOne",
+   "file": "internal/daemon/workloop.go",
+   "line": 143,
+   "evidence": "complexity 76 with 5 direct effectful call(s): exec.Run, exec.Start, exec.Wait, fmt.Fprintf, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/digest.buildPendingDecisions",
+   "file": "internal/digest/builder.go",
+   "line": 350,
+   "evidence": "complexity 18 with 2 direct effectful call(s): os.ReadDir, os.ReadFile",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/digest"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/eventbus.busImpl.Emit",
+   "file": "internal/eventbus/busimpl.go",
+   "line": 444,
+   "evidence": "complexity 16 with 1 direct effectful call(s): time.Now",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/eventbus"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/eventbus.busImpl.EmitWithRunID",
+   "file": "internal/eventbus/busimpl.go",
+   "line": 572,
+   "evidence": "complexity 16 with 1 direct effectful call(s): time.Now",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/eventbus"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/eventbus.busImpl.EmitAgentMessage",
+   "file": "internal/eventbus/busimpl.go",
+   "line": 692,
+   "evidence": "complexity 15 with 1 direct effectful call(s): time.Now",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/eventbus"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/eventbus.busImpl.EmitAgentPresence",
+   "file": "internal/eventbus/busimpl.go",
+   "line": 782,
+   "evidence": "complexity 15 with 1 direct effectful call(s): time.Now",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/eventbus"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/eventbus.busImpl.EmitTyped",
+   "file": "internal/eventbus/busimpl.go",
+   "line": 886,
+   "evidence": "complexity 15 with 1 direct effectful call(s): time.Now",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/eventbus"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/eventbus.busImpl.DeadLetterReplay",
+   "file": "internal/eventbus/busimpl.go",
+   "line": 1342,
+   "evidence": "complexity 19 with 6 direct effectful call(s): bufio.NewReader, bufio.ReadBytes, log.Printf, os.Close, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/eventbus"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/handlercontract.Watcher.readLoop",
+   "file": "internal/handlercontract/watcher_hc011.go",
+   "line": 495,
+   "evidence": "complexity 23 with 6 direct effectful call(s): bufio.Buffer, bufio.Bytes, bufio.Err, bufio.NewScanner, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/handlercontract"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/harness/codex.cleanCodexStaleWAL",
+   "file": "internal/harness/codex/walguard.go",
+   "line": 161,
+   "evidence": "complexity 27 with 8 direct effectful call(s): os.IsNotExist, os.MkdirAll, os.ReadFile, os.Remove, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/harness/codex"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/harness/pi.BuildLaunchSpec",
+   "file": "internal/harness/pi/launchspec.go",
+   "line": 247,
+   "evidence": "complexity 19 with 2 direct effectful call(s): os.MkdirAll, os.WriteFile",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/harness/pi"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/harness/pi.buildPiEnv",
+   "file": "internal/harness/pi/launchspec.go",
+   "line": 431,
+   "evidence": "complexity 15 with 1 direct effectful call(s): os.Getenv",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/harness/pi"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/hookrelay.Run",
+   "file": "internal/hookrelay/hookrelay.go",
+   "line": 146,
+   "evidence": "complexity 15 with 3 direct effectful call(s): io.ReadAll, time.Now, time.Since",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/hookrelay"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/hookrelay.sendToSocket",
+   "file": "internal/hookrelay/hookrelay.go",
+   "line": 554,
+   "evidence": "complexity 25 with 11 direct effectful call(s): bufio.Bytes, bufio.Err, bufio.NewScanner, bufio.Scan, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/hookrelay"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/keeper.AwaitAck",
+   "file": "internal/keeper/awaitack.go",
+   "line": 95,
+   "evidence": "complexity 15 with 3 direct effectful call(s): slog.InfoContext, slog.WarnContext, slog.With",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/keeper"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/keeper.deriveContextTokens",
+   "file": "internal/keeper/heartbeat.go",
+   "line": 88,
+   "evidence": "complexity 18 with 9 direct effectful call(s): bufio.Buffer, bufio.Bytes, bufio.Err, bufio.NewScanner, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/keeper"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/keeper.Watcher.maybeHeartbeat",
+   "file": "internal/keeper/heartbeat.go",
+   "line": 252,
+   "evidence": "complexity 16 with 2 direct effectful call(s): slog.DebugContext, slog.WarnContext",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/keeper"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/keeper.RestartNow",
+   "file": "internal/keeper/restartnow.go",
+   "line": 92,
+   "evidence": "complexity 15 with 3 direct effectful call(s): slog.InfoContext, slog.WarnContext, slog.With",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/keeper"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/keeper.recentTranscriptTurn",
+   "file": "internal/keeper/tmuxresolve.go",
+   "line": 266,
+   "evidence": "complexity 21 with 9 direct effectful call(s): bufio.Buffer, bufio.Bytes, bufio.Err, bufio.NewScanner, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/keeper"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/keeper.Watcher.Run",
+   "file": "internal/keeper/watcher.go",
+   "line": 1134,
+   "evidence": "complexity 71 with 3 direct effectful call(s): slog.DebugContext, slog.InfoContext, slog.WarnContext",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/keeper"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/keeper.Watcher.maybeLivePaneRecover",
+   "file": "internal/keeper/watcher.go",
+   "line": 1909,
+   "evidence": "complexity 18 with 2 direct effectful call(s): slog.InfoContext, slog.WarnContext",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/keeper"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/lifecycle.ReapPriorAgentFollowWatchers",
+   "file": "internal/lifecycle/agentwatcherreap.go",
+   "line": 152,
+   "evidence": "complexity 27 with 3 direct effectful call(s): syscall.Kill, time.After, time.Now",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/lifecycle"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/lifecycle.SweepOrphanHandlers",
+   "file": "internal/lifecycle/orphansweep.go",
+   "line": 326,
+   "evidence": "complexity 21 with 3 direct effectful call(s): syscall.Kill, time.After, time.Now",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/lifecycle"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/lifecycle.GCRetiredIntentsWithRedrive",
+   "file": "internal/lifecycle/orphansweep.go",
+   "line": 506,
+   "evidence": "complexity 24 with 2 direct effectful call(s): os.ReadDir, os.Remove",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/lifecycle"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/lifecycle.SweepOrphanBr",
+   "file": "internal/lifecycle/orphansweepbr.go",
+   "line": 108,
+   "evidence": "complexity 23 with 3 direct effectful call(s): syscall.Kill, time.After, time.Now",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/lifecycle"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/lifecycle.AcquirePidfile",
+   "file": "internal/lifecycle/pidfile.go",
+   "line": 90,
+   "evidence": "complexity 19 with 9 direct effectful call(s): os.Close, os.Fd, os.Open, os.OpenFile, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/lifecycle"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/lifecycle.reconcileThreeWay",
+   "file": "internal/lifecycle/startup_pl005_qm002.go",
+   "line": 488,
+   "evidence": "complexity 36 with 3 direct effectful call(s): slog.InfoContext, slog.WarnContext, time.Now",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/lifecycle"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/lifecycle.reapOrphanWorktreesFromArchives",
+   "file": "internal/lifecycle/startup_pl005_qm002.go",
+   "line": 794,
+   "evidence": "complexity 15 with 8 direct effectful call(s): exec.CombinedOutput, exec.CommandContext, os.IsNotExist, os.ReadDir, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/lifecycle"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/lifecycle.reconcileQueueTerminalState",
+   "file": "internal/lifecycle/startup_pl005_qm002.go",
+   "line": 896,
+   "evidence": "complexity 17 with 3 direct effectful call(s): slog.InfoContext, slog.WarnContext, time.Now",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/lifecycle"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/lifecycle/tmux.SweepOrphanTmuxWindows",
+   "file": "internal/lifecycle/tmux/orphanwindow.go",
+   "line": 42,
+   "evidence": "complexity 15 with 2 direct effectful call(s): time.After, time.Now",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/lifecycle/tmux.RunTmuxStart",
+   "file": "internal/lifecycle/tmux/subcommand.go",
+   "line": 51,
+   "evidence": "complexity 19 with 3 direct effectful call(s): fmt.Fprintf, fmt.Fprintln, os.Environ",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/presence.ComputeRegistry",
+   "file": "internal/presence/presence.go",
+   "line": 157,
+   "evidence": "complexity 15 with 1 direct effectful call(s): time.After",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/presence"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/projectconfig.parseKeeperBlock",
+   "file": "internal/projectconfig/projectconfig.go",
+   "line": 1749,
+   "evidence": "complexity 25 with 1 direct effectful call(s): slog.Warn",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/projectconfig"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/queue.AppendItems",
+   "file": "internal/queue/append.go",
+   "line": 54,
+   "evidence": "complexity 25 with 1 direct effectful call(s): time.Now",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/queue"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/queue/cli.RunQueueCancel",
+   "file": "internal/queue/cli/cancel.go",
+   "line": 67,
+   "evidence": "complexity 22 with 1 direct effectful call(s): time.Now",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/queue/cli"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/queue/cli.parseQueueFlagsExtra",
+   "file": "internal/queue/cli/helpers.go",
+   "line": 34,
+   "evidence": "complexity 16 with 1 direct effectful call(s): os.Getwd",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/queue/cli"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/queue.HandleQueueSubmit",
+   "file": "internal/queue/rpc.go",
+   "line": 177,
+   "evidence": "complexity 17 with 1 direct effectful call(s): time.Now",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/queue"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/queue.HandlerAdapter.HandleQueueSubmit",
+   "file": "internal/queue/rpc.go",
+   "line": 1024,
+   "evidence": "complexity 20 with 1 direct effectful call(s): fmt.Fprintf",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/queue"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/runmerge.RunBranchToTarget",
+   "file": "internal/runmerge/merge.go",
+   "line": 155,
+   "evidence": "complexity 20 with 4 direct effectful call(s): exec.CombinedOutput, exec.CommandContext, fmt.Fprintf, os.Stat",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/runmerge"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/scenario.evalWorkspacePredicate",
+   "file": "internal/scenario/asserteval.go",
+   "line": 440,
+   "evidence": "complexity 21 with 4 direct effectful call(s): exec.CommandContext, exec.Output, os.ReadFile, os.Stat",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/scenario"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/sessiondata.buildRunEventData",
+   "file": "internal/sessiondata/sessiondata.go",
+   "line": 440,
+   "evidence": "complexity 25 with 8 direct effectful call(s): bufio.Buffer, bufio.Err, bufio.NewScanner, bufio.Scan, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/sessiondata"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/supervise.Supervisor.Run",
+   "file": "internal/supervise/supervisor.go",
+   "line": 194,
+   "evidence": "complexity 21 with 6 direct effectful call(s): exec.Start, exec.Wait, slog.ErrorContext, slog.InfoContext, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/supervise"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/testhelpers.B87254WriteIntentEntry",
+   "file": "internal/testhelpers/crashharness.go",
+   "line": 106,
+   "evidence": "complexity 15 with 6 direct effectful call(s): os.Close, os.Open, os.OpenFile, os.Rename, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/testhelpers"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/usage.PrintSummary",
+   "file": "internal/usage/usage.go",
+   "line": 636,
+   "evidence": "complexity 30 with 1 direct effectful call(s): fmt.Fprintf",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/usage"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/workers.breachSweep",
+   "file": "internal/workers/report_poll.go",
+   "line": 229,
+   "evidence": "complexity 19 with 1 direct effectful call(s): fmt.Fprintf",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/workers"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/workspace.ensureWorktreeTrustAt",
+   "file": "internal/workspace/claudetrust_wm040b.go",
+   "line": 294,
+   "evidence": "complexity 16 with 2 direct effectful call(s): time.Now, time.Sleep",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/workspace"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/workspace.ensureClaudeThemeAt",
+   "file": "internal/workspace/claudetrust_wm040b.go",
+   "line": 603,
+   "evidence": "complexity 15 with 6 direct effectful call(s): os.Close, os.Fd, os.IsNotExist, os.OpenFile, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/workspace"
+  },
+  {
+   "issue": "B2",
+   "node": "internal/workspace.CreateWorktree",
+   "file": "internal/workspace/createworktree.go",
+   "line": 165,
+   "evidence": "complexity 18 with 3 direct effectful call(s): exec.CombinedOutput, os.MkdirAll, time.After",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/internal/workspace"
+  },
+  {
+   "issue": "B2",
+   "node": "scripts.main",
+   "file": "scripts/queue-status-writer-ratchet.go",
+   "line": 53,
+   "evidence": "complexity 19 with 7 direct effectful call(s): fmt.Fprintf, fmt.Fprintln, fmt.Printf, fmt.Println, ...",
+   "fix": "put the effectful call behind a port the caller is given, so the logic can be exercised without the world",
+   "verify": "builds; tests pass; the declaration no longer imports the effectful package directly",
+   "pkg": "github.com/gregberns/harmonik/scripts"
+  }
+ ]
+}

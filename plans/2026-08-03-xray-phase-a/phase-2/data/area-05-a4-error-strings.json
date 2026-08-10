@@ -1,0 +1,134 @@
+{
+ "repo": "harmonik",
+ "revision": "d5a12348f",
+ "generated_by": "codebase-organism refactor/cmd/detect @ 5e16c72",
+ "count": 14,
+ "findings": [
+  {
+   "issue": "A4",
+   "node": "harmonik.runCommsRecvFollowIO",
+   "file": "cmd/harmonik/comms.go",
+   "line": 1851,
+   "evidence": "strings.Contains over an error message",
+   "fix": "declare a sentinel error and compare with errors.Is, so the relationship between the raiser and the handler is typed rather than textual",
+   "verify": "builds; tests pass; no strings.Contains over an error message remains at this site"
+  },
+  {
+   "issue": "A4",
+   "node": "harmonik.runCommsRecvWait",
+   "file": "cmd/harmonik/comms.go",
+   "line": 2115,
+   "evidence": "strings.Contains over an error message",
+   "fix": "declare a sentinel error and compare with errors.Is, so the relationship between the raiser and the handler is typed rather than textual",
+   "verify": "builds; tests pass; no strings.Contains over an error message remains at this site"
+  },
+  {
+   "issue": "A4",
+   "node": "harmonik.decisionsBlockedWait",
+   "file": "cmd/harmonik/decisions.go",
+   "line": 462,
+   "evidence": "strings.Contains over an error message",
+   "fix": "declare a sentinel error and compare with errors.Is, so the relationship between the raiser and the handler is typed rather than textual",
+   "verify": "builds; tests pass; no strings.Contains over an error message remains at this site"
+  },
+  {
+   "issue": "A4",
+   "node": "harmonik.smokeWatchSignals",
+   "file": "cmd/harmonik/smoke.go",
+   "line": 608,
+   "evidence": "strings.Contains over an error message",
+   "fix": "declare a sentinel error and compare with errors.Is, so the relationship between the raiser and the handler is typed rather than textual",
+   "verify": "builds; tests pass; no strings.Contains over an error message remains at this site"
+  },
+  {
+   "issue": "A4",
+   "node": "harmonik.runSubscribeSubcommand",
+   "file": "cmd/harmonik/subscribe.go",
+   "line": 264,
+   "evidence": "strings.Contains over an error message",
+   "fix": "declare a sentinel error and compare with errors.Is, so the relationship between the raiser and the handler is typed rather than textual",
+   "verify": "builds; tests pass; no strings.Contains over an error message remains at this site"
+  },
+  {
+   "issue": "A4",
+   "node": "harmonik.runSubscribeSubcommand",
+   "file": "cmd/harmonik/subscribe.go",
+   "line": 274,
+   "evidence": "strings.Contains over an error message",
+   "fix": "declare a sentinel error and compare with errors.Is, so the relationship between the raiser and the handler is typed rather than textual",
+   "verify": "builds; tests pass; no strings.Contains over an error message remains at this site"
+  },
+  {
+   "issue": "A4",
+   "node": "harmonik.runSubscribeFollowIO",
+   "file": "cmd/harmonik/subscribe.go",
+   "line": 398,
+   "evidence": "strings.Contains over an error message",
+   "fix": "declare a sentinel error and compare with errors.Is, so the relationship between the raiser and the handler is typed rather than textual",
+   "verify": "builds; tests pass; no strings.Contains over an error message remains at this site"
+  },
+  {
+   "issue": "A4",
+   "node": "harmonik.closeSubscribeConn",
+   "file": "cmd/harmonik/subscribe.go",
+   "line": 498,
+   "evidence": "strings.Contains over an error message",
+   "fix": "declare a sentinel error and compare with errors.Is, so the relationship between the raiser and the handler is typed rather than textual",
+   "verify": "builds; tests pass; no strings.Contains over an error message remains at this site"
+  },
+  {
+   "issue": "A4",
+   "node": "internal/brcli.Adapter.ClaimBead",
+   "file": "internal/brcli/terminaltransition_bi010.go",
+   "line": 348,
+   "evidence": "strings.Contains over an error message",
+   "fix": "declare a sentinel error and compare with errors.Is, so the relationship between the raiser and the handler is typed rather than textual",
+   "verify": "builds; tests pass; no strings.Contains over an error message remains at this site"
+  },
+  {
+   "issue": "A4",
+   "node": "internal/lifecycle/tmux.isNotFoundErr",
+   "file": "internal/lifecycle/tmux/osadapter.go",
+   "line": 671,
+   "evidence": "strings.Contains over an error message",
+   "fix": "declare a sentinel error and compare with errors.Is, so the relationship between the raiser and the handler is typed rather than textual",
+   "verify": "builds; tests pass; no strings.Contains over an error message remains at this site"
+  },
+  {
+   "issue": "A4",
+   "node": "internal/lifecycle/tmux.isNotFoundErr",
+   "file": "internal/lifecycle/tmux/osadapter.go",
+   "line": 672,
+   "evidence": "strings.Contains over an error message",
+   "fix": "declare a sentinel error and compare with errors.Is, so the relationship between the raiser and the handler is typed rather than textual",
+   "verify": "builds; tests pass; no strings.Contains over an error message remains at this site"
+  },
+  {
+   "issue": "A4",
+   "node": "internal/workflow.LoadDotWorkflow",
+   "file": "internal/workflow/loader.go",
+   "line": 90,
+   "evidence": "strings.Contains over an error message",
+   "fix": "declare a sentinel error and compare with errors.Is, so the relationship between the raiser and the handler is typed rather than textual",
+   "verify": "builds; tests pass; no strings.Contains over an error message remains at this site"
+  },
+  {
+   "issue": "A4",
+   "node": "internal/workflow.LoadDotWorkflowWithParams",
+   "file": "internal/workflow/loader.go",
+   "line": 153,
+   "evidence": "strings.Contains over an error message",
+   "fix": "declare a sentinel error and compare with errors.Is, so the relationship between the raiser and the handler is typed rather than textual",
+   "verify": "builds; tests pass; no strings.Contains over an error message remains at this site"
+  },
+  {
+   "issue": "A4",
+   "node": "internal/workflow.LoadDotWorkflowFromBytes",
+   "file": "internal/workflow/loader.go",
+   "line": 209,
+   "evidence": "strings.Contains over an error message",
+   "fix": "declare a sentinel error and compare with errors.Is, so the relationship between the raiser and the handler is typed rather than textual",
+   "verify": "builds; tests pass; no strings.Contains over an error message remains at this site"
+  }
+ ]
+}

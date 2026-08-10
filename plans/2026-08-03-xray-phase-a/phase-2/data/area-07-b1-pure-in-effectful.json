@@ -1,0 +1,1508 @@
+{
+ "repo": "harmonik",
+ "revision": "d5a12348f",
+ "generated_by": "codebase-organism refactor/cmd/detect @ 5e16c72",
+ "count": 150,
+ "findings": [
+  {
+   "issue": "B1",
+   "node": "harmonik-twin-claude.run",
+   "file": "cmd/harmonik-twin-claude/main.go",
+   "line": 80,
+   "evidence": "15 of 23 top-level statements (65%) touch no effect; complexity 28",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik-twin-claude"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik-twin-claude.runScript",
+   "file": "cmd/harmonik-twin-claude/scriptdriver.go",
+   "line": 342,
+   "evidence": "4 of 5 top-level statements (80%) touch no effect; complexity 22",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik-twin-claude"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runAgentBrief",
+   "file": "cmd/harmonik/agent.go",
+   "line": 110,
+   "evidence": "9 of 22 top-level statements (40%) touch no effect; complexity 21",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runBranchReapSubcommand",
+   "file": "cmd/harmonik/branch_reap_cmd.go",
+   "line": 27,
+   "evidence": "8 of 16 top-level statements (50%) touch no effect; complexity 35",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runCaptainLaunchWithOps",
+   "file": "cmd/harmonik/captain.go",
+   "line": 402,
+   "evidence": "22 of 36 top-level statements (61%) touch no effect; complexity 25",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runCaptainRespawn",
+   "file": "cmd/harmonik/captain_respawn.go",
+   "line": 137,
+   "evidence": "15 of 24 top-level statements (62%) touch no effect; complexity 21",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runCommsSendSubcommand",
+   "file": "cmd/harmonik/comms.go",
+   "line": 131,
+   "evidence": "30 of 55 top-level statements (54%) touch no effect; complexity 67",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runCommsLogSubcommand",
+   "file": "cmd/harmonik/comms.go",
+   "line": 616,
+   "evidence": "12 of 18 top-level statements (66%) touch no effect; complexity 44",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runCommsPresenceSubcommand",
+   "file": "cmd/harmonik/comms.go",
+   "line": 907,
+   "evidence": "21 of 40 top-level statements (52%) touch no effect; complexity 42",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runCommsWhoSubcommand",
+   "file": "cmd/harmonik/comms.go",
+   "line": 1100,
+   "evidence": "8 of 15 top-level statements (53%) touch no effect; complexity 24",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runCommsRecvSubcommand",
+   "file": "cmd/harmonik/comms.go",
+   "line": 1282,
+   "evidence": "24 of 44 top-level statements (54%) touch no effect; complexity 62",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runCommsRecvFollowIO",
+   "file": "cmd/harmonik/comms.go",
+   "line": 1693,
+   "evidence": "5 of 11 top-level statements (45%) touch no effect; complexity 61",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runCommsRecvWait",
+   "file": "cmd/harmonik/comms.go",
+   "line": 2041,
+   "evidence": "11 of 19 top-level statements (57%) touch no effect; complexity 21",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runCrewStartCoreWith",
+   "file": "cmd/harmonik/crew.go",
+   "line": 289,
+   "evidence": "13 of 25 top-level statements (52%) touch no effect; complexity 17",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runCrewStopSubcommand",
+   "file": "cmd/harmonik/crew.go",
+   "line": 441,
+   "evidence": "11 of 18 top-level statements (61%) touch no effect; complexity 17",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runDecisionsRaiseSubcommand",
+   "file": "cmd/harmonik/decisions.go",
+   "line": 99,
+   "evidence": "19 of 30 top-level statements (63%) touch no effect; complexity 43",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runDecisionsWithdrawSubcommand",
+   "file": "cmd/harmonik/decisions.go",
+   "line": 293,
+   "evidence": "13 of 21 top-level statements (61%) touch no effect; complexity 24",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runDecisionsListOrShow",
+   "file": "cmd/harmonik/decisions_k4.go",
+   "line": 198,
+   "evidence": "4 of 6 top-level statements (66%) touch no effect; complexity 15",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runDecisionsListOrShowParsed",
+   "file": "cmd/harmonik/decisions_k4.go",
+   "line": 243,
+   "evidence": "11 of 18 top-level statements (61%) touch no effect; complexity 15",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runDecisionsAnswerSubcommand",
+   "file": "cmd/harmonik/decisions_k4.go",
+   "line": 380,
+   "evidence": "15 of 22 top-level statements (68%) touch no effect; complexity 24",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runDigestSubcommand",
+   "file": "cmd/harmonik/digest.go",
+   "line": 30,
+   "evidence": "11 of 22 top-level statements (50%) touch no effect; complexity 25",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runEvalCollect",
+   "file": "cmd/harmonik/eval_cmd.go",
+   "line": 133,
+   "evidence": "10 of 24 top-level statements (41%) touch no effect; complexity 23",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runEvalMetrics",
+   "file": "cmd/harmonik/eval_metrics_cmd.go",
+   "line": 90,
+   "evidence": "8 of 16 top-level statements (50%) touch no effect; complexity 17",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runEvalReport",
+   "file": "cmd/harmonik/eval_report_cmd.go",
+   "line": 72,
+   "evidence": "9 of 17 top-level statements (52%) touch no effect; complexity 20",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runGreenlightSubcommand",
+   "file": "cmd/harmonik/greenlight_cmd.go",
+   "line": 34,
+   "evidence": "7 of 16 top-level statements (43%) touch no effect; complexity 15",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runHandlerResume",
+   "file": "cmd/harmonik/handler.go",
+   "line": 293,
+   "evidence": "16 of 26 top-level statements (61%) touch no effect; complexity 34",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runHandlerStatus",
+   "file": "cmd/harmonik/handler.go",
+   "line": 642,
+   "evidence": "7 of 14 top-level statements (50%) touch no effect; complexity 30",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.printHandlerTextEntry",
+   "file": "cmd/harmonik/handler.go",
+   "line": 861,
+   "evidence": "3 of 6 top-level statements (50%) touch no effect; complexity 19",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runHarnessWithSigs",
+   "file": "cmd/harmonik/harness.go",
+   "line": 144,
+   "evidence": "31 of 54 top-level statements (57%) touch no effect; complexity 93",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.harnessDiscoverScenarios",
+   "file": "cmd/harmonik/harness.go",
+   "line": 799,
+   "evidence": "7 of 10 top-level statements (70%) touch no effect; complexity 21",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.provisionSkills",
+   "file": "cmd/harmonik/init_cmd.go",
+   "line": 699,
+   "evidence": "3 of 6 top-level statements (50%) touch no effect; complexity 20",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runKeeperSubcommand",
+   "file": "cmd/harmonik/keeper_cmd.go",
+   "line": 173,
+   "evidence": "50 of 71 top-level statements (70%) touch no effect; complexity 37",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.parseKeeperEnableArgs",
+   "file": "cmd/harmonik/keeper_enable_doctor_cmd.go",
+   "line": 87,
+   "evidence": "4 of 7 top-level statements (57%) touch no effect; complexity 27",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runKeeperEnable",
+   "file": "cmd/harmonik/keeper_enable_doctor_cmd.go",
+   "line": 228,
+   "evidence": "12 of 30 top-level statements (40%) touch no effect; complexity 48",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.parseKeeperDoctorArgs",
+   "file": "cmd/harmonik/keeper_enable_doctor_cmd.go",
+   "line": 489,
+   "evidence": "4 of 7 top-level statements (57%) touch no effect; complexity 20",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runKeeperDoctor",
+   "file": "cmd/harmonik/keeper_enable_doctor_cmd.go",
+   "line": 603,
+   "evidence": "15 of 26 top-level statements (57%) touch no effect; complexity 51",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.run",
+   "file": "cmd/harmonik/main.go",
+   "line": 160,
+   "evidence": "56 of 133 top-level statements (42%) touch no effect; complexity 216",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runPromoteSubcommand",
+   "file": "cmd/harmonik/promote_cmd.go",
+   "line": 104,
+   "evidence": "10 of 19 top-level statements (52%) touch no effect; complexity 18",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runReconcileSubcommandIO",
+   "file": "cmd/harmonik/reconcile.go",
+   "line": 106,
+   "evidence": "13 of 26 top-level statements (50%) touch no effect; complexity 30",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.parseReleaseFlags",
+   "file": "cmd/harmonik/release_cmd.go",
+   "line": 110,
+   "evidence": "5 of 6 top-level statements (83%) touch no effect; complexity 23",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.ResolvePiConfig",
+   "file": "cmd/harmonik/resolve_pi_config.go",
+   "line": 108,
+   "evidence": "13 of 15 top-level statements (86%) touch no effect; complexity 27",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runBeadSubcommandIO",
+   "file": "cmd/harmonik/run.go",
+   "line": 114,
+   "evidence": "52 of 91 top-level statements (57%) touch no effect; complexity 124",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.viaWatchGroupCompletion",
+   "file": "cmd/harmonik/run_via_daemon.go",
+   "line": 340,
+   "evidence": "5 of 9 top-level statements (55%) touch no effect; complexity 35",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runScheduleList",
+   "file": "cmd/harmonik/schedule.go",
+   "line": 290,
+   "evidence": "5 of 11 top-level statements (45%) touch no effect; complexity 16",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runSleepSubcommand",
+   "file": "cmd/harmonik/sleepwake.go",
+   "line": 53,
+   "evidence": "9 of 14 top-level statements (64%) touch no effect; complexity 17",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runWakeSubcommand",
+   "file": "cmd/harmonik/sleepwake.go",
+   "line": 122,
+   "evidence": "10 of 17 top-level statements (58%) touch no effect; complexity 26",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runSmoke",
+   "file": "cmd/harmonik/smoke.go",
+   "line": 79,
+   "evidence": "11 of 23 top-level statements (47%) touch no effect; complexity 45",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.smokeWatchSignals",
+   "file": "cmd/harmonik/smoke.go",
+   "line": 367,
+   "evidence": "9 of 19 top-level statements (47%) touch no effect; complexity 60",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.printStateHuman",
+   "file": "cmd/harmonik/state_cmd.go",
+   "line": 128,
+   "evidence": "5 of 12 top-level statements (41%) touch no effect; complexity 26",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runSubscribeSubcommand",
+   "file": "cmd/harmonik/subscribe.go",
+   "line": 59,
+   "evidence": "24 of 40 top-level statements (60%) touch no effect; complexity 62",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runSubscribeFollowIO",
+   "file": "cmd/harmonik/subscribe.go",
+   "line": 302,
+   "evidence": "4 of 6 top-level statements (66%) touch no effect; complexity 37",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "supervise.RunAttach",
+   "file": "cmd/harmonik/supervise/attach.go",
+   "line": 24,
+   "evidence": "4 of 9 top-level statements (44%) touch no effect; complexity 15",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik/supervise"
+  },
+  {
+   "issue": "B1",
+   "node": "supervise.WriteConfigAtomic",
+   "file": "cmd/harmonik/supervise/config.go",
+   "line": 129,
+   "evidence": "12 of 23 top-level statements (52%) touch no effect; complexity 18",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik/supervise"
+  },
+  {
+   "issue": "B1",
+   "node": "supervise.RunLogs",
+   "file": "cmd/harmonik/supervise/logs.go",
+   "line": 23,
+   "evidence": "7 of 11 top-level statements (63%) touch no effect; complexity 22",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik/supervise"
+  },
+  {
+   "issue": "B1",
+   "node": "supervise.WriteLoopStatusAtomic",
+   "file": "cmd/harmonik/supervise/loopstatus.go",
+   "line": 120,
+   "evidence": "12 of 23 top-level statements (52%) touch no effect; complexity 18",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik/supervise"
+  },
+  {
+   "issue": "B1",
+   "node": "supervise.RunPs",
+   "file": "cmd/harmonik/supervise/ps.go",
+   "line": 48,
+   "evidence": "4 of 9 top-level statements (44%) touch no effect; complexity 19",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik/supervise"
+  },
+  {
+   "issue": "B1",
+   "node": "supervise.RunRestart",
+   "file": "cmd/harmonik/supervise/restart.go",
+   "line": 21,
+   "evidence": "5 of 10 top-level statements (50%) touch no effect; complexity 20",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik/supervise"
+  },
+  {
+   "issue": "B1",
+   "node": "supervise.RunStart",
+   "file": "cmd/harmonik/supervise/start.go",
+   "line": 45,
+   "evidence": "18 of 43 top-level statements (41%) touch no effect; complexity 59",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik/supervise"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runSuperviseSubcommand",
+   "file": "cmd/harmonik/supervise_cmd.go",
+   "line": 25,
+   "evidence": "4 of 6 top-level statements (66%) touch no effect; complexity 17",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.applyManagedRegion",
+   "file": "cmd/harmonik/sync_assets_cmd.go",
+   "line": 531,
+   "evidence": "6 of 11 top-level statements (54%) touch no effect; complexity 15",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.commitSync",
+   "file": "cmd/harmonik/sync_assets_cmd.go",
+   "line": 1045,
+   "evidence": "6 of 11 top-level statements (54%) touch no effect; complexity 16",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "harmonik.runWriteReviewVerdictSubcommand",
+   "file": "cmd/harmonik/write_review_verdict_cmd.go",
+   "line": 70,
+   "evidence": "5 of 11 top-level statements (45%) touch no effect; complexity 25",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/branching.parse",
+   "file": "internal/branching/branching.go",
+   "line": 150,
+   "evidence": "7 of 8 top-level statements (87%) touch no effect; complexity 16",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/branching"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/brcli.Adapter.runWithDBLockedRetryTimeoutKills",
+   "file": "internal/brcli/dblockretry.go",
+   "line": 139,
+   "evidence": "5 of 6 top-level statements (83%) touch no effect; complexity 18",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/brcli"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/brcli.Adapter.ShowBead",
+   "file": "internal/brcli/show.go",
+   "line": 93,
+   "evidence": "16 of 17 top-level statements (94%) touch no effect; complexity 22",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/brcli"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/brcli.Adapter.terminalTransitionWrite",
+   "file": "internal/brcli/terminaltransition_bi010.go",
+   "line": 161,
+   "evidence": "7 of 14 top-level statements (50%) touch no effect; complexity 15",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/brcli"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.runAgentLaunch",
+   "file": "internal/daemon/agentlaunch.go",
+   "line": 341,
+   "evidence": "61 of 70 top-level statements (87%) touch no effect; complexity 66",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.bootState.wireWatchersAndObservers",
+   "file": "internal/daemon/bootstate.go",
+   "line": 249,
+   "evidence": "17 of 19 top-level statements (89%) touch no effect; complexity 17",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.bootState.launchWorkLoop",
+   "file": "internal/daemon/bootworkloop.go",
+   "line": 38,
+   "evidence": "48 of 60 top-level statements (80%) touch no effect; complexity 21",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.pruneBrHistoryArchive",
+   "file": "internal/daemon/brhistoryrotate.go",
+   "line": 240,
+   "evidence": "9 of 16 top-level statements (56%) touch no effect; complexity 27",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.CursorStore.Advance",
+   "file": "internal/daemon/commscursor.go",
+   "line": 153,
+   "evidence": "13 of 26 top-level statements (50%) touch no effect; complexity 20",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.commsSendHandlerImpl.HandleCommsRecv",
+   "file": "internal/daemon/commsrecvhandler_nnwaa.go",
+   "line": 167,
+   "evidence": "23 of 27 top-level statements (85%) touch no effect; complexity 19",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.crewHandlerImpl.HandleCrewStart",
+   "file": "internal/daemon/crewstart.go",
+   "line": 181,
+   "evidence": "11 of 21 top-level statements (52%) touch no effect; complexity 23",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.crewHandlerImpl.HandleCrewStop",
+   "file": "internal/daemon/crewstart.go",
+   "line": 664,
+   "evidence": "10 of 14 top-level statements (71%) touch no effect; complexity 20",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.startWithHooks",
+   "file": "internal/daemon/daemon.go",
+   "line": 931,
+   "evidence": "10 of 25 top-level statements (40%) touch no effect; complexity 19",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.DashboardBuilder.readThroughput",
+   "file": "internal/daemon/dashboardgather.go",
+   "line": 194,
+   "evidence": "19 of 22 top-level statements (86%) touch no effect; complexity 26",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.driveDotWorkflow",
+   "file": "internal/daemon/dot_cascade_core.go",
+   "line": 106,
+   "evidence": "30 of 31 top-level statements (96%) touch no effect; complexity 93",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.dispatchDotAgenticNode",
+   "file": "internal/daemon/dot_cascade_core.go",
+   "line": 1126,
+   "evidence": "38 of 50 top-level statements (76%) touch no effect; complexity 68",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.executeCognitionGate",
+   "file": "internal/daemon/dot_gate.go",
+   "line": 241,
+   "evidence": "21 of 27 top-level statements (77%) touch no effect; complexity 22",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.pasteInjectQuitOnGateFile",
+   "file": "internal/daemon/dot_gate.go",
+   "line": 720,
+   "evidence": "5 of 7 top-level statements (71%) touch no effect; complexity 21",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.DrainDetector.GatherDrainFacts",
+   "file": "internal/daemon/draindetect.go",
+   "line": 263,
+   "evidence": "25 of 27 top-level statements (92%) touch no effect; complexity 19",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.stagedBeadGeneratorEvalWithPort",
+   "file": "internal/daemon/eagerfill_em063.go",
+   "line": 404,
+   "evidence": "17 of 23 top-level statements (73%) touch no effect; complexity 20",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.LoadHandlerPauseState",
+   "file": "internal/daemon/handlerpause_persist_m0k0a.go",
+   "line": 263,
+   "evidence": "5 of 8 top-level statements (62%) touch no effect; complexity 21",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.probeCrewRegistrySessions",
+   "file": "internal/daemon/orphansweep.go",
+   "line": 739,
+   "evidence": "4 of 8 top-level statements (50%) touch no effect; complexity 22",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.RunOrphanSweep",
+   "file": "internal/daemon/orphansweep.go",
+   "line": 854,
+   "evidence": "29 of 46 top-level statements (63%) touch no effect; complexity 33",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.pasteInjectQuitOnCommit",
+   "file": "internal/daemon/pasteinject.go",
+   "line": 802,
+   "evidence": "35 of 40 top-level statements (87%) touch no effect; complexity 85",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.pasteInjectQuitOnReviewFile",
+   "file": "internal/daemon/pasteinject.go",
+   "line": 2374,
+   "evidence": "21 of 26 top-level statements (80%) touch no effect; complexity 56",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.QuiesceArbiter.reconcileOrphanedMarkers",
+   "file": "internal/daemon/quiesce.go",
+   "line": 325,
+   "evidence": "5 of 10 top-level statements (50%) touch no effect; complexity 19",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.RunCatBL1StartupSweep",
+   "file": "internal/daemon/reconciliation.go",
+   "line": 127,
+   "evidence": "12 of 14 top-level statements (85%) touch no effect; complexity 17",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.RunCatBL3StartupSweep",
+   "file": "internal/daemon/reconciliation.go",
+   "line": 311,
+   "evidence": "12 of 23 top-level statements (52%) touch no effect; complexity 15",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.runScheduledClassBRepair",
+   "file": "internal/daemon/reconciliationcadence_rc020a.go",
+   "line": 276,
+   "evidence": "9 of 14 top-level statements (64%) touch no effect; complexity 17",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.reconcileOrphanedRunsOnResume",
+   "file": "internal/daemon/runinflightreconcile_hkr73qr.go",
+   "line": 75,
+   "evidence": "9 of 13 top-level statements (69%) touch no effect; complexity 29",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon/scenariotest.RunConcurrentMerge",
+   "file": "internal/daemon/scenariotest/concurrent_merge.go",
+   "line": 181,
+   "evidence": "26 of 43 top-level statements (60%) touch no effect; complexity 25",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon/scenariotest"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.runWorkLoop",
+   "file": "internal/daemon/scheduler.go",
+   "line": 484,
+   "evidence": "17 of 23 top-level statements (73%) touch no effect; complexity 158",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.evaluateGroupAdvanceWithOutcome",
+   "file": "internal/daemon/scheduler.go",
+   "line": 2297,
+   "evidence": "14 of 19 top-level statements (73%) touch no effect; complexity 25",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.StaleWatcher.checkRun",
+   "file": "internal/daemon/stalewatch.go",
+   "line": 803,
+   "evidence": "37 of 47 top-level statements (78%) touch no effect; complexity 55",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.SubscribeHub.HandleSubscribe",
+   "file": "internal/daemon/subscribe.go",
+   "line": 325,
+   "evidence": "32 of 38 top-level statements (84%) touch no effect; complexity 58",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.tmuxSubstrate.spawnWindowVia",
+   "file": "internal/daemon/tmuxsubstrate.go",
+   "line": 901,
+   "evidence": "18 of 21 top-level statements (85%) touch no effect; complexity 20",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.ExecuteVerdict",
+   "file": "internal/daemon/verdictexecutor_rc025a.go",
+   "line": 105,
+   "evidence": "17 of 25 top-level statements (68%) touch no effect; complexity 23",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/daemon.beadRunOne",
+   "file": "internal/daemon/workloop.go",
+   "line": 143,
+   "evidence": "54 of 73 top-level statements (73%) touch no effect; complexity 76",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/digest.buildPendingDecisions",
+   "file": "internal/digest/builder.go",
+   "line": 350,
+   "evidence": "8 of 10 top-level statements (80%) touch no effect; complexity 18",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/digest"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/eventbus.busImpl.Emit",
+   "file": "internal/eventbus/busimpl.go",
+   "line": 444,
+   "evidence": "19 of 22 top-level statements (86%) touch no effect; complexity 16",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/eventbus"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/eventbus.busImpl.EmitWithRunID",
+   "file": "internal/eventbus/busimpl.go",
+   "line": 572,
+   "evidence": "20 of 23 top-level statements (86%) touch no effect; complexity 16",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/eventbus"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/eventbus.busImpl.EmitAgentMessage",
+   "file": "internal/eventbus/busimpl.go",
+   "line": 692,
+   "evidence": "20 of 23 top-level statements (86%) touch no effect; complexity 15",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/eventbus"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/eventbus.busImpl.EmitAgentPresence",
+   "file": "internal/eventbus/busimpl.go",
+   "line": 782,
+   "evidence": "20 of 22 top-level statements (90%) touch no effect; complexity 15",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/eventbus"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/eventbus.busImpl.EmitTyped",
+   "file": "internal/eventbus/busimpl.go",
+   "line": 886,
+   "evidence": "19 of 22 top-level statements (86%) touch no effect; complexity 15",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/eventbus"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/eventbus.busImpl.DeadLetterReplay",
+   "file": "internal/eventbus/busimpl.go",
+   "line": 1342,
+   "evidence": "9 of 14 top-level statements (64%) touch no effect; complexity 19",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/eventbus"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/harness/claude.BuildLaunchSpec",
+   "file": "internal/harness/claude/launchspec.go",
+   "line": 78,
+   "evidence": "42 of 50 top-level statements (84%) touch no effect; complexity 32",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/harness/claude"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/harness/codex.cleanCodexStaleWAL",
+   "file": "internal/harness/codex/walguard.go",
+   "line": 161,
+   "evidence": "9 of 15 top-level statements (60%) touch no effect; complexity 27",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/harness/codex"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/harness/pi.BuildLaunchSpec",
+   "file": "internal/harness/pi/launchspec.go",
+   "line": 247,
+   "evidence": "11 of 14 top-level statements (78%) touch no effect; complexity 19",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/harness/pi"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/harness/pi.buildPiEnv",
+   "file": "internal/harness/pi/launchspec.go",
+   "line": 431,
+   "evidence": "11 of 13 top-level statements (84%) touch no effect; complexity 15",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/harness/pi"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/hookrelay.sendToSocket",
+   "file": "internal/hookrelay/hookrelay.go",
+   "line": 554,
+   "evidence": "7 of 9 top-level statements (77%) touch no effect; complexity 25",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/hookrelay"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/keeper.AwaitAck",
+   "file": "internal/keeper/awaitack.go",
+   "line": 95,
+   "evidence": "14 of 18 top-level statements (77%) touch no effect; complexity 15",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/keeper"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/keeper.CyclerConfig.applyDefaults",
+   "file": "internal/keeper/cycle.go",
+   "line": 358,
+   "evidence": "41 of 42 top-level statements (97%) touch no effect; complexity 44",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/keeper"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/keeper.deriveContextTokens",
+   "file": "internal/keeper/heartbeat.go",
+   "line": 88,
+   "evidence": "8 of 17 top-level statements (47%) touch no effect; complexity 18",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/keeper"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/keeper.Watcher.maybeHeartbeat",
+   "file": "internal/keeper/heartbeat.go",
+   "line": 252,
+   "evidence": "11 of 16 top-level statements (68%) touch no effect; complexity 16",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/keeper"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/keeper.recentTranscriptTurn",
+   "file": "internal/keeper/tmuxresolve.go",
+   "line": 266,
+   "evidence": "8 of 18 top-level statements (44%) touch no effect; complexity 21",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/keeper"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/keeper.WatcherConfig.applyDefaults",
+   "file": "internal/keeper/watcher.go",
+   "line": 699,
+   "evidence": "33 of 34 top-level statements (97%) touch no effect; complexity 38",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/keeper"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/keeper.Watcher.Run",
+   "file": "internal/keeper/watcher.go",
+   "line": 1134,
+   "evidence": "3 of 6 top-level statements (50%) touch no effect; complexity 71",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/keeper"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/keeper.Watcher.maybeLivePaneRecover",
+   "file": "internal/keeper/watcher.go",
+   "line": 1909,
+   "evidence": "12 of 19 top-level statements (63%) touch no effect; complexity 18",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/keeper"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/lifecycle.ReapPriorAgentFollowWatchers",
+   "file": "internal/lifecycle/agentwatcherreap.go",
+   "line": 152,
+   "evidence": "11 of 19 top-level statements (57%) touch no effect; complexity 27",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/lifecycle"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/lifecycle.SweepOrphanHandlers",
+   "file": "internal/lifecycle/orphansweep.go",
+   "line": 326,
+   "evidence": "7 of 14 top-level statements (50%) touch no effect; complexity 21",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/lifecycle"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/lifecycle.GCRetiredIntentsWithRedrive",
+   "file": "internal/lifecycle/orphansweep.go",
+   "line": 506,
+   "evidence": "5 of 9 top-level statements (55%) touch no effect; complexity 24",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/lifecycle"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/lifecycle.SweepStaleInProgressBeads",
+   "file": "internal/lifecycle/orphansweepbeads.go",
+   "line": 658,
+   "evidence": "14 of 16 top-level statements (87%) touch no effect; complexity 31",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/lifecycle"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/lifecycle.SweepOrphanBr",
+   "file": "internal/lifecycle/orphansweepbr.go",
+   "line": 108,
+   "evidence": "7 of 15 top-level statements (46%) touch no effect; complexity 23",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/lifecycle"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/lifecycle.reconcileThreeWay",
+   "file": "internal/lifecycle/startup_pl005_qm002.go",
+   "line": 488,
+   "evidence": "6 of 11 top-level statements (54%) touch no effect; complexity 36",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/lifecycle"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/lifecycle.reconcileQueueTerminalState",
+   "file": "internal/lifecycle/startup_pl005_qm002.go",
+   "line": 896,
+   "evidence": "5 of 8 top-level statements (62%) touch no effect; complexity 17",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/lifecycle"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/lifecycle/tmux.SweepOrphanTmuxWindows",
+   "file": "internal/lifecycle/tmux/orphanwindow.go",
+   "line": 42,
+   "evidence": "7 of 10 top-level statements (70%) touch no effect; complexity 15",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/presence.ComputeRegistry",
+   "file": "internal/presence/presence.go",
+   "line": 157,
+   "evidence": "5 of 7 top-level statements (71%) touch no effect; complexity 15",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/presence"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/projectconfig.parseProjectConfig",
+   "file": "internal/projectconfig/projectconfig.go",
+   "line": 1360,
+   "evidence": "27 of 29 top-level statements (93%) touch no effect; complexity 18",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/projectconfig"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/projectconfig.parseKeeperBlock",
+   "file": "internal/projectconfig/projectconfig.go",
+   "line": 1749,
+   "evidence": "32 of 33 top-level statements (96%) touch no effect; complexity 25",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/projectconfig"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/queue.AppendItems",
+   "file": "internal/queue/append.go",
+   "line": 54,
+   "evidence": "24 of 27 top-level statements (88%) touch no effect; complexity 25",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/queue"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/queue/cli.RunQueueAppend",
+   "file": "internal/queue/cli/append.go",
+   "line": 34,
+   "evidence": "10 of 18 top-level statements (55%) touch no effect; complexity 15",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/queue/cli"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/queue/cli.RunQueueCancel",
+   "file": "internal/queue/cli/cancel.go",
+   "line": 67,
+   "evidence": "9 of 17 top-level statements (52%) touch no effect; complexity 22",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/queue/cli"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/queue/cli.RunQueueDryRun",
+   "file": "internal/queue/cli/dryrun.go",
+   "line": 46,
+   "evidence": "8 of 15 top-level statements (53%) touch no effect; complexity 19",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/queue/cli"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/queue/cli.parseQueueFlagsExtra",
+   "file": "internal/queue/cli/helpers.go",
+   "line": 34,
+   "evidence": "3 of 6 top-level statements (50%) touch no effect; complexity 16",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/queue/cli"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/queue/cli.RunQueueSubmit",
+   "file": "internal/queue/cli/submit.go",
+   "line": 44,
+   "evidence": "8 of 15 top-level statements (53%) touch no effect; complexity 19",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/queue/cli"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/queue.migrateFromLegacy",
+   "file": "internal/queue/persistence.go",
+   "line": 497,
+   "evidence": "13 of 14 top-level statements (92%) touch no effect; complexity 25",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/queue"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/queue.HandleQueueSubmit",
+   "file": "internal/queue/rpc.go",
+   "line": 177,
+   "evidence": "20 of 24 top-level statements (83%) touch no effect; complexity 17",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/queue"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/queue.HandlerAdapter.HandleQueueSubmit",
+   "file": "internal/queue/rpc.go",
+   "line": 1024,
+   "evidence": "13 of 16 top-level statements (81%) touch no effect; complexity 20",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/queue"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/queuewiring.QueueStore.Transact",
+   "file": "internal/queuewiring/store.go",
+   "line": 565,
+   "evidence": "25 of 29 top-level statements (86%) touch no effect; complexity 25",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/queuewiring"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/runmerge.RunBranchToTarget",
+   "file": "internal/runmerge/merge.go",
+   "line": 155,
+   "evidence": "6 of 10 top-level statements (60%) touch no effect; complexity 20",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/runmerge"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/sessiondata.Collect",
+   "file": "internal/sessiondata/sessiondata.go",
+   "line": 163,
+   "evidence": "21 of 24 top-level statements (87%) touch no effect; complexity 37",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/sessiondata"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/testhelpers.B87254WriteIntentEntry",
+   "file": "internal/testhelpers/crashharness.go",
+   "line": 106,
+   "evidence": "15 of 23 top-level statements (65%) touch no effect; complexity 15",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/testhelpers"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/usage.RunAnalysis",
+   "file": "internal/usage/usage.go",
+   "line": 216,
+   "evidence": "55 of 57 top-level statements (96%) touch no effect; complexity 34",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/usage"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/usage.PrintSummary",
+   "file": "internal/usage/usage.go",
+   "line": 636,
+   "evidence": "41 of 42 top-level statements (97%) touch no effect; complexity 30",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/usage"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/workers.breachSweep",
+   "file": "internal/workers/report_poll.go",
+   "line": 229,
+   "evidence": "4 of 5 top-level statements (80%) touch no effect; complexity 19",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/workers"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/workspace.ensureWorktreeTrustAt",
+   "file": "internal/workspace/claudetrust_wm040b.go",
+   "line": 294,
+   "evidence": "7 of 11 top-level statements (63%) touch no effect; complexity 16",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/workspace"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/workspace.ensureClaudeThemeAt",
+   "file": "internal/workspace/claudetrust_wm040b.go",
+   "line": 603,
+   "evidence": "13 of 21 top-level statements (61%) touch no effect; complexity 15",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/workspace"
+  },
+  {
+   "issue": "B1",
+   "node": "internal/workspace.CreateWorktree",
+   "file": "internal/workspace/createworktree.go",
+   "line": 165,
+   "evidence": "8 of 10 top-level statements (80%) touch no effect; complexity 18",
+   "fix": "extract the pure statements into their own function; they need no ports, are testable without fixtures, and narrow what remains",
+   "verify": "builds; tests pass; the extracted function touches no effectful package",
+   "pkg": "github.com/gregberns/harmonik/internal/workspace"
+  }
+ ]
+}

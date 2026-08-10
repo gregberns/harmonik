@@ -1,0 +1,808 @@
+{
+ "repo": "harmonik",
+ "revision": "d5a12348f",
+ "generated_by": "codebase-organism refactor/cmd/detect @ 5e16c72",
+ "count": 80,
+ "findings": [
+  {
+   "issue": "B4",
+   "node": "harmonik-twin-session.config",
+   "file": "cmd/harmonik-twin-session/main.go",
+   "line": 62,
+   "evidence": "12 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik-twin-session"
+  },
+  {
+   "issue": "B4",
+   "node": "harmonik.evalResultRecord",
+   "file": "cmd/harmonik/eval_cmd.go",
+   "line": 114,
+   "evidence": "15 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B4",
+   "node": "harmonik.evalMetricsRecord",
+   "file": "cmd/harmonik/eval_metrics_cmd.go",
+   "line": 66,
+   "evidence": "20 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B4",
+   "node": "harmonik.KeeperFlags",
+   "file": "cmd/harmonik/resolve_keeper_config.go",
+   "line": 134,
+   "evidence": "24 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B4",
+   "node": "harmonik.ResolvedKeeperConfig",
+   "file": "cmd/harmonik/resolve_keeper_config.go",
+   "line": 173,
+   "evidence": "40 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik"
+  },
+  {
+   "issue": "B4",
+   "node": "supervise.Config",
+   "file": "cmd/harmonik/supervise/config.go",
+   "line": 70,
+   "evidence": "31 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik/supervise"
+  },
+  {
+   "issue": "B4",
+   "node": "supervise.StatusResult",
+   "file": "cmd/harmonik/supervise/status.go",
+   "line": 17,
+   "evidence": "12 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/cmd/harmonik/supervise"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/agentmanifest.Manifest",
+   "file": "internal/agentmanifest/manifest.go",
+   "line": 137,
+   "evidence": "12 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/agentmanifest"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/codexdriver.Options",
+   "file": "internal/codexdriver/driver.go",
+   "line": 97,
+   "evidence": "12 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/codexdriver"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/codexdriver.codexSession",
+   "file": "internal/codexdriver/session.go",
+   "line": 65,
+   "evidence": "39 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/codexdriver"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/codexwire.ThreadStartResult",
+   "file": "internal/codexwire/codexwire.go",
+   "line": 756,
+   "evidence": "14 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/codexwire"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/core.DaemonOrphanSweepCompletedPayload",
+   "file": "internal/core/daemonevents_hqwn59.go",
+   "line": 742,
+   "evidence": "18 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/core"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/core.InvestigatorInput",
+   "file": "internal/core/investigatorinput.go",
+   "line": 33,
+   "evidence": "14 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/core"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/core.Node",
+   "file": "internal/core/node.go",
+   "line": 8,
+   "evidence": "19 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/core"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/core.RunStartedPayload",
+   "file": "internal/core/runstartedpayload.go",
+   "line": 13,
+   "evidence": "14 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/core"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/core.RunFailedPayload",
+   "file": "internal/core/runterminalpayload.go",
+   "line": 135,
+   "evidence": "13 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/core"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/core.Transition",
+   "file": "internal/core/transition.go",
+   "line": 47,
+   "evidence": "16 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/core"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/core.transitionWire",
+   "file": "internal/core/transitionrecord.go",
+   "line": 56,
+   "evidence": "16 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/core"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/core.Workflow",
+   "file": "internal/core/workflow.go",
+   "line": 34,
+   "evidence": "12 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/core"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/daemon.agentLaunchInput",
+   "file": "internal/daemon/agentlaunch.go",
+   "line": 146,
+   "evidence": "24 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/daemon.agentPostExitInput",
+   "file": "internal/daemon/agentlaunch.go",
+   "line": 1127,
+   "evidence": "12 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/daemon.reconcileState",
+   "file": "internal/daemon/bootreconcile.go",
+   "line": 23,
+   "evidence": "13 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/daemon.bootState",
+   "file": "internal/daemon/bootstate.go",
+   "line": 35,
+   "evidence": "24 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/daemon.Config",
+   "file": "internal/daemon/daemon.go",
+   "line": 49,
+   "evidence": "40 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/daemon.FleetFacts",
+   "file": "internal/daemon/draindetect.go",
+   "line": 53,
+   "evidence": "12 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/daemon.OrphanSweepResult",
+   "file": "internal/daemon/orphansweep.go",
+   "line": 55,
+   "evidence": "21 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/daemon.OrphanSweepConfig",
+   "file": "internal/daemon/orphansweep.go",
+   "line": 213,
+   "evidence": "19 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/daemon.RunHandle",
+   "file": "internal/daemon/runregistry.go",
+   "line": 32,
+   "evidence": "18 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/daemon.queueSelection",
+   "file": "internal/daemon/scheduler.go",
+   "line": 272,
+   "evidence": "13 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/daemon.runStaleState",
+   "file": "internal/daemon/stalewatch.go",
+   "line": 178,
+   "evidence": "24 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/daemon.StaleWatcherConfig",
+   "file": "internal/daemon/stalewatch.go",
+   "line": 325,
+   "evidence": "18 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/daemon.dotSubWorkflowRunner",
+   "file": "internal/daemon/sub_workflow_runner.go",
+   "line": 118,
+   "evidence": "27 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/daemon.tmuxSubstrate",
+   "file": "internal/daemon/tmuxsubstrate.go",
+   "line": 104,
+   "evidence": "16 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/daemon.tmuxSubstrateSession",
+   "file": "internal/daemon/tmuxsubstrate.go",
+   "line": 2730,
+   "evidence": "13 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/daemon.runPlan",
+   "file": "internal/daemon/workloop_runplan.go",
+   "line": 173,
+   "evidence": "17 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/daemon"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/digest.DigestJSON",
+   "file": "internal/digest/types.go",
+   "line": 59,
+   "evidence": "19 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/digest"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/eventbus.busImpl",
+   "file": "internal/eventbus/busimpl.go",
+   "line": 93,
+   "evidence": "17 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/eventbus"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/handler.ClaudeEnvConfig",
+   "file": "internal/handler/claudehandler_chb006_024.go",
+   "line": 160,
+   "evidence": "14 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/handler"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/handler.session",
+   "file": "internal/handler/session.go",
+   "line": 163,
+   "evidence": "12 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/handler"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/handlercontract.RunCtx",
+   "file": "internal/handlercontract/harness.go",
+   "line": 86,
+   "evidence": "29 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/handlercontract"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/handlercontract.LaunchSpec",
+   "file": "internal/handlercontract/launchspec_hc006.go",
+   "line": 62,
+   "evidence": "18 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/handlercontract"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/harness/pi.RunCtx",
+   "file": "internal/harness/pi/launchspec.go",
+   "line": 129,
+   "evidence": "16 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/harness/pi"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/harness/shared.LaunchCtx",
+   "file": "internal/harness/shared/launchctx.go",
+   "line": 33,
+   "evidence": "31 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/harness/shared"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/keeper.CyclerConfig",
+   "file": "internal/keeper/cycle.go",
+   "line": 97,
+   "evidence": "57 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/keeper"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/keeper.Event",
+   "file": "internal/keeper/step.go",
+   "line": 106,
+   "evidence": "14 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/keeper"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/keeper.CycleState",
+   "file": "internal/keeper/step.go",
+   "line": 164,
+   "evidence": "26 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/keeper"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/keeper.WatcherConfig",
+   "file": "internal/keeper/watcher.go",
+   "line": 206,
+   "evidence": "63 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/keeper"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/keeper.Watcher",
+   "file": "internal/keeper/watcher.go",
+   "line": 1063,
+   "evidence": "12 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/keeper"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/lifecycle.SweepStaleInProgressBeadsConfig",
+   "file": "internal/lifecycle/orphansweepbeads.go",
+   "line": 542,
+   "evidence": "12 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/lifecycle"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/projectconfig.rawKeeperCadence",
+   "file": "internal/projectconfig/projectconfig.go",
+   "line": 311,
+   "evidence": "14 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/projectconfig"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/projectconfig.KeeperConfigPresence",
+   "file": "internal/projectconfig/projectconfig.go",
+   "line": 504,
+   "evidence": "33 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/projectconfig"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/projectconfig.KeeperConfig",
+   "file": "internal/projectconfig/projectconfig.go",
+   "line": 553,
+   "evidence": "44 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/projectconfig"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/projectconfig.rawProjectConfig",
+   "file": "internal/projectconfig/projectconfig.go",
+   "line": 1203,
+   "evidence": "13 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/projectconfig"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/projectconfig.ProjectConfig",
+   "file": "internal/projectconfig/projectconfig.go",
+   "line": 1256,
+   "evidence": "12 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/projectconfig"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/queue.migrateFromLegacyOps",
+   "file": "internal/queue/persistence.go",
+   "line": 481,
+   "evidence": "12 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/queue"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/queue.ReplaceIntentV1",
+   "file": "internal/queue/transaction.go",
+   "line": 83,
+   "evidence": "13 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/queue"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/queue.namespaceOps",
+   "file": "internal/queue/transaction.go",
+   "line": 220,
+   "evidence": "13 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/queue"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/queue.Queue",
+   "file": "internal/queue/types.go",
+   "line": 245,
+   "evidence": "12 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/queue"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/runexec.RunState",
+   "file": "internal/runexec/run.go",
+   "line": 67,
+   "evidence": "12 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/runexec"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/runexec.Event",
+   "file": "internal/runexec/vocab.go",
+   "line": 142,
+   "evidence": "22 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/runexec"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/runexec.Action",
+   "file": "internal/runexec/vocab.go",
+   "line": 205,
+   "evidence": "16 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/runexec"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/runloop.DispatchSegment",
+   "file": "internal/runloop/dispatchsegment.go",
+   "line": 75,
+   "evidence": "19 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/runloop"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/runloop.RunEnv",
+   "file": "internal/runloop/ports.go",
+   "line": 260,
+   "evidence": "29 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/runloop"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/runloop.SharedHandles",
+   "file": "internal/runloop/ports.go",
+   "line": 347,
+   "evidence": "18 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/runloop"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/runloop.SpineArgs",
+   "file": "internal/runloop/runbridge.go",
+   "line": 190,
+   "evidence": "14 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/runloop"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/runloop.RunEffectors",
+   "file": "internal/runloop/runshell.go",
+   "line": 55,
+   "evidence": "14 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/runloop"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/scenario.ScenarioFile",
+   "file": "internal/scenario/scenariofile.go",
+   "line": 178,
+   "evidence": "12 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/scenario"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/scenario.ScenarioResult",
+   "file": "internal/scenario/scenarioresult.go",
+   "line": 67,
+   "evidence": "12 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/scenario"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/sessiondata.Record",
+   "file": "internal/sessiondata/sessiondata.go",
+   "line": 118,
+   "evidence": "15 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/sessiondata"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/supervise.DaemonWatchdogSpec",
+   "file": "internal/supervise/daemon_watchdog.go",
+   "line": 24,
+   "evidence": "12 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/supervise"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/supervise.Spec",
+   "file": "internal/supervise/supervisor.go",
+   "line": 49,
+   "evidence": "12 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/supervise"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/usage.RunRecord",
+   "file": "internal/usage/usage.go",
+   "line": 42,
+   "evidence": "13 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/usage"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/usage.AnalysisResult",
+   "file": "internal/usage/usage.go",
+   "line": 105,
+   "evidence": "18 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/usage"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/workers.WorkerReportPayload",
+   "file": "internal/workers/telemetry.go",
+   "line": 41,
+   "evidence": "12 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/workers"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/workers.Config",
+   "file": "internal/workers/workers.go",
+   "line": 65,
+   "evidence": "15 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/workers"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/workflow/dot.Graph",
+   "file": "internal/workflow/dot/ast.go",
+   "line": 35,
+   "evidence": "14 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/workflow/dot"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/workflow/dot.Node",
+   "file": "internal/workflow/dot/ast.go",
+   "line": 109,
+   "evidence": "29 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/workflow/dot"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/workspace.AgentTaskPayload",
+   "file": "internal/workspace/agenttask_chb028.go",
+   "line": 53,
+   "evidence": "14 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/workspace"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/workspace.ConflictResolverLaunchSpecParams",
+   "file": "internal/workspace/conflictresolution_wm024.go",
+   "line": 179,
+   "evidence": "13 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/workspace"
+  },
+  {
+   "issue": "B4",
+   "node": "internal/workspace.Workspace",
+   "file": "internal/workspace/workspace.go",
+   "line": 19,
+   "evidence": "12 fields",
+   "fix": "split the struct by consumer: each group of fields used together becomes its own type, and each caller takes only the group it needs",
+   "verify": "builds; tests pass; no consumer receives fields it does not reference",
+   "pkg": "github.com/gregberns/harmonik/internal/workspace"
+  }
+ ]
+}

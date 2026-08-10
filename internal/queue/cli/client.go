@@ -235,6 +235,13 @@ func renderQueueStatusText(result json.RawMessage, out io.Writer) int {
 			} `json:"groups"`
 		} `json:"queue"`
 		QuarantineReason string `json:"quarantine_reason"`
+		Completed        bool   `json:"completed"`
+		FinalStatus      string `json:"final_status"`
+		FinalGroupIndex  *int   `json:"final_group_index"`
+		SuccessCount     *int   `json:"success_count"`
+		FailCount        *int   `json:"fail_count"`
+		CompletedAt      string `json:"completed_at"`
+		ReceiptID        string `json:"completion_receipt_id"`
 		ActiveRuns       []struct {
 			Queue  string `json:"queue"`
 			BeadID string `json:"bead_id"`
@@ -263,6 +270,15 @@ func renderQueueStatusText(result json.RawMessage, out io.Writer) int {
 	}
 
 	if envelope.Queue == nil {
+		if envelope.Completed {
+			p.println("queue:    completed")
+			p.printf("receipt:  %s\n", envelope.ReceiptID)
+			p.printf("final:    %s  group=%d  success=%d  failed=%d\n",
+				envelope.FinalStatus, valueOrZero(envelope.FinalGroupIndex),
+				valueOrZero(envelope.SuccessCount), valueOrZero(envelope.FailCount))
+			p.printf("completed_at: %s\n", envelope.CompletedAt)
+			return renderExit(p)
+		}
 		if len(envelope.ActiveRuns) == 0 {
 			p.println("(no queue active)")
 			return renderExit(p)
@@ -289,6 +305,13 @@ func renderQueueStatusText(result json.RawMessage, out io.Writer) int {
 		}
 	}
 	return renderExit(p)
+}
+
+func valueOrZero(value *int) int {
+	if value == nil {
+		return 0
+	}
+	return *value
 }
 
 // renderQueueSubmitText prints a human-readable confirmation of a QueueSubmitResponse.

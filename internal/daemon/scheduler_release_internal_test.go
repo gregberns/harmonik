@@ -429,3 +429,60 @@ func TestReleaseFrom_RetriesAfterLosingTheSnapshotRace(t *testing.T) {
 			persisted.Status, persisted.RunID, queue.ItemStatusPending)
 	}
 }
+
+// The other end of the same loop. Losing every attempt is sustained contention
+// rather than one unlucky interleave, and the release then gives up. What it
+// must NOT do is call that a release: nothing wrote, the item is still
+// dispatched, and a caller told the item came back stops looking at the one
+// thing that is now stalled. The give-up and the sentence the operator gets are
+// one story — a give-up that claims success and a give-up that says nothing
+// produce the same silent stall, so both halves are pinned here.
+//
+// Every attempt is made to lose with a cancelled context rather than a racing
+// writer. WriteReplacement refuses a cancelled transaction before it touches the
+// disk, and that refusal is the same OutcomeRejected a lost snapshot race
+// produces, so the loop spends its whole budget and writes nothing. Losing a
+// real race three times in a row is not reproducible, which is reason enough:
+// a raced version of this test would fail whenever a race was won, not pass
+// quietly.
+func TestReleaseFrom_GivesUpAfterTheRetryBudgetAndSaysTheItemIsStranded(t *testing.T) {
+	const beadID = core.BeadID("hk-release-9")
+	projectDir, store, runID := reserveForRelease(t, beadID)
+
+	refusing, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	gaveUp := releaseFrom(refusing, store, projectDir, store.Snapshot(releaseQueueName), releaseTarget(beadID, runID), "claim_failed")
+	if gaveUp.Verdict == reservationReleased {
+		t.Fatalf("verdict = %q after every attempt was refused; the item was never written back, so a released "+
+			"verdict hands the caller a success it did not get", gaveUp.Verdict)
+	}
+	if gaveUp.Verdict != reservationReleaseContended {
+		t.Fatalf("verdict = %q (err %v); want %q — the spent budget is exactly what that verdict exists to name",
+			gaveUp.Verdict, gaveUp.Err, reservationReleaseContended)
+	}
+
+	// The verdict has to describe the disk. The item is still dispatched to a run
+	// that is not going to execute it, and nothing re-selects a dispatched item.
+	persisted, _, _ := loadReleasedItem(t, projectDir)
+	if persisted.Status != queue.ItemStatusDispatched {
+		t.Errorf("persisted status = %q; want %q — a release that gave up must not have written",
+			persisted.Status, queue.ItemStatusDispatched)
+	}
+	if persisted.RunID == nil || *persisted.RunID != runID.String() {
+		t.Errorf("persisted RunID = %v; want %q — the item still belongs to the run that could not give it back",
+			persisted.RunID, runID)
+	}
+
+	// The other half: a caller handed this verdict must speak. Silence here is
+	// the same stall as a false success — the group waits forever on an item no
+	// run will execute and nothing says why.
+	report := adoptedReleaseReport(releaseQueueName, string(beadID), runID, gaveUp)
+	if report == "" {
+		t.Fatal("the give-up produced no operator report; the strand then reads as a slow daemon rather than an error")
+	}
+	if !strings.Contains(report, releaseOutcomeAdvice(reservationReleaseContended)) {
+		t.Errorf("report = %q; it must carry releaseOutcomeAdvice(%q), which is the one tested statement of what "+
+			"an operator should expect next", report, reservationReleaseContended)
+	}
+}

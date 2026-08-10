@@ -82,25 +82,25 @@ const (
 func JSONRPCError(reason QueueValidationReason) (code int, message string) {
 	switch reason {
 	case ReasonQueueAlreadyActive:
-		return ErrorCodeQueueAlreadyActive, "queue_already_active"
+		return ErrorCodeQueueAlreadyActive, string(reason)
 	case ReasonAppendTargetInvalid:
-		return ErrorCodeAppendTargetInvalid, "append_target_invalid"
+		return ErrorCodeAppendTargetInvalid, string(reason)
 	case ReasonQueueNotAdvancing:
-		return ErrorCodeQueueNotAdvancing, "queue_not_advancing"
+		return ErrorCodeQueueNotAdvancing, string(reason)
 	case ReasonBeadNotFound:
-		return ErrorCodeBeadNotFound, "bead_not_found"
+		return ErrorCodeBeadNotFound, string(reason)
 	case ReasonBeadNotOpen:
-		return ErrorCodeBeadNotOpen, "bead_not_open"
+		return ErrorCodeBeadNotOpen, string(reason)
 	case ReasonBeadAlreadyDispatched:
-		return ErrorCodeBeadAlreadyDispatched, "bead_already_dispatched"
+		return ErrorCodeBeadAlreadyDispatched, string(reason)
 	case ReasonDuplicateBeadID:
-		return ErrorCodeDuplicateBeadID, "duplicate_bead_id"
+		return ErrorCodeDuplicateBeadID, string(reason)
 	case ReasonQueueTooLarge:
-		return ErrorCodeQueueTooLarge, "queue_too_large"
+		return ErrorCodeQueueTooLarge, string(reason)
 	case ReasonHandlerPaused:
-		return ErrorCodeHandlerPaused, "handler_paused"
+		return ErrorCodeHandlerPaused, string(reason)
 	case ReasonQueueNameInvalid:
-		return ErrorCodeQueueNameInvalid, "queue_name_invalid"
+		return ErrorCodeQueueNameInvalid, string(reason)
 	default:
 		return -32099, "unknown_validation_reason"
 	}

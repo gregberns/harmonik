@@ -41,6 +41,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/digest"
@@ -160,7 +161,7 @@ func eagerRefillEval(ctx context.Context, port reapSeamPort) {
 		beadStrs[i] = string(id)
 	}
 
-	_, evts, appendErr := queue.AppendItems(ctx, q, targetGroupPos, beadStrs, port.queueLedger)
+	_, evts, appendErr := queue.AppendItems(ctx, q, targetGroupPos, beadStrs, port.queueLedger, time.Now())
 	if appendErr != nil {
 		// Validation error (e.g. wave group) or ledger error — log and continue.
 		fmt.Fprintf(os.Stderr, "daemon: eagerRefillEval: AppendItems queueID=%s: %v\n",

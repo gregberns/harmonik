@@ -181,25 +181,12 @@ func HandleQueueSubmit(
 	projectDir string,
 	globalMaxConcurrent int,
 ) (QueueSubmitResponse, *Queue, []LedgerDepPair, *RPCError) {
+	if rpcErr := validatePiQueueWorkers(req); rpcErr != nil {
+		return QueueSubmitResponse{}, nil, nil, rpcErr
+	}
 	// Normalise the queue name for the per-name single-active guard and for
 	// the QM-002/2.1 name-validity pre-check inside Validate.
 	queueName := NormaliseQueueName(req.Name)
-
-	// PI-070: A Pi queue MUST carry an explicit Workers cap — fail loud if absent.
-	// Omitting Workers causes DefaultWorkers to inherit global max_concurrent and
-	// multiply the Pi request rate. Checked before the validation pipeline so the
-	// operator gets a clear, actionable error at submit time.
-	if req.DefaultHarness == core.AgentTypePi && req.Workers <= 0 {
-		return QueueSubmitResponse{}, nil, nil, &RPCError{
-			Code:    -32602,
-			Message: "pi_queue_missing_workers_cap",
-			Detail: map[string]any{
-				"error": "a Pi queue (default_harness=pi) MUST set an explicit workers cap; " +
-					"omitting it silently inherits global max_concurrent and multiplies the Pi request rate (PI-070)",
-				"field": "workers",
-			},
-		}
-	}
 
 	// Run the validation pipeline.
 	vreq := ValidationRequest{
@@ -243,23 +230,8 @@ func HandleQueueSubmit(
 	if len(verrs) > 0 {
 		return QueueSubmitResponse{}, nil, nil, rpcErrorFromValidation(verrs[0])
 	}
-
-	// WG-045 (security): validate launch template params at the ingestion boundary.
-	// Params arrive over the queue-submit RPC and are settable by any local agent;
-	// they MAY carry external data. Reject malformed keys, control characters
-	// (NUL/newline/tab — the highest-leverage injection primitives), and over-length
-	// values BEFORE persist, so a poison value never reaches the substitution path.
-	// (queue-append carries no template_params, so submit is the sole chokepoint.)
-	for _, g := range req.Groups {
-		for _, item := range g.Items {
-			if vErr := core.ValidateTemplateParams(item.TemplateParams); vErr != nil {
-				return QueueSubmitResponse{}, nil, nil, &RPCError{
-					Code:    -32602, // JSON-RPC Invalid params
-					Message: "invalid_template_param",
-					Detail:  map[string]any{"error": vErr.Error(), "bead_id": item.BeadID},
-				}
-			}
-		}
+	if rpcErr := validateQueueTemplateParams(req); rpcErr != nil {
+		return QueueSubmitResponse{}, nil, nil, rpcErr
 	}
 
 	// Mint queue_id per QM-010.
@@ -272,10 +244,42 @@ func HandleQueueSubmit(
 		}
 	}
 	queueID := queueUUID.String()
-	now := time.Now().UTC()
+	resp, q, buildErr := BuildQueueSubmit(req, deferredPairs, queueID, time.Now(), globalMaxConcurrent)
+	if buildErr != nil {
+		return QueueSubmitResponse{}, nil, nil, buildErr
+	}
 
-	// Build the in-memory Queue envelope per QM-050: all groups start pending,
-	// group_index 0 transitions active is deferred to caller for event ordering.
+	// Persist per QM-001 (QM-063: persist before events).
+	if persistErr := Persist(ctx, projectDir, q); persistErr != nil {
+		return QueueSubmitResponse{}, nil, nil, &RPCError{
+			Code:    -32099,
+			Message: "internal_error",
+			Detail:  map[string]any{"error": persistErr.Error()},
+		}
+	}
+
+	return resp, q, deferredPairs, nil
+}
+
+// BuildQueueSubmit constructs an accepted queue from values supplied by the
+// effectful submit shell. It reads no files, ledger, clock, or identity source.
+func BuildQueueSubmit(
+	req QueueSubmitRequest,
+	deferredPairs []LedgerDepPair,
+	queueID string,
+	acceptedAt time.Time,
+	globalMaxConcurrent int,
+) (QueueSubmitResponse, *Queue, *RPCError) {
+	queueName := NormaliseQueueName(req.Name)
+	if rpcErr := validatePiQueueWorkers(req); rpcErr != nil {
+		return QueueSubmitResponse{}, nil, rpcErr
+	}
+	if rpcErr := validateQueueTemplateParams(req); rpcErr != nil {
+		return QueueSubmitResponse{}, nil, rpcErr
+	}
+
+	now := acceptedAt.UTC()
+	// Build the in-memory Queue envelope per QM-050: all groups start pending.
 	groups := make([]Group, len(req.Groups))
 	for i, g := range req.Groups {
 		// Normalise submitted items: daemon-minted fields reset per §2.10.
@@ -301,7 +305,7 @@ func HandleQueueSubmit(
 		for j := range items {
 			if _, deferred := deferredSet[items[j].BeadID]; deferred {
 				if err := DeferItemForLedgerDependency(&items[j]); err != nil {
-					return QueueSubmitResponse{}, nil, nil, &RPCError{
+					return QueueSubmitResponse{}, nil, &RPCError{
 						Code:    -32099,
 						Message: "internal_error",
 						Detail:  map[string]any{"error": err.Error()},
@@ -349,21 +353,42 @@ func HandleQueueSubmit(
 	})
 	q := &initialQueue
 
-	// Persist per QM-001 (QM-063: persist before events).
-	if persistErr := Persist(ctx, projectDir, q); persistErr != nil {
-		return QueueSubmitResponse{}, nil, nil, &RPCError{
-			Code:    -32099,
-			Message: "internal_error",
-			Detail:  map[string]any{"error": persistErr.Error()},
-		}
-	}
-
 	resp := QueueSubmitResponse{
 		QueueID:    queueID,
 		Status:     QueueStatusActive,
 		GroupCount: len(req.Groups),
 	}
-	return resp, q, deferredPairs, nil
+	return resp, q, nil
+}
+
+func validatePiQueueWorkers(req QueueSubmitRequest) *RPCError {
+	if req.DefaultHarness != core.AgentTypePi || req.Workers > 0 {
+		return nil
+	}
+	return &RPCError{
+		Code:    -32602,
+		Message: "pi_queue_missing_workers_cap",
+		Detail: map[string]any{
+			"error": "a Pi queue (default_harness=pi) MUST set an explicit workers cap; " +
+				"omitting it silently inherits global max_concurrent and multiplies the Pi request rate (PI-070)",
+			"field": "workers",
+		},
+	}
+}
+
+func validateQueueTemplateParams(req QueueSubmitRequest) *RPCError {
+	for _, g := range req.Groups {
+		for _, item := range g.Items {
+			if vErr := core.ValidateTemplateParams(item.TemplateParams); vErr != nil {
+				return &RPCError{
+					Code:    -32602,
+					Message: "invalid_template_param",
+					Detail:  map[string]any{"error": vErr.Error(), "bead_id": item.BeadID},
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -513,7 +538,7 @@ func HandleQueueAppendOnQueue(
 		}
 	}
 
-	mutated, events, appendErr := AppendItems(ctx, q, req.GroupIndex, beadIDStrs, ledger, otherQueues...)
+	mutated, events, appendErr := AppendItems(ctx, q, req.GroupIndex, beadIDStrs, ledger, time.Now(), otherQueues...)
 	if appendErr != nil {
 		var ve *ValidationError
 		if errors.As(appendErr, &ve) {

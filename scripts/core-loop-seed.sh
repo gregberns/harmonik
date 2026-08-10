@@ -19,7 +19,61 @@ command -v br >/dev/null 2>&1 || { echo "br required" >&2; exit 2; }
 
 SCRATCH="${1:?usage: core-loop-seed.sh <scratch-path> <map-out-path>}"
 MAP_OUT="${2:?map-out-path required}"
+[ -d "$SCRATCH" ] || { echo "scratch path is not a directory: $SCRATCH (run scratch-daemon.sh init first)" >&2; exit 2; }
+
+# Resolve the scratch path to its absolute, symlink-free spelling BEFORE anything reads it.
+#
+# scripts/scratch-daemon.sh puts every path it records through guard_path, which canonicalizes
+# with `pwd -P`. On macOS /tmp is a symlink to /private/tmp, so scratch-daemon.sh writes the
+# origin URL as /private/tmp/h/core-loop-lt/.harmonik/scratch-origin.git. This script took $1
+# raw, and the Makefile's shipped default is LT_SCRATCH ?= /tmp/h/core-loop-lt. The two spelled
+# the same directory two ways, so the "origin is already isolated" test below could never match
+# and the script silently re-pointed origin off the bare repository scratch-daemon.sh manages.
+# One `pwd -P` here makes both sides spell the path identically. That is the same defect this
+# change exists to fix: a reader and a writer with private copies of one fact.
+SCRATCH="$(cd "$SCRATCH" && pwd -P)" \
+    || { echo "cannot resolve scratch path to an absolute directory: $1" >&2; exit 2; }
+[ -n "$SCRATCH" ] || { echo "scratch path resolved to an empty string: $1" >&2; exit 2; }
+
+# scratch-versus-fleet guard. Everything below rewrites the repository it is pointed at:
+# `git remote set-url origin`, `git branch -f`, and a force-push. What separates a scratch
+# from a live checkout is AUTHORSHIP, not gitignore: `harmonik init` writes config.yaml for
+# every live project, while only scripts/scratch-daemon.sh cmd_init writes audit-revision
+# (scratch_revfile), and it writes it for every scratch it prepares. So the presence of
+# audit-revision means scratch-daemon.sh built this tree. Refuse when it is absent, so a
+# hand-run against a live project cannot silently re-point that clone's origin.
+[ -f "$SCRATCH/.harmonik/audit-revision" ] || {
+    echo "refusing: $SCRATCH has no .harmonik/audit-revision, so scratch-daemon.sh init did not prepare it." >&2
+    echo "This script rewrites origin and force-pushes branches. Point it at a scratch clone, never a live harmonik checkout." >&2
+    exit 2
+}
 [ -d "$SCRATCH/.beads" ] || { echo "scratch has no .beads dir: $SCRATCH (run scratch-daemon.sh init first)" >&2; exit 2; }
+
+# The ref the daemon cuts every run worktree from. READ IT FROM THE DAEMON'S OWN CONFIG.
+#
+# This script used to write down its own copy of that ref — the literal `main` — and cut each
+# landing branch from it. The two disagree in every scratch clone. scripts/scratch-daemon.sh
+# isolate_push_target rewrites defaults.start_from to `scratch/main`, which it pins to the
+# audited commit; the local `main` that provision_matrix_config creates comes from origin/main,
+# which is the FLEET's main and is hundreds of commits away. So the run worktree started at the
+# audited commit and the landing branch started at the fleet's main. The landing rebase
+# (internal/runmerge/merge.go prepareRebase) then had to replay the whole divergence, it
+# conflicted across internal/daemon, and every run ended `merge-failed: rebase_conflict`.
+# Measured on a real clone of this repo: 932 commits to replay, 27 the other way, 7 conflicted
+# files on the first collision.
+#
+# Reading the value keeps one owner for it. The daemon's precedence is bead > project defaults >
+# spec default (internal/daemon/branching.go resolveBranchingFrom); a seed sets only
+# target_branch, which is LandsOn, so StartFrom always comes from this file.
+#
+# Every failure here is fatal. A silent fallback to `main` is how the defect above survived.
+BRANCHING="$SCRATCH/.harmonik/branching.yaml"
+[ -f "$BRANCHING" ] || { echo "no branching config at $BRANCHING — this scratch was not prepared by scratch-daemon.sh init, so the ref the daemon starts runs from cannot be read" >&2; exit 2; }
+BASE_REF="$(awk '/^[[:space:]]+start_from:/ { print $2; exit }' "$BRANCHING")"
+[ -n "$BASE_REF" ] || { echo "$BRANCHING has no defaults.start_from — refusing to guess the ref the daemon starts runs from" >&2; exit 2; }
+git -C "$SCRATCH" rev-parse --verify --quiet "${BASE_REF}^{commit}" >/dev/null \
+    || { echo "defaults.start_from is '$BASE_REF' but that ref does not resolve in $SCRATCH — the daemon cannot start a run from it either" >&2; exit 2; }
+echo "[core-loop-seed] daemon start_from = '$BASE_REF' ($(git -C "$SCRATCH" rev-parse --short "$BASE_REF")) — landing branches are cut from this ref"
 
 # D2: isolate the scratch's `origin` from the fleet clone. The daemon's landing does
 # `git push origin <target_branch>` (workloop.go mergeRunBranchToMain), and a scratch cloned
@@ -28,16 +82,31 @@ MAP_OUT="${2:?map-out-path required}"
 # rebases the run's commit onto the STALE tip, hits a content conflict on the appended line,
 # drops the commit, and leaves the branch at the stale SHA — a FALSE landing (the runner sees
 # a branch "advance" that is not this run's change). Re-point origin at a throwaway bare repo
-# seeded with only `main`, so every integration-branch push is a clean fast-forward create and
-# the fleet's refs are never touched. Gated on any target_branch seed; idempotent.
+# seeded with only the daemon's start_from ref, so every integration-branch push is a clean
+# fast-forward and the fleet's refs are never touched. Gated on any target_branch seed;
+# idempotent.
+#
+# scripts/scratch-daemon.sh isolate_push_target now does this at init time, and it does it
+# better: its bare repo carries the start_from ref the daemon was configured with. When that is
+# already in place, LEAVE IT. Building a second bare on top of it dropped that ref and left the
+# push target holding only a stale `main`, which is the same "keep a private copy of another
+# component's fact" mistake this block is being fixed for.
 if jq -e '[.seeds[] | select(.target_branch != null)] | length > 0' "$SEEDS" >/dev/null 2>&1; then
-    ORIGIN_BARE="$SCRATCH/.harmonik/matrix-origin.git"
-    [ -d "$ORIGIN_BARE" ] || git init --quiet --bare "$ORIGIN_BARE"
-    git -C "$SCRATCH" push --quiet "$ORIGIN_BARE" "main:main" 2>/dev/null \
-        || git -C "$SCRATCH" push --quiet "$ORIGIN_BARE" "HEAD:main" 2>/dev/null || true
-    git -C "$SCRATCH" remote set-url origin "$ORIGIN_BARE"
-    git -C "$SCRATCH" fetch --quiet origin 2>/dev/null || true
-    echo "[core-loop-seed] isolated origin -> $ORIGIN_BARE (daemon landings push here, never the fleet)"
+    CUR_ORIGIN="$(git -C "$SCRATCH" remote get-url origin 2>/dev/null || true)"
+    case "$CUR_ORIGIN" in
+        "$SCRATCH/.harmonik/"*)
+            echo "[core-loop-seed] origin already isolated by scratch-daemon.sh -> $CUR_ORIGIN"
+            ;;
+        *)
+            ORIGIN_BARE="$SCRATCH/.harmonik/matrix-origin.git"
+            [ -d "$ORIGIN_BARE" ] || git init --quiet --bare "$ORIGIN_BARE"
+            git -C "$SCRATCH" push --quiet --force "$ORIGIN_BARE" "$BASE_REF:refs/heads/$BASE_REF" \
+                || { echo "failed to seed the throwaway origin '$ORIGIN_BARE' with '$BASE_REF' — refusing to point the daemon's landing pushes at an origin that lacks its own base ref" >&2; exit 1; }
+            git -C "$SCRATCH" remote set-url origin "$ORIGIN_BARE"
+            git -C "$SCRATCH" fetch --quiet origin 2>/dev/null || true
+            echo "[core-loop-seed] isolated origin -> $ORIGIN_BARE (seeded with '$BASE_REF'; daemon landings push here, never the fleet)"
+            ;;
+    esac
 fi
 
 # D4: provision review-loop.dot at the scratch root for the dot cell's `dot:review-loop`
@@ -75,17 +144,28 @@ for i in $(seq 0 $((n-1))); do
     title="$(jq -r ".seeds[$i].title" "$SEEDS")"
     body="$(jq -r ".seeds[$i].body" "$SEEDS")"
     labels="$(jq -r ".seeds[$i].labels | join(\",\")" "$SEEDS")"
-    # D2: per-bead branch targeting. When the seed carries target_branch, (a) create/reset
-    # that branch off main in the SCRATCH clone BEFORE the bead exists (the daemon does NOT
-    # create it — it does `git rev-parse <b>` and reopens the bead if absent), and (b) append
-    # a ## Branching fenced-yaml block to the description so resolveBranching lands the task
-    # there instead of main (BI-009b). Idempotent (branch -f resets to the current main tip).
+    # D2: per-bead branch targeting. When the seed carries target_branch, (a) create/reset that
+    # branch at the daemon's start_from ref in the SCRATCH clone BEFORE the bead exists (the
+    # daemon does NOT create it — it does `git rev-parse <b>` and reopens the bead if absent),
+    # and (b) append a ## Branching fenced-yaml block to the description so resolveBranching
+    # lands the task there instead of on the project default (BI-009b). Idempotent (branch -f
+    # resets to the current start_from tip).
+    #
+    # The branch MUST be cut from the same ref the run worktree is cut from. The landing rebases
+    # the run branch onto this branch, so any gap between the two is replayed commit by commit.
+    # $BASE_REF is read from the daemon's branching.yaml above for exactly that reason.
     tb="$(jq -r ".seeds[$i].target_branch // empty" "$SEEDS")"
     if [ -n "$tb" ]; then
-        git -C "$SCRATCH" branch -f "$tb" main \
-            || { echo "seed '$key': failed to create/reset branch '$tb' off main (does main exist in $SCRATCH?)" >&2; exit 1; }
+        git -C "$SCRATCH" branch -f "$tb" "$BASE_REF" \
+            || { echo "seed '$key': failed to create/reset branch '$tb' at '$BASE_REF' in $SCRATCH" >&2; exit 1; }
+        # Publish it, so origin's copy cannot be a leftover from an earlier run. The landing
+        # pushes this branch (internal/runmerge/merge.go gitPushOrigin), and a `scratch-daemon.sh
+        # init --reuse` keeps the bare origin under .harmonik. A stale branch there rejects the
+        # push as non-fast-forward, and the daemon then rebases the run onto the stale tip.
+        git -C "$SCRATCH" push --quiet --force origin "$tb:refs/heads/$tb" \
+            || { echo "seed '$key': failed to publish branch '$tb' to origin — the landing push would meet an origin this script could not place" >&2; exit 1; }
         body="$(printf '%s\n\n## Branching\n\n```yaml\ntarget_branch: %s\n```\n' "$body" "$tb")"
-        echo "[core-loop-seed] $key -> lands on branch '$tb' (created/reset off main)"
+        echo "[core-loop-seed] $key -> lands on branch '$tb' (created/reset at '$BASE_REF', published to origin)"
     fi
     # create in the SCRATCH DB (subshell CWD = scratch; never the fleet DB)
     out="$( cd "$SCRATCH" && br create --title="$title" --description="$body" \

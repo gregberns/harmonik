@@ -12,6 +12,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gregberns/harmonik/internal/queue"
 )
@@ -75,7 +76,7 @@ func TestAppendItemsGroupIndexOutOfRangeReturnsError(t *testing.T) {
 			q := appendFixtureStreamQueue(queue.GroupStatusActive, nil) // single group at index 0
 			ledger := appendFixtureOpenLedger("hk-aaa01")
 
-			_, _, err := queue.AppendItems(context.Background(), q, idx, []string{"hk-aaa01"}, ledger)
+			_, _, err := queue.AppendItems(context.Background(), q, idx, []string{"hk-aaa01"}, ledger, time.Date(2026, 5, 16, 0, 0, 0, 0, time.UTC))
 			if err == nil {
 				t.Fatalf("GroupIndex %d: expected error, got nil", idx)
 			}

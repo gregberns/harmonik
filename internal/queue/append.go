@@ -57,6 +57,7 @@ func AppendItems(
 	groupIndex int,
 	beadIDs []string,
 	ledger BeadLedger,
+	acceptedAt time.Time,
 	otherQueues ...*Queue,
 ) (*Queue, []core.Event, error) {
 	if q == nil {
@@ -120,9 +121,9 @@ func AppendItems(
 		return nil, nil, &verrs[0]
 	}
 
-	// Validation passed. Stamp accept time and resolve deferred items.
-	now := time.Now().UTC()
-	nowStr := now.UTC().Format(time.RFC3339Nano)
+	// Validation passed. Normalize the shell-supplied acceptance time once.
+	now := acceptedAt.UTC()
+	nowStr := now.Format(time.RFC3339Nano)
 
 	// Build a set of deferred bead IDs from QM-025 notices returned by Validate.
 	// Validate only checks edges within the appended set; we also need to check

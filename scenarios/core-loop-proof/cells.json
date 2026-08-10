@@ -30,6 +30,25 @@
   "//nodes9": "many times a fix loop revisits a node, and which terminal node it ends on,",
   "//nodes10": "are routing outcomes and need a live capture to pin. See hk-gap4-workflow-",
   "//nodes11": "mode-drift-7xwat.",
+  "//lands_on": "EVERY cell says \"@resolved\" for expect.lands_on. This file names NO",
+  "//lands_on2": "branch, for the same reason it names no model: a branch name written",
+  "//lands_on3": "down here is a second copy of a fact another component owns, and the two",
+  "//lands_on4": "copies drift. They did, and THIS PARAGRAPH IS THE ONE PLACE THAT RECORDS",
+  "//lands_on5": "WHICH CELLS. The Go guard and the runner point here instead of keeping",
+  "//lands_on6": "their own tallies, because several copies of one count going stale",
+  "//lands_on7": "together is the same defect one level up. Five cells said \"main\". FOUR of",
+  "//lands_on8": "them — codex:local, codex:remote, claude:local, claude:remote — ride on",
+  "//lands_on9": "seeds that declare no target_branch, so they land on whatever",
+  "//lands_on10": "defaults.lands_on says, and scripts/scratch-daemon.sh isolate_push_target",
+  "//lands_on11": "rewrites that key to scratch/main; those four could not go green. The",
+  "//lands_on12": "FIFTH, pi:remote, said \"main\" while its own seed declares target_branch:",
+  "//lands_on13": "core-loop-proof-integ, so that cell contradicted the seed it comes from.",
+  "//lands_on14": "The runner resolves the sentinel per cell: the seed's target_branch when",
+  "//lands_on15": "the seed declares one, else defaults.lands_on read out of the scratch",
+  "//lands_on16": "daemon's own .harmonik/branching.yaml. It also injects that same default as",
+  "//lands_on17": "._trunk_branch, which is the branch t10 requires NOT to move. See",
+  "//lands_on18": "scripts/core-loop-matrix.sh seed_lands_on_for, and the drift guard",
+  "//lands_on19": "TestCoreLoopProofFixtureDrift_LandingBranchContract.",
   "schema_version": 1,
   "cells": [
     {
@@ -61,7 +80,7 @@
         "provider": {
           "enabled": true
         },
-        "lands_on": "main"
+        "lands_on": "@resolved"
       },
       "gaps": [
         "gap1",
@@ -99,7 +118,7 @@
         "provider": {
           "enabled": true
         },
-        "lands_on": "main"
+        "lands_on": "@resolved"
       },
       "gaps": [
         "gap1",
@@ -145,7 +164,7 @@
         "provider": {
           "enabled": true
         },
-        "lands_on": "core-loop-proof-integ"
+        "lands_on": "@resolved"
       },
       "gaps": [
         "gap1",
@@ -197,7 +216,7 @@
         "provider": {
           "enabled": true
         },
-        "lands_on": "core-loop-proof-dot-integ"
+        "lands_on": "@resolved"
       },
       "gaps": [
         "gap1",
@@ -237,7 +256,7 @@
         "provider": {
           "enabled": true
         },
-        "lands_on": "main"
+        "lands_on": "@resolved"
       },
       "gaps": [
         "gap1",
@@ -280,7 +299,7 @@
         "agent_ready": {
           "required": true
         },
-        "lands_on": "main"
+        "lands_on": "@resolved"
       },
       "gaps": [
         "gap1",
@@ -323,7 +342,7 @@
         "agent_ready": {
           "required": true
         },
-        "lands_on": "main"
+        "lands_on": "@resolved"
       },
       "gaps": [
         "gap1",

@@ -274,6 +274,52 @@ EOF
     printf '%s' "$out" | tr '|' '\n' | grep -v '^$' | jq -R . | jq -sc .
 }
 
+# ---- landing-branch resolution for the cell specs -------------------------
+# Same rule as the model above, for the same reason: cells.json names NO branch. It named
+# branches once, and the names disagreed with the daemon and with the seeds the cells come
+# from. Which cells said what is recorded in ONE place — the "//lands_on" notes at the top of
+# scenarios/core-loop-proof/cells.json. This header keeps no second tally, because several
+# copies of one count going stale together is the same defect one level up. The defect has one
+# shape: a fixture keeping a private copy of a fact another component owns. So read the fact
+# from its owners.
+#
+# TWO owners, and the precedence here mirrors the daemon's own
+# (internal/daemon/branching.go resolveBranchingFrom: bead body > project defaults > spec
+# default):
+#
+#   a seed's `target_branch`  — becomes the bead's ## Branching target_branch, tier 1, or
+#   defaults.lands_on         — .harmonik/branching.yaml, tier 2, when the seed asks for none.
+#
+# Tier 1 is the bead body and nothing else. internal/daemon/branching.go branchingYAMLShape
+# maps the body key `target_branch` onto LandsOn, so a seed that declares one wins outright,
+# and a seed that declares none drops to the tier-2 project default.
+# scripts/scratch-daemon.sh isolate_push_target rewrites that key to `scratch/main`, and
+# scripts/core-loop-seed.sh already reads defaults.start_from out of the same file with the
+# same awk shape. Reader and writer cannot drift when there is one written value.
+
+# daemon_default_lands_on: defaults.lands_on out of the SCRATCH daemon's branching.yaml.
+# This is both the landing branch for a seed with no target_branch AND the trunk t10 requires
+# not to move. Fatal on a missing file or key — a silent fall back to `main` is how the
+# original defect survived.
+daemon_default_lands_on() {
+    local branching="$SCRATCH/.harmonik/branching.yaml" val
+    [ -f "$branching" ] \
+        || die "no branching config at $branching — this scratch was not prepared by scratch-daemon.sh init, so the branch the daemon lands on cannot be read"
+    val="$(awk '/^[[:space:]]+lands_on:/ { print $2; exit }' "$branching")"
+    [ -n "$val" ] \
+        || die "$branching has no defaults.lands_on — refusing to guess the branch the daemon lands on"
+    printf '%s' "$val"
+}
+
+# seed_lands_on_for <seed-key> — the branch THIS seed's run must land on.
+seed_lands_on_for() {
+    local key="$1" tb
+    tb="$(jq -r --arg k "$key" '.seeds[] | select(.key == $k) | .target_branch // empty' \
+            "$REPO_ROOT/scenarios/core-loop-proof/seed-beads.json" 2>/dev/null | head -1)"
+    if [ -n "$tb" ]; then printf '%s' "$tb"; return 0; fi
+    printf '%s' "$TRUNK_BRANCH"
+}
+
 # cell_slug: a queue-name-safe + filesystem-safe token for a cell name (':' and '/' -> '-'),
 # so a cell whose name is NOT harness:substrate (e.g. the D4 extra cell pi-dot:local) gets
 # its own capture file and batch/queue name, and never collides with pi:local's. Hyphen
@@ -324,11 +370,17 @@ SCRATCH_SOCK="$SCRATCH/.harmonik/daemon.sock"
 # REQUEST_CHANGES. Harmless extras for the single/codex/claude cells (which never emit them).
 CAP_TYPES="harness_selected,model_selected,run_started,run_completed,run_failed,workspace_merge_status,implementer_phase_complete,reviewer_verdict,node_dispatch_requested,node_dispatch_decided,agent_ready,agent_ready_timeout,agent_ready_stall_detected,post_agent_ready_hang,launch_stall_detected"
 CAP_DIR="$SCRATCH/.harmonik/matrix-captures"
+# The branch the daemon lands a seed on when the seed asks for none — and the branch t10
+# requires NOT to move. Read once, AFTER the cycle above, because `cycle` may rebuild the
+# scratch. Only --assert needs it, and only --assert may pay its fatal failure.
+TRUNK_BRANCH=""
 if [ "$ASSERT" -eq 1 ]; then
     [ -x "$ASSERT_CELL" ] || die "--assert needs $ASSERT_CELL"
     [ -n "$SPECS" ] || SPECS="$REPO_ROOT/scenarios/core-loop-proof/cells.json"
     [ -f "$SPECS" ] || die "--assert: specs file not found: $SPECS"
     mkdir -p "$CAP_DIR"
+    TRUNK_BRANCH="$(daemon_default_lands_on)"
+    log "daemon defaults.lands_on = '$TRUNK_BRANCH' — cells with no seed target_branch land here, and t10 requires this branch not to move for the cells that do"
 fi
 
 [ "${#HARNESSES[@]}" -gt 0 ] || die "no harnesses to run (empty --harnesses?)"
@@ -414,14 +466,34 @@ for _run_cell in "${RUN_CELLS[@]}"; do
             trap 'kill "${cap_pid:-}" 2>/dev/null || true' EXIT INT TERM
         fi
 
+        # The seed KEY that ties this cell to its fixture. Read BEFORE the git baseline below,
+        # because the landing sentinel resolves through it, and before .seed_bead is
+        # overwritten with the dispatched bead id in the spec build further down.
+        spec_seed_key="$(jq -r --arg c "$cell" '.cells[]|select(.cell==$c)|.seed_bead // empty' "$SPECS" 2>/dev/null || true)"
+        spec_harness="$(jq -r --arg c "$cell" '.cells[]|select(.cell==$c)|.harness // empty' "$SPECS" 2>/dev/null || true)"
+
         # D2: git landing baseline (record BEFORE submit). The intended branch is the cell
-        # spec's expect.lands_on; we snapshot main + that branch tip so that AFTER the run we
-        # can prove from GIT which branch actually advanced — the workspace_merge_status event
-        # is never emitted (dead/aspirational), so the merge must be verified from the repo.
-        land_want=""; base_main=""; base_target=""
+        # spec's expect.lands_on, which is the "@resolved" sentinel — resolved here from the
+        # seed's target_branch, else from the daemon's own defaults.lands_on. We snapshot the
+        # trunk + that branch tip so that AFTER the run we can prove from GIT which branch
+        # actually advanced — the workspace_merge_status event is never emitted
+        # (dead/aspirational), so the merge must be verified from the repo.
+        #
+        # The trunk snapshot used to read the literal `main`. The daemon never lands there in a
+        # scratch: isolate_push_target points defaults.lands_on at scratch/main. A landing on
+        # scratch/main therefore read as "nothing moved", which is a true verdict reached for a
+        # false reason, and the next branch rename would have made it a wrong verdict.
+        land_want=""; base_trunk=""; base_target=""
         if [ "$ASSERT" -eq 1 ] && command -v git >/dev/null 2>&1; then
             land_want="$(jq -r --arg c "$cell" '.cells[]|select(.cell==$c)|.expect.lands_on // empty' "$SPECS" 2>/dev/null || true)"
-            base_main="$(git -C "$SCRATCH" rev-parse --verify -q main 2>/dev/null || echo -)"
+            if [ "$land_want" = "@resolved" ]; then
+                [ -n "$spec_seed_key" ] \
+                    || die "cell '$cell' says expect.lands_on = '@resolved' but names no seed_bead — nothing to resolve the landing branch from"
+                land_want="$(seed_lands_on_for "$spec_seed_key")"
+                [ -n "$land_want" ] \
+                    || die "cell '$cell' seed '$spec_seed_key': could not resolve expect.lands_on — no target_branch on the seed and no defaults.lands_on to fall back to"
+            fi
+            base_trunk="$(git -C "$SCRATCH" rev-parse --verify -q "$TRUNK_BRANCH" 2>/dev/null || echo -)"
             [ -n "$land_want" ] && base_target="$(git -C "$SCRATCH" rev-parse --verify -q "$land_want" 2>/dev/null || echo -)"
         fi
 
@@ -435,16 +507,22 @@ for _run_cell in "${RUN_CELLS[@]}"; do
         printf '%s\n' "$batch_out" | grep -E '^BATCH_(ITEM|SUMMARY)' || true
 
         # D2: recompute tips + derive the OBSERVED landing branch from git truth. Landed-on =
-        # the branch whose tip advanced; if main advanced at all that is always a fail (main
-        # must NOT move). This observed value is fed to the t10 assertion below.
+        # the branch whose tip advanced; if the TRUNK advanced while the cell asked for a
+        # different branch that is always a fail (the trunk must NOT move). This observed
+        # value is fed to the t10 assertion below.
+        #
+        # The trunk-advanced test is written second on purpose, so it wins. When a cell's own
+        # target IS the trunk — the seed declares no target_branch — both lines set the same
+        # name and the cell reads as a clean landing, which is right: that cell asked for the
+        # project default and got it.
         observed_lands_on=""
         if [ "$ASSERT" -eq 1 ] && [ -n "$land_want" ] && command -v git >/dev/null 2>&1; then
-            new_main="$(git -C "$SCRATCH" rev-parse --verify -q main 2>/dev/null || echo -)"
+            new_trunk="$(git -C "$SCRATCH" rev-parse --verify -q "$TRUNK_BRANCH" 2>/dev/null || echo -)"
             new_target="$(git -C "$SCRATCH" rev-parse --verify -q "$land_want" 2>/dev/null || echo -)"
             observed_lands_on="none"
             [ "$new_target" != "$base_target" ] && observed_lands_on="$land_want"
-            [ "$new_main" != "$base_main" ] && observed_lands_on="main"
-            log "landing: want='$land_want' observed='$observed_lands_on' (main ${base_main:0:8}->${new_main:0:8}, target ${base_target:0:8}->${new_target:0:8})"
+            [ "$new_trunk" != "$base_trunk" ] && observed_lands_on="$TRUNK_BRANCH"
+            log "landing: want='$land_want' observed='$observed_lands_on' (trunk '$TRUNK_BRANCH' ${base_trunk:0:8}->${new_trunk:0:8}, target ${base_target:0:8}->${new_target:0:8})"
         fi
 
         # Determine the cell verdict. Without --assert it is the batch terminal outcome.
@@ -455,17 +533,24 @@ for _run_cell in "${RUN_CELLS[@]}"; do
             # resolve the cell spec, overriding seed_bead with the real dispatched id and
             # injecting the git-observed landing branch (D2) so assert_t10 compares intent
             # (expect.lands_on) against reality (._observed_lands_on).
-            # Resolve the two model sentinels the spec carries instead of literal model
-            # names. Read the seed KEY before .seed_bead is overwritten with the dispatched
-            # bead id below — the key is what ties a cell to its seed's labels.
-            spec_seed_key="$(jq -r --arg c "$cell" '.cells[]|select(.cell==$c)|.seed_bead // empty' "$SPECS" 2>/dev/null || true)"
-            spec_harness="$(jq -r --arg c "$cell" '.cells[]|select(.cell==$c)|.harness // empty' "$SPECS" 2>/dev/null || true)"
+            # Resolve the THREE sentinels the spec carries instead of literal names: the two
+            # model ones, and expect.lands_on, which was resolved to $land_want at the git
+            # baseline above and is written back here so assert_t10 reads a branch name rather
+            # than the placeholder. ._trunk_branch rides along because t10 must be able to
+            # NAME the branch it requires not to move.
+            # spec_seed_key / spec_harness were read above, before .seed_bead is overwritten
+            # with the dispatched bead id below — the key is what ties a cell to its fixture.
             want_model="$(seed_model_for "$spec_seed_key" "$spec_harness")"
             foreign_models="$(foreign_models_for "$spec_seed_key" "$spec_harness")"
             [ -n "$foreign_models" ] || foreign_models='[]'
             spec="$(jq -c --arg c "$cell" --arg sb "$local_seed" --arg obs "$observed_lands_on" \
                       --arg wm "$want_model" --argjson fm "$foreign_models" \
+                      --arg lw "$land_want" --arg tb "$TRUNK_BRANCH" \
                       '.cells[] | select(.cell==$c) | .seed_bead=$sb | ._observed_lands_on=$obs
+                       | ._trunk_branch=$tb
+                       | if (.expect.lands_on? == "@resolved" and $lw != "")
+                         then .expect.lands_on = $lw
+                         else . end
                        | if (.expect.model_selected.model? == "@resolved")
                          then .expect.model_selected.model = (if $wm == "" then null else $wm end)
                          else . end

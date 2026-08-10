@@ -8,7 +8,7 @@
   "//pin4": "config (pi), or leaves the model uncontrolled (codex, set by $CODEX_HOME/config.toml).",
   "//pin5": "cells.json names NO model: it says @resolved and the runner resolves it from here.",
   "//branch": "target_branch (optional, D2): when set, core-loop-seed.sh creates/resets that",
-  "//branch2": "branch off main in the SCRATCH clone BEFORE creating the bead, and appends a",
+  "//branch2": "branch at the daemon's own defaults.start_from in the SCRATCH clone BEFORE creating the bead, and appends a",
   "//branch3": "## Branching fenced-yaml block (target_branch: <b>) to the bead description so",
   "//branch4": "the daemon lands the task there instead of main (BI-009b). The runner git-",
   "//branch5": "verifies the landing (the workspace_merge_status event is never emitted).",

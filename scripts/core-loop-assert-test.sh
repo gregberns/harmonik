@@ -40,6 +40,25 @@ check() {
     fi
 }
 
+# check_detail <name> <ndjson> <spec-json> <gap> <expected-verdict> <detail-substring>
+# Same as check, plus the REASON. A verdict alone cannot tell a right answer from a right
+# answer reached for the wrong reason, and t10 has already shipped one of those: it compared
+# the observed branch against the literal `main` while the scratch daemon lands on
+# scratch/main, so a landing on the trunk was reported as "landed on some other branch". The
+# verdict was fail either way. Only the detail string says which check actually fired.
+check_detail() {
+    local name="$1" stream="$2" spec="$3" gap="$4" want="$5" want_detail="$6" got_verdict got_detail row
+    row="$(jq -n --slurpfile events "$stream" --argjson spec "$spec" --argjson ref_events null -f "$LIB" \
+             | jq -c --arg g "$gap" '.[] | select(.gap==$g)')"
+    got_verdict="$(printf '%s' "$row" | jq -r '.verdict')"
+    got_detail="$(printf '%s' "$row" | jq -r '.detail')"
+    if [ "$got_verdict" = "$want" ] && case "$got_detail" in *"$want_detail"*) true;; *) false;; esac; then
+        pass=$((pass+1)); echo "ok   — $name ($gap=$got_verdict)"
+    else
+        fail=$((fail+1)); echo "FAIL — $name: $gap expected '$want' with detail containing '$want_detail'; got '$got_verdict' / '$got_detail'" >&2
+    fi
+}
+
 # no_leak_models forbids a FOREIGN family's node-model pin on this cell's harness (T4).
 CODEX='{"schema_version":1,"cell":"codex:local","seed_bead":"hk-clp-codex","expect":{"harness_selected":{"agent_type":"codex","tier":1},"model_selected":{"harness":"codex","model":null,"no_leak_models":["claude-opus-4-8","deepseek-reasoner"]}},"gaps":["gap1","gap3","gap4"]}'
 PI='{"schema_version":1,"cell":"pi:local","seed_bead":"hk-clp-pi","expect":{"harness_selected":{"agent_type":"pi","tier":1},"model_selected":{"harness":"pi","model":"deepseek-reasoner","no_leak_models":["claude-opus-4-8"]}},"gaps":["gap1"]}'
@@ -126,13 +145,33 @@ check "gap5 pending when no expect.agent_ready" "$TD/claude-agent-ready-pass.ndj
 # event stream is unused, so these rows carry ._observed_lands_on directly. Two-sided:
 # landed-on-intended-branch PASSES; main-advanced FAILS. Per-bead targeting is LIVE (hk-lgykq;
 # proven by daemon E2E TestMergeToMain_PerBeadIntegrationTargetLandsOnBranch).
-T10='{"schema_version":1,"seed_bead":"hk-clp-codex","expect":{"lands_on":"integration/core-loop-proof"},"gaps":["t10"]}'
+#
+# t10 NAMES NO BRANCH of its own. Both branch names are injected by the runner:
+# expect.lands_on (resolved from the seed's target_branch, else from the daemon's
+# defaults.lands_on) and ._trunk_branch (defaults.lands_on). The trunk here is spelled
+# scratch/main because that is what scratch-daemon.sh isolate_push_target writes, and the
+# rows below prove t10 follows the injected name rather than a literal `main` — the trunk
+# row advances scratch/main and must FAIL, and the row that advances the LITERAL main while
+# the trunk is scratch/main must fail as a landing on the wrong branch, not as a trunk move.
+T10='{"schema_version":1,"seed_bead":"hk-clp-codex","expect":{"lands_on":"integration/core-loop-proof"},"_trunk_branch":"scratch/main","gaps":["t10"]}'
 T10_PASS="$(printf '%s' "$T10" | jq -c '._observed_lands_on="integration/core-loop-proof"')"
+T10_TRUNK="$(printf '%s' "$T10" | jq -c '._observed_lands_on="scratch/main"')"
 T10_MAIN="$(printf '%s' "$T10" | jq -c '._observed_lands_on="main"')"
 T10_NONE="$(printf '%s' "$T10" | jq -c '._observed_lands_on="none"')"
-check "t10 landed-on-intended-branch pass" "$TD/t10-would-pass.ndjson" "$T10_PASS" t10 pass
-check "t10 landed-on-main fail"            "$TD/t10-known-red.ndjson"  "$T10_MAIN" t10 fail
-check "t10 nothing-landed fail"            "$TD/t10-would-pass.ndjson" "$T10_NONE" t10 fail
+T10_NOTRUNK="$(printf '%s' "$T10" | jq -c '._observed_lands_on="integration/core-loop-proof" | del(._trunk_branch)')"
+T10_SENTINEL="$(printf '%s' "$T10" | jq -c '._observed_lands_on="scratch/main" | .expect.lands_on="@resolved"')"
+# A cell whose seed declares no target_branch: it lands ON the trunk, and that is a pass.
+T10_DEFAULT="$(printf '%s' "$T10" | jq -c '.expect.lands_on="scratch/main" | ._observed_lands_on="scratch/main"')"
+check        "t10 landed-on-intended-branch pass" "$TD/t10-would-pass.ndjson" "$T10_PASS" t10 pass
+# check_detail, not check: the trunk-advanced and third-branch rows are the two that a t10
+# comparing against the literal `main` gets RIGHT for the WRONG REASON. Both stay 'fail'
+# under that defect. The reason is what separates them.
+check_detail "t10 trunk advanced fail"            "$TD/t10-known-red.ndjson"  "$T10_TRUNK" t10 fail "the trunk 'scratch/main' advanced"
+check_detail "t10 landed-on-a-third-branch fail"  "$TD/t10-known-red.ndjson"  "$T10_MAIN" t10 fail "landed on 'main' != intended"
+check        "t10 nothing-landed fail"            "$TD/t10-would-pass.ndjson" "$T10_NONE" t10 fail
+check        "t10 no trunk injected pending"      "$TD/t10-would-pass.ndjson" "$T10_NOTRUNK" t10 pending
+check        "t10 unsubstituted sentinel pending" "$TD/t10-would-pass.ndjson" "$T10_SENTINEL" t10 pending
+check_detail "t10 default-landing cell pass"      "$TD/t10-would-pass.ndjson" "$T10_DEFAULT" t10 pass "landed on the trunk 'scratch/main'"
 
 # gap6 — dot review->implement round-trip, same model (D4). PASS iff REQUEST_CHANGES ->
 # implementer re-dispatch -> APPROVE -> close AND every model_selected == the pinned model.

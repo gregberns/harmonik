@@ -66,6 +66,11 @@ type coreLoopProofSeed struct {
 	Key     string   `json:"key"`
 	Harness string   `json:"harness"`
 	Labels  []string `json:"labels"`
+	// TargetBranch is the seed's per-bead integration branch, or "" when the seed
+	// asks for none and the run lands on the project default. It is the tier-1 half
+	// of the landing-branch resolution the runner performs for the "@resolved"
+	// sentinel in cells.json.
+	TargetBranch string `json:"target_branch"`
 	// ModelPin is json.RawMessage, not *string, because the check on it is "this
 	// key must be ABSENT". RawMessage keeps that distinction: an absent key leaves
 	// it nil, a null one leaves it the four bytes "null". A *string flattens both
@@ -81,12 +86,18 @@ type coreLoopProofCellsFile struct {
 type coreLoopProofCell struct {
 	Cell    string `json:"cell"`
 	Harness string `json:"harness"`
-	Expect  struct {
+	// SeedBead is the KEY of the seed in seed-beads.json, not a bead id. The runner
+	// overwrites it with the dispatched bead id only after it has read the key, so
+	// the fixture value is the key and it is what ties a cell to its fixture.
+	SeedBead string `json:"seed_bead"`
+	Expect   struct {
 		ModelSelected struct {
-			// Model is a pointer so a JSON null is distinguishable from a string.
-			// No cell carries either any more — every cell carries the "@resolved"
-			// sentinel, and the check below treats a null as a failure. The pointer
-			// is what lets that check report a null as itself.
+			// Model is a pointer so a cell that carries a string value is
+			// distinguishable from one that does not. No cell carries a literal any
+			// more — every cell carries the "@resolved" sentinel, and check (3)
+			// treats nil as a failure. The pointer does NOT tell an absent key from
+			// a declared null: both leave it nil. Check (3) reports the two together
+			// because the fix for both is the same — write the sentinel.
 			Model        *string  `json:"model"`
 			NoLeakModels []string `json:"no_leak_models"`
 		} `json:"model_selected"`
@@ -104,6 +115,18 @@ type coreLoopProofCell struct {
 				Forbidden []string `json:"forbidden"`
 			} `json:"nodes"`
 		} `json:"dispatch"`
+		// LandsOn is the t10 landing expectation. A *string, so a cell carrying a
+		// string value is distinguishable from one carrying nothing usable. It does
+		// NOT tell an absent key from a declared null — both leave it nil, which is
+		// the same flattening ModelPin uses json.RawMessage to avoid.
+		//
+		// That flattening is harmless here and fatal there, and the difference is
+		// the shape of the check. ModelPin's check is "this key must be ABSENT", so
+		// a declared null must not read as absent or the check goes vacuous. This
+		// check is "this key must EQUAL the sentinel", and absent and null both
+		// fail it. Check (6) reports the nil case as one thing because there is one
+		// fix for it: write the sentinel.
+		LandsOn *string `json:"lands_on"`
 	} `json:"expect"`
 }
 
@@ -254,7 +277,7 @@ func TestCoreLoopProofFixtureDrift_ModelResolutionContract(t *testing.T) {
 	for _, cell := range cellsFile.Cells {
 		got := cell.Expect.ModelSelected.Model
 		if got == nil {
-			t.Errorf("cell %q expect.model_selected.model is null; want the sentinel %q — the runner resolves a null model for an unpinned harness, and a fixture that hard-codes the answer stops asking",
+			t.Errorf("cell %q has no usable expect.model_selected.model (the key is absent, or declared null); want the sentinel %q — the runner resolves a null model for an unpinned harness, and a fixture that hard-codes the answer stops asking",
 				cell.Cell, coreLoopProofResolvedSentinel)
 		} else if *got != coreLoopProofResolvedSentinel {
 			t.Errorf("cell %q expect.model_selected.model = %q; want the sentinel %q — cells.json names no model",
@@ -549,4 +572,180 @@ func checkCoreLoopProofPolicyBinding(t *testing.T, cellName, mode, workflowID, p
 	}
 	t.Errorf("cell %q describes a run_started record core.RunStartedPayload.Valid rejects: workflow_mode=%q workflow_id=%q (version %q) review_policy=%q workflow_selection_source=%q — the daemon can never emit it, so gap4 could never go green (execution-model.md §4.3 EM-012a)",
 		cellName, mode, workflowID, graphVersion, policy, source)
+}
+
+// TestCoreLoopProofFixtureDrift_LandingBranchContract asserts that no cell in
+// cells.json writes down a branch name.
+//
+// This is the model-resolution contract one field over, and it is here because
+// the same rot reached expect.lands_on: cells wrote literal branch names down,
+// and those names disagreed both with the daemon and with the seeds the cells
+// are derived from.
+//
+// WHICH cells said what is recorded in ONE place — the "//lands_on" notes in
+// scenarios/core-loop-proof/cells.json. This comment does not repeat the tally,
+// and neither does scripts/core-loop-matrix.sh. Several copies of one count
+// going stale together is the same defect this contract exists to remove, one
+// level up.
+//
+// The daemon has never landed on `main` in a scratch: scripts/scratch-daemon.sh
+// isolate_push_target rewrites defaults.lands_on to `scratch/main`, and
+// internal/daemon/branching.go resolveBranchingFrom takes that project default
+// for any bead whose body sets no target_branch. A cell naming `main` could
+// therefore never go green, and only an expensive live run said so.
+//
+// The fix is the one a08fa9de3 applied to models: the cell carries the
+// "@resolved" sentinel and the runner resolves the value from the components
+// that own it — the seed's target_branch, else defaults.lands_on out of the
+// daemon's own .harmonik/branching.yaml.
+//
+// The checks, numbered as the body numbers them. This file runs ONE sequence
+// across all three tests, and these five continue it:
+//
+//	(6)  Every cell declares expect.lands_on and it is the sentinel.
+//	(7)  Every cell's seed_bead names a seed that exists. The resolution runs
+//	     through that key, and an unmatched key resolves to the trunk in
+//	     silence.
+//	(8)  Some seed declares a target_branch, so the "the trunk must not move"
+//	     arm of t10 is reachable at all.
+//	(9)  scripts/core-loop-matrix.sh still spells all three names the landing
+//	     resolution rides on.
+//	(10) scripts/core-loop-assert.jq still spells the trunk key the runner
+//	     injects.
+//
+// (9) and (10) are SPELLING checks and WEAK ones. Neither mentions "@resolved"
+// — that sentinel's spelling is check (4)'s job, in the model test above.
+// Both are strings.Contains, so a rename that keeps the old name as a prefix
+// passes, and a rename applied to a definition and every caller at once passes
+// too. Read them as "the landing resolution has not been deleted outright", and
+// as nothing more than that. Whether the runner still USES what it reads is
+// answered by a live matrix run, not from here.
+//
+// Bead refs: hk-igege.
+func TestCoreLoopProofFixtureDrift_LandingBranchContract(t *testing.T) {
+	t.Parallel()
+
+	dir := coreLoopProofFixtureDir(t)
+
+	seedData, err := os.ReadFile(filepath.Join(dir, "seed-beads.json")) //nolint:gosec // G304: path from the in-repo fixture dir, not user input
+	if err != nil {
+		t.Fatalf("read seed-beads.json: %v", err)
+	}
+	var seedFile coreLoopProofSeedFile
+	if err := json.Unmarshal(seedData, &seedFile); err != nil {
+		t.Fatalf("unmarshal seed-beads.json: %v", err)
+	}
+	cellsData, err := os.ReadFile(filepath.Join(dir, "cells.json")) //nolint:gosec // G304: path from the in-repo fixture dir, not user input
+	if err != nil {
+		t.Fatalf("read cells.json: %v", err)
+	}
+	var cellsFile coreLoopProofCellsFile
+	if err := json.Unmarshal(cellsData, &cellsFile); err != nil {
+		t.Fatalf("unmarshal cells.json: %v", err)
+	}
+	if len(cellsFile.Cells) == 0 || len(seedFile.Seeds) == 0 {
+		t.Fatal("cells.json or seed-beads.json is empty; every check below would be vacuous")
+	}
+
+	seedByKey := make(map[string]coreLoopProofSeed, len(seedFile.Seeds))
+	for _, seed := range seedFile.Seeds {
+		seedByKey[seed.Key] = seed
+	}
+
+	// (6) No cell names a branch. The value must be the sentinel, and nothing else:
+	// a literal here is a second copy of a fact that lives in seed-beads.json or in
+	// the daemon's branching.yaml, and both copies have already drifted once.
+	for _, cell := range cellsFile.Cells {
+		switch got := cell.Expect.LandsOn; {
+		case got == nil:
+			t.Errorf("cell %q has no usable expect.lands_on (the key is absent, or declared null); want the sentinel %q — without it t10 is permanently pending and the cell's landing is never verified",
+				cell.Cell, coreLoopProofResolvedSentinel)
+		case *got != coreLoopProofResolvedSentinel:
+			t.Errorf("cell %q expect.lands_on = %q; want the sentinel %q — the runner reads the branch off the cell's seed (target_branch) or off the daemon's defaults.lands_on, and a branch name written here can only go stale",
+				cell.Cell, *got, coreLoopProofResolvedSentinel)
+		}
+	}
+
+	// (7) The sentinel resolves THROUGH the cell's seed key, so the key must match a
+	// seed. scripts/core-loop-matrix.sh seed_lands_on_for looks the key up in
+	// seed-beads.json and falls back to the trunk when it finds nothing, so a
+	// mistyped or renamed key silently turns an integration-branch cell into a
+	// trunk-landing cell. Nothing goes red. Same silent-degradation shape as (1c).
+	for _, cell := range cellsFile.Cells {
+		if cell.SeedBead == "" {
+			t.Errorf("cell %q names no seed_bead; the runner has no key to resolve %q through and dies rather than guess",
+				cell.Cell, coreLoopProofResolvedSentinel)
+			continue
+		}
+		if _, ok := seedByKey[cell.SeedBead]; !ok {
+			t.Errorf("cell %q names seed_bead %q, which seed-beads.json does not declare; seed_lands_on_for finds no target_branch for it and falls back to the trunk, so the cell would assert a trunk landing without saying so",
+				cell.Cell, cell.SeedBead)
+		}
+	}
+
+	// (8) At least one seed must ask for its own integration branch. This is the
+	// non-vacuity check for t10 as a whole. When every seed lands on the project
+	// default, every cell's $want equals its $trunk, the "the trunk advanced" arm of
+	// assert_t10 is unreachable by construction, and t10 degrades to "something
+	// landed" for the whole matrix — which is exactly the check the per-bead
+	// targeting contract (hk-lgykq) needs it not to be.
+	sawTargetBranch := false
+	for _, seed := range seedFile.Seeds {
+		if seed.TargetBranch != "" {
+			sawTargetBranch = true
+			break
+		}
+	}
+	if !sawTargetBranch {
+		t.Error("no seed in seed-beads.json declares a target_branch; every cell then lands on the project default, the trunk-must-not-move arm of t10 can never fire, and per-bead branch targeting goes unasserted across the whole matrix")
+	}
+
+	// (9) The runner still reads both branch names off the components that own
+	// them, rather than writing either down. THREE spellings must survive, and the
+	// loop below requires all three:
+	//
+	//   - `/^[[:space:]]+lands_on:/` — the awk read of defaults.lands_on out of the
+	//     scratch daemon's branching.yaml. The same shape scripts/scratch-daemon.sh
+	//     isolate_push_target WRITES that key with, and the same shape
+	//     scripts/core-loop-seed.sh reads defaults.start_from with.
+	//   - `seed_lands_on_for` — the resolver the "@resolved" sentinel is
+	//     substituted by. It turns a cell's seed key into a branch name.
+	//   - `_trunk_branch` — the key the runner injects the trunk name into the cell
+	//     spec under. Check (10) is the reading end of that same key.
+	//
+	// These are SPELLING checks, like (4), and they are WEAK. strings.Contains, so
+	// renaming seed_lands_on_for to seed_lands_on_forX still passes, and renaming a
+	// definition together with every caller still passes. They say the landing
+	// resolution has not been deleted outright. They do not say the runner still
+	// uses what it reads — a live matrix run is what says that.
+	runner := coreLoopProofMatrixRunnerSource(t)
+	for _, want := range []string{
+		`/^[[:space:]]+lands_on:/`,
+		"seed_lands_on_for",
+		"_trunk_branch",
+	} {
+		if !strings.Contains(runner, want) {
+			t.Errorf("scripts/core-loop-matrix.sh no longer mentions %q; the landing witness has stopped reading the branch names off the components that own them, which is the defect this contract exists to prevent", want)
+		}
+	}
+
+	// (10) The trunk name has a reader on the other side. The runner can inject
+	// ._trunk_branch faithfully and still assert nothing if the assertion library
+	// drops it — assert_t10's trunk-must-not-move arm would simply never fire.
+	assertLib := coreLoopProofAssertLibrarySource(t)
+	if !strings.Contains(assertLib, "_trunk_branch") {
+		t.Error("scripts/core-loop-assert.jq does not mention _trunk_branch; the runner injects the trunk name and nothing reads it, so t10 cannot tell a landing on the trunk from a landing on the intended branch")
+	}
+}
+
+// coreLoopProofAssertLibrarySource returns the text of the assertion library —
+// the other reader of the values the matrix runner injects into a cell spec.
+func coreLoopProofAssertLibrarySource(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(conformanceCorpusFixtureRepoRoot(t), "scripts", "core-loop-assert.jq")
+	data, err := os.ReadFile(path) //nolint:gosec // G304: path from the in-repo scripts dir, not user input
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
 }

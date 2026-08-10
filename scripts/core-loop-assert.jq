@@ -214,29 +214,48 @@ def assert_gap5:
     end;
 
 # --- t10 — branch-targeting acceptance (GIT-VERIFIED, D2) --------------------
-# A bead directed at integration branch X must LAND on X, and main must NOT advance.
+# A bead directed at integration branch X must LAND on X, and the TRUNK must NOT advance.
 # This assertion is NOT event-driven: the workspace_merge_status event the daemon once
 # aspired to emit is NEVER emitted (dead/aspirational — the merge writes git but no event),
 # so an event-based check is structurally always RED. Instead the matrix runner verifies
-# the landing directly from GIT (baseline vs. post-run tips of main + the target branch)
+# the landing directly from GIT (baseline vs. post-run tips of the trunk + the target branch)
 # and injects the branch that actually advanced as $spec._observed_lands_on. t10 simply
 # compares intent (expect.lands_on) against that git-observed reality. Per-bead integration
 # targeting is LIVE (hk-lgykq landed; proven by daemon E2E
 # TestMergeToMain_PerBeadIntegrationTargetLandsOnBranch), so this is no longer known-RED.
+#
+# THIS ASSERTION NAMES NO BRANCH. It used to say "main" in one comparison and three
+# messages, and the daemon has never landed on `main` in a scratch — scratch-daemon.sh
+# isolate_push_target points defaults.lands_on at scratch/main. Both branch names now
+# arrive from the runner, which reads them from the components that own them:
+# expect.lands_on from the seed (the "@resolved" sentinel, substituted before the fold) and
+# ._trunk_branch from the daemon's .harmonik/branching.yaml. A missing injection is PENDING,
+# never a quiet pass — an un-nameable trunk cannot be checked for not moving.
+#
+# A cell whose seed declares no target_branch lands ON the trunk. For that cell $want equals
+# $trunk, the trunk-advanced arm is skipped by its own second condition, and the landing
+# reads as the clean pass it is.
 def assert_t10:
   ($spec.expect.lands_on // null) as $want
   | ($spec._observed_lands_on // null) as $obs
+  | ($spec._trunk_branch // null) as $trunk
   | if $want == null
-    then result("t10"; "pending"; "no expect.lands_on in spec — set it to the intended integration branch")
+    then result("t10"; "pending"; "no expect.lands_on in spec — set it to \"@resolved\" and let the runner read the branch off the seed")
+    elif ($want | type) == "string" and ($want | startswith("@"))
+    then result("t10"; "pending"; "expect.lands_on is the unsubstituted sentinel '\($want)' — the runner did not resolve the cell's landing branch from its seed")
     elif ($obs == null or $obs == "")
     then result("t10"; "pending"; "no ._observed_lands_on injected — runner did not git-verify the landing (need --assert + a git scratch)")
-    elif ($obs == "main" and $want != "main")
-    then result("t10"; "fail"; "main advanced — the change landed on 'main', not the intended '\($want)' (main must not move)")
+    elif ($trunk == null or $trunk == "")
+    then result("t10"; "pending"; "no ._trunk_branch injected — runner did not read defaults.lands_on out of the daemon's branching.yaml, so 'the trunk must not move' cannot be checked")
+    elif ($obs == $trunk and $want != $trunk)
+    then result("t10"; "fail"; "the trunk '\($trunk)' advanced — the change landed there, not on the intended '\($want)' (the trunk must not move)")
     elif ($obs == "none")
-    then result("t10"; "fail"; "nothing landed — neither 'main' nor '\($want)' advanced (merge did not run / bead did not close)")
+    then result("t10"; "fail"; "nothing landed — neither the trunk '\($trunk)' nor '\($want)' advanced (merge did not run / bead did not close)")
     elif ($obs != $want)
     then result("t10"; "fail"; "landed on '\($obs)' != intended '\($want)' (git-verified)")
-    else result("t10"; "pass"; "landed on '\($want)' (git-verified; main unchanged)")
+    elif $want == $trunk
+    then result("t10"; "pass"; "landed on the trunk '\($want)', which is what this cell's seed asked for (it declares no target_branch) (git-verified)")
+    else result("t10"; "pass"; "landed on '\($want)' (git-verified; trunk '\($trunk)' unchanged)")
     end;
 
 # --- gap6 — dot review->implement round-trip, same model (D4) ----------------

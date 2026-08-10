@@ -16,6 +16,7 @@ package daemon_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -90,6 +91,42 @@ func t2WorktreePath(projectDir, runID string) string {
 func t2FindBinary(name string) string {
 	path, _ := scenariotest.CheckoutBinaryPath(name)
 	return path
+}
+
+// t2ScopedTwin copies a twin binary to a path whose basename is unique to THIS
+// test and THIS process, and returns the path plus that unique basename. The
+// basename is the launched process's argv[0], so a `pgrep -f` / `pkill -f` on it
+// matches this test's own twin and nothing else on the host.
+//
+// Why the copy: three tests in this file launch the hang twin, all three call
+// t.Parallel(), and two of them ran `pkill -SIGKILL -f twin-hang`. That pattern
+// is scoped to no process group, no project and no user, so each run killed its
+// siblings' twins and any other agent's twin anywhere on the box — including a
+// real dispatched agent's. It was only ever correct when nothing else ran on the
+// machine, which is not the operating condition here. Refs
+// hk-scenario-hostwide-pkill-hf166, and the same hazard family as hk-c6dt2.
+//
+// The test cannot kill by pid instead: the work loop spawns the twin, so the
+// test never holds the handle. A unique argv is the scoping the bead asks for.
+//
+// Skips (does not fail) when the twin is not built, matching the callers this
+// replaces.
+func t2ScopedTwin(t *testing.T, name string) (binPath, marker string) {
+	t.Helper()
+	src := t2FindBinary(name)
+	data, err := os.ReadFile(src) //nolint:gosec // G304: src is a build artifact at the checkout root, not user input
+	if err != nil {
+		t.Skipf("%s not found at %s; build with: make twins (%v)", name, src, err)
+	}
+	// t.Name() is unique inside one test binary; the pid separates concurrent
+	// test binaries and any other checkout on the same host. "/" appears in
+	// subtest names and would make the copy a path rather than a basename.
+	marker = fmt.Sprintf("%s-%s-%d", name, strings.ReplaceAll(t.Name(), "/", "_"), os.Getpid())
+	binPath = filepath.Join(t.TempDir(), marker)
+	if err := os.WriteFile(binPath, data, 0o700); err != nil { //nolint:gosec // G306: the copy has to be executable
+		t.Fatalf("t2ScopedTwin: write %s: %v", binPath, err)
+	}
+	return binPath, marker
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -185,10 +222,7 @@ func TestT2_NonZeroExit(t *testing.T) {
 func TestT2_SIGKILLDuringRun(t *testing.T) {
 	t.Parallel()
 
-	twinHang := t2FindBinary("twin-hang")
-	if _, err := os.Stat(twinHang); err != nil {
-		t.Skipf("twin-hang not found at %s; build with: go build -o ./twin-hang ./test/twins/hang", twinHang)
-	}
+	twinHang, twinMarker := t2ScopedTwin(t, "twin-hang")
 
 	projectDir := t2FixtureProjectDir(t)
 
@@ -240,8 +274,9 @@ func TestT2_SIGKILLDuringRun(t *testing.T) {
 launched:
 	t.Log("T2-S2: run_started seen; SIGKILLing hang twin via pkill")
 
-	// Kill the twin-hang process via pkill.
-	killCmd := exec.CommandContext(context.Background(), "pkill", "-SIGKILL", "-f", "twin-hang")
+	// Kill this test's OWN twin. The pattern is the per-test marker in the
+	// twin's argv, never the shared "twin-hang" name — see t2ScopedTwin.
+	killCmd := exec.CommandContext(context.Background(), "pkill", "-SIGKILL", "-f", twinMarker)
 	_ = killCmd.Run() // ignore error if no process found
 
 	// Now wait for the loop to detect the kill and reopen the bead.
@@ -446,10 +481,9 @@ func TestT2_ExitZeroNoSignal(t *testing.T) {
 func TestT2_HangTwinCtxCancel(t *testing.T) {
 	t.Parallel()
 
-	twinHang := t2FindBinary("twin-hang")
-	if _, err := os.Stat(twinHang); err != nil {
-		t.Skipf("twin-hang not found at %s", twinHang)
-	}
+	// Scoped copy: this twin must not be visible to a sibling's pgrep or
+	// reapable by a sibling's pkill — see t2ScopedTwin.
+	twinHang, _ := t2ScopedTwin(t, "twin-hang")
 
 	projectDir := t2FixtureProjectDir(t)
 
@@ -507,10 +541,7 @@ func TestT2_HangTwinCtxCancel(t *testing.T) {
 func TestT2_ProcessGroupCleanup(t *testing.T) {
 	t.Parallel()
 
-	twinHang := t2FindBinary("twin-hang")
-	if _, err := os.Stat(twinHang); err != nil {
-		t.Skipf("twin-hang not found")
-	}
+	twinHang, twinMarker := t2ScopedTwin(t, "twin-hang")
 
 	projectDir := t2FixtureProjectDir(t)
 
@@ -560,10 +591,12 @@ func TestT2_ProcessGroupCleanup(t *testing.T) {
 		}
 	}
 
-	// Check that twin-hang is running.
-	checkCmd := exec.CommandContext(context.Background(), "pgrep", "-f", "twin-hang")
+	// Check that THIS test's twin is running. Matching the shared "twin-hang"
+	// name also counted a sibling's twin, so the orphan-leak assertion below
+	// could fire on a process this test never started.
+	checkCmd := exec.CommandContext(context.Background(), "pgrep", "-f", twinMarker)
 	pids, _ := checkCmd.Output()
-	t.Logf("T2-S6: twin-hang PIDs before cancel: %s", strings.TrimSpace(string(pids)))
+	t.Logf("T2-S6: twin PIDs before cancel: %s", strings.TrimSpace(string(pids)))
 	hangRunning := len(strings.TrimSpace(string(pids))) > 0
 
 	// Cancel context (simulates SIGINT/SIGTERM to the daemon).
@@ -576,15 +609,15 @@ func TestT2_ProcessGroupCleanup(t *testing.T) {
 
 	// After loop exit, check whether twin-hang is still running.
 	time.Sleep(500 * time.Millisecond) // give OS time to reap
-	checkCmd2 := exec.CommandContext(context.Background(), "pgrep", "-f", "twin-hang")
+	checkCmd2 := exec.CommandContext(context.Background(), "pgrep", "-f", twinMarker)
 	pids2, _ := checkCmd2.Output()
 	afterPIDs := strings.TrimSpace(string(pids2))
-	t.Logf("T2-S6: twin-hang PIDs after cancel: %q (was running before: %v)", afterPIDs, hangRunning)
+	t.Logf("T2-S6: twin PIDs after cancel: %q (was running before: %v)", afterPIDs, hangRunning)
 
 	if hangRunning && afterPIDs != "" {
-		t.Errorf("T2-S6 FINDING: twin-hang process(es) still alive after context cancellation: %s — orphan leak", afterPIDs)
-		// Cleanup for the test run.
-		_ = exec.CommandContext(context.Background(), "pkill", "-SIGKILL", "-f", "twin-hang").Run()
+		t.Errorf("T2-S6 FINDING: twin process(es) still alive after context cancellation: %s — orphan leak", afterPIDs)
+		// Cleanup for the test run — this test's own twin only.
+		_ = exec.CommandContext(context.Background(), "pkill", "-SIGKILL", "-f", twinMarker).Run()
 	}
 }
 

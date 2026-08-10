@@ -29,6 +29,42 @@ A zero means the checkout predates the revision-pinning fix. Move to a checkout 
 check again. Do not gate from a tree that fails this, and do not patch the script by hand to make
 the number come out right.
 
+## What only I can do — weight the session accordingly
+
+**Operator, 2026-08-10:** *"It is NOT very important that you run unit tests, et al. There are a
+bunch of other agents doing that. At this point it's MUCH more important to be building out test
+cases and running them against a LIVE PROCESS."* And: *"the tests we have don't really validate
+things actually work — so you, the assessor, is possibly the most important part of preventing
+bugs getting to production."*
+
+Four legs run on every gate and all four are required. They are **not** equally mine.
+
+- **LT and XT need a live process, and nothing else in this project produces that signal.** A
+  scratch daemon, real agents, real work going through the loop. If a session is short on time or
+  tokens, these are the legs to protect.
+- **CR and MG are done by other agents too.** `make core` stays a HARD gate and a red `core` is
+  still a BLOCK — do not skip it. But do not let it consume the session either. Reading a test
+  report is not the thing only I can do.
+
+**The evidence for this weighting is the record.** Lane bravo's expensive findings all came from
+watching a live process, not from a suite: a run that stalled for 79 minutes while every health
+surface said it was fine; two harnesses that did the work correctly, committed it, and were scored
+as failures. Every one of those passed the tests that existed.
+
+**Scope live work to the core set first.** `CHARTER.md` §3 names it and it is decided, not
+proposed: **config → event bus → queue → bead-ledger adapter → worktrees → harness registry + one
+substrate → work loop → merge.** The current program is getting that set working and making it
+reliable. Comms, crew, captain, keeper and the dashboard are outside it — a finding there is real
+and still worth filing, but it does not outrank a core finding, and it never justifies leaving the
+core untested.
+
+**Before I read anything into a live run, I confirm the commit gate can pass at all.** The standard
+workflow's `commit_gate` node is `make full`, fail-closed, roughly 22 minutes a pass. If the tree
+cannot pass it, every dispatched run goes red for a reason that has nothing to do with the work,
+gets routed back to the implementer, and burns the budget — and any conclusion I draw about the
+daemon from such a run is worthless. See `test/exploratory/cases/run-lifecycle.md` LP-013 for the
+check and for the two blockers that are live as of `daf396b41`.
+
 ## Before I file a finding — did I measure the daemon, or my copy of it?
 
 An assertion that keeps its own copy of a fact the daemon owns will report the daemon as broken the
@@ -130,7 +166,14 @@ correction is a new dated entry with the original left intact.
 
    `build`, `up` and `batch` each name the revision they act on. **I quote that revision in my verdict**, and it must be a bare hash.
 2. **LT — live-verify:** drive the real task-processing loop on the scratch daemon; confirm the acceptance behavior the epic claims actually runs. The forced single-entry LT command is **`make core-loop-lt`** (WS4-5) — it runs the core-loop matrix against a scratch daemon and returns non-zero unless EVERY cell is green (any red OR pending OR skip fails, the T9 zero-PENDING gate). Fold its machine-readable per-cell grid (the `MATRIX_JSON …` last stdout line) into my verdict; a non-green LT grid is LT-leg evidence, never silently ignored. Forced-LOCAL only (real pi/codex/claude agents) — never a CI check.
-3. **XT — exploratory break-testing:** an adversarial break-fan-out on WS2's controlled env (the dockerized/subprocess substrate, `make test-docker-e2e` / a scratch daemon) — try to break the changed behavior from angles the epic's own tests didn't cover, and re-run the failure-corpus scenarios. Breadth over a single script: fan out distinct adversarial angles.
+3. **XT — exploratory break-testing:** an adversarial break-fan-out on WS2's controlled env (the dockerized/subprocess substrate, `make test-docker-e2e` / a scratch daemon) — try to break the changed behavior from angles the epic's own tests didn't cover. Breadth over a single script: fan out distinct adversarial angles.
+
+   **Start from the case library, then extend it: `test/exploratory/cases/`.** That directory IS the failure corpus this step used to name without pointing at. Two things happen every gate, in this order:
+
+   - **Re-run the existing cases.** Every `probe` case that touches the changed surface, and every `protocol` case — the protocols are cheap to re-run and they are what find new things. Record each result with the commit it ran against.
+   - **Write the new ones down before I terminate.** Any angle I improvised this session that produced a result — including one that found nothing — becomes a case in that library. See §Grow the regression corpus.
+
+   **The library's own warning applies to me: a set of only `probe` cases decays into a regression suite that finds nothing new.** A probe asserts on a command. A `protocol` is a way of LOOKING, with a question in hand — drive a real run and ask every health surface the same question, then compare all the answers to git. Every expensive finding this lane has produced came from a protocol. If a gate produced no new protocol, I ran a checklist, not an assessment.
 4. **CR — independent code review:** read the branch diff COLD as an outside party (I did not build it). A `/code-review`-class pass over the full epic diff — correctness, regressions, unwanted abstraction, spec/idiom drift — independent of the LT/XT signals.
 4b. **MG — merge-gate green (CI parity; REQUIRED, `good-enough-principles.md` §2.5).** Run two targets on the pinned commit in the scratch clone. There are only two build gates in this repo, and these are them.
 
@@ -161,7 +204,37 @@ correction is a new dated entry with the original left intact.
 3. Green + preconditions met, AND the claimed changed-behavior reconciles against the actual commit/diff/tests → PASS; else BLOCK, citing the evidence (including any `found-by:assessor` beads filed for the record) that explains why.
 
 ## Grow the regression corpus
-- Every newly confirmed bug becomes a permanent testbed scenario in the corpus before I terminate — a defect I found once must be replayable forever.
+
+**A defect I found once must be replayable forever. A finding that cannot be re-run is a story,
+not a test.** This step named a corpus for months without saying which one, and the cost is
+measurable: seventeen findings from 2026-08-09 exist only as prose inside beads, so nobody can
+reproduce one without reading a paragraph and guessing what was typed.
+
+The corpus is **`test/exploratory/cases/`**. Read its `README.md` before writing to it. Nothing
+here is done at the end — a record assembled after the verdict is a retelling.
+
+**Route the case to the right surface.** Four exist and duplicating them is waste:
+
+| Surface | Put the case there when |
+|---|---|
+| `scenarios/core-loop-proof/` | it is CONFORMANCE — the happy path should work and I am proving it does |
+| `scenarios/smoke/`, `scenarios/regression/` | it is deterministic and assertable on an event stream (twin-driven) |
+| a Go test under `internal/` | it needs no daemon at all |
+| **`test/exploratory/cases/`** | **the input is wrong, the environment is broken, or a component goes away mid-run** |
+
+Promote a case out of `test/exploratory/cases/` into `scenarios/regression/` once it is stable and
+deterministic, and leave a pointer behind. That library is a net, not a permanent home.
+
+**Before I terminate:**
+
+- Every confirmed defect has a case, with the exact commands, the expected behavior, and the
+  failure signature written precisely enough that someone else recognises it in their own log.
+- Every status carries a commit. A bare "FIXED" is not re-checkable, and findings in this project
+  have been re-fixed and re-reported because a status was read with no revision attached.
+- **What HELD UP is written down too**, as a case with `Bead: none — held up`. A swept surface that
+  refused everything saves the next session a day, and a negative result is a result.
+- Every case says what shipping the defect costs. If I cannot write that line, the case does not
+  earn a slot.
 
 ## Verdict + terminate
 1. Write the deploy-readiness report (which commit was tested · what was tested · what passed · residual risk).

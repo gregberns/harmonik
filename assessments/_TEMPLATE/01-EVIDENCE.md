@@ -28,6 +28,31 @@ reports the echo's zero.
 |---|---|---|---|---|---|---|
 | 1 | HH:MM | | | | | |
 
+## Live legs — what actually went through the process
+
+**A gate with no rows here did not validate that the system works.** The table above records
+commands and exit codes. The most valuable findings this role produces are not exit codes: they
+come from driving real work through a live daemon and watching what every surface claims about it.
+Record that here, or it is not evidence.
+
+| | |
+|---|---|
+| Work driven through the loop | `<bead ids, what the task was, which harness(es)>` |
+| Reached a terminal state? | `<per run: which terminal event, and how long it took>` |
+| Did the work actually land? | `<git, on the branch the daemon targets — not `main` unless the daemon says `main`>` |
+| Cases re-run from `test/exploratory/cases/` | `<ids, and the result of each>` |
+| New cases written this gate | `<ids — an empty cell means this gate explored nothing>` |
+
+### Observations
+
+For each `protocol` case run: the question asked, every surface's answer, and what was actually
+true. **The finding is in the disagreement, so record all the answers, including the ones that
+agreed.** A surface reporting health during a dead run is the evidence.
+
+| Question asked | What each surface said | What git / the process actually showed |
+|---|---|---|
+| | | |
+
 ## Conditions
 
 Things that invalidate a timing result if they were true while it ran. Check before and after.

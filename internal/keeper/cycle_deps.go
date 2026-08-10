@@ -30,12 +30,14 @@ type ActivityProbe interface {
 	LastAssistantTurn(string) (time.Time, bool)
 }
 
-type ManagedProbe interface{ IsManaged() bool }
-type IdleProbe interface{ CrispIdle() bool }
-type DispatchProbe interface{ HoldingDispatch() bool }
-type SleepProbe interface{ Sleeping(string) bool }
-type HoldProbe interface{ Held() bool }
-type OperatorPresenceProbe interface{ Attached(string) bool }
+type (
+	ManagedProbe          interface{ IsManaged() bool }
+	IdleProbe             interface{ CrispIdle() bool }
+	DispatchProbe         interface{ HoldingDispatch() bool }
+	SleepProbe            interface{ Sleeping(string) bool }
+	HoldProbe             interface{ Held() bool }
+	OperatorPresenceProbe interface{ Attached(string) bool }
+)
 
 type HandoffDocument interface {
 	Path() string
@@ -74,10 +76,18 @@ func (d CycleDeps) validate() error {
 		name string
 		dep  any
 	}{
-		{"Clock", d.Clock}, {"CycleIDs", d.CycleIDs}, {"Pane", d.Pane},
-		{"Context", d.Context}, {"Activity", d.Activity}, {"Managed", d.Managed},
-		{"Idle", d.Idle}, {"Dispatch", d.Dispatch}, {"Sleep", d.Sleep},
-		{"Hold", d.Hold}, {"Operator", d.Operator}, {"Handoff", d.Handoff},
+		{"Clock", d.Clock},
+		{"CycleIDs", d.CycleIDs},
+		{"Pane", d.Pane},
+		{"Context", d.Context},
+		{"Activity", d.Activity},
+		{"Managed", d.Managed},
+		{"Idle", d.Idle},
+		{"Dispatch", d.Dispatch},
+		{"Sleep", d.Sleep},
+		{"Hold", d.Hold},
+		{"Operator", d.Operator},
+		{"Handoff", d.Handoff},
 		{"Journal", d.Journal},
 	}
 	missing := make([]string, 0)
@@ -189,9 +199,11 @@ type legacyActivityProbe struct{ port GaugePort }
 func (a legacyActivityProbe) IdleMarkerModTime() (time.Time, bool) {
 	return a.port.IdleMarkerModTime()
 }
+
 func (a legacyActivityProbe) LastUserTurn(string) (time.Time, bool) {
 	return time.Time{}, false
 }
+
 func (a legacyActivityProbe) LastAssistantTurn(sid string) (time.Time, bool) {
 	return a.port.LastAssistantTurn(sid)
 }
@@ -223,21 +235,26 @@ type narrowGaugeAdapter struct {
 func (a narrowGaugeAdapter) ReadGauge() (*CtxFile, time.Time, error) {
 	return a.deps.Context.ReadGauge()
 }
+
 func (a narrowGaugeAdapter) SetManagedSession(sid string) error {
 	return a.deps.Context.SetManagedSession(sid)
 }
+
 func (a narrowGaugeAdapter) ClearPrecompactTrigger() error {
 	return a.deps.Context.ClearPrecompactTrigger()
 }
+
 func (a narrowGaugeAdapter) IdleMarkerModTime() (time.Time, bool) {
 	return a.deps.Activity.IdleMarkerModTime()
 }
+
 func (a narrowGaugeAdapter) LastAssistantTurn(sid string) (time.Time, bool) {
 	if sid == "" {
 		return time.Time{}, false
 	}
 	return a.deps.Activity.LastAssistantTurn(sid)
 }
+
 func (a narrowGaugeAdapter) Snapshot(sid string) GateSnapshot {
 	s := GateSnapshot{
 		Managed: a.deps.Managed.IsManaged(), CrispIdle: a.deps.Idle.CrispIdle(),

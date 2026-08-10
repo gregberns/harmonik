@@ -58,9 +58,11 @@ func (s *Scenario) disable(name, reason string, apply func()) error {
 func (s *Scenario) DisableBootGrace(reason string) error {
 	return s.disable("boot_grace", reason, func() { s.policy.BootGracePeriod = 0; s.policy.MaxBootGraceTotal = 0 })
 }
+
 func (s *Scenario) DisableOperatorTurnGate(reason string) error {
 	return s.disable("operator_turn", reason, func() { s.policy.OperatorTurnLookback = 0 })
 }
+
 func (s *Scenario) DisablePostAnswerGrace(reason string) error {
 	return s.disable("post_answer_grace", reason, func() { s.policy.PostAnswerGrace = 0 })
 }
@@ -84,12 +86,14 @@ func (r *RecordingPorts) add(effect string) {
 	defer r.mu.Unlock()
 	r.Effects = append(r.Effects, effect)
 }
+
 func (r *RecordingPorts) Next() string {
 	if r.NextCycleID != "" {
 		return r.NextCycleID
 	}
 	return "cyc-scenario"
 }
+
 func (r *RecordingPorts) Inject(_ context.Context, _, text string) error {
 	r.add("inject:" + text)
 	return nil
@@ -99,6 +103,7 @@ func (r *RecordingPorts) SetEnv(_ context.Context, _, key, value string) error {
 	r.add("env:" + key + "=" + value)
 	return nil
 }
+
 func (r *RecordingPorts) ReadGauge() (*keeper.CtxFile, time.Time, error) {
 	return r.Gauge, time.Time{}, nil
 }
@@ -107,9 +112,11 @@ func (r *RecordingPorts) ClearPrecompactTrigger() error      { r.add("precompact
 func (r *RecordingPorts) IdleMarkerModTime() (time.Time, bool) {
 	return r.IdleMarker, !r.IdleMarker.IsZero()
 }
+
 func (r *RecordingPorts) LastUserTurn(string) (time.Time, bool) {
 	return r.UserTurn, !r.UserTurn.IsZero()
 }
+
 func (r *RecordingPorts) LastAssistantTurn(string) (time.Time, bool) {
 	return r.AssistantTurn, !r.AssistantTurn.IsZero()
 }

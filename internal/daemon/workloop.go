@@ -986,11 +986,23 @@ func beadRunOne(ctx context.Context, env runloop.RunEnv, rp runloop.RunPorts, ha
 		// (terminalNodeID == "close") and the hk-8ps7q approved-and-done path
 		// (approveVerdict != nil). Falls through to CloseBead so the infinite
 		// re-dispatch loop terminates instead of re-queuing.
+		//
+		// hk-no-merge-silent-success-hc1jr: this carve-out turns a merge FAILURE
+		// into a close-as-success, and it used to do that without a word
+		// anywhere. Say it out loud, so an operator reading the daemon log can
+		// tell a run that merged from a run that only concluded its work was
+		// already on the target.
 		CarveOut: func(reason string) bool {
 			alreadyApprovedOnMain := dotResult.advisoryRC ||
 				dotResult.terminalNodeID == "close" ||
 				dotResult.approveVerdict != nil
-			return alreadyApprovedOnMain && strings.Contains(reason, "rebase_dropped_commits")
+			carved := alreadyApprovedOnMain && strings.Contains(reason, "rebase_dropped_commits")
+			if carved {
+				fmt.Fprintf(os.Stderr,
+					"daemon: workloop: bead %s (dot): closing as success WITHOUT a merge — the rebase found the work already on %q: %s\n",
+					beadID, mergeTarget, reason)
+			}
+			return carved
 		},
 	})
 	// The two cancellations take opposite paths here. A shutdown is a DRAIN: the

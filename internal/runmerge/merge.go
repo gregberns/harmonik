@@ -323,10 +323,25 @@ func resolveMergeTips(ctx context.Context, projectDir, runBranch, targetBranch, 
 		}
 	}
 
-	// Step 1: resolve run-branch tip. A missing branch means no commits → no-change.
+	// Step 1: resolve the run-branch tip. An unresolvable run branch is NOT
+	// evidence that the agent made no commits — CreateWorktree always cuts
+	// refs/heads/run/<id>, so the branch missing HERE means it never reached
+	// this repository (a remote run whose code-sync did not deliver it, a
+	// cross-repo run merged against the wrong repo) or was deleted under the
+	// run. Reporting no-change closed the bead as a success while the commit
+	// stayed stranded on a branch nobody looks at, and nothing in the event
+	// stream said so. Fail closed instead: the run reopens the bead and says
+	// out loud that the work did not land.
+	// Bead: hk-no-merge-silent-success-hc1jr.
 	rt, rtErr := gitprobe.RevParse(ctx, projectDir, "refs/heads/"+runBranch)
 	if rtErr != nil {
-		return "", "", &Outcome{NoChange: true}
+		return "", "", &Outcome{
+			Success: false,
+			Reason: fmt.Sprintf(
+				"merge_run_branch_missing: %s does not resolve in %s; the run's work cannot be merged"+
+					" and may be stranded — salvage it from the run worktree: %v",
+				runBranch, projectDir, rtErr),
+		}
 	}
 
 	// Step 1b: resolve the target tip; equal tips → the agent made no commits.

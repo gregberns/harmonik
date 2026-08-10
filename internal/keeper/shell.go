@@ -39,7 +39,7 @@ func (c *Cycler) execute(ctx context.Context, a Action) error {
 		c.executeEmit(ctx, a)
 	case ActTruncateHandoff:
 		// Scrubs the stale nonce marker only — the handoff body survives (hk-4tjyj).
-		_ = c.handoff.TruncateHandoff() //nolint:errcheck // non-fatal; poll fails gracefully
+		_ = c.handoff.ScrubNonce() //nolint:errcheck // non-fatal; poll fails gracefully
 	case ActSendEscape:
 		_ = c.pane.SendEscape(ctx, c.cfg.TmuxTarget) //nolint:errcheck // non-fatal; clears partial input
 	case ActInjectHandoffCmd:
@@ -53,7 +53,7 @@ func (c *Cycler) execute(ctx context.Context, a Action) error {
 	case ActSetManagedSession:
 		c.executeSetManagedSession(ctx, a)
 	case ActClearPrecompact:
-		_ = c.gauge.ClearPrecompactTrigger() //nolint:errcheck // non-fatal; a stale precompact trigger is re-cleared next cycle
+		_ = c.context.ClearPrecompactTrigger() //nolint:errcheck // non-fatal; a stale precompact trigger is re-cleared next cycle
 	case ActForceRestart:
 		c.executeForceRestart(ctx)
 	case ActArmTimer:
@@ -69,7 +69,7 @@ func (c *Cycler) execute(ctx context.Context, a Action) error {
 // returned its error); all other journal writes were `_ =` best-effort.
 func (c *Cycler) executeWriteJournal(a Action) error {
 	j := a.Journal
-	if err := c.handoff.WriteJournal(&j); err != nil {
+	if err := c.journal.Write(&j); err != nil {
 		if j.Phase == "opened" {
 			return err // fatal: the cycle must not start unjournaled
 		}
@@ -84,7 +84,7 @@ func (c *Cycler) executeWriteJournal(a Action) error {
 // at/after this moment.
 func (c *Cycler) executeInjectHandoffCmd(ctx context.Context, a Action) {
 	c.handoffInjectedAt = c.cfg.Clock.Now()
-	handoffCmd := handoffDirective(c.handoff.HandoffPath(), nonceMarker(a.CycleID))
+	handoffCmd := handoffDirective(c.handoff.Path(), nonceMarker(a.CycleID))
 	// Non-fatal: the confirm step catches any delivery failure.
 	_ = c.pane.Inject(ctx, c.cfg.TmuxTarget, handoffCmd) //nolint:errcheck // non-fatal; the nonce-confirm step catches a dropped injection
 }
@@ -92,7 +92,7 @@ func (c *Cycler) executeInjectHandoffCmd(ctx context.Context, a Action) {
 // executeSetManagedSession is the ActSetManagedSession arm. Non-fatal: the
 // watcher latch path rebinds on the next tick.
 func (c *Cycler) executeSetManagedSession(ctx context.Context, a Action) {
-	if err := c.gauge.SetManagedSession(a.SID); err != nil {
+	if err := c.context.SetManagedSession(a.SID); err != nil {
 		slog.WarnContext(ctx, "keeper: update managed session_id",
 			"agent", c.cfg.AgentName, "sid", a.SID, "err", err)
 	}
@@ -178,7 +178,7 @@ func (c *Cycler) feed(ctx context.Context, ev Event) error {
 func (c *Cycler) runEntry(ctx context.Context, ev Event) error {
 	if c.machine.peekFires(ev) {
 		ev.CycleID = c.cfg.CycleIDGen()
-		content, err := c.handoff.ReadHandoff()
+		content, err := c.handoff.Read()
 		ev.HandoffContent = content
 		ev.HandoffReadOK = err == nil
 	}
@@ -304,7 +304,7 @@ func (c *Cycler) pollOnce(ctx context.Context) {
 // pollAwaitingHandoff observes the handoff on every tick. A recent real user
 // turn can park pane injection, but it never suppresses the file read.
 func (c *Cycler) pollAwaitingHandoff(ctx context.Context, st CycleState, at time.Time) {
-	content, readErr := c.handoff.ReadHandoff()
+	content, readErr := c.handoff.Read()
 	nonceSeen := readErr == nil && strings.Contains(content, nonceMarker(st.CycleID))
 	operatorTurn := c.recentOperatorTurn(st, at)
 	if nonceSeen {
@@ -362,7 +362,7 @@ func (c *Cycler) pollAwaitModelDone(ctx context.Context, st CycleState, at time.
 	// handoff. STRICT compare against the nonce instant — no
 	// crispIdleTolerance fudge (that tolerance discounts passive .ctx
 	// repaints, irrelevant against t_nonce). SK-014 / design §5.
-	if mt, ok := c.gauge.IdleMarkerModTime(); ok && !mt.Before(st.NonceConfirmedAt) {
+	if mt, ok := c.activity.IdleMarkerModTime(); ok && !mt.Before(st.NonceConfirmedAt) {
 		_ = c.feed(ctx, Event{ //nolint:errcheck // non-fatal; a poll-fed event fails the cycle open, never the poll tick
 			Kind: EvModelDone, CycleID: st.CycleID,
 			SessionID: st.PrevSID, Source: "idle_marker", At: at,
@@ -372,7 +372,7 @@ func (c *Cycler) pollAwaitModelDone(ctx context.Context, st CycleState, at time.
 	// Backstop source: a real assistant transcript turn at/after t_nonce
 	// (agents whose Stop hook isn't wired). Heavier (JSONL tail scan);
 	// consulted only when the .idle read yields nothing.
-	if tt, ok := c.gauge.LastAssistantTurn(st.PrevSID); ok && !tt.Before(st.NonceConfirmedAt) {
+	if tt, ok := c.activity.LastAssistantTurn(st.PrevSID); ok && !tt.Before(st.NonceConfirmedAt) {
 		_ = c.feed(ctx, Event{ //nolint:errcheck // non-fatal; a poll-fed event fails the cycle open, never the poll tick
 			Kind: EvModelDone, CycleID: st.CycleID,
 			SessionID: st.PrevSID, Source: "transcript_turn", At: at,
@@ -398,14 +398,14 @@ func (c *Cycler) pollClearing(ctx context.Context, st CycleState, at time.Time) 
 		// re-inject is kept only when the pane still reads high (the /clear was not
 		// consumed — the busy-pane case hk-vdqe2 defends). A read error → nil CF →
 		// re-inject as before (fail toward the defensive behavior).
-		clearCF, _, gerr := c.gauge.ReadGauge()
+		clearCF, _, gerr := c.context.ReadGauge()
 		if gerr != nil {
 			clearCF = nil
 		}
 		_ = c.feed(ctx, Event{Kind: EvTimerFired, Timer: TimerClearSettle, CycleID: st.CycleID, At: at, CF: clearCF}) //nolint:errcheck // non-fatal; a poll-fed event fails the cycle open, never the poll tick
 		return
 	}
-	cf, _, err := c.gauge.ReadGauge()
+	cf, _, err := c.context.ReadGauge()
 	if err == nil && cf.SessionID != "" && cf.SessionID != st.PrevSID {
 		_ = c.feed(ctx, Event{ //nolint:errcheck // non-fatal; a poll-fed event fails the cycle open, never the poll tick
 			Kind: EvSessionChanged, CycleID: st.CycleID,
@@ -469,11 +469,11 @@ func (c *Cycler) fireOnCancel(ctx context.Context) {
 // unwritten handoff (SK-INV-001). Pinned by
 // TestCycler_EmptyTarget_ScrubbedStaleHandoff_StillAborts.
 func (c *Cycler) observeHandoffFreshness() (time.Time, bool) {
-	content, err := c.handoff.ReadHandoff()
+	content, err := c.handoff.Read()
 	if err != nil || strings.TrimSpace(content) == "" {
 		return time.Time{}, false
 	}
-	mt, ok := c.handoff.HandoffModTime()
+	mt, ok := c.handoff.ModTime()
 	if !ok || mt.Before(c.handoffInjectedAt) {
 		return time.Time{}, false
 	}

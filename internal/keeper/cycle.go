@@ -831,10 +831,20 @@ type Cycler struct {
 	// when nil, from the fn* adapters over the defaulted function fields.
 	// respawn stays nil when neither cfg.Respawn nor cfg.ForceRestartFn is set
 	// (escalation dormant).
-	pane    PanePort
-	gauge   GaugePort
-	handoff HandoffPort
-	respawn RespawnPort
+	pane     PaneWriter
+	context  ContextStore
+	activity ActivityProbe
+	managed  ManagedProbe
+	idle     IdleProbe
+	dispatch DispatchProbe
+	sleep    SleepProbe
+	hold     HoldProbe
+	operator OperatorPresenceProbe
+	handoff  HandoffDocument
+	journal  CycleJournalStore
+	// legacyGauge keeps the temporary broad-port override working during migration.
+	legacyGauge GaugePort
+	respawn     RespawnPort
 
 	// machine is the pure Step reactor holding ALL cycle state (design §3c).
 	machine *Cycle
@@ -866,13 +876,23 @@ func NewCycler(cfg CyclerConfig, emitter Emitter) *Cycler {
 	if c.pane == nil {
 		c.pane = fnPane{cfg: &c.cfg}
 	}
-	c.gauge = c.cfg.Gauge
-	if c.gauge == nil {
-		c.gauge = fnGauge{cfg: &c.cfg}
+	if c.cfg.Gauge != nil {
+		c.legacyGauge = c.cfg.Gauge
+		c.context = c.cfg.Gauge
+		c.activity = legacyGaugeActivity{c.cfg.Gauge}
+	} else {
+		gauge := fnGauge{cfg: &c.cfg}
+		c.context, c.activity = gauge, gauge
+		c.managed, c.idle, c.dispatch = gauge, gauge, gauge
+		c.sleep, c.hold, c.operator = gauge, gauge, gauge
 	}
-	c.handoff = c.cfg.Handoff
-	if c.handoff == nil {
-		c.handoff = fnHandoff{cfg: &c.cfg}
+	if c.cfg.Handoff != nil {
+		c.handoff = legacyHandoffDocument{c.cfg.Handoff}
+		c.journal = legacyCycleJournalStore{c.cfg.Handoff}
+	} else {
+		handoff := fnHandoff{cfg: &c.cfg}
+		c.handoff = handoff
+		c.journal = fnJournal{handoff: handoff}
 	}
 	c.respawn = c.cfg.Respawn
 	if c.respawn == nil && c.cfg.ForceRestartFn != nil {
@@ -898,6 +918,45 @@ func (c *Cycler) InCycle() bool { return c.machine.InCycle() }
 // instruction so nudge == handoff marker == restart-now event is one join key
 // (SK-030 / SK-031). Refs: T7.
 func (c *Cycler) MintCycleID() string { return c.cfg.CycleIDGen() }
+
+func (c *Cycler) isManaged() bool {
+	if c.legacyGauge != nil {
+		return c.legacyGauge.Snapshot("").Managed
+	}
+	return c.managed.IsManaged()
+}
+
+// sampleGates keeps the old lazy-read guards. Each source is read only when
+// its gate can use the result. The compatibility GaugePort keeps its former
+// snapshot behavior until its callers migrate.
+func (c *Cycler) sampleGates(sessionID string) GateSnapshot {
+	if c.legacyGauge != nil {
+		return c.legacyGauge.Snapshot(sessionID)
+	}
+	snapshot := GateSnapshot{
+		Managed:         c.managed.IsManaged(),
+		CrispIdle:       c.idle.CrispIdle(),
+		HoldingDispatch: c.dispatch.HoldingDispatch(),
+		Held:            c.hold.Held(),
+	}
+	if sessionID != "" {
+		snapshot.Sleeping = c.sleep.Sleeping(sessionID)
+	}
+	if c.cfg.TmuxTarget != "" {
+		snapshot.OperatorAttached = c.operator.Attached(c.cfg.TmuxTarget)
+	}
+	if sessionID != "" && c.cfg.OperatorTurnLookback > 0 {
+		if turn, ok := c.activity.LastUserTurn(sessionID); ok {
+			snapshot.LastUserTurnAt = turn
+		}
+	}
+	if sessionID != "" && c.cfg.PostAnswerGrace > 0 {
+		if turn, ok := c.activity.LastAssistantTurn(sessionID); ok {
+			snapshot.LastAssistantTurnAt = turn
+		}
+	}
+	return snapshot
+}
 
 // journalFilePath returns the path to the cycle journal file for the agent:
 // <projectDir>/.harmonik/keeper/<agent>.cycle.
@@ -931,7 +990,7 @@ func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
 	if cf == nil {
 		return nil
 	}
-	snap := c.gauge.Snapshot(cf.SessionID)
+	snap := c.sampleGates(cf.SessionID)
 	return c.runEntry(ctx, Event{
 		Kind:  EvGaugeTick,
 		At:    c.cfg.Clock.Now(),
@@ -988,14 +1047,13 @@ func (c *CyclerConfig) recentTurnFn() func(transcriptDir, sessionID, role string
 // recovery path injects the brief command directly without a nonce poll, so a
 // stale nonce cannot trigger unintended behaviour.
 func (c *Cycler) RecoverFromCrash(ctx context.Context) error {
-	// Fail-closed: only act on a managed agent. Boot-time entry point (the
-	// reactor's CrashJournal event): the gate input comes from the same
-	// per-entry GateSnapshot burst as the tick entry points.
-	if !c.gauge.Snapshot("").Managed {
+	// Fail-closed: only act on a managed agent. Recovery reads this one source
+	// without sampling unrelated entry gates.
+	if !c.isManaged() {
 		return nil
 	}
 
-	j, err := c.handoff.ReadJournal()
+	j, err := c.journal.Read()
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil // no journal = no crash to recover
@@ -1050,7 +1108,7 @@ func (c *Cycler) RunForPrecompact(ctx context.Context, cf *CtxFile) error {
 	// same tick — so gate values match the old live reads. The gate subset,
 	// the per-gate precompact_blocked emissions, and the always-clear-marker
 	// contract live in the pure reactor (stepIdlePrecompact, step.go).
-	snap := c.gauge.Snapshot(sessionID)
+	snap := c.sampleGates(sessionID)
 
 	return c.runEntry(ctx, Event{
 		Kind:  EvPrecompactTrigger,
@@ -1088,7 +1146,7 @@ func (c *Cycler) RunForIdle(ctx context.Context, cf *CtxFile) error {
 	// hk-4i0s stamp-then-unwind cooldown discipline and the hk-qshh8
 	// once-per-SID idle_crew notification) lives in the pure reactor
 	// (stepIdleRestartTick, step.go).
-	snap := c.gauge.Snapshot(cf.SessionID)
+	snap := c.sampleGates(cf.SessionID)
 
 	return c.runEntry(ctx, Event{
 		Kind:  EvIdleRestartTick,

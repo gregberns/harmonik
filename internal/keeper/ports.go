@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// ports.go — the five named ports + RespawnPort (T6, session-keeper-design §1,
+// ports.go defines the keeper cycle's narrow source and effect contracts.
 // D10). The cycle core (cycle.go) depends exclusively on these interfaces; the
 // CyclerConfig function-fields remain as WIRING INPUTS that the fn* adapters
 // below fold into the ports, so existing construction sites and tests keep
@@ -30,6 +30,56 @@ type PanePort interface {
 	SetEnv(ctx context.Context, target, key, value string) error
 	Capture(ctx context.Context, target string) (string, error)
 	OperatorAttached(target string) bool
+}
+
+// PaneWriter applies automatic cycle writes to a tmux pane.
+type PaneWriter interface {
+	Inject(context.Context, string, string) error
+	SendEscape(context.Context, string) error
+	SetEnv(context.Context, string, string, string) error
+}
+
+// ContextStore reads and updates keeper context state.
+type ContextStore interface {
+	ReadGauge() (*CtxFile, time.Time, error)
+	SetManagedSession(string) error
+	ClearPrecompactTrigger() error
+}
+
+// ActivityProbe reads session activity signals.
+type ActivityProbe interface {
+	IdleMarkerModTime() (time.Time, bool)
+	LastUserTurn(string) (time.Time, bool)
+	LastAssistantTurn(string) (time.Time, bool)
+}
+
+type (
+	// ManagedProbe reads the keeper managed state.
+	ManagedProbe interface{ IsManaged() bool }
+	// IdleProbe reads the pane idle state.
+	IdleProbe interface{ CrispIdle() bool }
+	// DispatchProbe reads the dispatch hold state.
+	DispatchProbe interface{ HoldingDispatch() bool }
+	// SleepProbe reads the session sleep state.
+	SleepProbe interface{ Sleeping(string) bool }
+	// HoldProbe reads the manual keeper hold state.
+	HoldProbe interface{ Held() bool }
+	// OperatorPresenceProbe reads the tmux operator state.
+	OperatorPresenceProbe interface{ Attached(string) bool }
+)
+
+// HandoffDocument reads and scrubs the keeper handoff file.
+type HandoffDocument interface {
+	Path() string
+	Read() (string, error)
+	ModTime() (time.Time, bool)
+	ScrubNonce() error
+}
+
+// CycleJournalStore reads and writes the cycle journal.
+type CycleJournalStore interface {
+	Write(*CycleJournal) error
+	Read() (*CycleJournal, error)
 }
 
 // RespawnPort is the kill+respawn escalation fired after MaxHandoffTimeouts
@@ -213,6 +263,37 @@ func (g fnGauge) LastAssistantTurn(sessionID string) (time.Time, bool) {
 	return g.cfg.recentTurnFn()(g.cfg.resolvedTranscriptDir(), sessionID, "assistant")
 }
 
+func (g fnGauge) LastUserTurn(sessionID string) (time.Time, bool) {
+	if sessionID == "" {
+		return time.Time{}, false
+	}
+	return g.cfg.recentTurnFn()(g.cfg.resolvedTranscriptDir(), sessionID, "user")
+}
+
+func (g fnGauge) IsManaged() bool {
+	return g.cfg.IsManagedFn(g.cfg.ProjectDir, g.cfg.AgentName)
+}
+
+func (g fnGauge) CrispIdle() bool {
+	return g.cfg.CrispIdleFn(g.cfg.ProjectDir, g.cfg.AgentName)
+}
+
+func (g fnGauge) HoldingDispatch() bool {
+	return g.cfg.HoldingDispatchFn(g.cfg.ProjectDir, g.cfg.AgentName)
+}
+
+func (g fnGauge) Sleeping(sessionID string) bool {
+	return g.cfg.SleepingCheckFn(g.cfg.ProjectDir, sessionID)
+}
+
+func (g fnGauge) Held() bool {
+	return g.cfg.HeldCheckFn(g.cfg.ProjectDir, g.cfg.AgentName)
+}
+
+func (g fnGauge) Attached(target string) bool {
+	return g.cfg.OperatorAttachedFn(target)
+}
+
 // fnHandoff adapts the handoff-file + journal fn-fields to HandoffPort. Paths
 // are computed per call (never cached), matching the old call sites.
 type fnHandoff struct{ cfg *CyclerConfig }
@@ -245,6 +326,35 @@ func (h fnHandoff) ReadJournal() (*CycleJournal, error) {
 // Cycler.journalPath): .harmonik/keeper/<agent>.cycle.
 func (h fnHandoff) journalPath() string {
 	return journalFilePath(h.cfg.ProjectDir, h.cfg.AgentName)
+}
+
+func (h fnHandoff) Path() string               { return h.HandoffPath() }
+func (h fnHandoff) Read() (string, error)      { return h.ReadHandoff() }
+func (h fnHandoff) ModTime() (time.Time, bool) { return h.HandoffModTime() }
+func (h fnHandoff) ScrubNonce() error          { return h.TruncateHandoff() }
+
+type fnJournal struct{ handoff fnHandoff }
+
+func (j fnJournal) Write(cycle *CycleJournal) error { return j.handoff.WriteJournal(cycle) }
+func (j fnJournal) Read() (*CycleJournal, error)    { return j.handoff.ReadJournal() }
+
+type legacyHandoffDocument struct{ HandoffPort }
+
+func (h legacyHandoffDocument) Path() string               { return h.HandoffPath() }
+func (h legacyHandoffDocument) Read() (string, error)      { return h.ReadHandoff() }
+func (h legacyHandoffDocument) ModTime() (time.Time, bool) { return h.HandoffModTime() }
+func (h legacyHandoffDocument) ScrubNonce() error          { return h.TruncateHandoff() }
+
+type legacyCycleJournalStore struct{ HandoffPort }
+
+func (h legacyCycleJournalStore) Write(j *CycleJournal) error  { return h.WriteJournal(j) }
+func (h legacyCycleJournalStore) Read() (*CycleJournal, error) { return h.ReadJournal() }
+
+type legacyGaugeActivity struct{ GaugePort }
+
+func (g legacyGaugeActivity) LastUserTurn(sessionID string) (time.Time, bool) {
+	turn := g.Snapshot(sessionID).LastUserTurnAt
+	return turn, !turn.IsZero()
 }
 
 // fnRespawn adapts ForceRestartFn to RespawnPort. Constructed only when the

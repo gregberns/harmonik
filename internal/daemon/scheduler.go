@@ -27,7 +27,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -1665,16 +1664,15 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 			// "cannot claim blocked issue" when deps are open) AND the ShowBead
 			// status. A bead can be status=open but still unclaimable due to deps.
 			if queueItemIndex >= 0 && queueStore != nil && queueIDField != nil && queueGroupIdxFd != nil {
-				claimErrStr := claimErr.Error()
-				isBlocked := strings.Contains(claimErrStr, "cannot claim blocked issue") ||
-					strings.Contains(claimErrStr, "blocked")
-				if !isBlocked {
-					if showRecord, showErr := ledger.ShowBead(ctx, beadID); showErr == nil &&
-						showRecord.Status == core.CoarseStatusBlocked {
-						isBlocked = true
-					}
+				kind := orchestrator.ClaimFailureOther
+				if errors.Is(claimErr, brcli.ErrClaimDependencyBlocked) {
+					kind = orchestrator.ClaimFailureDependencyBlocked
 				}
-				if isBlocked {
+				showRecord, showErr := ledger.ShowBead(ctx, beadID)
+				disposition := orchestrator.DecideClaimFailure(
+					true, kind, showRecord.Status, showErr == nil,
+				)
+				if disposition == orchestrator.ClaimFailureFailQueueItem {
 					fmt.Fprintf(os.Stderr, "daemon: workloop: ClaimBead %s bead is blocked (deps or status) — failing queue item (hk-n91y0)\n", beadID)
 					evaluateGroupAdvanceWithOutcome(ctx, reapPort, capturedQueueName, *queueIDField, *queueGroupIdxFd, queueItemIndex, false)
 					continue

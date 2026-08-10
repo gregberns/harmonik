@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -264,8 +263,7 @@ func (a *Adapter) terminalTransitionWrite(
 			return nil
 		}
 		// Intent file retained for BI-031 recovery.
-		return fmt.Errorf("brcli.terminalTransitionWrite: br %s failed: %w (exit %d): stderr=%q",
-			op, result.BrErr, result.ExitCode, result.Stderr)
+		return &TerminalWriteError{Op: string(op), Result: result}
 	}
 
 	// BI-030 step 6: delete intent file + fsync(parent_dir_fd) on success.
@@ -309,7 +307,7 @@ func (a *Adapter) ClaimBead(
 	a.terminalMu.Lock()
 	defer a.terminalMu.Unlock()
 
-	claimErr := a.terminalTransitionWrite(
+	claimErr := classifyClaimRefusal(a.terminalTransitionWrite(
 		ctx,
 		intentLogDir,
 		cfg,
@@ -319,7 +317,7 @@ func (a *Adapter) ClaimBead(
 		core.TerminalOpClaim,
 		core.CoarseStatusInProgress,
 		[]string{"update", string(beadID), "--claim"},
-	)
+	))
 	if claimErr != nil {
 		// hk-amed0: br --claim rejects beads that already have an assignee
 		// (exit 4, "Validation failed: claim: issue <id> already assigned to <name>").
@@ -345,7 +343,7 @@ func (a *Adapter) ClaimBead(
 		// conditions — a timeout kill in this call, or our ownership sentinel — so
 		// a genuine self-retry still returns success early and a bead another
 		// actor holds arrives here as an error instead.
-		if strings.Contains(claimErr.Error(), "already assigned") {
+		if errors.Is(claimErr, ErrClaimAlreadyAssigned) {
 			holder, allowed := a.claimFallbackAllowed(ctx, beadID)
 			if !allowed {
 				return fmt.Errorf(

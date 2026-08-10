@@ -195,6 +195,7 @@ type admissionLedger struct {
 	showTotal  int
 	showCalls  map[core.BeadID]int
 	claimCalls map[core.BeadID]int
+	claimErr   error
 
 	// unexpected records calls no test in this file should ever cause.
 	unexpected []string
@@ -243,6 +244,9 @@ func (l *admissionLedger) ClaimBead(_ context.Context, _ string, _ brcli.Timeout
 	l.mu.Lock()
 	l.claimCalls[id]++
 	l.mu.Unlock()
+	if l.claimErr != nil {
+		return l.claimErr
+	}
 	return errAdmissionClaimRefused
 }
 
@@ -999,6 +1003,53 @@ func TestAdmissionOrder_AttemptsBoundStaysFusedToTheStamp(t *testing.T) {
 		}
 		if item.LastFailureReason == "max_attempts_exceeded" {
 			t.Error("held item was failed at the attempts bound — the bound is no longer fused to the stamp")
+		}
+	})
+}
+
+// TestClaimFailureRoutingUsesTypedRefusal proves that claim policy does not
+// depend on words in an error message. The paired cases reach the same real
+// queue reservation window.
+func TestClaimFailureRoutingUsesTypedRefusal(t *testing.T) {
+	const beadID core.BeadID = "claim-routing-bead"
+	const parkedID core.BeadID = "claim-routing-parked"
+
+	observe := func(t *testing.T, claimErr error) (queue.Item, int) {
+		t.Helper()
+		ledger := newAdmissionLedger()
+		ledger.claimErr = claimErr
+		qs := daemon.ExportedNewQueueStore()
+		qs.SetQueue(admissionQueue("main",
+			queue.Item{BeadID: beadID, Status: queue.ItemStatusPending},
+			admissionParkedItem(parkedID),
+		))
+		deps := daemon.ExportedTestRuntime(admissionDeps(t, ledger, qs, &admissionQueueLedger{}, true, nil))
+		var snapshot *queue.Queue
+		runAdmissionLoop(t, qs,
+			func(c context.Context) { daemon.ExportedRunWorkLoop(c, deps) }, //nolint:errcheck,gosec
+			func() { snapshot = qs.Queue() },
+		)
+		ledger.assertNoRunPathCalls(t)
+		return admissionFirstItem(t, snapshot), ledger.claimCount(beadID)
+	}
+
+	t.Run("typed dependency refusal makes the queue item terminal", func(t *testing.T) {
+		item, claims := observe(t, fmt.Errorf("wording may change: %w", brcli.ErrClaimDependencyBlocked))
+		if item.Status != queue.ItemStatusFailed {
+			t.Fatalf("item status = %q, want failed", item.Status)
+		}
+		if claims != 1 {
+			t.Fatalf("ClaimBead calls = %d, want 1 after terminal disposition", claims)
+		}
+	})
+
+	t.Run("unrelated blocked text releases and retries", func(t *testing.T) {
+		item, claims := observe(t, errors.New("database operation blocked by lock timeout"))
+		if claims < 2 {
+			t.Fatalf("ClaimBead calls = %d, want at least 2 to prove release and retry", claims)
+		}
+		if item.Attempts != queue.MaxItemAttempts {
+			t.Fatalf("Attempts = %d, want %d after retries", item.Attempts, queue.MaxItemAttempts)
 		}
 	})
 }

@@ -17,7 +17,9 @@ description: >
       "notes":          string,     // free text for human consumption; 1–3 sentences
       "proposed_diff":  string      // unified-diff format; "" when verdict is CLEAN
     }
-  Required fields: schema_version, verdict, notes, proposed_diff. flags may be [].
+  Required fields: schema_version, verdict, flags, notes, proposed_diff. Emit the
+  flags key on every verdict; [] is the right value when you raised nothing, and
+  omitting the key is not.
   DRIFT_MAJOR proposals require main-agent acknowledgment before continuing a pass.
   DRIFT_MINOR proposals may be deferred by filing a bead (`br create`).
   CLEAN — no action required.

@@ -14,7 +14,9 @@ description: >
       "flags":          string[],   // issue tags — see §Flag vocabulary below
       "notes":          string      // free text for human consumption; 1–3 sentences
     }
-  Required fields: schema_version, verdict, notes. flags may be [].
+  Required fields: schema_version, verdict, flags, notes. Emit the flags key on
+  every verdict; [] is the right value when you raised nothing, and omitting the
+  key is not.
   BLOCK verdicts are never committed; agent fixes before committing.
   REQUEST_CHANGES may be committed with the trailer + rationale in the commit body.
   APPROVE commits normally.
@@ -537,9 +539,28 @@ Review-Verdict: {"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"All 
 ```
 
 The commit-message validation (agent-driven; git hooks are retired) checks that
-`Review-Verdict:` is parseable JSON with `schema_version` and `verdict` present. An
-unparseable trailer blocks the commit. This prevents prompt-injection via a free-text
-verdict field.
+`Review-Verdict:` is parseable JSON with `schema_version`, `verdict` and a non-empty
+`notes` present. An unparseable trailer blocks the commit. This prevents
+prompt-injection via a free-text verdict field.
+
+The `flags` key is required on every verdict you emit. `[]` is the right value when
+you raised nothing; leaving the key out is not. The Go reader in
+`internal/workspace/reviewverdict.go` rejects a verdict file with no `flags` key, and
+the marshaller in `internal/runmerge/reviewtrailers.go` always writes one, so a
+verdict without it is a shape no reader here accepts.
+
+An `APPROVE` is held to more than the other verdicts. `scripts/validate-commit-msg.sh`
+requires the `Reviewed-By:` value to name a reviewer skill this repo has —
+`agent-reviewer` or `agent-config-reviewer`, with an optional qualifier in parentheses
+— and refuses a value that says "self". Write `Reviewed-By: agent-reviewer`. It also
+requires the `flags` key on an `APPROVE` (and on the config reviewer's `CLEAN`). The
+validator does not demand `flags` of the author-written `NOT_REVIEWED` below, which no
+reviewer emitted and this skill does not govern.
+
+When the implementer could not reach you at all, the trailer says so and the commit
+lands anyway: `"verdict": "NOT_REVIEWED"`, which carries no approval. That is the
+author's record of an absent review, not an output of this skill. It is documented in
+`docs/foundation/project-level/build-practices.md` §Commit conventions.
 
 BLOCK verdicts never land. If you emit BLOCK, the implementer fixes the issue and
 invokes you again before committing.

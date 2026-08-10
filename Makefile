@@ -844,9 +844,10 @@ GATE_CAP := $(if $(TIMEOUT_BIN),$(TIMEOUT_BIN) --kill-after=30s $(GATE_STEP_SECS
 # working. gate-static says so out loud once per run.
 
 # script-tests — the self-tests for the shell the gate itself depends on.
-# 80 shell scripts in this repo decide things and 14 of them have a test. These
-# are those 14 as they apply to the gate path. They guard the parts that fail
-# silently.
+# Most shell scripts in this repo decide something and about a quarter of them
+# have a test. These are those tests as they apply to the gate path. They guard
+# the parts that fail silently. (The count used to be written here as a number
+# and it was wrong by nine before anyone noticed.)
 #
 # Most cost a few seconds. reachability-gate-test.sh costs about 13 seconds of
 # wall clock on a warm cache and about 46 of CPU across cores, because the only
@@ -878,6 +879,7 @@ GATE_CAP := $(if $(TIMEOUT_BIN),$(TIMEOUT_BIN) --kill-after=30s $(GATE_STEP_SECS
 .PHONY: script-tests
 script-tests:  ## Self-tests for the shell the gate depends on
 	scripts/go-format-test.sh
+	scripts/validate-commit-msg-test.sh
 	scripts/agent-reviewer-run-test.sh
 	scripts/agent-reviewer-prompt-parity-test.sh
 	scripts/with-lane-gocache-test.sh

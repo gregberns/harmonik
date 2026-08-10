@@ -732,3 +732,109 @@ func TestHookRelay_EnvelopeFields(t *testing.T) {
 		}
 	}
 }
+
+// hookRelayFixtureListenRestart simulates a daemon restart in the middle of an
+// exchange, which is the shape a redeploy produces (docs/daemon-redeploy.md).
+// The first listener accepts the relay's connection, reads the whole envelope,
+// then closes the connection WITHOUT acknowledging it and drops its listener —
+// exactly what an in-place binary swap or a SIGTERM does to a connection that
+// was established a moment earlier. A second listener then comes up on the same
+// path and acknowledges normally, standing in for the restarted daemon.
+//
+// It returns the socket path and a channel carrying the envelope the SECOND
+// (restarted) listener received, so a caller can prove the message actually
+// arrived rather than merely that the relay exited 0.
+func hookRelayFixtureListenRestart(t *testing.T, ackJSON string) (socketPath string, received <-chan []byte) {
+	t.Helper()
+
+	dir := hookRelayFixtureShortSockDir(t)
+	sockPath := filepath.Join(dir, "d.sock")
+
+	ch := make(chan []byte, 1)
+	errCh := make(chan error, 1)
+
+	// Not t.Context(): both listeners must outlive the test body's own call.
+	first, listenErr := (&net.ListenConfig{}).Listen(context.Background(), "unix", sockPath)
+	if listenErr != nil {
+		t.Fatalf("hookRelayFixtureListenRestart: first listen on %s: %v", sockPath, listenErr)
+	}
+
+	go func() {
+		errs := make([]error, 0, 4)
+		conn, acceptErr := first.Accept()
+		if acceptErr != nil {
+			errCh <- fmt.Errorf("first accept: %w", acceptErr)
+			return
+		}
+		// Consume the envelope so the relay's writes complete, then die
+		// before acknowledging. The relay sees EOF on the ACK read.
+		if _, readErr := bufio.NewReader(conn).ReadString('\n'); readErr != nil {
+			errs = append(errs, fmt.Errorf("first read: %w", readErr))
+		}
+		errs = append(errs, conn.Close(), first.Close())
+
+		second, secondErr := (&net.ListenConfig{}).Listen(context.Background(), "unix", sockPath)
+		if secondErr != nil {
+			errCh <- errors.Join(append(errs, fmt.Errorf("restart listen: %w", secondErr))...)
+			return
+		}
+		errs = append(errs, hookRelayFixtureServe(second, []string{ackJSON}, ch), second.Close())
+		errCh <- errors.Join(errs...)
+	}()
+
+	t.Cleanup(func() {
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Errorf("hookRelayFixtureListenRestart: fixture server: %v", err)
+			}
+		case <-time.After(3 * time.Second):
+			t.Errorf("hookRelayFixtureListenRestart: fixture server did not finish")
+		}
+	})
+
+	return sockPath, ch
+}
+
+func TestHookRelay_Reconnects_WhenDaemonDiesBeforeAck(t *testing.T) {
+	t.Parallel()
+
+	// The 79-minute silent stall. A daemon restart drops a connection the relay
+	// had ALREADY established, so the CHB-016 retry — which only ever covered
+	// the dial — never ran, and the relay failed instantly on a race it was
+	// built to survive. Whether a restart lands on the dial or mid-exchange is
+	// pure timing, so both halves must retry within the same startup window.
+	//
+	// Guards the reconnect in sendToSocket. To see it fail, make
+	// isConnectionLostErr return false: the relay stops re-dialling and exits 1.
+	e := hookRelayFixtureEnv(t.TempDir())
+	sockPath, received := hookRelayFixtureListenRestart(t, `{"status":"ok"}`)
+	e.DaemonSocket = sockPath
+
+	stdin := hookRelayFixtureStdin(t, e.ClaudeSessionID, "Stop", nil)
+	var stderr bytes.Buffer
+	code := hookrelay.Run("Stop", stdin, &stderr, &e)
+	if code != 0 {
+		t.Fatalf("daemon died before ACK: exit %d, want 0; stderr=%q", code, stderr.String())
+	}
+
+	// The restarted daemon must actually hold the message. Exit 0 alone would
+	// also be satisfied by a relay that gave up quietly.
+	select {
+	case msg := <-received:
+		if len(msg) == 0 {
+			t.Fatal("daemon died before ACK: restarted daemon received an empty envelope")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("daemon died before ACK: restarted daemon received no envelope")
+	}
+
+	// The failure must never again be reported as a dial problem: the dial had
+	// already succeeded when the daemon went away.
+	if strings.Contains(stderr.String(), "bridge_dial_failed") {
+		t.Errorf("daemon died before ACK: mid-exchange drop reported as a dial failure: %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "reconnecting") {
+		t.Errorf("daemon died before ACK: expected a reconnect diagnostic, got %q", stderr.String())
+	}
+}

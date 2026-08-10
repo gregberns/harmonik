@@ -547,10 +547,51 @@ func isRetryableDialErr(network, address string, err error) bool {
 	return true
 }
 
+// isConnectionLostErr reports whether a POST-DIAL failure means the peer went
+// away in the middle of the exchange, rather than the exchange itself being
+// bad. EPIPE / ECONNRESET / EOF all say the same thing: the connection was
+// established, and then the daemon on the other end stopped existing.
+//
+// This is the same daemon-restart / in-place-binary-swap race that CHB-016
+// covers on the dial (docs/daemon-redeploy.md), reached one step later. Whether
+// a restart surfaces as a dial error or as a mid-exchange drop is pure timing:
+// dial before the daemon dies and the failure lands on the write or on the ACK
+// read instead. Only the dial half was ever retried, so a relay that connected
+// microseconds before the swap failed instantly while a relay that connected
+// microseconds after recovered.
+//
+// A read-deadline expiry is deliberately NOT in this set. A timeout means the
+// daemon is alive and slow, so a re-send could reach a daemon that already
+// processed the first copy — the one case where re-sending is not provably
+// harmless. Only re-send when the peer is known to be gone.
+func isConnectionLostErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	return errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.ENOTCONN) ||
+		errors.Is(err, syscall.ESHUTDOWN)
+}
+
+// errReconnect is an internal control signal, never returned to a caller: it
+// tells the send loop to re-dial and re-send the same envelope.
+var errReconnect = errors.New("reconnect")
+
 // sendToSocket implements the one-shot write with daemon-not-ready retry per
 // CHB-015 and CHB-016. socketPath is the HARMONIK_DAEMON_SOCKET value: a unix
 // path for local runs, or a "tcp://127.0.0.1:<port>" reverse-tunnel endpoint for
 // remote-worker runs (hk-ege6) — the transport is selected by resolveDialTarget.
+//
+// Re-sending an envelope is safe. The daemon accepts every message keyed by
+// (run_id, claude_session_id) and takes the most recent one (CHB-025
+// last-received-wins), so a duplicate of an identical envelope resolves to the
+// same state as the original. After an actual daemon restart the question does
+// not arise: the new daemon holds no memory of the session window, so the
+// re-send is the only copy that can ever land.
 func sendToSocket(socketPath string, msgBytes []byte, stderr io.Writer) error {
 	network, address := resolveDialTarget(socketPath)
 	const (
@@ -604,19 +645,57 @@ func sendToSocket(socketPath string, msgBytes []byte, stderr io.Writer) error {
 			return fmt.Errorf("bridge_dial_failed: %w", dialErr)
 		}
 
+		// reconnectOrFail decides what a post-dial failure means. It always
+		// closes conn. It returns errReconnect when the daemon went away and
+		// the startup window still has room, so the caller re-dials and
+		// re-sends; otherwise it returns the error to surface.
+		//
+		// None of these are dial failures. The dial SUCCEEDED — labelling them
+		// bridge_dial_failed produced the error text "dial failed" for a
+		// connection that had already been established, which sent at least one
+		// investigation looking for a connect problem that never existed.
+		reconnectOrFail := func(stage string, cause error) error {
+			closeErr := conn.Close()
+			if !isConnectionLostErr(cause) {
+				return errors.Join(fmt.Errorf("bridge_partial_write: %s: %w", stage, cause), closeErr)
+			}
+			elapsed := time.Since(wallStart)
+			if elapsed+retryDelay > wallMax {
+				return errors.Join(fmt.Errorf("bridge_daemon_startup_window_exceeded: %s after %v: %w", stage, elapsed, cause), closeErr)
+			}
+			writeDiagnostic(stderr, "hook-relay: %s (%v), reconnecting in %v\n", stage, cause, retryDelay)
+			if waitErr := waitForRetry(wallCtx, retryDelay); waitErr != nil {
+				return errors.Join(fmt.Errorf("bridge_daemon_startup_window_exceeded: %s after %v: %w", stage, time.Since(wallStart), waitErr), closeErr)
+			}
+			retryDelay *= 2
+			if retryDelay > retryMax {
+				retryDelay = retryMax
+			}
+			return errReconnect
+		}
+
 		if wallDeadline, ok := wallCtx.Deadline(); ok {
 			if deadlineErr := conn.SetWriteDeadline(wallDeadline); deadlineErr != nil {
-				return errors.Join(fmt.Errorf("bridge_dial_failed: set write deadline: %w", deadlineErr), conn.Close())
+				if err := reconnectOrFail("set write deadline", deadlineErr); !errors.Is(err, errReconnect) {
+					return err
+				}
+				continue
 			}
 		}
 
 		// CHB-015: write exactly one NDJSON line terminated by \n.
 		// Two sequential writes: the JSON bytes then the newline delimiter.
 		if _, writeErr := conn.Write(msgBytes); writeErr != nil {
-			return errors.Join(fmt.Errorf("bridge_dial_failed: write: %w", writeErr), conn.Close())
+			if err := reconnectOrFail("write envelope", writeErr); !errors.Is(err, errReconnect) {
+				return err
+			}
+			continue
 		}
 		if _, writeErr := conn.Write([]byte{'\n'}); writeErr != nil {
-			return errors.Join(fmt.Errorf("bridge_dial_failed: write newline: %w", writeErr), conn.Close())
+			if err := reconnectOrFail("write newline", writeErr); !errors.Is(err, errReconnect) {
+				return err
+			}
+			continue
 		}
 
 		// CHB-015: read back one NDJSON line within 5s.
@@ -625,16 +704,27 @@ func sendToSocket(socketPath string, msgBytes []byte, stderr io.Writer) error {
 			readDeadline = wallDeadline
 		}
 		if deadlineErr := conn.SetReadDeadline(readDeadline); deadlineErr != nil {
-			return errors.Join(fmt.Errorf("bridge_dial_failed: set read deadline: %w", deadlineErr), conn.Close())
+			if err := reconnectOrFail("set read deadline", deadlineErr); !errors.Is(err, errReconnect) {
+				return err
+			}
+			continue
 		}
 
 		scanner := bufio.NewScanner(conn)
 		if !scanner.Scan() {
+			// A daemon that dies after accepting the envelope but before
+			// acknowledging it closes the connection, which surfaces here as
+			// EOF rather than as a write error — so this is the likelier half
+			// of the restart race, not the rarer one. bufio.Scanner reports a
+			// clean close as Err() == nil, hence the io.EOF substitution.
 			scanErr := scanner.Err()
 			if scanErr == nil {
 				scanErr = io.EOF
 			}
-			return errors.Join(fmt.Errorf("bridge_dial_failed: read ACK: %w", scanErr), conn.Close())
+			if err := reconnectOrFail("read ACK", scanErr); !errors.Is(err, errReconnect) {
+				return err
+			}
+			continue
 		}
 		ackBytes := scanner.Bytes()
 		if closeErr := conn.Close(); closeErr != nil {

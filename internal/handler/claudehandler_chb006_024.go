@@ -457,7 +457,15 @@ func CheckSettingsLocalJSON(workspacePath string) error {
 // Parameters:
 //   - runID, sessionID, workflowID, nodeID — IDs to embed in the messages.
 //   - claudeSessionID — the claude_session_id minted/reused by MintClaudeSessionID.
-//   - logPath — the Claude transcript path for session_log_location (HC-010).
+//   - agentType — the conformance class of the handler subprocess that actually
+//     runs (AR-025): "claude-code", "codex", or "pi". It is REPORTED, not assumed.
+//     This value was hard-coded to claude-code until hk-sll-claude-leak-z8fs0: the
+//     routed builder that serves every non-claude harness calls this function, so
+//     every pi and codex run announced a claude identity in session_log_location.
+//   - logPath — the session-log path for session_log_location (HC-010). The claude
+//     handler passes its transcript file; the routed builder passes the canonical
+//     session-log directory. Non-empty is REQUIRED — an empty value produces a
+//     payload core.SessionLogLocationPayload.Valid() rejects.
 //   - skills — the installed skill entries for skills_provisioned (HC-049).
 //
 // Returns a slice of 4 compact JSON lines (no trailing newline on each; the caller
@@ -474,6 +482,7 @@ func PreExecMessages(
 	sessionID string,
 	nodeID string,
 	claudeSessionID string,
+	agentType string,
 	logPath string,
 	skills []handlercontract.SkillProvisionedEntry,
 ) ([][]byte, error) {
@@ -498,7 +507,7 @@ func PreExecMessages(
 		SessionID: sessionID,
 		RunID:     runID,
 		NodeID:    nodeID,
-		AgentType: string(handlercontract.AgentTypeClaudeCode),
+		AgentType: agentType,
 		LogPath:   logPath,
 		LogFormat: "jsonl",
 	}

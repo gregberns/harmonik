@@ -342,6 +342,7 @@ func BuildLaunchSpec(ctx context.Context, rc shared.LaunchCtx) (handler.LaunchSp
 		handlerSessionID,
 		nodeID,
 		mintRes.ClaudeSessionID,
+		string(core.AgentTypeClaudeCode),
 		sessionLogPath,
 		nil, // skills = nil per design §1 step 9
 	)

@@ -297,14 +297,29 @@ func buildCodexRoutedLaunchSpec(
 	trackingSessionID := trackingUID.String()
 
 	// Step 4: render pre-exec bus messages (CHB-018 subset).
+	//
+	// agentType and sessionLogPath are REPORTED, not assumed. This function serves
+	// every non-claude harness, and it used to hand PreExecMessages a hard-coded
+	// claude agent type and an empty log path, so every pi and codex run announced
+	// session_log_location{agent_type:"claude-code", log_path:""} — a payload
+	// core.SessionLogLocationPayload.Valid() rejects
+	// (hk-sll-claude-leak-z8fs0, hk-sll-empty-logpath-7dxdw).
+	//
+	// The log path is the canonical per-session log directory of
+	// workspace-model.md §4.7 WM-025, which is exactly what the payload field
+	// documents. Creating it is the workspace manager's job (WM-025) and would be
+	// wrong here: for a REMOTE run the worktree lives on the worker, not on this
+	// host, so a local MkdirAll would build the directory in the wrong place.
 	nodeID := "bead/" + rc.BeadID
 	runIDStr := core.RunID(rc.RunID).String()
+	sessionLogPath := workspace.SessionLogDirPath(rc.WorkspacePath, handlerSessionID)
 	rawMsgs, err := handler.PreExecMessages(
 		runIDStr,
 		handlerSessionID,
 		nodeID,
 		trackingSessionID,
-		"", // no session log path for codex
+		string(agentType),
+		sessionLogPath,
 		nil,
 	)
 	if err != nil {

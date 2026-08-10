@@ -96,10 +96,10 @@ func TestL0_GateLadderTable(t *testing.T) {
 		{"gate5c_held", func(_ *keeper.CyclerConfig, ev *keeper.Event) {
 			ev.Gates.Held = true
 		}, false, ""},
-		{"gate5d_recent_operator_turn_sets_hold", func(cfg *keeper.CyclerConfig, ev *keeper.Event) {
+		{"gate5d_recent_operator_turn_defers", func(cfg *keeper.CyclerConfig, ev *keeper.Event) {
 			cfg.OperatorTurnLookback = time.Minute
 			ev.Gates.LastUserTurnAt = ev.At.Add(-10 * time.Second)
-		}, false, keeper.ActSetHold},
+		}, false, ""},
 		{"gate5e_post_answer_grace", func(cfg *keeper.CyclerConfig, ev *keeper.Event) {
 			cfg.PostAnswerGrace = time.Minute
 			ev.Gates.LastAssistantTurnAt = ev.At.Add(-10 * time.Second)

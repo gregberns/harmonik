@@ -480,7 +480,8 @@ authoritative liveness signal, not gauge mtime.
 
 `keeper doctor` also reports the last cycle phase and reason from
 `.harmonik/keeper/<agent>.cycle`. A parked cycle reports
-`phase=parked reason=operator_turn_recent`.
+`phase=parked reason=operator_turn_recent`. This is a transient deferral. It does
+not create an operator hold. The watcher can retry after the activity window.
 
 **`.managed` present with no watcher is a DEADLOCK, not a degraded mode** (hk-220lv).
 A live captain once sat at a typed-but-unsent `/clear` waiting for a restart cycle

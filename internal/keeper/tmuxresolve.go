@@ -367,15 +367,20 @@ func isRealTranscriptTurn(role string, content json.RawMessage) bool {
 	if len(content) == 0 {
 		return role == "user"
 	}
-	// Plain string content (old format) → always a real turn.
+	// Plain strings include operator text and text injected through tmux.
 	if content[0] == '"' {
-		return true
+		var text string
+		if json.Unmarshal(content, &text) != nil {
+			return role == "user"
+		}
+		return role != "user" || isOperatorText(text)
 	}
 	if content[0] != '[' {
 		return role == "user" // unknown format → conservative
 	}
 	type contentItem struct {
 		Type string `json:"type"`
+		Text string `json:"text"`
 	}
 	var items []contentItem
 	if err := json.Unmarshal(content, &items); err != nil {
@@ -384,8 +389,11 @@ func isRealTranscriptTurn(role string, content json.RawMessage) bool {
 	switch role {
 	case "user":
 		for _, it := range items {
-			if it.Type != "tool_result" {
-				return true // at least one non-tool_result → real operator turn
+			if it.Type == "text" && isOperatorText(it.Text) {
+				return true
+			}
+			if it.Type != "text" && it.Type != "tool_result" {
+				return true // image or other inbound operator content
 			}
 		}
 		return false
@@ -399,4 +407,15 @@ func isRealTranscriptTurn(role string, content json.RawMessage) bool {
 	default:
 		return false
 	}
+}
+
+func isOperatorText(text string) bool {
+	text = strings.TrimSpace(text)
+	if strings.HasPrefix(text, AutomationEnvelopePrefix) {
+		return false
+	}
+	// Keeper submits this command itself. Claude records it as a user turn, but
+	// it is an automation effect rather than new operator activity.
+	return !strings.HasPrefix(text, "<command-name>/session-handoff</command-name>") &&
+		!strings.HasPrefix(text, "/session-handoff ")
 }

@@ -313,11 +313,8 @@ type CyclerConfig struct {
 	TranscriptDir string
 
 	// OperatorTurnLookback is the maximum age of a real inbound operator user
-	// turn in the session transcript that triggers Gate 5d auto-hold: when a
-	// user turn (not exclusively tool_result content) landed within this window,
-	// SetHold is called and ACT is deferred for this tick. The hold auto-reverts
-	// via the existing session-id keying and TTL backstop (Gates.go). Zero
-	// disables Gate 5d. Refs: hk-74iyd.
+	// turn that defers ACT. The deferral is transient and lifts when this window
+	// expires. Zero disables Gate 5d. Refs: hk-74iyd.
 	OperatorTurnLookback time.Duration
 
 	// PostAnswerGrace is the minimum duration after the agent's most recent real

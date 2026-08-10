@@ -170,7 +170,7 @@ func (w *Watcher) deliverTerminalWarn(ctx context.Context, ctxFile *CtxFile, cri
 	if inject == nil {
 		text := w.cfg.selectWarnText(ctxFile, crispIdle, operatorAttached)
 		inject = func(ctx context.Context, target string) error {
-			return InjectText(ctx, target, text)
+			return InjectText(ctx, target, AutomationMessage("keeper", text))
 		}
 	}
 	return inject(ctx, w.cfg.TmuxTarget)

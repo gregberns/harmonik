@@ -55,7 +55,6 @@ type KeeperBridgeSink struct {
 	// GaugePort effects.
 	ManagedWrites    []string // SetManagedSession values ("" = clear binding)
 	PrecompactClears int
-	Holds            int
 
 	// HandoffPort effects.
 	Journals  []keeper.CycleJournal
@@ -89,8 +88,6 @@ func (s *KeeperBridgeSink) Execute(_ context.Context, a keeper.Action) error {
 		s.ManagedWrites = append(s.ManagedWrites, a.SID)
 	case keeper.ActClearPrecompact:
 		s.PrecompactClears++
-	case keeper.ActSetHold:
-		s.Holds++
 	case keeper.ActWriteJournal:
 		s.Journals = append(s.Journals, a.Journal)
 	case keeper.ActTruncateHandoff:

@@ -16,6 +16,28 @@ import (
 const wrapUpWarningText = "[KEEPER WARN] Context threshold crossed. " +
 	"At a clean stop: commit + write HANDOFF-<name>.md (KEEPER nonce). Keep working."
 
+// AutomationEnvelopePrefix marks text inserted by Harmonik rather than typed by
+// the operator. Transcript readers use this stable prefix to keep automation
+// messages out of operator-activity gates. The rest of the envelope stays
+// visible so an agent can identify the sender without hidden state.
+const AutomationEnvelopePrefix = "[[harmonik-message:v1 "
+
+// AutomationMessage wraps injected prose with its machine-readable origin.
+// Slash commands are not prose and must not be wrapped because the leading
+// command token is load-bearing.
+func AutomationMessage(origin, text string) string {
+	origin = strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
+			return r
+		}
+		return -1
+	}, strings.ToLower(origin))
+	if origin == "" {
+		origin = "unknown"
+	}
+	return AutomationEnvelopePrefix + "origin=" + origin + "]]\n" + text
+}
+
 // restartNowCmdToken is the EXACT, load-bearing command an actionable-warn agent
 // must run to self-restart. It is templated INTO ActionableWarnText (never
 // concatenated free-form) so a custom warn-text override CANNOT drop the required
@@ -58,7 +80,7 @@ func ActionableWarnText(agent string, tokens, warn, act int64) string {
 // hk-vs4u.
 func InjectOnDemandRestartWarning(ctx context.Context, tmuxTarget, agentName string) error {
 	text := ActionableWarnText(agentName, defaultWarnAbsTokens, defaultWarnAbsTokens, defaultActAbsTokens)
-	return InjectText(ctx, tmuxTarget, text)
+	return InjectText(ctx, tmuxTarget, AutomationMessage("keeper", text))
 }
 
 // --- K2 leader defer template (SK-026 / SK-027 / SK-033) ------------------------
@@ -320,7 +342,7 @@ func SendEscapeKey(ctx context.Context, tmuxTarget string) error {
 // The injector is side-effect-only. Errors are returned but the watcher
 // treats injection failure as non-fatal (warn event is still emitted).
 func InjectWrapUpWarning(ctx context.Context, tmuxTarget string) error {
-	return InjectText(ctx, tmuxTarget, wrapUpWarningText)
+	return InjectText(ctx, tmuxTarget, AutomationMessage("keeper", wrapUpWarningText))
 }
 
 // SetTmuxEnv sets an environment variable in the tmux session that owns

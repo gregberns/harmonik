@@ -62,16 +62,11 @@ type GateSnapshot struct {
 }
 
 // GaugePort is the keeper's file-state universe (.ctx/.sid/.managed/markers/
-// transcript) and the one write-back that keeps the watcher bound.
-//
-// SetHold is here (not on the §1b four-method read surface) because the Gate-5d
-// auto-hold is a GaugePort-owned marker write the reactor must be able to drive
-// as an action (§3b maps the SetHold action to GaugePort).
+// transcript) and the write-back that keeps the watcher bound.
 type GaugePort interface {
 	ReadGauge() (*CtxFile, time.Time, error) // .ctx (+ .sid overlay when primary UUIDv4)
 	SetManagedSession(sessionID string) error
 	ClearPrecompactTrigger() error
-	SetHold() (string, error) // Gate 5d auto-hold marker write (hk-74iyd)
 	// Snapshot performs the one gate-input read-burst per tick; the gate ladder
 	// reads ONLY the returned value, never a port.
 	Snapshot(sessionID string) GateSnapshot
@@ -159,12 +154,6 @@ func (g fnGauge) SetManagedSession(sessionID string) error {
 
 func (g fnGauge) ClearPrecompactTrigger() error {
 	return g.cfg.ClearPrecompactTriggerFn(g.cfg.ProjectDir, g.cfg.AgentName)
-}
-
-// SetHold routes the Gate-5d auto-hold marker stamp through the cycle Clock
-// (T5-seam fold: gates.go marker stamps honor the determinism port).
-func (g fnGauge) SetHold() (string, error) {
-	return setHoldAt(g.cfg.ProjectDir, g.cfg.AgentName, g.cfg.Clock)
 }
 
 // Snapshot performs the per-tick gate-input read-burst. Guard parity with the

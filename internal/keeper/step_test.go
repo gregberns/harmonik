@@ -124,7 +124,7 @@ func TestStep_LadderPass_StaleNonceTruncates(t *testing.T) {
 // TestStep_LadderFail_Gate5d_SetHoldPrelude proves the ladder-FAIL path still
 // emits the unconditional prelude side effect (SK-011): a recent operator
 // user turn defers ACT and emits SetHold, leaving the machine in Idle.
-func TestStep_LadderFail_Gate5d_SetHoldPrelude(t *testing.T) {
+func TestStep_LadderFail_Gate5dDefersTransiently(t *testing.T) {
 	t.Parallel()
 	cfg := stepTestConfig()
 	cfg.OperatorTurnLookback = 2 * time.Minute
@@ -135,9 +135,18 @@ func TestStep_LadderFail_Gate5d_SetHoldPrelude(t *testing.T) {
 	ev.Gates.LastUserTurnAt = at.Add(-30 * time.Second) // within lookback
 
 	actions := m.Step(ev)
-	assertKinds(t, actions, []ActionKind{ActSetHold})
+	assertKinds(t, actions, nil)
 	if m.InCycle() {
 		t.Fatal("machine left Idle on a Gate-5d deferral")
+	}
+
+	// The same machine retries without a release command when the activity
+	// window expires.
+	retry := gaugeTickAt(at.Add(3*time.Minute), "cyc-step-retry")
+	retry.Gates.LastUserTurnAt = ev.Gates.LastUserTurnAt
+	actions = m.Step(retry)
+	if len(actions) == 0 || actions[0].Kind != ActWriteJournal {
+		t.Fatalf("expired transient deferral did not start a new cycle: %+v", actions)
 	}
 }
 
@@ -188,7 +197,7 @@ func TestStep_RecentOperatorTurn_ParksWithoutTimeoutEscalation(t *testing.T) {
 	m.state.ConsecutiveHandoffTimeouts = 2
 	actions := m.Step(Event{Kind: EvOperatorTurnRecent, CycleID: "cyc-step-park", At: at.Add(time.Second)})
 
-	assertKinds(t, actions, []ActionKind{ActWriteJournal, ActEmit, ActCancelTimer, ActSetHold})
+	assertKinds(t, actions, []ActionKind{ActWriteJournal, ActEmit, ActCancelTimer})
 	if actions[0].Journal.Phase != "parked" || actions[0].Journal.Reason != "operator_turn_recent" {
 		t.Fatalf("park journal = %+v", actions[0].Journal)
 	}

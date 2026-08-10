@@ -139,7 +139,6 @@ const (
 	ActSetTmuxEnv        ActionKind = "set_tmux_env"
 	ActSetManagedSession ActionKind = "set_managed_session"
 	ActClearPrecompact   ActionKind = "clear_precompact_marker"
-	ActSetHold           ActionKind = "set_hold"
 	ActEmit              ActionKind = "emit"
 	ActArmTimer          ActionKind = "arm_timer"
 	ActCancelTimer       ActionKind = "cancel_timer"
@@ -368,7 +367,6 @@ func stepParkForOperator(cfg *CyclerConfig, s CycleState, ev Event) (CycleState,
 		journalAction(&s, "parked", ev.At),
 		emitCycleParkedAction(cfg, s.CycleID, s.EntryCF.SessionID, s.Reason),
 		{Kind: ActCancelTimer, Timer: TimerHandoffTimeout},
-		{Kind: ActSetHold},
 	}
 }
 
@@ -518,10 +516,9 @@ func stepIdleGaugeTick(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, [
 	if snap.Held {
 		return s, nil
 	}
-	// Gate 5d: auto-hold on a recent inbound operator user turn (hk-74iyd).
-	// Prelude-class side effect on the FAIL path: the SetHold marker write.
+	// Gate 5d: transient deferral after a recent inbound operator user turn.
 	if gateOperatorTurnHolds(cfg, snap, ev.At, cf.SessionID) {
-		return s, []Action{{Kind: ActSetHold}}
+		return s, nil
 	}
 	// Gate 5e: post-answer grace (hk-74iyd) — transient tick-level deferral.
 	if gatePostAnswerGraceHolds(cfg, snap, ev.At, cf.SessionID) {

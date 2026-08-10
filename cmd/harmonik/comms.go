@@ -456,7 +456,7 @@ func commsWakePaneCandidates(projectDir, agentName string) []string {
 //
 // Bead ref: hk-y7v8 (CE5), originally hk-37ra4.
 func commsWakePaneForAgent(ctx context.Context, projectDir, agentName string) error {
-	const nudgeMsg = "You have a new comms message. Please check your inbox."
+	const nudgeMsg = "[[harmonik-message:v1 origin=comms]]\nYou have a new comms message. Please check your inbox."
 	candidates := commsWakePaneCandidates(projectDir, agentName)
 	var lastErr error
 	for _, paneTarget := range candidates {

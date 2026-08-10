@@ -369,7 +369,7 @@ func TestCycler_OperatorTurnLookbackZero_DisablesGate5d(t *testing.T) {
 // TestCycler_Gate5d_WritesHoldMarker verifies that Gate 5d calls SetHold and
 // creates the <agent>.hold.<sid> marker file when a recent operator turn
 // is detected.
-func TestCycler_Gate5d_WritesHoldMarker(t *testing.T) {
+func TestCycler_Gate5d_DoesNotWriteHoldMarker(t *testing.T) {
 	t.Parallel()
 
 	const (
@@ -411,10 +411,10 @@ func TestCycler_Gate5d_WritesHoldMarker(t *testing.T) {
 		t.Errorf("want 0 inject calls (Gate 5d suppress); got %d", n)
 	}
 
-	// The hold marker must have been written.
+	// No hold marker is written. A later tick can retry after the lookback.
 	holdPath := filepath.Join(keeperDir, agent+".hold."+sid)
-	if _, err := os.Stat(holdPath); err != nil {
-		t.Errorf("Gate 5d must write hold marker %q, but stat failed: %v", holdPath, err)
+	if _, err := os.Stat(holdPath); !os.IsNotExist(err) {
+		t.Errorf("Gate 5d wrote persistent hold marker %q: %v", holdPath, err)
 	}
 }
 

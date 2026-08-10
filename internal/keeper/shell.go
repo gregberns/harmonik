@@ -54,9 +54,6 @@ func (c *Cycler) execute(ctx context.Context, a Action) error {
 		c.executeSetManagedSession(ctx, a)
 	case ActClearPrecompact:
 		_ = c.gauge.ClearPrecompactTrigger() //nolint:errcheck // non-fatal; a stale precompact trigger is re-cleared next cycle
-	case ActSetHold:
-		// Best-effort (SetHold fails silently when .sid is absent) — Gate 5d.
-		_, _ = c.gauge.SetHold() //nolint:errcheck // best-effort; SetHold no-ops without a .sid (Gate 5d)
 	case ActForceRestart:
 		c.executeForceRestart(ctx)
 	case ActArmTimer:
@@ -309,7 +306,7 @@ func (c *Cycler) pollOnce(ctx context.Context) {
 func (c *Cycler) pollAwaitingHandoff(ctx context.Context, st CycleState, at time.Time) {
 	content, readErr := c.handoff.ReadHandoff()
 	nonceSeen := readErr == nil && strings.Contains(content, nonceMarker(st.CycleID))
-	operatorTurn := c.recentOperatorTurn(st.PrevSID, at)
+	operatorTurn := c.recentOperatorTurn(st, at)
 	if nonceSeen {
 		if operatorTurn {
 			c.parkForOperator(ctx, st, at)
@@ -329,12 +326,19 @@ func (c *Cycler) pollAwaitingHandoff(ctx context.Context, st CycleState, at time
 	}
 }
 
-func (c *Cycler) recentOperatorTurn(sessionID string, at time.Time) bool {
-	if c.cfg.OperatorTurnLookback <= 0 || sessionID == "" {
+const injectionArtifactWindow = 2 * time.Second
+
+func (c *Cycler) recentOperatorTurn(st CycleState, at time.Time) bool {
+	if c.cfg.OperatorTurnLookback <= 0 || st.PrevSID == "" {
 		return false
 	}
-	turnAt, ok := c.cfg.recentTurnFn()(c.cfg.resolvedTranscriptDir(), sessionID, "user")
-	return ok && !turnAt.After(at) && at.Sub(turnAt) <= c.cfg.OperatorTurnLookback
+	turnAt, ok := c.cfg.recentTurnFn()(c.cfg.resolvedTranscriptDir(), st.PrevSID, "user")
+	if !ok || turnAt.After(at) || at.Sub(turnAt) > c.cfg.OperatorTurnLookback {
+		return false
+	}
+	// Escape and slash-command submission can appear as user transcript entries.
+	// Only activity after the injection boundary can park this cycle.
+	return st.InjectedAt.IsZero() || turnAt.After(st.InjectedAt.Add(injectionArtifactWindow))
 }
 
 func (c *Cycler) parkForOperator(ctx context.Context, st CycleState, at time.Time) {

@@ -1650,7 +1650,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 					operatorAttached := w.cfg.TmuxTarget != "" && w.cfg.OperatorAttachedFn(w.cfg.TmuxTarget)
 					text := w.cfg.selectWarnText(ctxFile, crispIdle, operatorAttached)
 					inject = func(ctx context.Context, target string) error {
-						return InjectText(ctx, target, text)
+						return InjectText(ctx, target, AutomationMessage("keeper", text))
 					}
 				}
 				if injectErr := inject(ctx, w.cfg.TmuxTarget); injectErr != nil {

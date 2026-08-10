@@ -887,6 +887,7 @@ script-tests:  ## Self-tests for the shell the gate depends on
 	scripts/loadgen-test.sh
 	scripts/gate-fails-closed-test.sh
 	scripts/scratch-daemon-rev-pin-test.sh
+	scripts/scratch-daemon-toolchain-test.sh
 	scripts/lint-allow-test.sh
 	scripts/scenario-pkgs-test.sh
 	scripts/lint-changed-test.sh

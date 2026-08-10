@@ -112,6 +112,24 @@ printf 'base\n' >"$SRC/marker.txt"
 mkdir -p "$SRC/cmd/harmonik"   # cmd_build's checkout sniff looks for this path
 printf 'module scratchfixture\n\ngo 1.21\n' >"$SRC/go.mod"
 printf 'package main\n\nfunc main() {}\n' >"$SRC/cmd/harmonik/main.go"
+# A Makefile with a `tools:` recipe, because init now provisions the pinned dev
+# toolchain into the scratch clone before any daemon dispatches into it, and it
+# refuses a tree that has none. It stands in for the real Makefile the same way
+# .harmonik/config.yaml above stands in for the real config. `@:` is the shell
+# no-op, so the two `go install` lines are read by the name derivation and run by
+# nothing — this fixture must not want the network or minutes of wall time.
+# scripts/scratch-daemon-toolchain-test.sh is where that step is really tested.
+# /.tools matches the real repo's .gitignore entry: without it the installed
+# binaries read as untracked local edits and every case here stamps
+# +local-edits.
+{
+	printf 'TOOLS_DIR := $(shell pwd)/.tools\n\n'
+	printf '.PHONY: tools\ntools:\n'
+	printf '\t@mkdir -p $(TOOLS_DIR) && touch $(TOOLS_DIR)/alpha $(TOOLS_DIR)/beta && chmod +x $(TOOLS_DIR)/alpha $(TOOLS_DIR)/beta\n'
+	printf '\t@: go install example.com/a/cmd/alpha@v1.0.0\n'
+	printf '\t@: go install example.com/b/cmd/beta@v2.0.0\n'
+} >"$SRC/Makefile"
+printf '/.tools\n' >"$SRC/.gitignore"
 # `harmonik init --force` rewrites both of these on every real scratch, so they
 # stand in for init's own edits. .claude/skills is the one that is easy to miss:
 # init re-provisions all ten embedded skills there unconditionally under --force,

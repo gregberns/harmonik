@@ -519,6 +519,71 @@ provision_matrix_config() {
 }
 
 # ---------------------------------------------------------------------------
+# provision_toolchain: install the repo's pinned dev tools into the scratch
+# clone's .tools/ BEFORE any daemon dispatches work there.
+#
+# THE DEFECT THIS CLOSES. The commit gate an implementer runs reaches .tools/
+# for gofumpt, gci and golangci-lint. Nothing here ever installed them, so the
+# first cell of a live-gate run died three minutes into dispatch with
+# `.tools/gofumpt: No such file or directory` and exit 127 — a bare ENOENT that
+# names no cause, arrives after the expensive part, and reads like a product
+# failure rather than a missing setup step.
+#
+# It ran at INIT, not at build or up, for two reasons. `git clean -qfdx` above
+# deletes .tools/ on every init, including `--reuse`, so any earlier point is
+# undone; and init is the last moment where a failure costs seconds instead of a
+# dispatched run.
+#
+# The Makefile is the single source of the pinned versions — this function names
+# none of them. It also derives the binaries to verify from the same `tools:`
+# recipe, so a tool added there is checked here without a second edit. The check
+# matters more than it looks: `go install` can leave a partial .tools/ and still
+# exit 0 under a warm cache, and a half-provisioned toolchain fails at exactly
+# the same place as no toolchain at all.
+# ---------------------------------------------------------------------------
+provision_toolchain() {
+    local scratch="$1" tools_dir
+    tools_dir="$scratch/.tools"
+    # No skip-when-absent. This runs on a clone of this repo, where the Makefile
+    # is always there — so an absent one means the tree is not what the caller
+    # thinks it is, and continuing would hand a daemon a clone with no gate.
+    [ -f "$scratch/Makefile" ] \
+        || die "toolchain: no Makefile at $scratch — this is not a harmonik checkout, and no toolchain can be installed into it"
+
+    echo "[scratch-daemon] toolchain: installing pinned dev tools → $tools_dir"
+    # A subshell cd rather than `make -C`: TOOLS_DIR in the Makefile falls back to
+    # $(PWD), which `make -C` does not move.
+    ( cd "$scratch" && make tools ) \
+        || die "toolchain: 'make tools' failed in $scratch.
+  Every dispatched implementer's commit gate reaches .tools/, so a daemon started
+  now would fail each bead with a bare ENOENT minutes into the run."
+
+    # What the recipe installs, by name. Each `go install <module path>@<version>`
+    # leaves a binary named for the last path element.
+    local want missing=""
+    want="$(awk '
+        /^tools:/     { in_recipe = 1; next }
+        in_recipe && /^[^\t]/ { in_recipe = 0 }
+        in_recipe && /go install/ {
+            for (i = 1; i <= NF; i++) if ($i ~ /@/) {
+                sub(/@.*$/, "", $i); n = split($i, parts, "/"); print parts[n]
+            }
+        }
+    ' "$scratch/Makefile")"
+    [ -n "$want" ] || die "toolchain: read no tool names out of $scratch/Makefile — the 'tools:' recipe is not in the shape this expects, so nothing was verified"
+
+    local tool
+    while IFS= read -r tool; do
+        [ -n "$tool" ] || continue
+        [ -x "$tools_dir/$tool" ] || missing="$missing $tool"
+    done <<<"$want"
+    [ -z "$missing" ] \
+        || die "toolchain: 'make tools' reported success but these are absent from $tools_dir:$missing"
+
+    echo "[scratch-daemon] toolchain: verified $(echo "$want" | tr '\n' ' ')in $tools_dir"
+}
+
+# ---------------------------------------------------------------------------
 # Subcommand: init
 # ---------------------------------------------------------------------------
 cmd_init() {
@@ -659,6 +724,7 @@ cmd_init() {
     fi
     isolate_push_target "$scratch"
     provision_matrix_config "$scratch"
+    provision_toolchain "$scratch"
     # isolate_push_target and the harmonik bootstrap both touch the tree. Confirm
     # the pin one more time so init cannot report success on a moved tree.
     assert_pinned "$scratch" >/dev/null

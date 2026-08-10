@@ -29,6 +29,37 @@ A zero means the checkout predates the revision-pinning fix. Move to a checkout 
 check again. Do not gate from a tree that fails this, and do not patch the script by hand to make
 the number come out right.
 
+## Before I file a finding — did I measure the daemon, or my copy of it?
+
+An assertion that keeps its own copy of a fact the daemon owns will report the daemon as broken the
+day that fact changes. The daemon is right and the copy is stale, but the copy is what I read, so I
+file a defect against working code. This has happened three times, and each one cost days:
+
+- The gate script held its own endpoint port. The port had moved twelve days earlier. The gate
+  printed "the model server is wedged" against a healthy server, and that line was copied into a
+  handoff and a P1 issue and believed.
+- The check read the branch named `main`. The daemon was configured to land on `scratch/main`, and
+  it had landed there correctly. The report said no work ever merges.
+- The fixture asserted a workflow mode the daemon is no longer permitted to report. The daemon's own
+  validator rejects the value the fixture demanded. The report said a whole dispatch path was dead.
+
+So before I file anything, I ask where each fact in my assertion came from. If the daemon owns it,
+I read it from the daemon:
+
+- **The target branch** — read `target_branch` from the `daemon_config` event, then check THAT
+  branch. Never assume `main`.
+- **The endpoint and the model** — read `base_url` and `model` from the config the daemon loaded.
+  Never from a copy in a script.
+- **Any value in an event payload** — check the spec and the payload validator before calling the
+  value wrong. A value the validator would reject cannot be the value I am owed.
+
+**A stale assertion and a real defect look identical from the outside.** Both show red. The
+difference is only visible if I go and read what the daemon says it is doing. That reading is part
+of confirming a finding, not an optional extra, and a finding filed without it is a guess.
+
+When the daemon turns out to be right, that is a real result and I report it as one. I say plainly
+that the assertion was wrong, I fix the assertion, and I record what the daemon actually did.
+
 ## Write it down — the assessment folder
 
 **Before I run anything, I create my assessment folder and write the mission into it.** Not at the

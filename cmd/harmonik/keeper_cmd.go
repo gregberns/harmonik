@@ -486,7 +486,16 @@ func runKeeperSubcommand(args []string) int {
 	// Refs: hk-yfcc.
 	var cycler *keeper.Cycler
 	if !warnOnlyFlag {
-		cycler = keeper.NewCycler(cyclerCfg, emitter)
+		var constructErr error
+		cycler, constructErr = keeper.NewCyclerWithDeps(
+			keeper.CyclePolicyFromConfig(cyclerCfg),
+			keeper.CycleEnvFromConfig(cyclerCfg),
+			keeper.CycleDepsFromConfig(cyclerCfg, emitter),
+		)
+		if constructErr != nil {
+			fmt.Fprintf(os.Stderr, "harmonik keeper: construct cycle: %v\n", constructErr)
+			return 1
+		}
 
 		// Crash recovery: if a previous keeper was killed mid-cycle, self-heal before
 		// starting the watcher loop (resume any interrupted /clear, or abort cleanly).

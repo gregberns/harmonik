@@ -826,15 +826,14 @@ type Cycler struct {
 	cfg     CyclerConfig
 	emitter Emitter
 
-	// The named ports (T6). The shell routes EVERY side effect through these;
-	// they are filled by NewCycler from cfg.Pane/Gauge/Handoff/Respawn or,
-	// when nil, from the fn* adapters over the defaulted function fields.
-	// respawn stays nil when neither cfg.Respawn nor cfg.ForceRestartFn is set
-	// (escalation dormant).
-	pane    PanePort
-	gauge   GaugePort
-	handoff HandoffPort
-	respawn RespawnPort
+	cycleIDs CycleIDGenerator
+	pane     PaneWriter
+	context  ContextStore
+	activity ActivityProbe
+	handoff  HandoffDocument
+	journal  CycleJournalStore
+	snapshot func(string) GateSnapshot
+	respawn  RespawnPort
 
 	// machine is the pure Step reactor holding ALL cycle state (design §3c).
 	machine *Cycle
@@ -861,19 +860,25 @@ func NewCycler(cfg CyclerConfig, emitter Emitter) *Cycler {
 	if emitter == nil {
 		emitter = NoopEmitter{}
 	}
-	c := &Cycler{cfg: cfg, emitter: emitter}
-	c.pane = c.cfg.Pane
-	if c.pane == nil {
-		c.pane = fnPane{cfg: &c.cfg}
+	c := &Cycler{cfg: cfg, emitter: emitter, cycleIDs: cycleIDFunc(cfg.CycleIDGen)}
+	pane := c.cfg.Pane
+	if pane == nil {
+		pane = fnPane{cfg: &c.cfg}
 	}
-	c.gauge = c.cfg.Gauge
-	if c.gauge == nil {
-		c.gauge = fnGauge{cfg: &c.cfg}
+	gauge := c.cfg.Gauge
+	if gauge == nil {
+		gauge = fnGauge{cfg: &c.cfg}
 	}
-	c.handoff = c.cfg.Handoff
-	if c.handoff == nil {
-		c.handoff = fnHandoff{cfg: &c.cfg}
+	handoff := c.cfg.Handoff
+	if handoff == nil {
+		handoff = fnHandoff{cfg: &c.cfg}
 	}
+	c.pane = pane
+	c.context = gauge
+	c.activity = legacyActivityProbe{port: gauge}
+	c.snapshot = gauge.Snapshot
+	c.handoff = legacyHandoffDocument{port: handoff}
+	c.journal = legacyJournalStore{port: handoff}
 	c.respawn = c.cfg.Respawn
 	if c.respawn == nil && c.cfg.ForceRestartFn != nil {
 		c.respawn = fnRespawn{fn: c.cfg.ForceRestartFn}
@@ -897,7 +902,7 @@ func (c *Cycler) InCycle() bool { return c.machine.InCycle() }
 // both the nudge's restart-now --nonce and the handoff KEEPER:<id> marker
 // instruction so nudge == handoff marker == restart-now event is one join key
 // (SK-030 / SK-031). Refs: T7.
-func (c *Cycler) MintCycleID() string { return c.cfg.CycleIDGen() }
+func (c *Cycler) MintCycleID() string { return c.cycleIDs.Next() }
 
 // journalFilePath returns the path to the cycle journal file for the agent:
 // <projectDir>/.harmonik/keeper/<agent>.cycle.
@@ -931,7 +936,7 @@ func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
 	if cf == nil {
 		return nil
 	}
-	snap := c.gauge.Snapshot(cf.SessionID)
+	snap := c.snapshot(cf.SessionID)
 	return c.runEntry(ctx, Event{
 		Kind:  EvGaugeTick,
 		At:    c.cfg.Clock.Now(),
@@ -991,11 +996,11 @@ func (c *Cycler) RecoverFromCrash(ctx context.Context) error {
 	// Fail-closed: only act on a managed agent. Boot-time entry point (the
 	// reactor's CrashJournal event): the gate input comes from the same
 	// per-entry GateSnapshot burst as the tick entry points.
-	if !c.gauge.Snapshot("").Managed {
+	if !c.snapshot("").Managed {
 		return nil
 	}
 
-	j, err := c.handoff.ReadJournal()
+	j, err := c.journal.Read()
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil // no journal = no crash to recover
@@ -1050,7 +1055,7 @@ func (c *Cycler) RunForPrecompact(ctx context.Context, cf *CtxFile) error {
 	// same tick — so gate values match the old live reads. The gate subset,
 	// the per-gate precompact_blocked emissions, and the always-clear-marker
 	// contract live in the pure reactor (stepIdlePrecompact, step.go).
-	snap := c.gauge.Snapshot(sessionID)
+	snap := c.snapshot(sessionID)
 
 	return c.runEntry(ctx, Event{
 		Kind:  EvPrecompactTrigger,
@@ -1088,7 +1093,7 @@ func (c *Cycler) RunForIdle(ctx context.Context, cf *CtxFile) error {
 	// hk-4i0s stamp-then-unwind cooldown discipline and the hk-qshh8
 	// once-per-SID idle_crew notification) lives in the pure reactor
 	// (stepIdleRestartTick, step.go).
-	snap := c.gauge.Snapshot(cf.SessionID)
+	snap := c.snapshot(cf.SessionID)
 
 	return c.runEntry(ctx, Event{
 		Kind:  EvIdleRestartTick,

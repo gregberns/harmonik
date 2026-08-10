@@ -238,6 +238,13 @@ func buildCodexRoutedLaunchSpec(
 		ReAttach:            rc.AgentTaskReAttach,
 		ExtraContext:        rc.ExtraContext,
 		BaseBranch:          rc.BaseBranch,
+		// The harness declares how its run signals completion; the task file
+		// tells the agent to finish the way that harness actually finishes.
+		// Hard-coding the claude `/quit` form here is what made a pi agent
+		// that had already committed run `echo "/quit" | pbcopy`, outlive its
+		// budget, and be killed as a crash
+		// (hk-quit-instruction-not-portable-ms55w).
+		Completion: h.Completion(),
 	}
 	if err := workspace.WriteAgentTaskVia(ctx, rc.Runner, rc.WorkspacePath, agentTaskPayload); err != nil {
 		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf(

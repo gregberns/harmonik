@@ -450,6 +450,11 @@ func TestScenario_Fix10_AgentTaskSessionCompletion(t *testing.T) {
 		RunID:         "scenario-fix10-run-001",
 		WorkspacePath: workspacePath,
 		Body:          "Write a test file to verify agent-task.md materialization.",
+		// Stated rather than left to the zero value: the /quit instruction is
+		// claude's because claude is the REPL, and the section is now rendered
+		// from this field (hk-quit-instruction-not-portable-ms55w). A test that
+		// leans on the default would keep passing if the default changed.
+		Completion: handlercontract.CompletionEventStreamThenQuit,
 	}
 
 	if err := workspace.WriteAgentTask(workspacePath, payload); err != nil {

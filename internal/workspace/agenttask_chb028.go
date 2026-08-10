@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/handlercontract"
 )
 
 // ErrTaskFileCollision is retained for backwards compatibility of the public
@@ -115,6 +116,25 @@ type AgentTaskPayload struct {
 	// implementer can rebase against origin/$BaseBranch before exiting.
 	// When empty, the header line is omitted.
 	BaseBranch string
+
+	// Completion is the launching harness's own declared completion mode —
+	// pass h.Completion() verbatim. It selects the wording of the Session
+	// Completion section, because how an agent is told to finish is a
+	// property of the harness it runs on and of nothing else (hk-quit-
+	// instruction-not-portable-ms55w).
+	//
+	// The section used to be hard-coded to the claude REPL form: "you MUST
+	// run /quit". Pi and codex have no REPL and no slash commands, and a pi
+	// agent that had already committed its work obeyed that instruction with
+	// the only tool it has — `echo "/quit" | pbcopy`. The session stayed
+	// alive, the daemon killed it on the budget, and a correct run was
+	// scored as a structural crash with its commit stranded on the run
+	// branch.
+	//
+	// The zero value is CompletionEventStreamThenQuit, the claude form, so an
+	// unset field renders what every caller rendered before this field
+	// existed.
+	Completion handlercontract.CompletionMode
 }
 
 // AgentTaskPath returns the canonical path for the per-launch task-delivery
@@ -264,11 +284,12 @@ func WriteAgentTask(workspacePath string, payload AgentTaskPayload) error {
 // buildAgentTaskContent constructs the UTF-8 Markdown content for agent-task.md
 // per the CHB-028 content shape.
 //
-// Every task file ends with a ## Session Completion section that instructs
-// Claude to run `/quit` after committing the work.  This is the mechanism that
-// causes Claude's Stop hook to fire, which triggers the `outcome_emitted`
-// envelope via harmonik hook-relay, which unblocks the daemon's workloop
-// (CHB-028 §session-completion-instruction, hk-cmybm).
+// Every task file ends with a ## Session Completion section whose wording comes
+// from the launching harness's own p.Completion mode — see
+// renderSessionCompletion. On claude it asks for `/quit`, which fires the Stop
+// hook, which emits the `outcome_emitted` envelope via harmonik hook-relay and
+// unblocks the daemon's workloop (CHB-028 §session-completion-instruction,
+// hk-cmybm). On a one-shot harness it asks for none of that.
 func buildAgentTaskContent(p AgentTaskPayload) string {
 	var sb strings.Builder
 
@@ -318,7 +339,8 @@ func buildAgentTaskContent(p AgentTaskPayload) string {
 	sb.WriteString("DO NOT run `br close`, `br update --status closed`, or any terminal bead transition from inside this worktree.\n")
 	sb.WriteString("The daemon owns all bead lifecycle transitions (open → in_progress → closed/failed).\n")
 	sb.WriteString("Running `br close` from the worktree causes premature closure that leaks to the parent repo even when no implementation has landed.\n")
-	sb.WriteString("Your job is to implement, commit, and `/quit`. The daemon will close the bead on your behalf after verifying the commit.\n")
+	sb.WriteString(fmt.Sprintf("Your job is to %s. The daemon will close the bead on your behalf after verifying the commit.\n",
+		jobSummary(p.Completion)))
 
 	sb.WriteString("\n## Task Description\n\n")
 	sb.WriteString(p.Body)
@@ -389,26 +411,59 @@ func buildAgentTaskContent(p AgentTaskPayload) string {
 		sb.WriteString(fmt.Sprintf("review_head_sha: %s\n", p.ReviewHeadSHA))
 	}
 
-	// Session Completion section (hk-cmybm): every task file instructs Claude
-	// to run /quit after completing and committing the work.  In interactive TUI
-	// mode, the Stop hook fires on session exit (/quit or Ctrl-C) — NOT after
-	// each assistant response.  Without /quit, the daemon's workloop sits at
-	// sess.Wait() forever because the claude process remains alive at the REPL.
+	// Session Completion section (hk-cmybm), worded for the launching harness.
 	//
 	// Commit-before-close guard (hk-2hb2y): agents MUST NOT run `br close` from
 	// inside the worktree — bead lifecycle transitions are owned by the daemon.
 	// Running `br close` without a commit causes the closure to leak into the
 	// parent repo's .beads/issues.jsonl even though no implementation landed.
-	//
-	// Spec ref: specs/claude-hook-bridge.md §4.11 CHB-028 (session-completion-instruction).
-	// Bead ref: hk-2hb2y (commit-before-close guard).
+	renderSessionCompletion(&sb, p.Completion)
+
+	return sb.String()
+}
+
+// jobSummary is the one-line "your job is to X" clause in the Bead Lifecycle
+// section, in the terms of the harness the agent is running on.
+func jobSummary(mode handlercontract.CompletionMode) string {
+	if mode == handlercontract.CompletionProcessExit {
+		return "implement and commit"
+	}
+	return "implement, commit, and `/quit`"
+}
+
+// renderSessionCompletion writes the ## Session Completion section for the
+// launching harness's completion mode.
+//
+// EventStreamThenQuit (claude) — the process is a REPL that outlives the work.
+// The Stop hook that emits outcome_emitted fires on session exit, not after each
+// assistant response, so without an explicit /quit the daemon's workloop sits at
+// sess.Wait() forever (hk-cmybm).
+//
+// ProcessExit (pi, codex) — the process is one-shot and self-terminates when the
+// turn ends. There is nothing for the agent to do to end the session and no
+// slash commands to do it with. Telling such an agent to run /quit is not merely
+// redundant: a pi agent that had finished and committed did the closest thing
+// its one tool could reach, `echo "/quit" | pbcopy`, kept the session alive, and
+// was killed on the budget as a crash (hk-quit-instruction-not-portable-ms55w).
+// The completion signal for these harnesses is the Refs: trailer on the commit,
+// which is what their seed prompt already asks for.
+//
+// Spec ref: specs/harness-contract.md §4.6 (completion-mode liveness),
+// specs/claude-hook-bridge.md §4.11 CHB-028 (session-completion-instruction).
+func renderSessionCompletion(sb *strings.Builder, mode handlercontract.CompletionMode) {
 	sb.WriteString("\n## Session Completion\n\n")
+
+	if mode == handlercontract.CompletionProcessExit {
+		sb.WriteString("Committing your work is what completes the task. Your session ends by itself when your turn ends — there is nothing else to run.\n")
+		sb.WriteString("The commit message MUST carry the `Refs: <bead-id>` line on its own line in the body. That trailer is how the daemon detects that your work is done.\n")
+		sb.WriteString("Do NOT try to quit, exit, or end the session yourself, and do not run any slash command. This harness has none; an attempt to end the session keeps it alive past its budget and the daemon then scores your correct work as a crash.\n")
+		return
+	}
+
 	sb.WriteString("IMPORTANT: You MUST run `/quit` as your final action after committing all work.\n")
 	sb.WriteString("Do not ask the user to run it — you must type `/quit` yourself and submit it.\n")
 	sb.WriteString("The daemon cannot detect that your task is complete until you exit this session.\n")
 	sb.WriteString("Failure to run `/quit` will leave the workflow permanently stalled.\n")
-
-	return sb.String()
 }
 
 // renderReviewerConstraint writes the reviewer read-only constraint block

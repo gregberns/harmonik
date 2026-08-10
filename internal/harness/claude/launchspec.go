@@ -215,6 +215,11 @@ func BuildLaunchSpec(ctx context.Context, rc shared.LaunchCtx) (handler.LaunchSp
 		ReAttach:            rc.AgentTaskReAttach,
 		ExtraContext:        rc.ExtraContext,
 		BaseBranch:          rc.BaseBranch,
+		// Claude is a REPL that outlives the work, so its task file keeps the
+		// `/quit` instruction that fires the Stop hook (CHB-028, hk-cmybm).
+		// Stated rather than left to the zero value, so the two launch paths
+		// read the same way (hk-quit-instruction-not-portable-ms55w).
+		Completion: handlercontract.CompletionEventStreamThenQuit,
 	}
 	// REMOTE run (rc.runner != nil): write agent-task.md onto the WORKER's
 	// worktree; LOCAL run: unchanged box-A-local write (NFR7) (hk-z8ek).

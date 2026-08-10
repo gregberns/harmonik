@@ -631,6 +631,22 @@ du -sh "$B"      # confirm it actually shrank
 Smaller siblings worth a glance: `.harmonik/watch/`, `.harmonik/keeper/`,
 `.harmonik/daemon-run.log`.
 
+### `.harmonik/gate-logs/` — kept on purpose, pruned by hand (hk-0kdr6)
+
+One directory per run, holding the full output of every FAILED commit-gate
+attempt. Nothing removes it, and that is deliberate: the gate log used to live in
+the run worktree and die with it, which made a red run impossible to diagnose
+after it reported. A gate is `make full`, so one failed attempt is megabytes and
+one four-attempt run is tens of megabytes.
+
+It is safe to delete outright, and safe to delete per-run. Delete the runs you
+have already read:
+
+```bash
+du -sh .harmonik/gate-logs
+find .harmonik/gate-logs -mindepth 1 -maxdepth 1 -type d -mtime +7 -exec rm -rf {} +
+```
+
 ## 6. launchd stdout logs (adjacent projects on this box)
 
 A launchd `StandardOutPath`/`StandardErrorPath` target has **no rotation** — the

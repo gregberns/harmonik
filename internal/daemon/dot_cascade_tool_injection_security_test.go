@@ -65,7 +65,7 @@ func TestDispatchDotToolNode_LocalInjection_NoExec(t *testing.T) {
 		t.Fatalf("tool_command not shell-quoted: %q", node.ToolCommand)
 	}
 
-	outcome, err := dispatchDotToolNode(context.Background(), nil, core.RunID{}, nil, t.TempDir(), node, nil)
+	outcome, err := dispatchDotToolNode(context.Background(), nil, core.RunID{}, nil, t.TempDir(), t.TempDir(), node, nil)
 	if err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestDispatchDotToolNode_RemoteInjection_NoExec(t *testing.T) {
 	node := loadInjectionToolNode(t, "x; touch "+sentinel+" #")
 
 	rr := &tmux.RecordingRunner{} // nil CmdFunc → exec.CommandContext directly
-	outcome, err := dispatchDotToolNode(context.Background(), nil, core.RunID{}, rr, t.TempDir(), node, nil)
+	outcome, err := dispatchDotToolNode(context.Background(), nil, core.RunID{}, rr, t.TempDir(), t.TempDir(), node, nil)
 	if err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}

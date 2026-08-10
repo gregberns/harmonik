@@ -391,7 +391,7 @@ func driveDotWorkflow(
 				if parentSHA != "" {
 					gateEnv = append(append(make([]string, 0, len(env.HandlerEnv)+1), env.HandlerEnv...), "HK_GATE_BASE_SHA="+parentSHA)
 				}
-				toolOutcome, toolErr := dispatchDotToolNode(ctx, emit, runID, runner, wtPath, node, gateEnv)
+				toolOutcome, toolErr := dispatchDotToolNode(ctx, emit, runID, runner, env.ProjectDir, wtPath, node, gateEnv)
 				if toolErr != nil {
 					return dotWorkflowResult{
 						success:        false,

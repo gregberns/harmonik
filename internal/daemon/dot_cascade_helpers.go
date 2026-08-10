@@ -455,7 +455,15 @@ func readAutoStatusMarkerVia(ctx context.Context, runner tmux.CommandRunner, wtP
 // and remote command paths and is stopped via close(hbDone) the moment the command
 // returns, so it cannot leak. bus may be nil in unit tests that exercise the gate
 // in isolation; the heartbeat is simply skipped in that case.
-func dispatchDotToolNode(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, runner tmux.CommandRunner, wtPath string, node *dot.Node, env []string) (core.Outcome, error) {
+//
+// hk-0kdr6: the worktree copy of the gate log dies with the worktree. The
+// worktree is removed on the run's terminal transition, so by the time a cell or
+// a run reports RED the path the daemon just logged does not exist and the only
+// record of WHY the merge decision failed is gone. Every failed gate therefore
+// ALSO appends to a run-scoped archive under the project's own .harmonik/, which
+// nothing removes, and the daemon log points at THAT path rather than the
+// worktree one.
+func dispatchDotToolNode(ctx context.Context, bus handlercontract.EventEmitter, runID core.RunID, runner tmux.CommandRunner, projectDir, wtPath string, node *dot.Node, env []string) (core.Outcome, error) {
 	timeoutSecs := 300
 	if node.Timeout != "" {
 		if n, err := strconv.Atoi(node.Timeout); err == nil && n > 0 {
@@ -549,6 +557,17 @@ func dispatchDotToolNode(ctx context.Context, bus handlercontract.EventEmitter, 
 	gateLogPath := filepath.Join(wtPath, ".harmonik", "commit-gate.log")
 	if runner == nil {
 		writeGateLog(gateLogPath, combined)
+	}
+
+	// hk-0kdr6: the durable copy. Unlike the worktree copy this one outlives the
+	// run, and unlike the worktree copy it is written for a REMOTE run too — the
+	// bytes came back over the runner, and the archive lives on box A. Appending
+	// (not truncating) keeps every attempt: a red gate drives the cascade back to
+	// implement and the same node runs again, and what the EARLIER attempts failed
+	// on is the whole question a red cell asks. Report the archive path, because
+	// it is the one that still exists when somebody reads the log.
+	if archived := appendGateLogArchive(projectDir, runID, node.ID, combined, err); archived != "" {
+		gateLogPath = archived
 	}
 
 	outputTail := tailString(string(combined), dotGateOutputTailBytes)
@@ -1127,6 +1146,76 @@ func writeGateLog(path string, combined []byte) {
 	if writeErr := os.WriteFile(path, combined, 0o600); writeErr != nil {
 		fmt.Fprintf(os.Stderr, "daemon: dot cascade: write gate log %q: %v\n", path, writeErr)
 	}
+}
+
+// gateLogArchiveDir is the project-scoped root under which every run's failed
+// gate output is kept. It is a sibling of .harmonik/runs and .harmonik/lt-runs,
+// it is gitignored with the rest of .harmonik, and NOTHING removes it — that is
+// the point (hk-0kdr6).
+const gateLogArchiveDir = "gate-logs"
+
+// appendGateLogArchive appends one failed gate attempt to
+// <projectDir>/.harmonik/gate-logs/<runID>/<nodeID>.log and returns the path it
+// wrote. It returns "" when it wrote nothing, so the caller keeps reporting the
+// worktree path in that case.
+//
+// Append, not truncate: one run makes several attempts at the same gate node
+// (the deterministic-FAIL back-edge to implement), and a red run is diagnosed by
+// comparing them. Each attempt gets a header line so the boundaries are findable.
+func appendGateLogArchive(projectDir string, runID core.RunID, nodeID string, combined []byte, gateErr error) string {
+	if projectDir == "" {
+		return ""
+	}
+	dir := filepath.Join(projectDir, ".harmonik", gateLogArchiveDir, runID.String())
+	if mkErr := os.MkdirAll(dir, 0o700); mkErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: dot cascade: mkdir gate-log archive %q: %v\n", dir, mkErr)
+		return ""
+	}
+	path := filepath.Join(dir, sanitizeGateLogName(nodeID)+".log")
+
+	//nolint:gosec // G304: path is projectDir (harmonik config) + runID (a UUID) + a sanitized node ID.
+	f, openErr := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if openErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: dot cascade: open gate-log archive %q: %v\n", path, openErr)
+		return ""
+	}
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: dot cascade: close gate-log archive %q: %v\n", path, closeErr)
+		}
+	}()
+
+	header := fmt.Sprintf("\n===== gate attempt: node=%s run=%s at=%s exit=%v =====\n",
+		nodeID, runID.String(), time.Now().UTC().Format(time.RFC3339), gateErr)
+	if _, writeErr := f.WriteString(header); writeErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: dot cascade: write gate-log archive %q: %v\n", path, writeErr)
+		return ""
+	}
+	if _, writeErr := f.Write(combined); writeErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: dot cascade: write gate-log archive %q: %v\n", path, writeErr)
+		return ""
+	}
+	return path
+}
+
+// sanitizeGateLogName reduces a DOT node ID to a safe single filename component.
+// Node IDs are author-supplied, so a name with a path separator in it would
+// otherwise decide where the daemon writes.
+func sanitizeGateLogName(nodeID string) string {
+	safe := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			return r
+		case r == '-', r == '_', r == '.':
+			return r
+		default:
+			return '_'
+		}
+	}, nodeID)
+	if safe == "" || strings.Trim(safe, ".") == "" {
+		return "node"
+	}
+	return safe
 }
 
 // dotResolveResumeSessionID picks the session identifier that an

@@ -1,0 +1,46 @@
+type: alpha
+cardinality: { min: 0, max: 1 }
+harness: claude
+
+# soul.md and operating.md live in roles/lane, shared with the other hand-run
+# lane. This folder keeps only harmonik wiring.
+#
+# This folder existing is what makes the brief correct. crew.ResolveType stats
+# .harmonik/agents/<name>/ BEFORE it consults the crew registry, so without it
+# `alpha` resolved through .harmonik/crew/alpha.json ("type":"crew") and booted
+# on the daemon-dispatch contract — join comms, adopt an epic, submit to a
+# queue — none of which exists while the daemon is down.
+role: roles/lane
+
+identity:
+  soul: soul.md
+  parent_intent: operator
+
+context:
+  - { ref: boot,                                           as: skill,       presence: injected }
+  - { ref: roles/lane/operating.md,                        as: instruction, presence: injected }
+  - { ref: beads-cli,                                      as: skill,       presence: retrieved }
+  - { ref: ./PRINCIPLES.md,                                  as: doc,         presence: retrieved }
+  - { ref: plans/2026-07-27-delete-and-rewrite/CHARTER.md, as: doc,         presence: retrieved }
+  - { ref: plans/2026-07-27-delete-and-rewrite/LANES.md,   as: doc,         presence: retrieved }
+
+# No queue trigger: nothing dispatches to a hand-run lane. The operator is the
+# only source of work.
+triggers:
+  - { id: operator, source: manual, enabled: true }
+
+handoff:
+  channel: private
+
+keeper:
+  thresholds: default
+
+lifecycle:
+  self_restart: true
+
+tools_dir: null
+
+markers:
+  never_emits:
+    - queue_submit:main
+    - crew_start

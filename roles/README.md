@@ -17,6 +17,12 @@ with nothing running at all.
       assessor/     operating.md · soul.md · personality.md · good-enough-principles.md
       captain/      operating.md · soul.md
       admiral/      operating.md · soul.md
+      lane/         operating.md · soul.md
+
+`lane` is the one role here shared by more than one agent: `alpha` and `bravo` both point at it.
+They are hand-run delivery lanes, so their instructions describe a working engineering session that
+resumes from a handoff file — not a loop that services a queue. It carries no **[FLEET]** steps,
+because a lane runs with the daemon deliberately down.
 
 `soul.md` is who the role is — what it does, what it refuses to do, who it escalates to.
 `operating.md` is how it works — the loop, the bounds. Roles may add their own files; the assessor

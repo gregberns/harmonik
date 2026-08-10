@@ -134,24 +134,34 @@ def assert_gap3:
     end;
 # --- gap4 — queue-submit → dispatch field fidelity (C7) (T5, hk-bkn5a) -------
 # A fully-specified queue item (workflow_ref, workflow_mode, model, harness) must reach
-# the dispatched run with every field intact — in particular workflow_mode must NOT be
-# silently forced to review-loop (the hk-u6zp/hk-y3o51 hardcoded-override regression).
+# the dispatched run with every field intact.
 # Cross-event: model/harness fidelity is gap1's job; gap4 owns the run_started dispatch
-# fields. spec.expect.dispatch.workflow_mode = the submitted mode; .workflow_id_present
-# = require workflow_ref to have resolved to a real (non-zero) workflow_id.
+# fields. spec.expect.dispatch.workflow_mode = the resolved mode, which a version-2
+# run_started record always reports as "dot"; .workflow_id_present = require the
+# workflow ref to have resolved to a real (non-zero) workflow_id.
+#
+# workflow_mode alone no longer distinguishes a no-review run from a reviewed one —
+# the daemon runs both as DOT graphs, so the mode names the engine. review_policy and
+# workflow_selection_source carry that distinction instead, and gap4 asserts them when
+# the cell declares them. Both are REQUIRED on a version-2 run_started record
+# (event-model.md §8.1.1). Refs: hk-oeqn9, hk-gap4-workflow-mode-drift-7xwat.
 def assert_gap4:
   ($spec.expect.dispatch // {}) as $ed
   | (of_type("run_started") | map(pl) | map(select((.bead_id // null) == $spec.seed_bead))) as $rs
   | (($rs[-1].workflow_id // "") | tostring) as $wid
   | if ($ed == {})
-    then result("gap4"; "pending"; "no expect.dispatch in spec — add {workflow_mode, workflow_id_present} to assert gap4")
+    then result("gap4"; "pending"; "no expect.dispatch in spec — add {workflow_mode, review_policy, workflow_selection_source, workflow_id_present} to assert gap4")
     elif ($rs | length) == 0
     then result("gap4"; "fail"; "no run_started event for seed bead \($spec.seed_bead)")
     elif ($ed.workflow_mode != null and ($rs[-1].workflow_mode != $ed.workflow_mode))
-    then result("gap4"; "fail"; "run_started.workflow_mode=\($rs[-1].workflow_mode) != submitted \($ed.workflow_mode) (hardcoded review-loop override?)")
+    then result("gap4"; "fail"; "run_started.workflow_mode=\($rs[-1].workflow_mode) != expected \($ed.workflow_mode)")
+    elif ($ed.review_policy != null and ($rs[-1].review_policy != $ed.review_policy))
+    then result("gap4"; "fail"; "run_started.review_policy=\($rs[-1].review_policy) != expected \($ed.review_policy) — the run took the wrong review path")
+    elif ($ed.workflow_selection_source != null and ($rs[-1].workflow_selection_source != $ed.workflow_selection_source))
+    then result("gap4"; "fail"; "run_started.workflow_selection_source=\($rs[-1].workflow_selection_source) != expected \($ed.workflow_selection_source) — the resolver chose the graph for the wrong reason")
     elif ($ed.workflow_id_present == true and ($wid == "" or ($wid | test("^0+(-0+)*$"))))
     then result("gap4"; "fail"; "run_started.workflow_id is absent/zero (\($wid)) — workflow_ref did not resolve at dispatch")
-    else result("gap4"; "pass"; "workflow_mode=\($rs[-1].workflow_mode) workflow_id=\($wid)")
+    else result("gap4"; "pass"; "workflow_mode=\($rs[-1].workflow_mode) review_policy=\($rs[-1].review_policy) source=\($rs[-1].workflow_selection_source) workflow_id=\($wid)")
     end;
 # --- gap5 — claude worktree startup → agent_ready (C8/PR-19) (T8, hk-4vwlx) --
 # A real git-worktree claude launch must reach agent_ready past the folder-trust /

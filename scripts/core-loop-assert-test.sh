@@ -62,6 +62,16 @@ check "codex gap4 review-loop override fail" "$TD/codex-local-dispatch-override.
 check "codex gap4 no run_started fail" "$TD/codex-local-missing.ndjson"           "$DISP" gap4 fail
 check "codex gap4 pending when no expect.dispatch" "$TD/codex-local-pass.ndjson"  "$CODEX" gap4 pending
 
+# gap4 on a version-2 run_started record. workflow_mode is "dot" for every run, so the
+# no-review path is told apart from the reviewed path by review_policy and
+# workflow_selection_source. Refs: hk-oeqn9, hk-gap4-workflow-mode-drift-7xwat.
+V2='{"schema_version":1,"seed_bead":"hk-clp-codex","expect":{"dispatch":{"workflow_mode":"dot","review_policy":"no_review","workflow_selection_source":"legacy_single_label","workflow_id_present":true}},"gaps":["gap4"]}'
+V2POL='{"schema_version":1,"seed_bead":"hk-clp-codex","expect":{"dispatch":{"workflow_mode":"dot","review_policy":"reviewed"}},"gaps":["gap4"]}'
+V2SRC='{"schema_version":1,"seed_bead":"hk-clp-codex","expect":{"dispatch":{"workflow_mode":"dot","workflow_selection_source":"project_default"}},"gaps":["gap4"]}'
+check "codex gap4 v2 no-review pass"        "$TD/codex-local-dispatch-v2-pass.ndjson" "$V2"    gap4 pass
+check "codex gap4 v2 wrong review_policy fail" "$TD/codex-local-dispatch-v2-pass.ndjson" "$V2POL" gap4 fail
+check "codex gap4 v2 wrong selection source fail" "$TD/codex-local-dispatch-v2-pass.ndjson" "$V2SRC" gap4 fail
+
 # gap3 — provider comms through the sandbox (T6). Spec carries expect.provider.
 PROV='{"schema_version":1,"seed_bead":"hk-clp-codex","expect":{"provider":{"enabled":true}},"gaps":["gap3"]}'
 check "codex gap3 real commit pass"    "$TD/codex-provider-commit.ndjson"         "$PROV" gap3 pass

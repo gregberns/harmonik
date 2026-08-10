@@ -53,6 +53,14 @@ type coreLoopProofCell struct {
 			Model        *string  `json:"model"`
 			NoLeakModels []string `json:"no_leak_models"`
 		} `json:"model_selected"`
+		// Dispatch is the gap4 run_started expectation. Every field is a pointer
+		// so "the cell said nothing" is distinguishable from "the cell said the
+		// empty string".
+		Dispatch *struct {
+			WorkflowMode            *string `json:"workflow_mode"`
+			ReviewPolicy            *string `json:"review_policy"`
+			WorkflowSelectionSource *string `json:"workflow_selection_source"`
+		} `json:"dispatch"`
 	} `json:"expect"`
 }
 
@@ -156,6 +164,90 @@ func TestCoreLoopProofFixtureDrift_CodexEmptyModel(t *testing.T) {
 	}
 	if !sawPiCell {
 		t.Error("cells.json contains no pi cell; the pi leak cross-check would be vacuous")
+	}
+}
+
+// TestCoreLoopProofFixtureDrift_RunStartedDispatchContract asserts that the gap4
+// dispatch expectations in cells.json still describe the run_started record the
+// daemon is specified to emit.
+//
+// A version-2 run_started record carries workflow_mode = "dot" for EVERY run.
+// The mode names the execution engine, and there is only one engine: the daemon
+// resolves a DOT graph before it emits the event. A legacy workflow:single bead
+// label and a tier-0 queue item with workflow_mode = single are graph SELECTION
+// requests, not execution modes — both select the registered embedded
+// no-review-bead graph and record their provenance in workflow_selection_source.
+// Sources, in order of precedence and all normative:
+//
+//   - specs/execution-model.md §4.3 EM-012a tier 0 and tier 1 ("Both resolve to
+//     execution mode dot") and its closing clause ("The event payload MUST
+//     surface the descriptor, workflow_mode = dot, review policy, and selection
+//     source").
+//   - specs/execution-model.md §4.4 run_started emission ("The version-2 payload
+//     MUST carry ... workflow_mode = dot").
+//   - specs/event-model.md §8.1 workflow_mode payload-field rule ("run_started
+//     schema version 2 MUST carry workflow_mode = \"dot\"").
+//
+// core.RunStartedPayload.Valid rejects any other mode, so a cell expecting
+// "single" asserts against a record the daemon cannot emit and can never go
+// green. That is what this guard catches, and it is why the single-versus-
+// reviewed distinction now rides on review_policy and workflow_selection_source
+// instead: those two fields carry the fact the mode field used to carry.
+//
+// Bead refs: hk-oeqn9, hk-gap4-workflow-mode-drift-7xwat.
+func TestCoreLoopProofFixtureDrift_RunStartedDispatchContract(t *testing.T) {
+	t.Parallel()
+
+	cellsData, err := os.ReadFile(filepath.Join(coreLoopProofFixtureDir(t), "cells.json"))
+	if err != nil {
+		t.Fatalf("read cells.json: %v", err)
+	}
+	var cellsFile coreLoopProofCellsFile
+	if err := json.Unmarshal(cellsData, &cellsFile); err != nil {
+		t.Fatalf("unmarshal cells.json: %v", err)
+	}
+
+	// The no-review policy is reachable from exactly two selection sources per
+	// EM-012a; every other source is reviewed. Mirrors core.RunStartedPayload's
+	// policy binding so the fixture cannot assert a tuple the daemon rejects.
+	noReviewSources := map[string]bool{
+		"legacy_single_label":    true,
+		"queue_item_single_mode": true,
+	}
+
+	sawDispatch := false
+	for _, cell := range cellsFile.Cells {
+		d := cell.Expect.Dispatch
+		if d == nil {
+			continue
+		}
+		sawDispatch = true
+
+		if d.WorkflowMode == nil {
+			t.Errorf("cell %q expect.dispatch has no workflow_mode; gap4 cannot assert it", cell.Cell)
+		} else if *d.WorkflowMode != "dot" {
+			t.Errorf("cell %q expects run_started.workflow_mode = %q; want \"dot\" — a version-2 run_started record carries \"dot\" for every run (execution-model.md §4.3 EM-012a, event-model.md §8.1)",
+				cell.Cell, *d.WorkflowMode)
+		}
+
+		if d.ReviewPolicy == nil {
+			t.Errorf("cell %q expect.dispatch has no review_policy; with workflow_mode a constant, review_policy is what still tells single-mode work apart from reviewed work", cell.Cell)
+			continue
+		}
+		if *d.ReviewPolicy != "reviewed" && *d.ReviewPolicy != "no_review" {
+			t.Errorf("cell %q expects review_policy = %q; want \"reviewed\" or \"no_review\"", cell.Cell, *d.ReviewPolicy)
+		}
+		if d.WorkflowSelectionSource == nil {
+			t.Errorf("cell %q expect.dispatch has no workflow_selection_source; it is the field that names WHY the graph was chosen", cell.Cell)
+			continue
+		}
+		if *d.ReviewPolicy == "no_review" && !noReviewSources[*d.WorkflowSelectionSource] {
+			t.Errorf("cell %q pairs review_policy=no_review with workflow_selection_source=%q; only legacy_single_label and queue_item_single_mode may select no_review (execution-model.md §4.3 EM-012a)",
+				cell.Cell, *d.WorkflowSelectionSource)
+		}
+	}
+	if !sawDispatch {
+		t.Error("no cell in cells.json declares expect.dispatch; the gap4 drift guard would be vacuous")
 	}
 }
 

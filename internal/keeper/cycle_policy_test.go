@@ -10,7 +10,7 @@ func TestDefaultCyclePolicyMatchesResolvedCyclerConfig(t *testing.T) {
 	var cfg CyclerConfig
 	cfg.applyDefaults()
 	want := policyProjectionWithoutResolving(cfg)
-	if got := DefaultCyclePolicy(); !reflect.DeepEqual(got, want) {
+	if got := CyclePolicyFromConfig(CyclerConfig{}); !reflect.DeepEqual(got, want) {
 		t.Fatalf("DefaultCyclePolicy drifted from CyclerConfig defaults:\n got: %+v\nwant: %+v", got, want)
 	}
 }
@@ -37,7 +37,7 @@ func TestCyclePolicyFromConfigPreservesOverridesAndSentinels(t *testing.T) {
 		t.Fatalf("transcript policy lost: %+v", got)
 	}
 
-	disabled := DefaultCyclePolicy()
+	disabled := CyclePolicyFromConfig(CyclerConfig{})
 	if disabled.BootGracePeriod != 0 || disabled.MaxBootGraceTotal != 0 ||
 		disabled.OperatorTurnLookback != 0 || disabled.PostAnswerGrace != 0 {
 		t.Fatalf("library-disabled sentinels changed: %+v", disabled)

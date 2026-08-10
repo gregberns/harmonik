@@ -977,6 +977,72 @@ func emitDotNoProgressDetected(
 	}
 }
 
+// strandedCommitNote describes the commit a red gate is about to leave behind,
+// for the no-progress terminals in the DOT walk (hk-2vx1n).
+//
+// A red gate routes the implementer back. When the implementer has nothing to
+// add, HEAD does not advance and the run ends there — with a real commit
+// sitting on the run branch that nothing will ever merge. Both no-progress
+// terminals then report that HEAD did not advance, which reads as "the harness
+// never landed anything". It landed something. The gate rejected the tree it
+// was already sitting on.
+//
+// That wording is not a cosmetic problem. An operator who reads it goes and
+// looks at the harness, and that misdirection is on record more than once. So
+// when the node that routed the implementer back was the gate, and there IS a
+// committed result, the reason names the stranded commit, its branch, and the
+// tail of the gate output.
+//
+// This changes what a run SAYS, not what it does. The caller's disposition
+// stays failure plus needs-attention either way, so no gate-red tree can merge
+// through here. Whether the gate's failure was caused by this diff at all is
+// the other half of hk-2vx1n and is not decided here.
+//
+// gateNodeID must match prevNodeID as well as gatePassed being false:
+// gatePassed is also false when no gate has ever run, and that case is a
+// genuine no-progress loop with nothing to preserve.
+func strandedCommitNote(
+	runID core.RunID,
+	committed bool,
+	gatePassed bool,
+	gateNodeID string,
+	prevNodeID string,
+	headSHA string,
+	gateNotes string,
+) string {
+	if !committed || gatePassed || gateNodeID == "" || prevNodeID != gateNodeID {
+		return ""
+	}
+	return fmt.Sprintf(
+		" — the %s gate stayed red and the implementer added nothing; commit %s is preserved on %s and was NOT merged%s",
+		gateNodeID, headSHA, workspace.TaskBranchPrefix+runID.String(), gateFailureTail(gateNotes))
+}
+
+// gateFailureTailMaxBytes bounds how much gate output the stranded-commit
+// reason carries. The reason travels into run_failed, which an operator reads
+// in one line, so it holds a hint and not a build log. The full output already
+// reached the implementer as GATE_FAIL feedback.
+const gateFailureTailMaxBytes = 200
+
+// gateFailureTail renders the last of a failed gate's notes for the
+// stranded-commit reason (hk-2vx1n), prefixed and bounded, or "" when the gate
+// recorded nothing. It keeps the TAIL rather than the head: a build or test
+// gate names what failed at the end of its output.
+func gateFailureTail(notes string) string {
+	trimmed := strings.TrimSpace(notes)
+	if trimmed == "" {
+		return ""
+	}
+	if len(trimmed) > gateFailureTailMaxBytes {
+		b := []byte(trimmed[len(trimmed)-gateFailureTailMaxBytes:])
+		for len(b) > 0 && !utf8.Valid(b) {
+			b = b[1:]
+		}
+		trimmed = "…" + string(b)
+	}
+	return "; gate output: " + strings.ReplaceAll(trimmed, "\n", " ")
+}
+
 // graphVersionOr returns the graph's version field or a placeholder when empty
 // (WorkflowVersion must be non-empty for a valid core.Run).
 func graphVersionOr(graph *dot.Graph) string {

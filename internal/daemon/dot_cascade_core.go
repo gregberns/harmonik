@@ -264,6 +264,12 @@ func driveDotWorkflow(
 	// real failure reason instead of the misleading NO-commit nudge. Empty
 	// until a gate has run and failed (hk-778x9).
 	lastGateNotes := ""
+	// lastGateNodeID names the shell tool node that produced lastGatePassed.
+	// The no-progress block reads it to tell "the gate bounced me" from "no
+	// gate has ever run": lastGatePassed is false in both cases, and only the
+	// first one means a red gate sent the implementer back (hk-2vx1n). Empty
+	// until a shell tool node has run.
+	lastGateNodeID := ""
 
 	// reviewerNoVerdictRetries counts how many times the current reviewer node
 	// invocation was retried after producing no verdict (stall / hang).
@@ -408,6 +414,7 @@ func driveDotWorkflow(
 				// only fires when HEAD is UNCHANGED, so the gate result reflects the
 				// exact tree under review.
 				lastGatePassed = outcome.Status == core.OutcomeStatusSuccess
+				lastGateNodeID = currentNodeID
 				if !lastGatePassed {
 					lastGateNotes = outcome.Notes
 				}
@@ -659,6 +666,11 @@ func driveDotWorkflow(
 						shouldFire = consecutiveNoProgressCount > noProgressGuardCap
 					}
 					if shouldFire {
+						// hk-2vx1n — say which commit is being left behind, and why.
+						// Empty unless a red gate is what routed the implementer back;
+						// strandedCommitNote owns that rule and its reasoning.
+						strandedNote := strandedCommitNote(runID, committedResult, lastGatePassed,
+							lastGateNodeID, prevNodeID, currentHead, lastGateNotes)
 						// hk-m1wqp: emit review_fixup_stalled (carrying the reviewer
 						// flags) when the prior verdict was REQUEST_CHANGES and the
 						// implementer made no new commit. Fall back to
@@ -671,14 +683,14 @@ func driveDotWorkflow(
 							return dotWorkflowResult{
 								success:        false,
 								needsAttention: true,
-								summary:        fmt.Sprintf("dot: review fix-up stalled at iteration %d: HEAD did not advance after REQUEST_CHANGES", iterationCount),
+								summary:        fmt.Sprintf("dot: review fix-up stalled at iteration %d: HEAD did not advance after REQUEST_CHANGES%s", iterationCount, strandedNote),
 							}
 						}
 						emitDotNoProgressDetected(ctx, emit, runID, iterationCount, currentHash, lastDiffHash)
 						return dotWorkflowResult{
 							success:        false,
 							needsAttention: true,
-							summary:        fmt.Sprintf("dot: no-progress detected at iteration %d: HEAD did not advance", iterationCount),
+							summary:        fmt.Sprintf("dot: no-progress detected at iteration %d: HEAD did not advance%s", iterationCount, strandedNote),
 						}
 					}
 				}

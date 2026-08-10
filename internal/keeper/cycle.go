@@ -851,45 +851,6 @@ type Cycler struct {
 	handoffInjectedAt time.Time
 }
 
-// NewCycler constructs a Cycler. Defaults are applied to zero-valued config
-// fields, then the named ports are bound: an explicitly injected port wins;
-// otherwise the fn* adapter over the (defaulted) function fields is used, so
-// runtime behavior is unchanged (the production adapters wire the real fns).
-func NewCycler(cfg CyclerConfig, emitter Emitter) *Cycler {
-	cfg.applyDefaults()
-	if emitter == nil {
-		emitter = NoopEmitter{}
-	}
-	c := &Cycler{cfg: cfg, emitter: emitter, cycleIDs: cycleIDFunc(cfg.CycleIDGen)}
-	pane := c.cfg.Pane
-	if pane == nil {
-		pane = fnPane{cfg: &c.cfg}
-	}
-	gauge := c.cfg.Gauge
-	if gauge == nil {
-		gauge = fnGauge{cfg: &c.cfg}
-	}
-	handoff := c.cfg.Handoff
-	if handoff == nil {
-		handoff = fnHandoff{cfg: &c.cfg}
-	}
-	c.pane = pane
-	c.context = gauge
-	c.activity = legacyActivityProbe{port: gauge}
-	c.snapshot = gauge.Snapshot
-	c.handoff = legacyHandoffDocument{port: handoff}
-	c.journal = legacyJournalStore{port: handoff}
-	c.respawn = c.cfg.Respawn
-	if c.respawn == nil && c.cfg.ForceRestartFn != nil {
-		c.respawn = fnRespawn{fn: c.cfg.ForceRestartFn}
-	}
-	// The pure reactor reads policy scalars (and whether escalation is wired)
-	// from the defaulted config; it never calls a fn-field or port.
-	c.cfg.hasRespawn = c.respawn != nil
-	c.machine = NewCycle(&c.cfg)
-	return c
-}
-
 // InCycle reports whether a restart cycle is currently in flight (the reactor
 // is off-Idle). The watcher's tick loop consults this to park all non-cycle
 // processing while a cycle runs (the InCycle suppression, SK-017 / D11).

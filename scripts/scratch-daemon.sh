@@ -59,7 +59,8 @@
 #   SCRATCH_MAX_CONCURRENT  — daemon --max-concurrent      (default: 1)
 #   SCRATCH_WORKFLOW_MODE   — daemon --workflow-mode        (default: dot)
 #   SCRATCH_DAEMON_FLAGS    — extra flags appended verbatim to the daemon start
-#   SCRATCH_BATCH_TIMEOUT   — batch: max seconds to await terminal events (default: 1800)
+#   SCRATCH_BATCH_TIMEOUT   — batch: max seconds to await terminal events (default: 3600).
+#                       One commit-gate pass is ~13 min, so a run needs ~45 (hk-hhqyo).
 #   SCRATCH_DEBUG_WIRING    — HARMONIK_DEBUG_WIRING for the daemon (default: 1). Prints
 #                             the composition-root audit table at boot; that table is the
 #                             boot record for the queue-only subsystems posture.
@@ -1162,7 +1163,14 @@ cmd_batch() {
     fi
     echo "[scratch-daemon] batch '$name' — revision: $batch_rev"
 
-    timeout="${SCRATCH_BATCH_TIMEOUT:-1800}"
+    # 1800 was set when the commit gate died in seconds for want of a toolchain, so
+    # the clock never bound anything. It runs the real `make full` now: one pass was
+    # measured at 13m23s, and a normal implement -> gate -> fix -> gate cycle needs
+    # about 45 minutes. At 1800 the daemon was torn down mid-gate and a run that was
+    # making real progress was graded `incomplete` with nothing landed (hk-hhqyo).
+    # This bounds a hung run; it is not a budget, so it is set where a healthy run
+    # finishes rather than where an impatient reader would like one to.
+    timeout="${SCRATCH_BATCH_TIMEOUT:-3600}"
     command -v jq >/dev/null 2>&1 || die "batch: jq is required to parse the event stream"
 
     # Fleet-safety: same guard the kill/stop paths use, even on the already-up path.

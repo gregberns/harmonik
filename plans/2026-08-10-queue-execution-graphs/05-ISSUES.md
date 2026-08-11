@@ -37,7 +37,6 @@ Do not turn open research questions into implementation issues.
 
 ## Open research gaps
 
-- The queue accepts named bead IDs. It does not expand an epic into children. Confirm whether this is intentional in the queue contract.
 - Alpha's durable dispatch replay producer and startup replay paths are not on the integration branch yet. Reconcile the abrupt-crash scenario with their final contract when they land.
 
 ## Confirmed policy boundaries
@@ -48,3 +47,10 @@ Do not turn open research questions into implementation issues.
 - Evidence: `workspace-model` `WM-007` ends Harmonik's contract when the integration branch holds one commit per task. `daemon.maybeEmitEpicCompleted` emits a fact and does not mutate Git. The project branch rule requires a human pull request into `main`.
 - State: not an implementation issue under the current contract. The live fan graph proves the derived branch advances while its configured base stays unchanged.
 - Future design need: distinguish derived epic branch to project integration from project integration to `main`. Define the target and conflict contract before code performs either merge.
+
+### Submission-set completeness belongs to the planning agent
+
+- Claim: queue dry-run can confirm that a submitted epic child set is complete.
+- Evidence: the queue contract checks dependency edges only between items in the submitted group. A real dry run that omitted A from `A -> [B, C, D] -> E` marked B, C, and D pending and reported only their edges into E.
+- State: accepted current boundary. The user said automatic epic expansion is not a priority. The crew must submit every child ID.
+- Future option: add an explicit completeness audit. Do not silently expand the queue because that changes the requested work set.

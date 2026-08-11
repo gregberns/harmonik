@@ -849,6 +849,13 @@ func TestScenario_QueueSubmit_FanOutFanIn(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	queueSubmitDispatchWaitSocket(t, projectDir)
+	omittedRootDryRun := queueSubmitDispatchDryRunCLI(t, projectDir, ids[1:])
+	require.Len(t, omittedRootDryRun.LedgerDepNotices, 3,
+		"dry-run reports only dependency edges whose endpoints are both submitted")
+	for _, item := range omittedRootDryRun.ResolvedQueue.Groups[0].Items[:3] {
+		require.Equal(t, queue.ItemStatusPending, item.Status,
+			"dry-run cannot defer %s when its omitted root blocker is outside the request", item.BeadID)
+	}
 	dryRun := queueSubmitDispatchDryRunCLI(t, projectDir, ids)
 	require.True(t, dryRun.ParallelismNarrowed, "dependency graph must narrow initial parallelism")
 	require.Len(t, dryRun.LedgerDepNotices, 6, "A→B/C/D and B/C/D→E must produce six edge notices")

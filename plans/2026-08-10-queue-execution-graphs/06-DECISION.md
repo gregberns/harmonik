@@ -9,6 +9,7 @@
 - Reduce avoidable file overlap when it understands the planned work.
 - Put explicit branch overrides in bead bodies only when the project or epic needs them.
 - Dry-run and submit every child ID in one request.
+- Treat dry-run as validation of the requested subgraph, not as proof that no child or blocker was omitted.
 
 The queue does not discover an epic's children. Submitting only the epic is not enough.
 

@@ -38,10 +38,10 @@ Research and runtime proof. Serial and fan-out or fan-in graphs passed through t
 - Re-ran the real merge-conflict and merge-serialization scenarios after the restart changes. Both passed.
 - Strengthened the fan graph with the real dry-run client. It reports all six dependency edges, marks only the root ready, and persists nothing.
 - Confirmed that onward promotion of a completed epic branch is an external policy step under `WM-007`. The daemon emits `epic_completed` and does not merge that branch onward.
+- Proved that dry-run does not discover an omitted blocker. Submission-set completeness belongs to the planning agent under the current contract.
 
 ## Next
 
-- Test what happens when the submitter omits an open blocker from the submitted child set.
 - Coordinate the abrupt-crash scenario with C21 when its producer and startup replay land.
 - Run the focused package and scenario gates after the next change.
 

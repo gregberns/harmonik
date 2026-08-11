@@ -32,6 +32,8 @@ The scenario created `A -> [B, C, D] -> E` in real Beads. It submitted all five 
 
 The scenario now runs the real `queue dry-run` client before submission. The returned plan marks only A as pending. It marks B, C, D, and E as dependency-deferred and reports all six graph edges. The dry run does not create the canonical queue file. The strengthened scenario passed in 28.47 seconds on 2026-08-11.
 
+A second dry run omits A. It reports B, C, and D as pending and reports only their three edges into E. This proves that dry-run checks the requested subgraph. It does not discover an omitted blocker or certify that the submitted set is complete.
+
 The durable event log proved:
 
 - A was the first run.

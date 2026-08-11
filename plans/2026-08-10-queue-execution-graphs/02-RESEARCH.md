@@ -79,6 +79,8 @@ harmonik queue submit --beads A,B,C,D,E
 
 The agent must submit every child bead that it wants the queue to execute. The agent must create the Beads `blocks` edges first. The agent must not submit only the epic and expect child discovery. The simple `--beads` form creates one stream group. That group can still run independent ready items concurrently when the daemon and queue worker limits are greater than one.
 
+Dry-run does not prove that the submitted set is complete. It examines dependency edges only when both endpoints are in the request. In a dry run that omitted A from `A -> [B, C, D] -> E`, it reported B, C, and D as pending. It reported only their three edges into E. The planning agent therefore owns submission-set completeness under the current contract.
+
 A JSON queue document is useful when the agent needs more than one ordered group, an explicit wave, a named queue, queue-specific workers, per-item context, or per-item workflow settings. The dependency graph remains in Beads. Queue groups add execution-plan barriers and append rules. They do not replace ledger dependencies.
 
 ### Epic integration branch composition and promotion

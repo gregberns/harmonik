@@ -5,7 +5,6 @@ HoldingDispatchFn
 IdleMarkerModTimeFn
 InjectFn
 IsManagedFn
-OperatorAttachedFn
 ReadGaugeFn
 ReadHandoff
 SetManagedSessionFn

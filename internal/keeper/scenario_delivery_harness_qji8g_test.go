@@ -142,7 +142,6 @@ func TestScenario_LateHandoff300sFakeClock_Aborts_qji8g(t *testing.T) {
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
 		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
-		OperatorAttachedFn:  func(string) bool { return false }, // deterministic, no real tmux
 		IdleMarkerModTimeFn: func(_, _ string) (time.Time, bool) { return clock.Now(), true },
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {

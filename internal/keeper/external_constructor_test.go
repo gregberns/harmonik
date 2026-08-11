@@ -17,6 +17,7 @@ func mustNewCyclerWithDeps(
 	modify func(*keeper.CycleDeps),
 ) *keeper.Cycler {
 	deps := keeper.CycleDepsFromConfig(cfg, emitter)
+	deps.Operator = testOperatorProbe(func(string) bool { return false })
 	if modify != nil {
 		modify(&deps)
 	}
@@ -53,6 +54,10 @@ func (f testSleepProbe) Sleeping(sid string) bool { return f(sid) }
 type testHoldProbe func() bool
 
 func (f testHoldProbe) Held() bool { return f() }
+
+type testOperatorProbe func(string) bool
+
+func (f testOperatorProbe) Attached(target string) bool { return f(target) }
 
 type testHandoffWithModTime struct {
 	keeper.HandoffDocument

@@ -74,17 +74,18 @@ func newAttachTestCycler(
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
-		ReadHandoff:        readHandoff,
-		TruncateHandoffFn:  func(_ string) error { return nil },
-		InjectFn:           spy.inject,
-		ReadGaugeFn:        readGaugeFn,
-		CrispIdleFn:        func(_, _ string) bool { return true },
-		HoldingDispatchFn:  func(_, _ string) bool { return false },
-		WriteJournalFn:     jc.write,
-		SetTmuxEnvFn:       func(_ context.Context, _, _, _ string) error { return nil },
-		OperatorAttachedFn: attachFn,
+		ReadHandoff:       readHandoff,
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          spy.inject,
+		ReadGaugeFn:       readGaugeFn,
+		CrispIdleFn:       func(_, _ string) bool { return true },
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    jc.write,
+		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
 	}
-	return mustNewCycler(cfg, em)
+	return mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Operator = testOperatorProbe(attachFn)
+	})
 }
 
 // TestCycler_OperatorAttached_SuppressesInjection verifies that when the
@@ -279,18 +280,18 @@ func TestCycler_Precompact_OperatorAttached_Suppresses(t *testing.T) {
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
-		ReadHandoff:        alwaysNonce,
-		TruncateHandoffFn:  func(_ string) error { return nil },
-		InjectFn:           spy.inject,
-		ReadGaugeFn:        noopGauge,
-		CrispIdleFn:        func(_, _ string) bool { return true },
-		HoldingDispatchFn:  func(_, _ string) bool { return false },
-		WriteJournalFn:     jc.write,
-		SetTmuxEnvFn:       func(_ context.Context, _, _, _ string) error { return nil },
-		OperatorAttachedFn: attach.fn,
+		ReadHandoff:       alwaysNonce,
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          spy.inject,
+		ReadGaugeFn:       noopGauge,
+		CrispIdleFn:       func(_, _ string) bool { return true },
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    jc.write,
+		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
 		deps.Context = testContextWithClear{ContextStore: deps.Context, clear: func() error { cleared++; return nil }}
+		deps.Operator = testOperatorProbe(attach.fn)
 	})
 
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: sid}

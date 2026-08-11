@@ -243,17 +243,6 @@ type CyclerConfig struct {
 	// escalation. Default: 3. Refs: hk-qoz.
 	MaxHandoffTimeouts int
 
-	// OperatorAttachedFn reports whether a human operator is currently attached
-	// to the target tmux session. When it returns true the act-path goes
-	// warn-only: the destructive reset-cycle injection (/session-handoff,
-	// /clear, agent brief) is suppressed so the keeper never races the
-	// operator's own keystrokes and clobbers an in-flight turn. The watcher's
-	// warn/gauge emissions continue, and the cycle resumes on the next tick
-	// once the operator detaches. Nil → OperatorAttached (real tmux
-	// list-clients). The check is skipped entirely when TmuxTarget is empty
-	// (no pane to inject into). Refs: hk-6qf.
-	OperatorAttachedFn func(target string) bool
-
 	// HoldTTL is the keeper HOLD timer backstop; zero → DefaultHoldTTL.
 	HoldTTL time.Duration
 
@@ -391,9 +380,6 @@ func (c *CyclerConfig) applyDefaults() {
 	}
 	if c.SetTmuxEnvFn == nil {
 		c.SetTmuxEnvFn = SetTmuxEnv
-	}
-	if c.OperatorAttachedFn == nil {
-		c.OperatorAttachedFn = OperatorAttached
 	}
 	if c.HoldTTL <= 0 {
 		c.HoldTTL = DefaultHoldTTL

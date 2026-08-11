@@ -649,9 +649,10 @@ func TestIntegration_TwinE2E_OperatorRealEnv(t *testing.T) {
 		PollInterval:        150 * time.Millisecond,
 		InjectFn:            recInject,
 		SetManagedSessionFn: recSetManaged,
-		OperatorAttachedFn:  operatorAttached,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Operator = testOperatorProbe(operatorAttached)
+	})
 
 	// Watch for the post-/clear token RESET on the rotated session (immune to the
 	// resumed emitter's regrowth), exactly as the happy-path E2E does.

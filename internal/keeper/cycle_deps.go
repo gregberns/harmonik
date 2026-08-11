@@ -177,7 +177,7 @@ func CycleDepsFromConfig(cfg CyclerConfig, emitter Emitter) CycleDeps {
 		Dispatch: boolProbe(func() bool { return cfg.HoldingDispatchFn(cfg.ProjectDir, cfg.AgentName) }),
 		Sleep:    sleepProbeFunc(func(sid string) bool { return IsSleeping(cfg.ProjectDir, sid) }),
 		Hold:     boolProbe(func() bool { return isHeldAt(cfg.ProjectDir, cfg.AgentName, cfg.HoldTTL, cfg.Clock) }),
-		Operator: operatorProbeFunc(cfg.OperatorAttachedFn),
+		Operator: operatorProbeFunc(OperatorAttached),
 		Handoff:  configHandoffDocument{cfg: &cfg}, Journal: configJournalStore{cfg: &cfg},
 		Emitter: emitter,
 	}

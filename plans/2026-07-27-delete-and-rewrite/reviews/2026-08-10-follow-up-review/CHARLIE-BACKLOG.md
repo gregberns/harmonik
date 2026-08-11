@@ -10,14 +10,26 @@ Charlie must deliberately break each new claim test before accepting it.
 Updated: 2026-08-10
 
 - Owner: Charlie.
-- Active slice: C15 is complete. C16 is next.
+- Active slice: C16 is complete. C17 is next.
 - Start revision: `b49210d67` on `work/alpha-integration-merge`.
 - State: C01 through C04 are complete and independently approved.
 - Implementation commit: `de0a6ca3`.
 - Integration reconciliation commit: `b0cac51a`.
 - Stop gate: C05 through C07 received independent approval before C08.
 - Coordination note: the queue RPC overlap retained both the active-run status work and the event-intent path.
-- Later tasks: C16 through C31 remain unstarted.
+- Later tasks: C17 through C31 remain unstarted.
+
+### C16 evidence
+
+- A pure daemon policy maps durable facts to only the remaining outer effects.
+- It never authorizes a second raw queue install, clear, or final event emit.
+- The policy authorizes refill after every terminal call except the internal receipt retry.
+- Final cancellation requires proven queue-name ownership release.
+- Contradictory disposition, outcome, phase, and diagnostic facts fail closed.
+- Exact tables cover every completion transaction phase and the receipt-install fault boundary.
+- Named daemon tests, focused vet, and the diff check pass.
+- A receipt-retry refill mutation made the effect table fail.
+- Independent reviewer verdict: `APPROVE` after two blocking correction rounds.
 
 ### C15 evidence
 

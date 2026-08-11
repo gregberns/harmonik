@@ -1931,7 +1931,7 @@ func TestCycler_ForcedClear_RetryAfterInterval(t *testing.T) {
 	}
 }
 
-// TestCycler_ForcedClear_EscapeInjected verifies that when SendEscapeFn is set,
+// TestCycler_ForcedClear_EscapeInjected verifies that the pane port receives Escape
 // it is called before the /session-handoff inject. The Escape must precede the
 // handoff to preempt any in-progress input on a busy pane. Refs: hk-qoz.
 func TestCycler_ForcedClear_EscapeInjected(t *testing.T) {
@@ -1992,9 +1992,10 @@ func TestCycler_ForcedClear_EscapeInjected(t *testing.T) {
 		WriteJournalFn:      jc.write,
 		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
-		SendEscapeFn:        escapeFn,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Pane = testPaneWithEscape{PaneWriter: deps.Pane, sendEscape: escapeFn}
+	})
 
 	// Context at force threshold with CrispIdle=false → forced-clear fires.
 	cf := &keeper.CtxFile{Pct: 97.0, SessionID: prevSID}
@@ -2019,7 +2020,7 @@ func TestCycler_ForcedClear_EscapeInjected(t *testing.T) {
 		}
 	}
 	if !foundEscape {
-		t.Errorf("want SendEscapeFn called; callOrder = %v", order)
+		t.Errorf("want pane port to receive Escape; callOrder = %v", order)
 	}
 	// Escape must appear before the /session-handoff inject.
 	firstEscapeIdx := -1
@@ -2037,7 +2038,7 @@ func TestCycler_ForcedClear_EscapeInjected(t *testing.T) {
 
 // TestCycler_ForcedClear_EscalatesAfterNTimeouts verifies that after
 // MaxHandoffTimeouts consecutive handoff timeouts above the force threshold,
-// ForceRestartFn is called to hard-restart the agent. Refs: hk-qoz.
+// RespawnPort is called to hard-restart the agent. Refs: hk-qoz.
 func TestCycler_ForcedClear_EscalatesAfterNTimeouts(t *testing.T) {
 	t.Parallel()
 
@@ -2093,9 +2094,10 @@ func TestCycler_ForcedClear_EscalatesAfterNTimeouts(t *testing.T) {
 		WriteJournalFn:      jc.write,
 		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
-		ForceRestartFn:      forceRestartFn,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Respawn = testRespawnFunc(forceRestartFn)
+	})
 
 	cf := &keeper.CtxFile{Pct: 97.0, SessionID: sid}
 
@@ -2115,7 +2117,7 @@ func TestCycler_ForcedClear_EscalatesAfterNTimeouts(t *testing.T) {
 	mu.Unlock()
 
 	if rc != 1 {
-		t.Errorf("ForceRestartFn called %d times; want 1 (after %d timeouts)", rc, maxTimeouts)
+		t.Errorf("RespawnPort called %d times; want 1 (after %d timeouts)", rc, maxTimeouts)
 	}
 
 	aborted := len(em.EventsOfType(core.EventTypeSessionKeeperCycleAborted))

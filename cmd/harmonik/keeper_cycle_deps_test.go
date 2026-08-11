@@ -7,10 +7,6 @@ import (
 
 func TestBuildKeeperCycleDepsOwnsCommandRuntimeCapabilities(t *testing.T) {
 	cfg, _ := buildKeeperConfigs(ResolvedKeeperConfig{}, keeperBuildParams{})
-	if cfg.SendEscapeFn != nil || cfg.ForceRestartFn != nil {
-		t.Fatal("runtime capabilities leaked into CyclerConfig")
-	}
-
 	called := false
 	deps := buildKeeperCycleDeps(cfg, nil, func(context.Context, string) error {
 		called = true

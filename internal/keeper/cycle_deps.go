@@ -179,10 +179,7 @@ func CycleDepsFromConfig(cfg CyclerConfig, emitter Emitter) CycleDeps {
 		Hold:     boolProbe(func() bool { return cfg.HeldCheckFn(cfg.ProjectDir, cfg.AgentName) }),
 		Operator: operatorProbeFunc(cfg.OperatorAttachedFn),
 		Handoff:  configHandoffDocument{cfg: &cfg}, Journal: configJournalStore{cfg: &cfg},
-		Emitter: emitter, Respawn: cfg.Respawn,
-	}
-	if deps.Respawn == nil && cfg.ForceRestartFn != nil {
-		deps.Respawn = configRespawn{fn: cfg.ForceRestartFn}
+		Emitter: emitter,
 	}
 	return deps
 }

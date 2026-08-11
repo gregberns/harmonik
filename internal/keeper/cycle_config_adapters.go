@@ -10,12 +10,7 @@ type configPaneWriter struct{ cfg *CyclerConfig }
 func (p configPaneWriter) Inject(ctx context.Context, target, value string) error {
 	return p.cfg.InjectFn(ctx, target, value)
 }
-func (p configPaneWriter) SendEscape(ctx context.Context, target string) error {
-	if p.cfg.SendEscapeFn == nil {
-		return nil
-	}
-	return p.cfg.SendEscapeFn(ctx, target)
-}
+func (p configPaneWriter) SendEscape(context.Context, string) error { return nil }
 func (p configPaneWriter) SetEnv(ctx context.Context, target, key, value string) error {
 	return p.cfg.SetTmuxEnvFn(ctx, target, key, value)
 }
@@ -68,11 +63,3 @@ func (s configJournalStore) Write(j *CycleJournal) error {
 	return s.cfg.WriteJournalFn(s.path(), j)
 }
 func (s configJournalStore) Read() (*CycleJournal, error) { return s.cfg.ReadJournalFn(s.path()) }
-
-type configRespawn struct {
-	fn func(context.Context, string) error
-}
-
-func (r configRespawn) ForceRestart(ctx context.Context, agent string) error {
-	return r.fn(ctx, agent)
-}

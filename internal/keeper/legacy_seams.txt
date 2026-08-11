@@ -1,7 +1,6 @@
 ClearPrecompactTriggerFn
 CrispIdleFn
 CycleIDGen
-ForceRestartFn
 HandoffFilePath
 HandoffModTimeFn
 HeldCheckFn
@@ -14,7 +13,6 @@ ReadGaugeFn
 ReadHandoff
 ReadJournalFn
 RecentTranscriptTurnFn
-SendEscapeFn
 SetManagedSessionFn
 SetTmuxEnvFn
 SleepingCheckFn

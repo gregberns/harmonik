@@ -296,7 +296,6 @@ func TestScenario_ForceAct_NeverIdleStillCut_qji8g(t *testing.T) {
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
 		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
-		SendEscapeFn:      func(_ context.Context, _ string) error { return nil }, // no-op escape (force path)
 		SetManagedSessionFn: func(_, _, sid string) error {
 			mu.Lock()
 			defer mu.Unlock()

@@ -157,8 +157,6 @@ type CyclerConfig struct {
 	// substrate.FakeClock can drive timeouts and poll cadences in virtual time.
 	Clock substrate.ClockPort
 
-	Respawn RespawnPort // nil AND ForceRestartFn nil → escalation dormant
-
 	// Injectable dependencies. Nil means use the production default. Command
 	// composition converts these functions into the narrow ports in CycleDeps.
 	CycleIDGen      func() string
@@ -249,21 +247,9 @@ type CyclerConfig struct {
 	MaxBootGraceTotal time.Duration
 
 	// MaxHandoffTimeouts is the number of consecutive handoff timeouts above
-	// the force threshold before escalating to ForceRestartFn. Zero disables
+	// the force threshold before escalating through RespawnPort. Zero disables
 	// escalation. Default: 3. Refs: hk-qoz.
 	MaxHandoffTimeouts int
-
-	// ForceRestartFn, when non-nil, is called after MaxHandoffTimeouts
-	// consecutive handoff timeouts while above the force threshold. Expected
-	// to kill and restart the agent (e.g. via the respawn path). Non-fatal:
-	// a failure is logged but does not stop the keeper loop. Refs: hk-qoz.
-	ForceRestartFn func(ctx context.Context, agentName string) error
-
-	// SendEscapeFn, when non-nil, is called before injecting /session-handoff
-	// to preempt any in-progress input on a busy pane. Nil → no Escape sent.
-	// Set to keeper.SendEscapeKey in production; leave nil in tests.
-	// Refs: hk-qoz (forced-clear busy-pane fix).
-	SendEscapeFn func(ctx context.Context, target string) error
 
 	// OperatorAttachedFn reports whether a human operator is currently attached
 	// to the target tmux session. When it returns true the act-path goes

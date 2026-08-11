@@ -216,9 +216,10 @@ func TestKeeperCycle_ForcedClearAboveHardThreshold(t *testing.T) {
 			managedBinding = sid
 			return nil
 		},
-		SendEscapeFn: escapeFn,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Pane = testPaneWithEscape{PaneWriter: deps.Pane, sendEscape: escapeFn}
+	})
 
 	// Tokens at/above the default ForceActAbsTokens (240_000) with CrispIdle=false.
 	cf := &keeper.CtxFile{Pct: 97.0, Tokens: 390_000, WindowSize: 1_000_000, SessionID: s1}
@@ -253,7 +254,7 @@ func TestKeeperCycle_ForcedClearAboveHardThreshold(t *testing.T) {
 		}
 	}
 	if escapeIdx == -1 {
-		t.Errorf("SendEscapeFn was never called; order = %v", snap)
+		t.Errorf("pane port did not receive Escape; order = %v", snap)
 	}
 	if handoffIdx == -1 {
 		t.Fatalf("/session-handoff was never injected; order = %v", snap)

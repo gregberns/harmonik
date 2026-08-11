@@ -551,7 +551,7 @@ func runKeeperSubcommand(args []string) int {
 	return 0
 }
 
-// keeperForceRestartFn returns the ForceRestartFn to wire into CyclerConfig for
+// keeperForceRestartFn returns the force-restart effect to wire into CycleDeps for
 // the handoff-timeout hard-restart escalation (cycle.go:767). It is FAIL-CLOSED:
 // nil — the escalation stays dormant and behaviour is byte-identical to today —
 // UNLESS the operator BOTH opts in with --force-restart AND supplies a
@@ -559,7 +559,7 @@ func runKeeperSubcommand(args []string) int {
 // NewLiveRecoverViaRespawn, which re-verifies the bound .sid identity at the
 // moment of firing and refuses (returns ErrLiveRecoverIdentityUntrusted, no
 // restart) on a non-UUIDv4 — force-restart is the most destructive keeper action.
-// Refs: hk-suxt (wire dormant ForceRestartFn), hk-qoz (escalation path).
+// Refs: hk-suxt (wire dormant restart capability), hk-qoz (escalation path).
 func keeperForceRestartFn(forceRestart bool, projectDir, respawnCmd string) func(ctx context.Context, agentName string) error {
 	if !forceRestart || respawnCmd == "" {
 		return nil

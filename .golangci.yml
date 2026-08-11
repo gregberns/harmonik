@@ -556,7 +556,27 @@ linters:
             - "pgregory.net/rapid"
           deny:
             - { pkg: "github.com/gregberns/harmonik/internal/", desc: "core is a leaf; no subsystem imports" }
-  
+
+        # dispatch owns only the values for one queue-to-run handoff. Queue owns
+        # queue-name validation. The daemon and the C21 persistence adapter
+        # compose this package from outside. The explicit queuewiring deny is
+        # needed because depguard treats the allowed internal/queue entry as a
+        # prefix match.
+        # Rationale: specs/live-bead-state.md LB-007 and LB-008.
+        dispatch:
+          files: ["**/internal/dispatch/**"]
+          allow:
+            - "$gostd"
+            - "github.com/google/uuid"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/queue"
+            - "github.com/gregberns/harmonik/internal/dispatch"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "dispatch is a value package; daemon composes it from outside (LB-007)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/queuewiring", desc: "dispatch values do not own queue persistence (LB-007)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/brcli", desc: "dispatch values do not call the Beads adapter (LB-007)" }
+            - { pkg: "github.com/gregberns/harmonik/internal/run", desc: "dispatch values bind run identity but do not own run storage (LB-007)" }
+
         # Queue production code imports core plus UUID for queue/event identity.
         # External tests also need the self-import used by package queue_test.
         # eventbus import added by T12 (hk-hn363) when queue-lifecycle events are

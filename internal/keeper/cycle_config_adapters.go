@@ -52,7 +52,7 @@ func (d configHandoffDocument) Path() string {
 }
 func (d configHandoffDocument) Read() (string, error) { return d.cfg.ReadHandoff(d.Path()) }
 func (d configHandoffDocument) ModTime() (time.Time, bool) {
-	return d.cfg.HandoffModTimeFn(d.Path())
+	return defaultHandoffModTime(d.Path())
 }
 func (d configHandoffDocument) ScrubNonce() error { return d.cfg.TruncateHandoffFn(d.Path()) }
 

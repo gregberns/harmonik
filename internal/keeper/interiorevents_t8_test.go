@@ -51,7 +51,6 @@ func newModelDoneCycler(
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
 		ReadHandoff:         rs.readHandoff,
-		HandoffModTimeFn:    rs.handoffModTime,
 		TruncateHandoffFn:   rs.truncate,
 		InjectFn:            rs.inject,
 		ReadGaugeFn:         rs.readGauge,
@@ -68,6 +67,7 @@ func newModelDoneCycler(
 		},
 	}
 	return mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Handoff = testHandoffWithModTime{HandoffDocument: deps.Handoff, modTime: rs.handoffModTime}
 		deps.Activity = testActivityWithTurns{
 			ActivityProbe: deps.Activity,
 			dir:           projectDir,

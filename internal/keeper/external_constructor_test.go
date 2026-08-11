@@ -50,6 +50,15 @@ type testSleepProbe func(string) bool
 
 func (f testSleepProbe) Sleeping(sid string) bool { return f(sid) }
 
+type testHandoffWithModTime struct {
+	keeper.HandoffDocument
+	modTime func(string) (time.Time, bool)
+}
+
+func (h testHandoffWithModTime) ModTime() (time.Time, bool) {
+	return h.modTime(h.Path())
+}
+
 type testActivityWithTurns struct {
 	keeper.ActivityProbe
 	dir  string

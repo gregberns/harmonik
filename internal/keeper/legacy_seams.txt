@@ -2,7 +2,6 @@ ClearPrecompactTriggerFn
 CrispIdleFn
 CycleIDGen
 HandoffFilePath
-HandoffModTimeFn
 HeldCheckFn
 HoldingDispatchFn
 IdleMarkerModTimeFn

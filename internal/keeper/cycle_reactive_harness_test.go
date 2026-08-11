@@ -201,7 +201,7 @@ func (rs *reactiveSession) readHandoff(_ /*path*/ string) (string, error) {
 	return rs.handoffBody, nil
 }
 
-// handoffModTime is the reactive HandoffModTimeFn: it reports a fresh mtime
+// handoffModTime is the reactive handoff freshness read. It reports a fresh mtime
 // (now) whenever a handoff body has been written, and "absent" while empty. This
 // mirrors os.Stat on a real handoff file and lets the ack-timeout recovery path
 // (hk-fi78d) distinguish "agent wrote a fresh handoff" from "nothing written".
@@ -332,7 +332,6 @@ func newReactiveCyclerWithBackstop(
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
 		ReadHandoff:       rs.readHandoff,
-		HandoffModTimeFn:  rs.handoffModTime,
 		TruncateHandoffFn: rs.truncate,
 		InjectFn:          rs.inject,
 		ReadGaugeFn:       rs.readGauge,
@@ -351,5 +350,7 @@ func newReactiveCyclerWithBackstop(
 		// pre-T8 clear-right-after-confirm scenario cadence.
 		IdleMarkerModTimeFn: idleMarkerFreshNow,
 	}
-	return mustNewCycler(cfg, em)
+	return mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Handoff = testHandoffWithModTime{HandoffDocument: deps.Handoff, modTime: rs.handoffModTime}
+	})
 }

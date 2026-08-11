@@ -163,12 +163,6 @@ type CyclerConfig struct {
 	IsManagedFn     func(projectDir, agentName string) bool
 	HandoffFilePath func(projectDir, agentName string) string
 	ReadHandoff     func(path string) (string, error)
-	// HandoffModTimeFn returns the handoff file's modification time and whether it
-	// exists. Nil → defaultHandoffModTime (os.Stat). Used by the ack-timeout
-	// recovery path (hk-fi78d) to decide whether the agent actually WROTE a fresh
-	// handoff despite the nonce echo never landing — in which case the brief
-	// injection must still survive rather than blindly aborting before /clear.
-	HandoffModTimeFn func(path string) (time.Time, bool)
 	// TruncateHandoffFn SCRUBS the keeper's own `<!-- KEEPER:... -->` nonce
 	// marker(s) out of the handoff file, preserving every other byte. The name is
 	// historical: it once truncated the whole file, which silently destroyed the
@@ -374,9 +368,6 @@ func (c *CyclerConfig) applyDefaults() {
 	}
 	if c.ReadHandoff == nil {
 		c.ReadHandoff = defaultReadHandoff
-	}
-	if c.HandoffModTimeFn == nil {
-		c.HandoffModTimeFn = defaultHandoffModTime
 	}
 	if c.TruncateHandoffFn == nil {
 		c.TruncateHandoffFn = defaultScrubHandoffNonces

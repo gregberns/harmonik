@@ -568,7 +568,6 @@ func TestKeeperCycle_ClearBriefHardGate_SlowClear(t *testing.T) {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
 		ReadHandoff:       rs.readHandoff,
-		HandoffModTimeFn:  rs.handoffModTime,
 		TruncateHandoffFn: rs.truncate,
 		InjectFn:          witnessInject,
 		ReadGaugeFn:       rs.readGauge,
@@ -583,7 +582,9 @@ func TestKeeperCycle_ClearBriefHardGate_SlowClear(t *testing.T) {
 			return nil
 		},
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Handoff = testHandoffWithModTime{HandoffDocument: deps.Handoff, modTime: rs.handoffModTime}
+	})
 
 	cf := &keeper.CtxFile{Pct: 95.0, Tokens: 320_000, WindowSize: 1_000_000, SessionID: s1}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {

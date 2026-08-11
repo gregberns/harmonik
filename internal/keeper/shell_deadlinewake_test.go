@@ -121,10 +121,9 @@ func TestCycler_DelayedPollTick_HandoffTimeoutStaysPunctual(t *testing.T) {
 		TruncateHandoffFn: func(_ string) error { return nil },
 		InjectFn:          spy.inject,
 		ReadGaugeFn:       noopGauge,
-		CrispIdleFn:       func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithIdle(cfg, em, false)
 
 	// Call 1: fires (above force) and must abort on the PUNCTUAL 30ms handoff
 	// timeout — the deadline wake, not the starved 65ms detection tick.
@@ -225,7 +224,6 @@ func TestCycler_ClearingElapsedBackstop_NoHotSpin(t *testing.T) {
 		TruncateHandoffFn:    func(_ string) error { return nil },
 		InjectFn:             spy.inject,
 		ReadGaugeFn:          readGaugeFn,
-		CrispIdleFn:          func(_, _ string) bool { return true },
 		WriteJournalFn:       jc.write,
 	}
 	cycler := mustNewCycler(cfg, em)

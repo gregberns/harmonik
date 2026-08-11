@@ -337,12 +337,11 @@ func TestCyclerMaybeRun_DeferredWhenHeld(t *testing.T) {
 	// gate (Gate 5c) was actually consulted.
 	baseCfg := func(projectDir, agent string, injectCount *int) keeper.CyclerConfig {
 		return keeper.CyclerConfig{
-			AgentName:   agent,
-			ProjectDir:  projectDir,
-			TmuxTarget:  "",
-			ActPct:      80.0,
-			WarnPct:     70.0,
-			CrispIdleFn: func(_, _ string) bool { return true },
+			AgentName:  agent,
+			ProjectDir: projectDir,
+			TmuxTarget: "",
+			ActPct:     80.0,
+			WarnPct:    70.0,
 			InjectFn: func(_ context.Context, _, _ string) error {
 				*injectCount++
 				return nil
@@ -626,11 +625,11 @@ func TestRunForPrecompact_SuppressedWhenHeld(t *testing.T) {
 			ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 				return &keeper.CtxFile{Pct: 95.0, SessionID: "sess-new"}, time.Now(), nil
 			},
-			CrispIdleFn:    func(_, _ string) bool { return false },
 			WriteJournalFn: jc.write,
 		}
 		cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
 			deps.Hold = testHoldProbe(func() bool { return held })
+			deps.Idle = testIdleProbe(false)
 			deps.Context = testContextWithClear{ContextStore: deps.Context, clear: func() error { return nil }}
 		})
 		cf := &keeper.CtxFile{Pct: 95.0, SessionID: "sess-abc"}
@@ -711,7 +710,6 @@ func TestRunForIdle_SuppressedWhenHeld(t *testing.T) {
 			ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 				return &keeper.CtxFile{Pct: 10.0, Tokens: 5_000, WindowSize: 400_000, SessionID: "sess-new"}, time.Now(), nil
 			},
-			CrispIdleFn:          func(_, _ string) bool { return true },
 			WriteJournalFn:       jc.write,
 			IdleRestartAbsTokens: 150_000,
 			IdleRestartCooldown:  0,

@@ -284,7 +284,6 @@ func TestZJ1Y_SelfServiceRestart_GaugeDrop_ExactlyOneClear(t *testing.T) {
 		ReadGaugeFn: func(_, _ string) (*CtxFile, time.Time, error) {
 			return &CtxFile{Tokens: 40_000, WindowSize: 200_000, Pct: 20, SessionID: sid}, time.Now(), nil
 		},
-		CrispIdleFn:    func(_, _ string) bool { return true },
 		WriteJournalFn: func(_ string, _ *CycleJournal) error { return nil },
 		// Stop-hook .idle marker reads fresh so model-done lands on the first
 		// AwaitModelDone poll (SK-014) — without it the cycle waits the full

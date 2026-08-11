@@ -11,6 +11,12 @@ func mustNewCycler(cfg keeper.CyclerConfig, emitter keeper.Emitter) *keeper.Cycl
 	return mustNewCyclerWithDeps(cfg, emitter, nil)
 }
 
+func mustNewCyclerWithIdle(cfg keeper.CyclerConfig, emitter keeper.Emitter, idle bool) *keeper.Cycler {
+	return mustNewCyclerWithDeps(cfg, emitter, func(deps *keeper.CycleDeps) {
+		deps.Idle = testIdleProbe(idle)
+	})
+}
+
 func mustNewCyclerWithDeps(
 	cfg keeper.CyclerConfig,
 	emitter keeper.Emitter,
@@ -20,6 +26,7 @@ func mustNewCyclerWithDeps(
 	deps.Operator = testOperatorProbe(func(string) bool { return false })
 	deps.Managed = testManagedProbe(true)
 	deps.Dispatch = testDispatchProbe(false)
+	deps.Idle = testIdleProbe(true)
 	deps.Pane = testPaneWithEnv{PaneWriter: deps.Pane}
 	deps.Context = testContextWithManaged{ContextStore: deps.Context}
 	deps.Activity = testActivityWithIdle{ActivityProbe: deps.Activity, idleMarker: func() (time.Time, bool) { return time.Now(), true }}
@@ -83,6 +90,10 @@ func (p testDispatchProbe) HoldingDispatch() bool { return bool(p) }
 type testDispatchProbeFunc func() bool
 
 func (f testDispatchProbeFunc) HoldingDispatch() bool { return f() }
+
+type testIdleProbe bool
+
+func (p testIdleProbe) CrispIdle() bool { return bool(p) }
 
 type testOperatorProbe func(string) bool
 

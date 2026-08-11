@@ -173,7 +173,7 @@ func CycleDepsFromConfig(cfg CyclerConfig, emitter Emitter) CycleDeps {
 		Pane: configPaneWriter{cfg: &cfg}, Context: configContextStore{cfg: &cfg},
 		Activity: configActivityProbe{cfg: &cfg},
 		Managed:  boolProbe(func() bool { return IsManaged(cfg.ProjectDir, cfg.AgentName) }),
-		Idle:     boolProbe(func() bool { return cfg.CrispIdleFn(cfg.ProjectDir, cfg.AgentName) }),
+		Idle:     boolProbe(func() bool { return CrispIdle(cfg.ProjectDir, cfg.AgentName) }),
 		Dispatch: boolProbe(func() bool { return HoldingDispatch(cfg.ProjectDir, cfg.AgentName) }),
 		Sleep:    sleepProbeFunc(func(sid string) bool { return IsSleeping(cfg.ProjectDir, sid) }),
 		Hold:     boolProbe(func() bool { return isHeldAt(cfg.ProjectDir, cfg.AgentName, cfg.HoldTTL, cfg.Clock) }),

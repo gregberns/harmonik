@@ -137,7 +137,6 @@ func TestScenario_LateHandoff300sFakeClock_Aborts_qji8g(t *testing.T) {
 		TruncateHandoffFn: rs.truncate,
 		InjectFn:          rs.inject,
 		ReadGaugeFn:       rs.readGauge,
-		CrispIdleFn:       func(_, _ string) bool { return true },
 		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
@@ -243,7 +242,7 @@ func TestScenario_ClientActivityMidWait_DoesNotHideHandoff_qji8g(t *testing.T) {
 }
 
 // (e) FORCE-ACT STILL CUTS A NEVER-IDLE SESSION. A perpetually-busy session
-// (CrispIdleFn always false) above the FORCE threshold must be cut UNCONDITIONALLY:
+// (IdleProbe always false) above the FORCE threshold must be cut UNCONDITIONALLY:
 // the CrispIdle gate is bypassed on the force path, the cycle fires, and /clear is
 // STILL gated on a confirmed nonce (the deferral machinery does NOT relax the
 // safety gate). Proves the K2 leader-defer work did not weaken the FORCE-ACT
@@ -286,11 +285,11 @@ func TestScenario_ForceAct_NeverIdleStillCut_qji8g(t *testing.T) {
 		TruncateHandoffFn: rs.truncate,
 		InjectFn:          rs.inject,
 		ReadGaugeFn:       rs.readGauge,
-		CrispIdleFn:       func(_, _ string) bool { return false }, // NEVER idle → force path
 		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
 		deps.Handoff = testHandoffWithModTime{HandoffDocument: deps.Handoff, modTime: rs.handoffModTime}
+		deps.Idle = testIdleProbe(false)
 		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error {
 			mu.Lock()
 			defer mu.Unlock()

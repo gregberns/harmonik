@@ -404,7 +404,7 @@ func TestIntegration_TwinClearRestartCycle_E2E(t *testing.T) {
 		// sequence with the verbatim MULTI-LINE /session-handoff directive (no
 		// flatten). The twin now parses the multi-line directive natively
 		// (hk-fan), so the E2E exercises the maximally-faithful path. Everything
-		// else (ReadGaugeFn, ReadHandoff, CrispIdleFn, DispatchProbe,
+		// else (ReadGaugeFn, ReadHandoff, IdleProbe, DispatchProbe,
 		// ManagedProbe, managed-session port, HandoffFilePath, TruncateHandoffFn,
 		// defaults.
 		InjectFn: keeper.InjectText,
@@ -857,14 +857,15 @@ func TestIntegration_TwinE2E_GaugeStateTransitions(t *testing.T) {
 				HandoffTimeout:    200 * time.Millisecond,
 				PollInterval:      30 * time.Millisecond,
 				ClearSettle:       30 * time.Millisecond,
-				CrispIdleFn:       func(_, _ string) bool { return c.crispIdle },
 				HandoffFilePath:   func(_, _ string) string { return filepath.Join(t.TempDir(), "HANDOFF.md") },
 				ReadHandoff:       func(_ string) (string, error) { return "", nil }, // never confirms → abort.
 				TruncateHandoffFn: func(_ string) error { return nil },
 				WriteJournalFn:    func(_ string, _ *keeper.CycleJournal) error { return nil },
 				InjectFn:          func(_ context.Context, _, _ string) error { return nil },
 			}
-			cycler := mustNewCycler(cfg, em)
+			cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+				deps.Idle = testIdleProbe(c.crispIdle)
+			})
 			cf := &keeper.CtxFile{
 				Tokens:     c.tokens,
 				WindowSize: c.window,

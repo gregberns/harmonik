@@ -53,7 +53,6 @@ func newModelDoneCycler(
 		TruncateHandoffFn: rs.truncate,
 		InjectFn:          rs.inject,
 		ReadGaugeFn:       rs.readGauge,
-		CrispIdleFn:       func(_, _ string) bool { return true },
 		WriteJournalFn:    jc.write,
 	}
 	return mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {

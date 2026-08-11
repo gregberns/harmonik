@@ -206,11 +206,11 @@ func TestKeeperCycle_ForcedClearAboveHardThreshold(t *testing.T) {
 		TruncateHandoffFn: rs.truncate,
 		InjectFn:          injectFn,
 		ReadGaugeFn:       rs.readGauge,
-		CrispIdleFn:       func(_, _ string) bool { return false }, // perpetually busy → force path
 		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
 		deps.Pane = testPaneWithEscape{PaneWriter: deps.Pane, sendEscape: escapeFn}
+		deps.Idle = testIdleProbe(false)
 		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error {
 			managedBinding = sid
 			return nil
@@ -410,10 +410,10 @@ func TestKeeperCycle_PreCompactBackstop(t *testing.T) {
 		TruncateHandoffFn: rs.truncate,
 		InjectFn:          rs.inject,
 		ReadGaugeFn:       rs.readGauge,
-		CrispIdleFn:       func(_, _ string) bool { return false }, // NOT idle — precompact must skip this gate
 		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Idle = testIdleProbe(false)
 		deps.Context = testContextWithClear{ContextStore: deps.Context, clear: func() error {
 			markerCleared = true
 			return nil
@@ -562,7 +562,6 @@ func TestKeeperCycle_ClearBriefHardGate_SlowClear(t *testing.T) {
 		TruncateHandoffFn: rs.truncate,
 		InjectFn:          witnessInject,
 		ReadGaugeFn:       rs.readGauge,
-		CrispIdleFn:       func(_, _ string) bool { return true },
 		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {

@@ -1,4 +1,3 @@
-CrispIdleFn
 CycleIDGen
 HandoffFilePath
 InjectFn

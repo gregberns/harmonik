@@ -71,7 +71,6 @@ func newPrecompactCycler(
 		TruncateHandoffFn: func(_ string) error { return nil },
 		InjectFn:          spy.inject,
 		ReadGaugeFn:       readGaugeFn,
-		CrispIdleFn:       func(_, _ string) bool { return false }, // not used by RunForPrecompact
 		WriteJournalFn:    jc.write,
 	}
 	return mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {

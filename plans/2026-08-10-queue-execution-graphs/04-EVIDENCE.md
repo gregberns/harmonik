@@ -34,6 +34,12 @@ The scenario now runs the real `queue dry-run` client before submission. The ret
 
 A second dry run omits A. It reports B, C, and D as pending and reports only their three edges into E. This proves that dry-run checks the requested subgraph. It does not discover an omitted blocker or certify that the submitted set is complete.
 
+### Parent epic terminal behavior
+
+The strengthened live fan graph passed in 31.13 seconds after parent assertions were added. All five children closed. The parent epic stayed open. The daemon emitted exactly one run-scoped `epic_completed` event for it.
+
+The event is a fact, not a ledger transition. `QuiesceArbiter.handleEpicCompleted` routes that fact to the captain wake path. The current design therefore needs no supervisor during successful child processing. It asks for one supervisor decision after the whole child set finishes.
+
 The durable event log proved:
 
 - A was the first run.

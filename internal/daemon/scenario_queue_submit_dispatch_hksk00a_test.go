@@ -139,6 +139,30 @@ func queueSubmitDispatchDryRunCLI(t *testing.T, projectDir string, ids []core.Be
 	return response
 }
 
+func queueSubmitDispatchEpicCompleted(t *testing.T, jsonlPath string, epicID core.BeadID) []core.Event {
+	t.Helper()
+	f, err := os.Open(jsonlPath)
+	require.NoError(t, err, "open event log")
+	defer f.Close()
+
+	var matches []core.Event
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		var event core.Event
+		if json.Unmarshal(scanner.Bytes(), &event) != nil || event.Type != core.EventTypeEpicCompleted {
+			continue
+		}
+		var payload struct {
+			EpicID string `json:"epic_id"`
+		}
+		if json.Unmarshal(event.Payload, &payload) == nil && payload.EpicID == string(epicID) {
+			matches = append(matches, event)
+		}
+	}
+	require.NoError(t, scanner.Err(), "scan event log")
+	return matches
+}
+
 // queueSubmitDispatchGitRepo initialises a git repository with one commit in
 // dir, and wires a bare-repo "origin" remote so that mergeRunBranchToMain's
 // git-push step succeeds (avoiding push_failed run_failed events in scenario
@@ -885,6 +909,10 @@ func TestScenario_QueueSubmit_FanOutFanIn(t *testing.T) {
 	for _, id := range ids {
 		scenariotest.AssertBeadStatus(t, brWrapper, string(id), "closed")
 	}
+	scenariotest.AssertBeadStatus(t, brWrapper, string(epicID), "open")
+	epicEvents := queueSubmitDispatchEpicCompleted(t, jsonlPath, epicID)
+	require.Len(t, epicEvents, 1, "the last child must emit one epic completion fact")
+	require.NotNil(t, epicEvents[0].RunID, "epic completion must retain the last child run identity")
 	derivedBranch, deriveErr := workspace.IntegrationBranchName(t.Context(), string(epicID))
 	require.NoError(t, deriveErr, "derive epic integration branch")
 	queueSubmitDispatchAssertLanded(t, projectDir, derivedBranch, ids)

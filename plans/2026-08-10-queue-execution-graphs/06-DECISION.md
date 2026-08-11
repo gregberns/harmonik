@@ -42,6 +42,8 @@ The supervisor does not need to act between successful dependency transitions. I
 
 The supervisor should not claim beads, close beads, move queue items, start the next ready child, or merge each normal completion. Those are core actions.
 
+The parent epic is the exception to the child-close rule. The daemon emits one `epic_completed` fact and leaves the parent open. The supervisor inspects the integrated result once. It then closes, revises, or escalates the epic. This preserves a semantic acceptance point without placing the supervisor between routine child transitions.
+
 A daemon restart should also be a core recovery action when the stored facts give one safe answer. The current clean-stop path does not meet that goal. It cancels and archives the active queue, so an agent or operator must reconstruct and resubmit the remaining set. That is mechanical work and should not belong to the supervisor. An abrupt crash can contain ambiguous in-flight work. Deterministic reconciliation should classify it first. An investigator agent should run only when Git, Beads, and queue state do not give one safe action.
 
 ### Human or release owner

@@ -54,3 +54,10 @@ Do not turn open research questions into implementation issues.
 - Evidence: the queue contract checks dependency edges only between items in the submitted group. A real dry run that omitted A from `A -> [B, C, D] -> E` marked B, C, and D pending and reported only their edges into E.
 - State: accepted current boundary. The user said automatic epic expansion is not a priority. The crew must submit every child ID.
 - Future option: add an explicit completeness audit. Do not silently expand the queue because that changes the requested work set.
+
+### Parent epic closure is a supervisor decision
+
+- Claim: the daemon closes the parent when every submitted child finishes.
+- Evidence: the live fan graph closed all five children, kept the parent open, and emitted one run-scoped `epic_completed`. `QuiesceArbiter.handleEpicCompleted` wakes the captain.
+- State: accepted current boundary. The event can include a set with tombstoned children, and the current contract also leaves onward branch promotion outside the core. Closing the epic can therefore require a result judgment.
+- Economy: this is one wake after the graph, not work between child transitions. The captain should inspect the result once and then close, revise, or escalate the epic.

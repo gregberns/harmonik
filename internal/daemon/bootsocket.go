@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/agentmanifest"
@@ -244,6 +245,15 @@ func (bs *bootState) buildPauseConcurrencyTuner(ctx context.Context, queueHandle
 		// the cap to satisfy an oversubscribing request instead of refusing it.
 		if ss, ok := cfg.Substrate.(substrateWithSpawnCapSetter); ok {
 			ha.SetSpawnCapSetFunc(ss.SetSpawnCap)
+			// hk-ad79i: bound that resize on both sides. Read the startup cap
+			// HERE, before any set-concurrency can have moved it — later it is
+			// no longer recoverable, and it is the operator's own declared
+			// configuration.
+			startupCap := 0
+			if getter, ok := cfg.Substrate.(substrateWithSpawnCap); ok {
+				startupCap = getter.SpawnCapSize()
+			}
+			ha.SetSpawnCapBounds(startupCap, hostSpawnCapCeiling())
 		}
 	}
 
@@ -251,6 +261,34 @@ func (bs *bootState) buildPauseConcurrencyTuner(ctx context.Context, queueHandle
 	// rolling 5h token usage. Subject to subsystem partitioning; see
 	// startBandwidthTunerIfEnabled.
 	bs.startBandwidthTunerIfEnabled(ctx)
+}
+
+// spawnCapSessionsPerCPU is how many concurrent agent sessions this daemon is
+// willing to believe one CPU can carry. An agent session is a tmux window
+// running an agent CLI that spends most of its life waiting on a model
+// response, so it is not one busy core each and a small multiple is right. Four
+// is deliberately generous: the number exists to refuse a slipped keystroke,
+// not to tune throughput. An operator who wants more says so with
+// HARMONIK_MAX_CONCURRENT_SESSIONS at startup, and that becomes the floor,
+// which always wins.
+const spawnCapSessionsPerCPU = 4
+
+// hostSpawnCapCeiling is the highest spawn cap `queue set-concurrency` may
+// raise this host to, measured from the host rather than taken from the request
+// (hk-ad79i).
+//
+// The live resize it bounds computes its target as N*2 and had no bound of its
+// own, so it agreed with any number it was given: a real `set-concurrency
+// 999999` against a live daemon installed 1999998 session slots and reported
+// back "safe max_concurrent = 999999", a reassurance computed from the typo. On
+// a control that spends real money per spawned session, the failure mode is a
+// box that stops answering while spending, at the moment the operator is least
+// able to type the command that would undo it.
+//
+// This is measured HERE, at the daemon's composition root, and injected into
+// the queue core, which does not look at the host (PRINCIPLES.md §1).
+func hostSpawnCapCeiling() int {
+	return runtime.NumCPU() * spawnCapSessionsPerCPU
 }
 
 // bandwidthTunerEnabled reports whether the bandwidth-tuner subsystem is switched

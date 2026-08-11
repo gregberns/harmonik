@@ -1015,6 +1015,18 @@ type HandlerAdapter struct {
 	// back to the hk-vfeeo refuse-with-detail behaviour in that case.
 	spawnCapSet func(n int)
 
+	// spawnCapFloor is the spawn cap the daemon started with, read once at
+	// wiring time before any live resize (hk-ad79i). A resize never takes the
+	// cap below it, so a low set-concurrency cannot discard an operator's
+	// explicit HARMONIK_MAX_CONCURRENT_SESSIONS. Zero when not wired.
+	spawnCapFloor int
+
+	// spawnCapCeiling is the highest spawn cap the host is judged able to serve,
+	// measured at boot and injected from the edge (hk-ad79i). A request above it
+	// is REFUSED rather than granted. Zero means unbounded, which is the
+	// behaviour every caller had before this field existed.
+	spawnCapCeiling int
+
 	// workerToggle flips the named worker's enabled state in the daemon's LIVE
 	// worker registry (hk-xjbvi). It returns the resolved worker name on success
 	// or an error (unknown name / no worker configured). Nil when the daemon did
@@ -1075,6 +1087,30 @@ func (a *HandlerAdapter) SetSpawnCapFunc(fn func() int) {
 // Bead ref: hk-omvan.
 func (a *HandlerAdapter) SetSpawnCapSetFunc(fn func(n int)) {
 	a.spawnCapSet = fn
+}
+
+// SetSpawnCapBounds wires the two limits on the live resize (hk-ad79i): the
+// floor a resize may not go below, and the ceiling it may not go above. Both
+// are measured at the edge and injected here, because the queue core does not
+// look at the host (PRINCIPLES.md §1). Called by daemon.Start beside the two
+// setters above. Either may be 0 to leave that side unbounded, which is the
+// behaviour of every caller that predates this method.
+//
+// floor is the cap the daemon STARTED with, read before any resize. It is what
+// stops a low set-concurrency from silently discarding an operator's explicit
+// HARMONIK_MAX_CONCURRENT_SESSIONS.
+//
+// ceiling is the highest cap the host is judged able to serve. A ceiling below
+// the floor would refuse the operator's own declared configuration, so the
+// floor wins and the ceiling is lifted to meet it.
+//
+// Bead ref: hk-ad79i.
+func (a *HandlerAdapter) SetSpawnCapBounds(floor, ceiling int) {
+	a.spawnCapFloor = floor
+	a.spawnCapCeiling = ceiling
+	if ceiling > 0 && floor > ceiling {
+		a.spawnCapCeiling = floor
+	}
 }
 
 // SetWorkerToggleFunc wires the live worker enable/disable setter from the
@@ -1548,6 +1584,79 @@ func (a *HandlerAdapter) HandleQueueList(ctx context.Context) (json.RawMessage, 
 	return data, nil
 }
 
+// resolveSpawnCap decides what the local spawn cap should be for a
+// set-concurrency request of n, given the cap currently in force. It returns
+// the target cap, or a refusal.
+//
+// Each LOCAL in-flight bead occupies 2 non-terminal sessions (implementer +
+// reviewer), so a ceiling of n beads needs n*2 slots. Remote runs (hk-hs7ex)
+// spawn tmux on the WORKER and do not consume the local semaphore, so nothing
+// here applies to them.
+//
+// THE RESIZE IS SYMMETRIC, and that is the repair (hk-ad79i). It used to run
+// only inside `n*2 > cap`, so a LOWER n never reached the setter and the cap
+// RATCHETED: one `set-concurrency 999999` installed 1999998 slots, and setting
+// the value back to 1 left them installed for the life of the daemon. The
+// operator's undo did not undo the thing that matters, and the readback that
+// looked stale was in fact telling the truth about a cap nobody could reach.
+//
+// Three bounds, in the order they are applied:
+//
+//   - The FLOOR. The target never goes below the cap the daemon started with,
+//     so lowering max_concurrent cannot discard an operator's explicit
+//     HARMONIK_MAX_CONCURRENT_SESSIONS. Without it, the fix for the ratchet
+//     would have introduced the mirror-image defect.
+//   - The CEILING. A raise beyond what the host can serve is REFUSED. The
+//     auto-raise (hk-omvan) deliberately replaced the old refusal so the knob
+//     could scale real throughput without a restart, but it took its bound
+//     from the request itself, so it agreed with any number it was given. It
+//     is now bounded by a measurement of the host instead.
+//   - No live resize (spawnCapSet nil, the pre-hk-omvan substrate). Any raise
+//     is refused with the hk-vfeeo detail, unchanged. Lowering is a no-op
+//     there because the cap is fixed at startup.
+//
+// Bead ref: hk-ad79i (follow-ups hk-vfeeo, hk-omvan).
+func (a *HandlerAdapter) resolveSpawnCap(n, currentCap int) (int, *RPCError) {
+	want := n * 2
+	if want < a.spawnCapFloor {
+		want = a.spawnCapFloor
+	}
+	if want <= currentCap {
+		// Lowering, or no change. Nothing to refuse: giving back slots is always
+		// safe. resizableSemaphore.SetCapacity moves a field, in-flight holders
+		// keep the slots they already have, and new acquires block until the
+		// cap drains. Nothing in flight is killed.
+		return want, nil
+	}
+	// A raise from here on.
+	if a.spawnCapSet == nil {
+		safeMax := currentCap / 2
+		return 0, &RPCError{
+			Code: -32099, Message: "spawn_cap_exceeded",
+			Detail: map[string]any{
+				"error":     fmt.Sprintf("set-concurrency %d would oversubscribe the local spawn cap: each LOCAL bead needs 2 sessions, cap = %d non-terminal slots (safe local max_concurrent = %d); restart with --max-concurrent %d or HARMONIK_MAX_CONCURRENT_SESSIONS=%d to raise the cap; remote worker runs are not subject to this limit", n, currentCap, safeMax, n, n*2),
+				"requested": n,
+				"spawn_cap": currentCap,
+				"safe_max":  safeMax,
+			},
+		}
+	}
+	if a.spawnCapCeiling > 0 && want > a.spawnCapCeiling {
+		safeMax := a.spawnCapCeiling / 2
+		return 0, &RPCError{
+			Code: -32099, Message: "spawn_cap_exceeded",
+			Detail: map[string]any{
+				"error":      fmt.Sprintf("set-concurrency %d would raise the local spawn cap past what this host can serve: each LOCAL bead needs 2 sessions, so it asks for %d non-terminal slots against a host bound of %d (safe local max_concurrent = %d); restart with HARMONIK_MAX_CONCURRENT_SESSIONS=%d to declare a higher ceiling deliberately; remote worker runs are not subject to this limit", n, want, a.spawnCapCeiling, safeMax, want),
+				"requested":  n,
+				"spawn_cap":  currentCap,
+				"host_bound": a.spawnCapCeiling,
+				"safe_max":   safeMax,
+			},
+		}
+	}
+	return want, nil
+}
+
 // HandleQueueSetConcurrency updates the daemon's runtime dispatch ceiling.
 // Satisfies daemon.QueueHandler.
 //
@@ -1555,13 +1664,11 @@ func (a *HandlerAdapter) HandleQueueList(ctx context.Context) (json.RawMessage, 
 // and returns the old and new ceiling values. Returns -32099 when the setter
 // is not wired (daemon started without a ConcurrencyController).
 //
-// hk-omvan: when N would oversubscribe the substrate's spawn cap and the
-// substrate supports a live resize, this also raises the spawn cap to
-// max(currentCap, N*2) so the request succeeds — see the spawnCapSet wiring
-// comment below. Otherwise falls back to the hk-vfeeo refuse-with-detail
-// behaviour.
+// It also resizes the substrate's local spawn cap to match the new ceiling,
+// in BOTH directions and within a floor and a ceiling. resolveSpawnCap above
+// owns that decision and states why each bound exists.
 //
-// Bead ref: hk-ohiaf, hk-vfeeo, hk-omvan.
+// Bead ref: hk-ohiaf, hk-vfeeo, hk-omvan, hk-ad79i.
 func (a *HandlerAdapter) HandleQueueSetConcurrency(_ context.Context, params json.RawMessage) (json.RawMessage, *RPCError) {
 	var req QueueSetConcurrencyRequest
 	if err := json.Unmarshal(params, &req); err != nil {
@@ -1584,38 +1691,20 @@ func (a *HandlerAdapter) HandleQueueSetConcurrency(_ context.Context, params jso
 			Detail: map[string]any{"error": "concurrency controller not wired; daemon may not support set-concurrency"},
 		}
 	}
-	// hk-vfeeo / hk-omvan: each LOCAL in-flight bead occupies 2 non-terminal
-	// sessions (implementer + reviewer), so the safe local dispatch ceiling is
-	// spawnCap/2. Remote runs (hk-hs7ex) spawn tmux on the WORKER, not locally,
-	// so they do not consume the local spawnSem — this guard protects the
-	// local sub-cap only; remote slots are not counted here.
-	//
-	// hk-omvan: when the substrate supports a live resize (spawnCapSet wired),
-	// an oversubscribing request RAISES the cap to max(currentCap, N*2) instead
-	// of being refused — the operator's set-concurrency knob now scales real
-	// throughput with no daemon restart. When the substrate predates live
-	// resize (spawnCapSet nil), fall back to the hk-vfeeo refuse-with-detail
-	// behaviour: the cap stays fixed at daemon startup (--max-concurrent × 2)
-	// and raising it requires a restart with a higher value.
+	// The response reports the cap ACTUALLY in force after this call, which is
+	// what makes the readback honest once the resize runs in both directions.
 	spawnCap := 0
 	if a.spawnCapGet != nil {
 		spawnCap = a.spawnCapGet()
 	}
-	if spawnCap > 0 && req.N*2 > spawnCap {
-		if a.spawnCapSet != nil {
-			a.spawnCapSet(req.N * 2)
-			spawnCap = req.N * 2
-		} else {
-			safeMax := spawnCap / 2
-			return nil, &RPCError{
-				Code: -32099, Message: "spawn_cap_exceeded",
-				Detail: map[string]any{
-					"error":     fmt.Sprintf("set-concurrency %d would oversubscribe the local spawn cap: each LOCAL bead needs 2 sessions, cap = %d non-terminal slots (safe local max_concurrent = %d); restart with --max-concurrent %d or HARMONIK_MAX_CONCURRENT_SESSIONS=%d to raise the cap; remote worker runs are not subject to this limit", req.N, spawnCap, safeMax, req.N, req.N*2),
-					"requested": req.N,
-					"spawn_cap": spawnCap,
-					"safe_max":  safeMax,
-				},
-			}
+	if spawnCap > 0 {
+		newCap, rpcErr := a.resolveSpawnCap(req.N, spawnCap)
+		if rpcErr != nil {
+			return nil, rpcErr
+		}
+		if a.spawnCapSet != nil && newCap != spawnCap {
+			a.spawnCapSet(newCap)
+			spawnCap = newCap
 		}
 	}
 

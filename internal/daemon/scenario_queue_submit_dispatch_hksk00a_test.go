@@ -1108,6 +1108,7 @@ func TestScenario_QueueSubmit_CleanStopResumesPendingGraph(t *testing.T) {
 	startAndStop := func(waitForRun bool) {
 		t.Helper()
 		loopCtx, loopCancel := context.WithCancel(context.Background())
+		defer loopCancel()
 		qs := daemon.ExportedNewQueueStore()
 		startDone := make(chan error, 1)
 		go func() {

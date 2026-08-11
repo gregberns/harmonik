@@ -456,11 +456,6 @@ type branchPlan struct {
 //
 // Spec ref: specs/workspace-model.md §4.2 WM-005b.
 func resolveBranchPlan(ctx context.Context, repoRoot, beadID string, beadCfg BranchingConfig, targetBranch, parentBeadID string) (branchPlan, error) {
-	projDefaults, loadErr := branching.LoadCached(repoRoot)
-	if loadErr != nil {
-		return branchPlan{}, fmt.Errorf("daemon: resolveParentCommit for bead %s: %w", beadID, &ErrProjectBranchingConfig{Cause: loadErr})
-	}
-
 	defaultBranch := targetBranch
 	if defaultBranch == "" {
 		defaultBranch = specDefaultStartFrom
@@ -473,7 +468,10 @@ func resolveBranchPlan(ctx context.Context, repoRoot, beadID string, beadCfg Bra
 		}
 	}
 
-	cfg := resolveBranchingWithDefaults(beadCfg, projDefaults, defaultBranch)
+	cfg, resolveErr := resolveBranchingFrom(ctx, beadCfg, repoRoot, defaultBranch)
+	if resolveErr != nil {
+		return branchPlan{}, fmt.Errorf("daemon: resolveParentCommit for bead %s: %w", beadID, resolveErr)
+	}
 	if parentBeadID != "" && (cfg.StartFrom == defaultBranch || cfg.LandsOn == defaultBranch) {
 		base := targetBranch
 		if base == "" {

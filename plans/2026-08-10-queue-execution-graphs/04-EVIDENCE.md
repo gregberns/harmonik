@@ -207,4 +207,12 @@ The real merge conflict and merge serialization scenarios passed together in 5.5
 
 The focused queue, queue-wiring, and workspace packages pass. The broad daemon package has three unrelated failures in `dot_node_baseline_test.go`. Each fixture reached no terminal transition within 50 seconds. Delta does not change those tests or their product path. The operator directed delta to disregard unrelated red tests and continue.
 
+After the final alpha sync at `f0704feee`, the five live scenarios passed in 140.64 seconds. The real merge conflict and serialization scenarios passed in 13.95 seconds. Queue, queue wiring, and workspace package tests passed.
+
+The final static gate found three delta contract gaps. The clean-restart fixture did not cancel its context on every path. The scheduler freeze gate still named the retired shutdown-cancel helper. Dependency failure wrote item status outside the transition owner. Delta fixed all three. Tagged vet, the scheduler freeze gate, the queue status ratchet, focused tests, and the reachability gate then passed.
+
+The restart design made the old shutdown-cancel APIs and their tests unreachable. Delta removed them. The branch resolver returned to the production branch-plan path. The reachability gate reports no new unreachable names.
+
+The last pre-commit `make fast` run reached changed-line lint. It stopped on five findings in `internal/keeper/heartbeat.go` and `internal/workspace/workertrust_isolation_test.go`. Those files are unchanged from alpha. The operator directed delta to disregard red tests outside its scope.
+
 Use one section per scenario. Include the exact command, binary commit, fixture commit, event IDs or stable log paths, branch graph, ledger state, and result.

@@ -4,7 +4,7 @@ Updated: 2026-08-11
 
 ## Current stage
 
-Core research and runtime proof are complete. Serial and fan-out or fan-in graphs pass through the real daemon and Unix-socket CLI without supervisor action. Crash replay will gain stronger assertions when alpha's durable producer and startup replay land.
+Delta's queue graph work is complete. Serial and fan-out or fan-in graphs pass through the real daemon and Unix-socket CLI without supervisor action. One later assertion depends on Charlie's unfinished durable replay work.
 
 ## Completed
 
@@ -51,17 +51,23 @@ Core research and runtime proof are complete. Serial and fan-out or fan-in graph
 - Synced delta through alpha integration commit `4e149dff6` and re-ran the two large graph scenarios successfully.
 - Ran the current five-scenario gate with canonical validation paths. All scenarios passed in 101.43 seconds.
 - Found and fixed a failed-dependency release defect. Descendants now fail directly during group completion and never reach reservation or claim.
+- Synced through alpha integration commit `f0704feee`.
+- Re-ran the five live queue scenarios. They passed in 140.64 seconds.
+- Re-ran the conflict and serialization scenarios. They passed in 13.95 seconds.
+- Removed the retired shutdown-cancel path after restart parking replaced it.
+- Updated the scheduler and queue status ownership gates for the new paths.
 
 ## Next
 
-- Coordinate the abrupt-crash scenario with C21 when its producer and startup replay land.
-- Review alpha integration changes and add durable replay assertions when that work lands.
+- Merge delta into the integration branch.
+- Add durable replay assertions after Charlie lands its producer and startup replay work.
 
 ## Constraints
 
 - The shared checkout belongs to lane alpha and is dirty. Delta does not edit it.
 - Kerf cannot create a work from this worktree because its global project link points to the shared checkout.
-- The default macOS Bash 3 cannot run one script test because it lacks `mapfile`. Bash 5 is installed at `/opt/homebrew/bin/bash`. `PATH=/opt/homebrew/bin:$PATH make fast` is green: 8,342 tests passed and 45 existing tests were skipped.
+- The default macOS Bash 3 cannot run one script test because it lacks `mapfile`. Bash 5 is installed at `/opt/homebrew/bin/bash`.
+- The final pre-commit `make fast` reached changed-line lint. It found five issues in current-alpha keeper and workspace files. Delta does not change those files. Run the gate again after this commit so it checks delta's patch.
 - `PATH=/opt/homebrew/bin:$PATH make full` ran 75,687 tests across 108 packages. All tests passed and 54 tests were skipped. The final repository-wide lint allow-list step failed on ten file and linter pairs outside delta's diff. The files belong to other active lanes and were present in delta's base. Delta did not change them or weaken the allow list.
 - Delta has committed graph tests, restart fixes, parent branch wiring, and abrupt-crash proof.
 - Free disk recovered above the watermark. The parent branch and clean restart scenarios now pass.

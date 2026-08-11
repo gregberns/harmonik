@@ -391,8 +391,9 @@ func ReevaluateDeferred(ctx context.Context, g *Group, ledger BeadLedger) ([]cor
 				continue
 			}
 			if g.Items[j].Status == ItemStatusFailed {
-				g.Items[i].Status = ItemStatusFailed
-				g.Items[i].LastFailureReason = "dependency_failed:" + string(blocker)
+				if err := FailDeferredItem(&g.Items[i], string(blocker)); err != nil {
+					return undeferred, err
+				}
 				dependencyFailed = true
 				break
 			}
@@ -449,8 +450,9 @@ func FailDeferredDependents(ctx context.Context, g *Group, failedBead core.BeadI
 				if !blocks {
 					continue
 				}
-				g.Items[i].Status = ItemStatusFailed
-				g.Items[i].LastFailureReason = "dependency_failed:" + string(blocker)
+				if err := FailDeferredItem(&g.Items[i], string(blocker)); err != nil {
+					return propagated, err
+				}
 				failed[g.Items[i].BeadID] = true
 				propagated = append(propagated, g.Items[i].BeadID)
 				changed = true

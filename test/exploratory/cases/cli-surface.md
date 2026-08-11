@@ -139,17 +139,42 @@ between the keystroke and the effect.
 
 Class: probe
 Exercises: `promote --dry-run`
-Bead: `hk-promote-dryrun-validates-nothing-975nt`
-Status: OPEN at `daf396b41`
+Bead: `hk-promote-dryrun-validates-nothing-975nt`; repro defect `hk-q21jt`
+Status: OPEN at `938b3c4cb` — **bug re-confirmed live; the STEPS below were wrong until 2026-08-11**
 
-Steps:
+Steps — **both lines below were previously recorded with flags that do not exist.** SHAs are
+POSITIONAL (`harmonik promote <sha>...`); there is no `--sha`. Run these against any repo with at
+least one commit. `--dry-run` mutates nothing.
 
-    harmonik promote --dry-run --sha deadbeefdeadbeefdeadbeefdeadbeefdeadbeef --project "$SCRATCH"
-    harmonik promote --dry-run --target refs/heads/branch-that-does-not-exist --project "$SCRATCH"
+    SHA=$(git rev-parse HEAD)
+    # a commit that does not exist, real target
+    out=$(harmonik promote --dry-run deadbeefdeadbeefdeadbeefdeadbeefdeadbeef \
+          --target main --project "$SCRATCH" 2>&1); echo "rc=$?"; echo "$out"
+    # real commit, a target branch that does not exist
+    out=$(harmonik promote --dry-run "$SHA" \
+          --target refs/heads/branch-that-does-not-exist --project "$SCRATCH" 2>&1); echo "rc=$?"
 
 Expect: each refuses, naming which input could not be resolved.
 
-Failure signature: an identical plan printed for both, exit 0.
+Failure signature: **both exit 0** and print a full plan, including the push line:
+
+    harmonik promote (dry-run): would cherry-pick 938b3c4cb... onto
+      "refs/heads/branch-that-does-not-exist" in a temp worktree
+    harmonik promote (dry-run): would push: git push origin
+      HEAD:refs/heads/branch-that-does-not-exist (with up to 3 non-ff retries)
+
+**What the old steps did instead, and why this case is the library's own cautionary tale.** The
+recorded repro was written from memory of the command surface rather than from a run, and it was
+broken in two different ways, both of which read as a PASS:
+
+- `--sha deadbeef...` exited 1 with `unknown flag "--sha"` — dead on flag parsing, never reaching
+  the code under test.
+- `--target refs/heads/nope` with no SHA exited 1 with `push-mode requires at least one SHA
+  argument` — a refusal, but for the missing SHA, not the bad target.
+
+The case expects a refusal, so **both non-zero exits read as correct behaviour and the case
+reported this live bug as FIXED.** Found by alpha, filed as `hk-q21jt`, verified here. The bug was
+never fixed; only the test for it was broken.
 
 Why it matters: `promote` is how work reaches the target branch, so this is the release path's
 own safety check — and it cannot fail. A dry run that always succeeds trains the operator to

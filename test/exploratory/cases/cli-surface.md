@@ -218,8 +218,11 @@ Steps:
 
 Failure signature: both point the operator at `harmonik status`, which does not exist.
 
-Why it matters: the phantom command compounds LP-002 — the flag-first spelling of the
-non-existent command starts a daemon. Following the help text is what triggers the trap.
+Why it matters: the phantom command used to compound LP-002 — the flag-first spelling of a
+non-existent command started a daemon, so following the help text was what triggered the trap.
+**That second half is FIXED at `5dd157cb9`** (verified 2026-08-11): `harmonik --project DIR status`
+now exits 2 and starts nothing. The phantom command in the help text is the part this case owns,
+and it was fixed earlier at `2c5b5b03b`.
 
 **Related, found while re-checking this one:** `hk-verdict-override-unwired-aqjxo` — no run
 can ever be parked awaiting a verdict, because the executor never calls `Await`. Both verdict
@@ -402,10 +405,13 @@ it degrades honestly rather than pretending, marking the registry entries `stale
 ago)` instead of reporting them online.
 
 Why it matters: this is the failure every operator and every agent hits constantly, and it is the
-one place a CLI is most tempted to be helpful by starting a daemon for you. Nothing here does. Note
-the contrast that makes this worth recording: **the flag-first hole (LP-002) reaches daemon-start
-through this same binary**, so "the daemon-down path is safe" is true of the verb-first spelling and
-NOT of `harmonik --project DIR queue list`. Sweeping this surface is how you tell those apart.
+one place a CLI is most tempted to be helpful by starting a daemon for you. Nothing here does.
+
+**The contrast this used to record is gone, and that is the update.** When this was swept, the
+flag-first hole (LP-002) reached daemon-start through the same binary, so "the daemon-down path is
+safe" held for the verb-first spelling and NOT for `harmonik --project DIR queue list`. **LP-002 is
+FIXED at `5dd157cb9`**, so all four spellings now refuse and the distinction no longer exists.
+Both surfaces are safe today; do not re-derive the old asymmetry from this paragraph.
 
 Do not re-sweep this surface looking for silent-success defects. The two found in this pass
 (LP-015, LP-016) are on the *live-daemon* path, not this one.

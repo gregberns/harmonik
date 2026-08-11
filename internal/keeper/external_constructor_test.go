@@ -22,6 +22,7 @@ func mustNewCyclerWithDeps(
 	deps.Dispatch = testDispatchProbe(false)
 	deps.Pane = testPaneWithEnv{PaneWriter: deps.Pane}
 	deps.Context = testContextWithManaged{ContextStore: deps.Context}
+	deps.Activity = testActivityWithIdle{ActivityProbe: deps.Activity, idleMarker: func() (time.Time, bool) { return time.Now(), true }}
 	if modify != nil {
 		modify(&deps)
 	}
@@ -127,6 +128,15 @@ type testActivityWithTurns struct {
 	keeper.ActivityProbe
 	dir  string
 	turn func(string, string, string) (time.Time, bool)
+}
+
+type testActivityWithIdle struct {
+	keeper.ActivityProbe
+	idleMarker func() (time.Time, bool)
+}
+
+func (a testActivityWithIdle) IdleMarkerModTime() (time.Time, bool) {
+	return a.idleMarker()
 }
 
 func (a testActivityWithTurns) LastUserTurn(sid string) (time.Time, bool) {

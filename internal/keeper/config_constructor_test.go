@@ -1,6 +1,9 @@
 package keeper
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 func mustNewCycler(cfg CyclerConfig, emitter Emitter) *Cycler {
 	deps := CycleDepsFromConfig(cfg, emitter)
@@ -9,6 +12,7 @@ func mustNewCycler(cfg CyclerConfig, emitter Emitter) *Cycler {
 	deps.Dispatch = boolProbe(func() bool { return false })
 	deps.Pane = configTestPane{PaneWriter: deps.Pane}
 	deps.Context = configTestContext{ContextStore: deps.Context}
+	deps.Activity = configTestActivity{ActivityProbe: deps.Activity}
 	cycler, err := NewCyclerWithDeps(
 		CyclePolicyFromConfig(cfg), CycleEnvFromConfig(cfg), deps,
 	)
@@ -25,3 +29,7 @@ func (configTestPane) SetEnv(context.Context, string, string, string) error { re
 type configTestContext struct{ ContextStore }
 
 func (configTestContext) SetManagedSession(string) error { return nil }
+
+type configTestActivity struct{ ActivityProbe }
+
+func (configTestActivity) IdleMarkerModTime() (time.Time, bool) { return time.Now(), true }

@@ -291,7 +291,6 @@ func TestZJ1Y_SelfServiceRestart_GaugeDrop_ExactlyOneClear(t *testing.T) {
 		// ModelDoneTimeout (60s) fail-open before clearing, making this test
 		// needlessly slow. Model-done speed does not affect the /clear count; it
 		// only removes the 60s wait.
-		IdleMarkerModTimeFn: func(_, _ string) (time.Time, bool) { return time.Now(), true },
 	}
 	cycler := mustNewCycler(cfg, em)
 	ctx := context.Background()

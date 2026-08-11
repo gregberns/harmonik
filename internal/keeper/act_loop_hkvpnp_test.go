@@ -34,17 +34,16 @@ func realHandoffCycler(t *testing.T, agent, projectDir, cycleID string, spy *cyc
 	t.Helper()
 	handoffPath := filepath.Join(projectDir, "HANDOFF-"+agent+".md")
 	cfg := keeper.CyclerConfig{
-		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
-		AgentName:           agent,
-		ProjectDir:          projectDir,
-		TmuxTarget:          "fake-pane",
-		ActPct:              90.0,
-		WarnPct:             80.0,
-		ForceActPct:         200.0, // disable the force-clear path for this test
-		HandoffTimeout:      60 * time.Millisecond,
-		ClearSettle:         30 * time.Millisecond,
-		PollInterval:        10 * time.Millisecond,
-		CycleIDGen:          func() string { return cycleID },
+		AgentName:      agent,
+		ProjectDir:     projectDir,
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		ForceActPct:    200.0, // disable the force-clear path for this test
+		HandoffTimeout: 60 * time.Millisecond,
+		ClearSettle:    30 * time.Millisecond,
+		PollInterval:   10 * time.Millisecond,
+		CycleIDGen:     func() string { return cycleID },
 		HandoffFilePath: func(_, _ string) string {
 			return handoffPath
 		},
@@ -136,17 +135,16 @@ func TestActLoop_HKVPNP_DoesNotRefireSecondNonceAfterTimeout(t *testing.T) {
 	}
 
 	cfg := keeper.CyclerConfig{
-		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
-		AgentName:           agent,
-		ProjectDir:          dir,
-		TmuxTarget:          "fake-pane",
-		ActPct:              90.0,
-		WarnPct:             80.0,
-		ForceActPct:         200.0,
-		HandoffTimeout:      40 * time.Millisecond,
-		ClearSettle:         20 * time.Millisecond,
-		PollInterval:        10 * time.Millisecond,
-		CycleIDGen:          idGen,
+		AgentName:      agent,
+		ProjectDir:     dir,
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		ForceActPct:    200.0,
+		HandoffTimeout: 40 * time.Millisecond,
+		ClearSettle:    20 * time.Millisecond,
+		PollInterval:   10 * time.Millisecond,
+		CycleIDGen:     idGen,
 		HandoffFilePath: func(_, _ string) string {
 			return handoffPath
 		},

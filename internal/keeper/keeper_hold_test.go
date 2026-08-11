@@ -606,16 +606,15 @@ func TestRunForPrecompact_SuppressedWhenHeld(t *testing.T) {
 		nonce := "<!-- KEEPER:" + cycleID + " -->"
 
 		cfg := keeper.CyclerConfig{
-			IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
-			AgentName:           agent,
-			ProjectDir:          dir,
-			TmuxTarget:          "fake-pane",
-			ActPct:              90.0,
-			WarnPct:             80.0,
-			HandoffTimeout:      200 * time.Millisecond,
-			ClearSettle:         20 * time.Millisecond,
-			PollInterval:        10 * time.Millisecond,
-			CycleIDGen:          func() string { return cycleID },
+			AgentName:      agent,
+			ProjectDir:     dir,
+			TmuxTarget:     "fake-pane",
+			ActPct:         90.0,
+			WarnPct:        80.0,
+			HandoffTimeout: 200 * time.Millisecond,
+			ClearSettle:    20 * time.Millisecond,
+			PollInterval:   10 * time.Millisecond,
+			CycleIDGen:     func() string { return cycleID },
 			HandoffFilePath: func(_, a string) string {
 				return filepath.Join(dir, "HANDOFF-"+a+".md")
 			},
@@ -689,17 +688,16 @@ func TestRunForIdle_SuppressedWhenHeld(t *testing.T) {
 		nonce := "<!-- KEEPER:" + cycleID + " -->"
 
 		cfg := keeper.CyclerConfig{
-			IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
-			AgentName:           agent,
-			ProjectDir:          dir,
-			TmuxTarget:          "fake-pane",
-			ActAbsTokens:        300_000,
-			ActPct:              90.0,
-			WarnPct:             80.0,
-			HandoffTimeout:      200 * time.Millisecond,
-			ClearSettle:         20 * time.Millisecond,
-			PollInterval:        10 * time.Millisecond,
-			CycleIDGen:          func() string { return cycleID },
+			AgentName:      agent,
+			ProjectDir:     dir,
+			TmuxTarget:     "fake-pane",
+			ActAbsTokens:   300_000,
+			ActPct:         90.0,
+			WarnPct:        80.0,
+			HandoffTimeout: 200 * time.Millisecond,
+			ClearSettle:    20 * time.Millisecond,
+			PollInterval:   10 * time.Millisecond,
+			CycleIDGen:     func() string { return cycleID },
 			HandoffFilePath: func(_, a string) string {
 				return filepath.Join(dir, "HANDOFF-"+a+".md")
 			},

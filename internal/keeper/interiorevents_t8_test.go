@@ -49,13 +49,12 @@ func newModelDoneCycler(
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
-		ReadHandoff:         rs.readHandoff,
-		TruncateHandoffFn:   rs.truncate,
-		InjectFn:            rs.inject,
-		ReadGaugeFn:         rs.readGauge,
-		CrispIdleFn:         func(_, _ string) bool { return true },
-		WriteJournalFn:      jc.write,
-		IdleMarkerModTimeFn: idleMarker,
+		ReadHandoff:       rs.readHandoff,
+		TruncateHandoffFn: rs.truncate,
+		InjectFn:          rs.inject,
+		ReadGaugeFn:       rs.readGauge,
+		CrispIdleFn:       func(_, _ string) bool { return true },
+		WriteJournalFn:    jc.write,
 	}
 	return mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
 		deps.Handoff = testHandoffWithModTime{HandoffDocument: deps.Handoff, modTime: rs.handoffModTime}
@@ -64,6 +63,9 @@ func newModelDoneCycler(
 			dir:           projectDir,
 			turn:          transcriptTurn,
 		}
+		deps.Activity = testActivityWithIdle{ActivityProbe: deps.Activity, idleMarker: func() (time.Time, bool) {
+			return idleMarker(projectDir, agent)
+		}}
 		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error {
 			mu.Lock()
 			defer mu.Unlock()

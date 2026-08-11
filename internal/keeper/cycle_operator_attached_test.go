@@ -60,16 +60,15 @@ func newAttachTestCycler(
 	attachFn func(string) bool,
 ) *keeper.Cycler {
 	cfg := keeper.CyclerConfig{
-		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
-		AgentName:           agent,
-		ProjectDir:          projectDir,
-		TmuxTarget:          "fake-pane",
-		ActPct:              90.0,
-		WarnPct:             80.0,
-		HandoffTimeout:      200 * time.Millisecond,
-		ClearSettle:         50 * time.Millisecond,
-		PollInterval:        5 * time.Millisecond,
-		CycleIDGen:          func() string { return cycleID },
+		AgentName:      agent,
+		ProjectDir:     projectDir,
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		HandoffTimeout: 200 * time.Millisecond,
+		ClearSettle:    50 * time.Millisecond,
+		PollInterval:   5 * time.Millisecond,
+		CycleIDGen:     func() string { return cycleID },
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
@@ -263,16 +262,15 @@ func TestCycler_Precompact_OperatorAttached_Suppresses(t *testing.T) {
 
 	var cleared int
 	cfg := keeper.CyclerConfig{
-		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
-		AgentName:           agent,
-		ProjectDir:          t.TempDir(),
-		TmuxTarget:          "fake-pane",
-		ActPct:              90.0,
-		WarnPct:             80.0,
-		HandoffTimeout:      200 * time.Millisecond,
-		ClearSettle:         50 * time.Millisecond,
-		PollInterval:        5 * time.Millisecond,
-		CycleIDGen:          func() string { return cycleID },
+		AgentName:      agent,
+		ProjectDir:     t.TempDir(),
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		HandoffTimeout: 200 * time.Millisecond,
+		ClearSettle:    50 * time.Millisecond,
+		PollInterval:   5 * time.Millisecond,
+		CycleIDGen:     func() string { return cycleID },
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},

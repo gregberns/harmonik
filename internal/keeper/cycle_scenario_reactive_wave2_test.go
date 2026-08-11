@@ -189,17 +189,16 @@ func TestKeeperCycle_ForcedClearAboveHardThreshold(t *testing.T) {
 	}
 
 	cfg := keeper.CyclerConfig{
-		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
-		AgentName:           agent,
-		ProjectDir:          t.TempDir(),
-		TmuxTarget:          "fake-pane",
-		ActPct:              90.0,
-		WarnPct:             80.0,
-		ForceActPct:         95.0,
-		HandoffTimeout:      500 * time.Millisecond,
-		ClearSettle:         300 * time.Millisecond,
-		PollInterval:        5 * time.Millisecond,
-		CycleIDGen:          func() string { return cycleID },
+		AgentName:      agent,
+		ProjectDir:     t.TempDir(),
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		ForceActPct:    95.0,
+		HandoffTimeout: 500 * time.Millisecond,
+		ClearSettle:    300 * time.Millisecond,
+		PollInterval:   5 * time.Millisecond,
+		CycleIDGen:     func() string { return cycleID },
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
@@ -395,16 +394,15 @@ func TestKeeperCycle_PreCompactBackstop(t *testing.T) {
 
 	var markerCleared bool
 	cfg := keeper.CyclerConfig{
-		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
-		AgentName:           agent,
-		ProjectDir:          t.TempDir(),
-		TmuxTarget:          "fake-pane",
-		ActPct:              90.0,
-		WarnPct:             80.0,
-		HandoffTimeout:      500 * time.Millisecond,
-		ClearSettle:         300 * time.Millisecond,
-		PollInterval:        5 * time.Millisecond,
-		CycleIDGen:          func() string { return cycleID },
+		AgentName:      agent,
+		ProjectDir:     t.TempDir(),
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		HandoffTimeout: 500 * time.Millisecond,
+		ClearSettle:    300 * time.Millisecond,
+		PollInterval:   5 * time.Millisecond,
+		CycleIDGen:     func() string { return cycleID },
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
@@ -546,7 +544,6 @@ func TestKeeperCycle_ClearBriefHardGate_SlowClear(t *testing.T) {
 
 	var mu sync.Mutex
 	cfg := keeper.CyclerConfig{
-		IdleMarkerModTimeFn:  idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
 		AgentName:            agent,
 		ProjectDir:           t.TempDir(),
 		TmuxTarget:           "fake-pane",

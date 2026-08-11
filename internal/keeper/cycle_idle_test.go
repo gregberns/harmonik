@@ -44,17 +44,16 @@ func newIdleCycler(
 	}
 
 	cfg := keeper.CyclerConfig{
-		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
-		AgentName:           "idle-agent",
-		ProjectDir:          projectDir,
-		TmuxTarget:          "fake-pane",
-		ActAbsTokens:        actAbsForIdleTests,
-		ActPct:              90.0,
-		WarnPct:             80.0,
-		HandoffTimeout:      500 * time.Millisecond,
-		ClearSettle:         50 * time.Millisecond,
-		PollInterval:        10 * time.Millisecond,
-		CycleIDGen:          func() string { return cycleID },
+		AgentName:      "idle-agent",
+		ProjectDir:     projectDir,
+		TmuxTarget:     "fake-pane",
+		ActAbsTokens:   actAbsForIdleTests,
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		HandoffTimeout: 500 * time.Millisecond,
+		ClearSettle:    50 * time.Millisecond,
+		PollInterval:   10 * time.Millisecond,
+		CycleIDGen:     func() string { return cycleID },
 		HandoffFilePath: func(_, agent string) string {
 			return filepath.Join(projectDir, "HANDOFF-"+agent+".md")
 		},

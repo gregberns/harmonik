@@ -87,16 +87,15 @@ func newConvoAwareCycler(
 	t.Helper()
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	cfg := keeper.CyclerConfig{
-		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
-		AgentName:           agent,
-		ProjectDir:          projectDir,
-		TmuxTarget:          "fake-pane",
-		ActPct:              90.0,
-		WarnPct:             80.0,
-		HandoffTimeout:      200 * time.Millisecond,
-		ClearSettle:         50 * time.Millisecond,
-		PollInterval:        5 * time.Millisecond,
-		CycleIDGen:          func() string { return cycleID },
+		AgentName:      agent,
+		ProjectDir:     projectDir,
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		HandoffTimeout: 200 * time.Millisecond,
+		ClearSettle:    50 * time.Millisecond,
+		PollInterval:   5 * time.Millisecond,
+		CycleIDGen:     func() string { return cycleID },
 		HandoffFilePath: func(_, a string) string {
 			return filepath.Join(projectDir, "HANDOFF-"+a+".md")
 		},
@@ -181,16 +180,15 @@ func TestCycler_StaleOperatorTurn_DoesNotSuppress(t *testing.T) {
 	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
 
 	cfg := keeper.CyclerConfig{
-		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
-		AgentName:           agent,
-		ProjectDir:          projectDir,
-		TmuxTarget:          "fake-pane",
-		ActPct:              90.0,
-		WarnPct:             80.0,
-		HandoffTimeout:      200 * time.Millisecond,
-		ClearSettle:         50 * time.Millisecond,
-		PollInterval:        5 * time.Millisecond,
-		CycleIDGen:          func() string { return cycleID },
+		AgentName:      agent,
+		ProjectDir:     projectDir,
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		HandoffTimeout: 200 * time.Millisecond,
+		ClearSettle:    50 * time.Millisecond,
+		PollInterval:   5 * time.Millisecond,
+		CycleIDGen:     func() string { return cycleID },
 		HandoffFilePath: func(_, a string) string {
 			return filepath.Join(projectDir, "HANDOFF-"+a+".md")
 		},
@@ -245,16 +243,15 @@ func TestCycler_ToolResultUserTurn_DoesNotSuppress(t *testing.T) {
 	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
 
 	cfg := keeper.CyclerConfig{
-		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
-		AgentName:           agent,
-		ProjectDir:          projectDir,
-		TmuxTarget:          "fake-pane",
-		ActPct:              90.0,
-		WarnPct:             80.0,
-		HandoffTimeout:      200 * time.Millisecond,
-		ClearSettle:         50 * time.Millisecond,
-		PollInterval:        5 * time.Millisecond,
-		CycleIDGen:          func() string { return cycleID },
+		AgentName:      agent,
+		ProjectDir:     projectDir,
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		HandoffTimeout: 200 * time.Millisecond,
+		ClearSettle:    50 * time.Millisecond,
+		PollInterval:   5 * time.Millisecond,
+		CycleIDGen:     func() string { return cycleID },
 		HandoffFilePath: func(_, a string) string {
 			return filepath.Join(projectDir, "HANDOFF-"+a+".md")
 		},
@@ -309,16 +306,15 @@ func TestCycler_OperatorTurnLookbackZero_DisablesGate5d(t *testing.T) {
 	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
 
 	cfg := keeper.CyclerConfig{
-		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
-		AgentName:           agent,
-		ProjectDir:          projectDir,
-		TmuxTarget:          "fake-pane",
-		ActPct:              90.0,
-		WarnPct:             80.0,
-		HandoffTimeout:      200 * time.Millisecond,
-		ClearSettle:         50 * time.Millisecond,
-		PollInterval:        5 * time.Millisecond,
-		CycleIDGen:          func() string { return cycleID },
+		AgentName:      agent,
+		ProjectDir:     projectDir,
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		HandoffTimeout: 200 * time.Millisecond,
+		ClearSettle:    50 * time.Millisecond,
+		PollInterval:   5 * time.Millisecond,
+		CycleIDGen:     func() string { return cycleID },
 		HandoffFilePath: func(_, a string) string {
 			return filepath.Join(projectDir, "HANDOFF-"+a+".md")
 		},
@@ -462,16 +458,15 @@ func TestCycler_PostAnswerGrace_Expired_DoesNotSuppress(t *testing.T) {
 	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
 
 	cfg := keeper.CyclerConfig{
-		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
-		AgentName:           agent,
-		ProjectDir:          projectDir,
-		TmuxTarget:          "fake-pane",
-		ActPct:              90.0,
-		WarnPct:             80.0,
-		HandoffTimeout:      200 * time.Millisecond,
-		ClearSettle:         50 * time.Millisecond,
-		PollInterval:        5 * time.Millisecond,
-		CycleIDGen:          func() string { return cycleID },
+		AgentName:      agent,
+		ProjectDir:     projectDir,
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		HandoffTimeout: 200 * time.Millisecond,
+		ClearSettle:    50 * time.Millisecond,
+		PollInterval:   5 * time.Millisecond,
+		CycleIDGen:     func() string { return cycleID },
 		HandoffFilePath: func(_, a string) string {
 			return filepath.Join(projectDir, "HANDOFF-"+a+".md")
 		},
@@ -525,16 +520,15 @@ func TestCycler_AssistantToolUseTurn_DoesNotTriggerGrace(t *testing.T) {
 	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
 
 	cfg := keeper.CyclerConfig{
-		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
-		AgentName:           agent,
-		ProjectDir:          projectDir,
-		TmuxTarget:          "fake-pane",
-		ActPct:              90.0,
-		WarnPct:             80.0,
-		HandoffTimeout:      200 * time.Millisecond,
-		ClearSettle:         50 * time.Millisecond,
-		PollInterval:        5 * time.Millisecond,
-		CycleIDGen:          func() string { return cycleID },
+		AgentName:      agent,
+		ProjectDir:     projectDir,
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		HandoffTimeout: 200 * time.Millisecond,
+		ClearSettle:    50 * time.Millisecond,
+		PollInterval:   5 * time.Millisecond,
+		CycleIDGen:     func() string { return cycleID },
 		HandoffFilePath: func(_, a string) string {
 			return filepath.Join(projectDir, "HANDOFF-"+a+".md")
 		},

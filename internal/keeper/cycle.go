@@ -168,17 +168,10 @@ type CyclerConfig struct {
 	// crew's handoff on every cycle after the first (hk-4tjyj). Nil →
 	// defaultScrubHandoffNonces.
 	TruncateHandoffFn func(path string) error
-	// IdleMarkerModTimeFn reports the Stop-hook .idle marker's mtime and whether
-	// it exists — the PRIMARY model-done source (SK-014): in AwaitModelDone the
-	// shell reads it each detection tick and the first mtime ≥ t_nonce (the
-	// nonce-confirmation instant, strict compare, NO crispIdleTolerance) yields
-	// ModelDone{source:"idle_marker"}. Nil → defaultIdleMarkerModTime (os.Stat
-	// on .harmonik/keeper/<agent>.idle).
-	IdleMarkerModTimeFn func(projectDir, agentName string) (time.Time, bool)
-	InjectFn            func(ctx context.Context, target, text string) error
-	ReadGaugeFn         func(projectDir, agentName string) (*CtxFile, time.Time, error)
-	CrispIdleFn         func(projectDir, agentName string) bool
-	WriteJournalFn      func(path string, j *CycleJournal) error
+	InjectFn          func(ctx context.Context, target, text string) error
+	ReadGaugeFn       func(projectDir, agentName string) (*CtxFile, time.Time, error)
+	CrispIdleFn       func(projectDir, agentName string) bool
+	WriteJournalFn    func(path string, j *CycleJournal) error
 
 	// ForceRetryInterval is the minimum duration after a forced-clear attempt
 	// (above ForceActPct) before the keeper retries on the same session_id.
@@ -332,9 +325,6 @@ func (c *CyclerConfig) applyDefaults() {
 	}
 	if c.TruncateHandoffFn == nil {
 		c.TruncateHandoffFn = defaultScrubHandoffNonces
-	}
-	if c.IdleMarkerModTimeFn == nil {
-		c.IdleMarkerModTimeFn = defaultIdleMarkerModTime
 	}
 	if c.InjectFn == nil {
 		// Bind the production injector to the cycle Clock so the settle/retry

@@ -133,16 +133,16 @@ func TestScenario_LateHandoff300sFakeClock_Aborts_qji8g(t *testing.T) {
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
-		ReadHandoff:         rs.readHandoff,
-		TruncateHandoffFn:   rs.truncate,
-		InjectFn:            rs.inject,
-		ReadGaugeFn:         rs.readGauge,
-		CrispIdleFn:         func(_, _ string) bool { return true },
-		WriteJournalFn:      jc.write,
-		IdleMarkerModTimeFn: func(_, _ string) (time.Time, bool) { return clock.Now(), true },
+		ReadHandoff:       rs.readHandoff,
+		TruncateHandoffFn: rs.truncate,
+		InjectFn:          rs.inject,
+		ReadGaugeFn:       rs.readGauge,
+		CrispIdleFn:       func(_, _ string) bool { return true },
+		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
 		deps.Handoff = testHandoffWithModTime{HandoffDocument: deps.Handoff, modTime: rs.handoffModTime}
+		deps.Activity = testActivityWithIdle{ActivityProbe: deps.Activity, idleMarker: func() (time.Time, bool) { return clock.Now(), true }}
 	})
 
 	errCh := make(chan error, 1)
@@ -269,17 +269,16 @@ func TestScenario_ForceAct_NeverIdleStillCut_qji8g(t *testing.T) {
 	cfg := keeper.CyclerConfig{
 		// Stop hook wired and freshly fired (T8, SK-014): ModelDone lands on the
 		// first AwaitModelDone poll so the force cycle does not stall the phase.
-		IdleMarkerModTimeFn: idleMarkerFreshNow,
-		AgentName:           agent,
-		ProjectDir:          t.TempDir(),
-		TmuxTarget:          "fake-pane",
-		ActPct:              90.0,
-		WarnPct:             80.0,
-		ForceActPct:         95.0,
-		HandoffTimeout:      500 * time.Millisecond,
-		ClearSettle:         300 * time.Millisecond,
-		PollInterval:        5 * time.Millisecond,
-		CycleIDGen:          func() string { return cycleID },
+		AgentName:      agent,
+		ProjectDir:     t.TempDir(),
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		ForceActPct:    95.0,
+		HandoffTimeout: 500 * time.Millisecond,
+		ClearSettle:    300 * time.Millisecond,
+		PollInterval:   5 * time.Millisecond,
+		CycleIDGen:     func() string { return cycleID },
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},

@@ -30,7 +30,7 @@ func (s configContextStore) ClearPrecompactTrigger() error {
 type configActivityProbe struct{ cfg *CyclerConfig }
 
 func (p configActivityProbe) IdleMarkerModTime() (time.Time, bool) {
-	return p.cfg.IdleMarkerModTimeFn(p.cfg.ProjectDir, p.cfg.AgentName)
+	return defaultIdleMarkerModTime(p.cfg.ProjectDir, p.cfg.AgentName)
 }
 func (p configActivityProbe) LastUserTurn(sid string) (time.Time, bool) {
 	return p.lastTurn(sid, "user")

@@ -1,7 +1,6 @@
 CrispIdleFn
 CycleIDGen
 HandoffFilePath
-IdleMarkerModTimeFn
 InjectFn
 ReadGaugeFn
 ReadHandoff

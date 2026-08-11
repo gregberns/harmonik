@@ -363,6 +363,7 @@ func parseBasename(name string) (core.RunID, error) {
 
 func nextPhase(prior, next dispatch.Phase) bool {
 	return prior == dispatch.PhasePrepared && next == dispatch.PhaseClaimDurable ||
+		prior == dispatch.PhasePrepared && next == dispatch.PhaseClaimRefused ||
 		prior == dispatch.PhaseClaimDurable && next == dispatch.PhaseRunDurable ||
 		prior == dispatch.PhaseRunDurable && next == dispatch.PhaseHandoffDurable
 }

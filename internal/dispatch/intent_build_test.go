@@ -52,6 +52,26 @@ func TestIntentPhaseBuildersRejectSkippedOrRepeatedPhases(t *testing.T) {
 	}
 }
 
+func TestWithClaimRefusedBuildsOnlyActionableCauses(t *testing.T) {
+	prepared := testIntent(PhasePrepared)
+	for _, cause := range []ClaimRefusalCause{ClaimRefusalDependency, ClaimRefusalSupportedNonOpen} {
+		refused, err := prepared.WithClaimRefused(cause)
+		if err != nil {
+			t.Fatalf("cause %q: %v", cause, err)
+		}
+		if refused.Binding != prepared.Binding || refused.Refusal == nil || refused.Refusal.Cause != cause {
+			t.Fatalf("refused intent = %+v", refused)
+		}
+	}
+	if _, err := prepared.WithClaimRefused("already_assigned"); err == nil {
+		t.Fatal("WithClaimRefused accepted non-actionable ownership conflict")
+	}
+	refused := testIntent(PhaseClaimRefused)
+	if _, err := refused.WithClaimRefused(ClaimRefusalDependency); err == nil {
+		t.Fatal("WithClaimRefused accepted repeated transition")
+	}
+}
+
 func TestIntentPhaseBuildersRejectInvalidPredecessors(t *testing.T) {
 	prepared := testIntent(PhasePrepared)
 	prepared.Binding.BeadID = ""

@@ -34,6 +34,9 @@ func testIntent(phase Phase) Intent {
 	if phase == PhaseRunDurable || phase == PhaseHandoffDurable {
 		i.Run = &RunBinding{RecordRunID: runID}
 	}
+	if phase == PhaseClaimRefused {
+		i.Refusal = &ClaimRefusalBinding{Cause: ClaimRefusalDependency}
+	}
 	if phase == PhaseHandoffDurable {
 		i.Handoff = &HandoffBinding{
 			SessionName:        "harmonik-run-0197d100",
@@ -44,7 +47,7 @@ func testIntent(phase Phase) Intent {
 }
 
 func TestIntentValidPhaseShapes(t *testing.T) {
-	for _, phase := range []Phase{PhasePrepared, PhaseClaimDurable, PhaseRunDurable, PhaseHandoffDurable} {
+	for _, phase := range []Phase{PhasePrepared, PhaseClaimDurable, PhaseClaimRefused, PhaseRunDurable, PhaseHandoffDurable} {
 		t.Run(string(phase), func(t *testing.T) {
 			if err := testIntent(phase).Validate(); err != nil {
 				t.Fatal(err)
@@ -60,6 +63,14 @@ func TestIntentRejectsIncompleteAndEarlyPhaseData(t *testing.T) {
 		mutate func(*Intent)
 	}{
 		{name: "unknown phase", mutate: func(i *Intent) { i.Phase = "unknown" }},
+		{name: "refusal missing", mutate: func(i *Intent) { i.Phase = PhaseClaimRefused }},
+		{name: "refusal early", mutate: func(i *Intent) { i.Refusal = &ClaimRefusalBinding{Cause: ClaimRefusalDependency} }},
+		{name: "refusal unknown", mutate: func(i *Intent) { *i = testIntent(PhaseClaimRefused); i.Refusal.Cause = "unknown" }},
+		{name: "refusal with run", mutate: func(i *Intent) { *i = testIntent(PhaseClaimRefused); i.Run = &RunBinding{RecordRunID: i.Binding.RunID} }},
+		{name: "refusal with handoff", mutate: func(i *Intent) {
+			*i = testIntent(PhaseClaimRefused)
+			i.Handoff = &HandoffBinding{SessionName: "not-allowed", WorktreeLeaseRunID: i.Binding.RunID}
+		}},
 		{name: "run missing", mutate: func(i *Intent) { i.Phase = PhaseRunDurable }},
 		{name: "run early", mutate: func(i *Intent) { i.Run = &RunBinding{RecordRunID: i.Binding.RunID} }},
 		{name: "run mismatch", mutate: func(i *Intent) {
@@ -82,6 +93,36 @@ func TestIntentRejectsIncompleteAndEarlyPhaseData(t *testing.T) {
 				t.Fatal("Validate() = nil")
 			}
 		})
+	}
+}
+
+func TestClaimRefusedIntentJSONRoundTrip(t *testing.T) {
+	want := testIntent(PhaseClaimRefused)
+	data, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got Intent
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Refusal == nil || *got.Refusal != *want.Refusal || got.Phase != PhaseClaimRefused {
+		t.Fatalf("round trip = %+v", got)
+	}
+	for name, raw := range map[string]string{
+		"unknown cause": strings.Replace(string(data), `"dependency_refusal"`, `"unknown"`, 1),
+		"unknown field": strings.Replace(string(data), `"cause":"dependency_refusal"`, `"cause":"dependency_refusal","extra":true`, 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := json.Unmarshal([]byte(raw), &got); err == nil {
+				t.Fatal("Unmarshal() = nil")
+			}
+		})
+	}
+	invalid := want
+	invalid.Refusal.Cause = "unknown"
+	if _, err := json.Marshal(invalid); err == nil {
+		t.Fatal("Marshal() = nil")
 	}
 }
 

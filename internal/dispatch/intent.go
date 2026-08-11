@@ -24,6 +24,8 @@ const (
 	PhasePrepared Phase = "prepared"
 	// PhaseClaimDurable records that Beads accepted the claim.
 	PhaseClaimDurable Phase = "claim_durable"
+	// PhaseClaimRefused records one actionable definite claim refusal.
+	PhaseClaimRefused Phase = "claim_refused"
 	// PhaseRunDurable records that the durable run record exists.
 	PhaseRunDurable Phase = "run_durable"
 	// PhaseHandoffDurable records that the session handoff is durable.
@@ -32,21 +34,46 @@ const (
 
 func (p Phase) valid() bool {
 	switch p {
-	case PhasePrepared, PhaseClaimDurable, PhaseRunDurable, PhaseHandoffDurable:
+	case PhasePrepared, PhaseClaimDurable, PhaseClaimRefused, PhaseRunDurable, PhaseHandoffDurable:
 		return true
 	default:
 		return false
 	}
 }
 
-func (p Phase) atLeast(want Phase) bool {
-	order := map[Phase]int{
-		PhasePrepared:       0,
-		PhaseClaimDurable:   1,
-		PhaseRunDurable:     2,
-		PhaseHandoffDurable: 3,
+// ClaimRefusalCause is the durable class of one actionable claim refusal.
+type ClaimRefusalCause string
+
+const (
+	// ClaimRefusalDependency means Beads refused an open dependency.
+	ClaimRefusalDependency ClaimRefusalCause = "dependency_refusal"
+	// ClaimRefusalSupportedNonOpen means the bead has a supported non-open state.
+	ClaimRefusalSupportedNonOpen ClaimRefusalCause = "supported_non_open"
+)
+
+// ClaimRefusalBinding is the typed refusal stored before queue compensation.
+type ClaimRefusalBinding struct {
+	Cause ClaimRefusalCause `json:"cause"`
+}
+
+func (b ClaimRefusalBinding) validate() error {
+	switch b.Cause {
+	case ClaimRefusalDependency, ClaimRefusalSupportedNonOpen:
+		return nil
+	default:
+		return fmt.Errorf("dispatch: invalid claim refusal cause %q", b.Cause)
 	}
-	return order[p] >= order[want]
+}
+
+func (p Phase) atLeast(want Phase) bool {
+	switch want {
+	case PhaseRunDurable:
+		return p == PhaseRunDurable || p == PhaseHandoffDurable
+	case PhaseHandoffDurable:
+		return p == PhaseHandoffDurable
+	default:
+		return p == want
+	}
 }
 
 // Binding identifies one queue item and the run that owns its claim.
@@ -73,11 +100,28 @@ type HandoffBinding struct {
 
 // Intent records the durable progress of one dispatch.
 type Intent struct {
-	SchemaVersion int             `json:"schema_version"`
-	Phase         Phase           `json:"phase"`
-	Binding       Binding         `json:"binding"`
-	Run           *RunBinding     `json:"run,omitempty"`
-	Handoff       *HandoffBinding `json:"handoff,omitempty"`
+	SchemaVersion int                  `json:"schema_version"`
+	Phase         Phase                `json:"phase"`
+	Binding       Binding              `json:"binding"`
+	Refusal       *ClaimRefusalBinding `json:"refusal,omitempty"`
+	Run           *RunBinding          `json:"run,omitempty"`
+	Handoff       *HandoffBinding      `json:"handoff,omitempty"`
+}
+
+// WithClaimRefused returns the terminal claim branch for one definite refusal.
+func (i Intent) WithClaimRefused(cause ClaimRefusalCause) (Intent, error) {
+	if err := i.Validate(); err != nil {
+		return Intent{}, fmt.Errorf("dispatch: invalid prepared predecessor: %w", err)
+	}
+	if i.Phase != PhasePrepared {
+		return Intent{}, fmt.Errorf("dispatch: refusal advance requires prepared phase, got %q", i.Phase)
+	}
+	i.Phase = PhaseClaimRefused
+	i.Refusal = &ClaimRefusalBinding{Cause: cause}
+	if err := i.Validate(); err != nil {
+		return Intent{}, err
+	}
+	return i, nil
 }
 
 // NewPrepared returns the first durable intent for one queue reservation.
@@ -149,10 +193,26 @@ func (i Intent) Validate() error {
 	if err := i.Binding.validate(); err != nil {
 		return err
 	}
+	if err := i.validateRefusalBinding(); err != nil {
+		return err
+	}
 	if err := i.validateRunBinding(); err != nil {
 		return err
 	}
 	return i.validateHandoffBinding()
+}
+
+func (i Intent) validateRefusalBinding() error {
+	if i.Phase == PhaseClaimRefused {
+		if i.Refusal == nil {
+			return errors.New("dispatch: refusal binding is required at claim_refused")
+		}
+		return i.Refusal.validate()
+	}
+	if i.Refusal != nil {
+		return errors.New("dispatch: refusal binding is allowed only at claim_refused")
+	}
+	return nil
 }
 
 func (i Intent) validateRunBinding() error {
@@ -239,6 +299,9 @@ func (i Intent) MarshalJSON() ([]byte, error) {
 	if i.Run != nil {
 		w.Run = &runBindingWire{RecordRunID: i.Run.RecordRunID.String()}
 	}
+	if i.Refusal != nil {
+		w.Refusal = &claimRefusalWire{Cause: i.Refusal.Cause}
+	}
 	if i.Handoff != nil {
 		w.Handoff = &handoffBindingWire{
 			SessionName:        i.Handoff.SessionName,
@@ -277,8 +340,13 @@ type intentWire struct {
 	SchemaVersion int                 `json:"schema_version"`
 	Phase         Phase               `json:"phase"`
 	Binding       bindingWire         `json:"binding"`
+	Refusal       *claimRefusalWire   `json:"refusal,omitempty"`
 	Run           *runBindingWire     `json:"run,omitempty"`
 	Handoff       *handoffBindingWire `json:"handoff,omitempty"`
+}
+
+type claimRefusalWire struct {
+	Cause ClaimRefusalCause `json:"cause"`
 }
 
 type bindingWire struct {
@@ -338,6 +406,9 @@ func (w intentWire) intent() (Intent, error) {
 		value.Run = &RunBinding{
 			RecordRunID: core.RunID(uuid.MustParse(w.Run.RecordRunID)),
 		}
+	}
+	if w.Refusal != nil {
+		value.Refusal = &ClaimRefusalBinding{Cause: w.Refusal.Cause}
 	}
 	if w.Handoff != nil {
 		if err := validateUUIDv7(w.Handoff.WorktreeLeaseRunID); err != nil {

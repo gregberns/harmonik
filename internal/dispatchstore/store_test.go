@@ -83,6 +83,50 @@ func TestStoreCreateAdvanceListAndRemove(t *testing.T) {
 	}
 }
 
+func TestStoreAdvancesPreparedIntentToClaimRefused(t *testing.T) {
+	store := New(t.TempDir())
+	prepared := testIntent(dispatch.PhasePrepared)
+	if err := store.Create(prepared); err != nil {
+		t.Fatal(err)
+	}
+	refused := prepared
+	refused.Phase = dispatch.PhaseClaimRefused
+	refused.Refusal = &dispatch.ClaimRefusalBinding{Cause: dispatch.ClaimRefusalDependency}
+	if err := store.Advance(prepared, refused); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Load(prepared.Binding.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Phase != dispatch.PhaseClaimRefused || loaded.Refusal == nil || loaded.Refusal.Cause != dispatch.ClaimRefusalDependency {
+		t.Fatalf("loaded = %+v", loaded)
+	}
+}
+
+func TestStoreClaimRefusedCannotRejoinSuccessPath(t *testing.T) {
+	store := New(t.TempDir())
+	prepared := testIntent(dispatch.PhasePrepared)
+	if err := store.Create(prepared); err != nil {
+		t.Fatal(err)
+	}
+	refused := prepared
+	refused.Phase = dispatch.PhaseClaimRefused
+	refused.Refusal = &dispatch.ClaimRefusalBinding{Cause: dispatch.ClaimRefusalDependency}
+	if err := store.Advance(prepared, refused); err != nil {
+		t.Fatal(err)
+	}
+	for _, next := range []dispatch.Intent{
+		testIntent(dispatch.PhaseClaimDurable),
+		testIntent(dispatch.PhaseRunDurable),
+		testIntent(dispatch.PhaseHandoffDurable),
+	} {
+		if err := store.Advance(refused, next); err == nil {
+			t.Fatalf("claim_refused advanced to %q", next.Phase)
+		}
+	}
+}
+
 func TestStoreAdvanceAndRemoveRequireExactBytes(t *testing.T) {
 	store := New(t.TempDir())
 	prepared := testIntent(dispatch.PhasePrepared)

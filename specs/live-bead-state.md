@@ -58,7 +58,7 @@ The model uses these facts.
 | --- | --- |
 | Queue item | `pending`, `deferred-for-ledger-dep`, `reserved(run_id)`, `terminal(outcome)` |
 | Bead | `open`, `in_progress`, `closed`, or `other(status)` |
-| Dispatch intent | `absent`, `prepared`, `claim_durable`, `run_durable`, `handoff_durable` |
+| Dispatch intent | `absent`, `prepared`, `claim_refused`, `claim_durable`, `run_durable`, `handoff_durable` |
 | Run registry | `absent` or `live(run_id)` |
 | Durable run record | `absent`, `present(run_id, execution_location)`, or `present(run_id, execution_location, session_id)` |
 | Worktree | `absent`, `leased(run_id)`, or `retained_for_repair(run_id)` |
@@ -124,6 +124,10 @@ scheduler offers new work.
 | D1 after intent prepare, before queue reservation | Prepared intent, offerable item, open bead | `replay-reservation` with the same IDs | Mint replacement IDs |
 | D2 after queue reservation, before claim | Reserved item, prepared intent, open bead | `replay-claim` | Release from elapsed time alone |
 | D3 claim refused | Reserved item, prepared intent, typed claim result | Use table 4.1 | Match error text |
+| D3a after refusal phase | Reserved item, claim_refused intent | Apply the exact typed fail or release action | Re-run ClaimBead |
+| D3b after dependency compensation | Exact failed item with matching preclaim binding, claim_refused intent | Finalize the exact failed-item group decision | Remove the intent before group durability |
+| D3c after refusal finalization | Durable exact group result, or exact release to pending | Remove the exact intent | Repeat compensation |
+| D3r after reservation terminal write | Prepared intent and matching max-attempt or cross-queue preclaim binding | Finalize the exact failed-item group decision, then remove the intent | Infer completion from item status alone |
 | D4 after claim, before claim phase is durable in intent | Reserved item, prepared intent, current bead status | Use table 4.2 | Reset or dispatch again before classification |
 | D5 after durable claim, before run record | Reserved item, claim_durable intent, current bead status | Use table 4.3 | Leave a permanent bare claim |
 | D6 after run record, before intent phase update | Exact run record, claim_durable intent | `advance-run-phase` | Write a second run record |
@@ -281,6 +285,13 @@ The dispatch transaction must define an intent with these immutable bindings:
 The type must not admit a claimed phase without all queue, bead, and run
 bindings. A later phase can add a binding that the prior phase could not know.
 It cannot change a binding that is already durable.
+
+`claim_refused` is a terminal branch from `prepared`. It stores one actionable
+definite refusal before queue compensation. `dependency_refusal` authorizes an
+exact failed-item write. `supported_non_open` authorizes an exact reservation
+release. An already-assigned or uncertain owner stays `prepared` and requires
+repair from current Beads ownership. A refusal phase cannot carry a run or
+handoff binding.
 
 The run record alone owns the execution location. The intent binds that record
 by exact run ID. Replay must decode and validate the record before it uses the

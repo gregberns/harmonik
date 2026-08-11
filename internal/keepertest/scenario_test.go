@@ -284,3 +284,66 @@ func TestScenarioSuccessfulCycleRecordsOrderedEffects(t *testing.T) {
 		t.Fatalf("journal = %+v, want complete", s.Ports().Journal)
 	}
 }
+
+func TestScenarioHandoffTimeoutAbortsWithoutClear(t *testing.T) {
+	policy := keeper.CyclePolicyFromConfig(keeper.CyclerConfig{})
+	policy.BootGracePeriod = 0
+	policy.MaxBootGraceTotal = 0
+	policy.OperatorTurnLookback = 0
+	policy.PostAnswerGrace = 0
+	policy.PollInterval = time.Second
+	policy.HandoffTimeout = 3 * time.Second
+	policy.MaxHandoffTimeouts = 3
+
+	s := NewScenario(policy)
+	s.Ports().NextCycleID = "cyc-timeout"
+	cycler, err := s.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cycler.MaybeRun(context.Background(), s.Ports().Gauge) }()
+	waitForScenarioEffectContaining(t, s.Ports(), "KEEPER:cyc-timeout")
+	s.Clock().Advance(policy.HandoffTimeout)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if s.Ports().Journal == nil || s.Ports().Journal.Phase != "aborted" ||
+		s.Ports().Journal.Reason != "handoff_timeout" {
+		t.Fatalf("journal = %+v, want aborted handoff_timeout", s.Ports().Journal)
+	}
+	for _, effect := range s.Ports().EffectsSnapshot() {
+		if strings.Contains(effect, "inject:/clear") {
+			t.Fatalf("handoff timeout cleared the pane: %v", s.Ports().EffectsSnapshot())
+		}
+	}
+}
+
+func TestScenarioCrashRecoveryCompletesClearedJournal(t *testing.T) {
+	policy := keeper.CyclePolicyFromConfig(keeper.CyclerConfig{})
+	s := NewScenario(policy)
+	s.Ports().Journal = &keeper.CycleJournal{
+		CycleID: "cyc-recovery", Phase: "cleared",
+	}
+	cycler, err := s.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cycler.RecoverFromCrash(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	effects := s.Ports().EffectsSnapshot()
+	wantOrdered := []string{"inject:harmonik agent brief", "journal:complete"}
+	position := 0
+	for _, effect := range effects {
+		if position < len(wantOrdered) && strings.Contains(effect, wantOrdered[position]) {
+			position++
+		}
+	}
+	if position != len(wantOrdered) {
+		t.Fatalf("recovery effects stopped at %d/%d: %v", position, len(wantOrdered), effects)
+	}
+	if s.Ports().Journal == nil || s.Ports().Journal.Phase != "complete" {
+		t.Fatalf("journal = %+v, want complete", s.Ports().Journal)
+	}
+}

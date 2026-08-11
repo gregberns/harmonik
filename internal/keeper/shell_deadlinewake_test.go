@@ -129,7 +129,7 @@ func TestCycler_DelayedPollTick_HandoffTimeoutStaysPunctual(t *testing.T) {
 		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	// Call 1: fires (above force) and must abort on the PUNCTUAL 30ms handoff
 	// timeout — the deadline wake, not the starved 65ms detection tick.
@@ -238,7 +238,7 @@ func TestCycler_ClearingElapsedBackstop_NoHotSpin(t *testing.T) {
 		SetTmuxEnvFn:         func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn:  func(_, _, _ string) error { return nil },
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {

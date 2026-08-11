@@ -68,7 +68,7 @@ func newModelDoneCycler(
 			return nil
 		},
 	}
-	return keeper.NewCycler(cfg, em)
+	return mustNewCycler(cfg, em)
 }
 
 // noIdleMarker models an agent whose Stop hook is not wired.

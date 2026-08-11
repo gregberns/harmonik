@@ -84,7 +84,7 @@ func newAttachTestCycler(
 		SetTmuxEnvFn:       func(_ context.Context, _, _, _ string) error { return nil },
 		OperatorAttachedFn: attachFn,
 	}
-	return keeper.NewCycler(cfg, em)
+	return mustNewCycler(cfg, em)
 }
 
 // TestCycler_OperatorAttached_SuppressesInjection verifies that when the
@@ -290,7 +290,7 @@ func TestCycler_Precompact_OperatorAttached_Suppresses(t *testing.T) {
 		ClearPrecompactTriggerFn: func(_, _ string) error { cleared++; return nil },
 		OperatorAttachedFn:       attach.fn,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: sid}
 	if err := cycler.RunForPrecompact(context.Background(), cf); err != nil {

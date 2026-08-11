@@ -78,7 +78,7 @@ func newPrecompactCycler(
 		WriteJournalFn:           jc.write,
 		ClearPrecompactTriggerFn: func(_, _ string) error { return nil }, // no-op; test controls marker
 	}
-	return keeper.NewCycler(cfg, em)
+	return mustNewCycler(cfg, em)
 }
 
 // TestRunForPrecompact_NotManaged verifies that an unmanaged agent emits

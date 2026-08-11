@@ -146,7 +146,7 @@ func TestScenario_LateHandoff300sFakeClock_Aborts_qji8g(t *testing.T) {
 		OperatorAttachedFn:  func(string) bool { return false }, // deterministic, no real tmux
 		IdleMarkerModTimeFn: func(_, _ string) (time.Time, bool) { return clock.Now(), true },
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -304,7 +304,7 @@ func TestScenario_ForceAct_NeverIdleStillCut_qji8g(t *testing.T) {
 			return nil
 		},
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	// Tokens well above the default ForceActAbsTokens (240K) with CrispIdle=false.
 	cf := &keeper.CtxFile{Pct: 97.0, Tokens: 390_000, WindowSize: 1_000_000, SessionID: s1}

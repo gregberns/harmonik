@@ -116,7 +116,7 @@ func newConvoAwareCycler(
 		OperatorTurnLookback: operatorTurnLookback,
 		PostAnswerGrace:      postAnswerGrace,
 	}
-	return keeper.NewCycler(cfg, em)
+	return mustNewCycler(cfg, em)
 }
 
 // ── Gate 5d: auto-hold on recent operator turn ────────────────────────────────
@@ -214,7 +214,7 @@ func TestCycler_StaleOperatorTurn_DoesNotSuppress(t *testing.T) {
 		OperatorTurnLookback: 5 * time.Minute, // lookback shorter than 10m stale turn
 		PostAnswerGrace:      0,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
@@ -283,7 +283,7 @@ func TestCycler_ToolResultUserTurn_DoesNotSuppress(t *testing.T) {
 		OperatorTurnLookback: 5 * time.Minute,
 		PostAnswerGrace:      0,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
@@ -352,7 +352,7 @@ func TestCycler_OperatorTurnLookbackZero_DisablesGate5d(t *testing.T) {
 		OperatorTurnLookback: 0, // DISABLED — gate must not fire
 		PostAnswerGrace:      0,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
@@ -510,7 +510,7 @@ func TestCycler_PostAnswerGrace_Expired_DoesNotSuppress(t *testing.T) {
 		OperatorTurnLookback: 0,
 		PostAnswerGrace:      30 * time.Second,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
@@ -578,7 +578,7 @@ func TestCycler_AssistantToolUseTurn_DoesNotTriggerGrace(t *testing.T) {
 		OperatorTurnLookback: 0,
 		PostAnswerGrace:      30 * time.Second,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {

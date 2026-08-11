@@ -123,7 +123,7 @@ func TestIntegration_TwinSidRebind_AntiLoopGateHolds(t *testing.T) {
 		// /session-handoff directive natively (hk-fan).
 		InjectFn: keeper.InjectText,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	// Watch the gauge concurrently with the cycle so Phase 2 can observe the
 	// genuine post-/clear token RESET rather than racing the twin's aggressive

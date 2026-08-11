@@ -59,7 +59,7 @@ func realHandoffCycler(t *testing.T, agent, projectDir, cycleID string, spy *cyc
 		WriteJournalFn:    jc.write,
 		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
 	}
-	return keeper.NewCycler(cfg, &keeper.RecordingEmitter{})
+	return mustNewCycler(cfg, &keeper.RecordingEmitter{})
 }
 
 // TestActLoop_HKVPNP_DoesNotTruncateNonEmptyHandoffOnTimeout reproduces Bug 3b:
@@ -163,7 +163,7 @@ func TestActLoop_HKVPNP_DoesNotRefireSecondNonceAfterTimeout(t *testing.T) {
 		WriteJournalFn:    jc.write,
 		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
 	}
-	cycler := keeper.NewCycler(cfg, &keeper.RecordingEmitter{})
+	cycler := mustNewCycler(cfg, &keeper.RecordingEmitter{})
 
 	// Simulate the live loop signature. The SID never changes (no /clear ever
 	// completed), but the gauge pct oscillates: after each aborted cycle the

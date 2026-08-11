@@ -286,7 +286,7 @@ func TestIntegration_OperatorAttached_SuppressesAndResumes(t *testing.T) {
 		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
 		// OperatorAttachedFn left nil → real OperatorAttached (tmux list-clients).
 	}
-	cycler := NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	// Attach a REAL client and confirm the probe sees it before driving the cycle.
 	detach := oaiAttachClient(t, name)

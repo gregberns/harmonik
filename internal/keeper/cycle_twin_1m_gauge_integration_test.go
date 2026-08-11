@@ -326,7 +326,7 @@ func TestIntegration_Twin1mGauge_CycleFiresOnInferredWindow(t *testing.T) {
 		// production MULTI-LINE /session-handoff directive natively (hk-fan).
 		InjectFn: keeper.InjectText,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	if err := cycler.MaybeRun(context.Background(), seed); err != nil {
 		t.Fatalf("tw: MaybeRun: %v", err)

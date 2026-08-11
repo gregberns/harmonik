@@ -351,5 +351,5 @@ func newReactiveCyclerWithBackstop(
 		// pre-T8 clear-right-after-confirm scenario cadence.
 		IdleMarkerModTimeFn: idleMarkerFreshNow,
 	}
-	return keeper.NewCycler(cfg, em)
+	return mustNewCycler(cfg, em)
 }

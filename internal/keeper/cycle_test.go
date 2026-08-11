@@ -258,7 +258,7 @@ func newTestCyclerManaged(
 		// with no added wait (the pre-T8 clear-right-after-confirm cadence).
 		IdleMarkerModTimeFn: idleMarkerFreshNow,
 	}
-	return keeper.NewCycler(cfg, em)
+	return mustNewCycler(cfg, em)
 }
 
 // idleMarkerFreshNow is the shared test IdleMarkerModTimeFn: a Stop-hook
@@ -771,7 +771,7 @@ func TestCycler_SuppressionRequiresBothConditions(t *testing.T) {
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	// Step 1: fire the cycle on prevSID at high pct.
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
@@ -847,7 +847,7 @@ func TestCycler_BootRecovery_PhaseCleared(t *testing.T) {
 		WriteJournalFn:      js.write,
 		ReadJournalFn:       js.read,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	if err := cycler.RecoverFromCrash(context.Background()); err != nil {
 		t.Fatalf("RecoverFromCrash: %v", err)
@@ -924,7 +924,7 @@ func TestCycler_BootRecovery_PhaseHandoff(t *testing.T) {
 		WriteJournalFn:      js.write,
 		ReadJournalFn:       js.read,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	if err := cycler.RecoverFromCrash(context.Background()); err != nil {
 		t.Fatalf("RecoverFromCrash: %v", err)
@@ -994,7 +994,7 @@ func TestCycler_BootRecovery_PhaseComplete(t *testing.T) {
 				},
 				ReadJournalFn: js.read,
 			}
-			cycler := keeper.NewCycler(cfg, em)
+			cycler := mustNewCycler(cfg, em)
 
 			if err := cycler.RecoverFromCrash(context.Background()); err != nil {
 				t.Fatalf("RecoverFromCrash: %v", err)
@@ -1035,7 +1035,7 @@ func TestCycler_BootRecovery_NoJournal(t *testing.T) {
 		WriteJournalFn:      js.write,
 		ReadJournalFn:       js.read,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	if err := cycler.RecoverFromCrash(context.Background()); err != nil {
 		t.Fatalf("RecoverFromCrash with no journal: %v", err)
@@ -1074,7 +1074,7 @@ func TestCycler_BootRecovery_UnmanagedNoOp(t *testing.T) {
 		WriteJournalFn:      js.write,
 		ReadJournalFn:       js.read,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	if err := cycler.RecoverFromCrash(context.Background()); err != nil {
 		t.Fatalf("RecoverFromCrash unmanaged: %v", err)
@@ -1156,7 +1156,7 @@ func TestCycler_TruncateCalledBeforePoll(t *testing.T) {
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: sid}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
@@ -1250,7 +1250,7 @@ func TestCycler_BriefRestartAfterNonceConfirm(t *testing.T) {
 		WriteJournalFn:    jc.write,
 		SetTmuxEnvFn:      setEnvFn,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
@@ -1351,7 +1351,7 @@ func TestCycler_AbsoluteTokenGate(t *testing.T) {
 		WriteJournalFn:    jc.write,
 		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	cf := &keeper.CtxFile{Pct: 28.0, Tokens: 280_000, WindowSize: 1_000_000, SessionID: sid}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
@@ -1411,7 +1411,7 @@ func TestCycler_AbsoluteTokenGate_BelowThreshold(t *testing.T) {
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	cf := &keeper.CtxFile{Pct: 20.0, Tokens: 200_000, WindowSize: 1_000_000, SessionID: sid}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
@@ -1476,7 +1476,7 @@ func TestCycler_AbsoluteTokenGate_200kWindow(t *testing.T) {
 		WriteJournalFn:    jc.write,
 		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	cf := &keeper.CtxFile{Pct: 85.0, Tokens: 170_000, WindowSize: 200_000, SessionID: sid}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
@@ -1543,7 +1543,7 @@ func TestCycler_UpdatesManagedSessionAfterCycle(t *testing.T) {
 			return nil
 		},
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
@@ -1621,7 +1621,7 @@ func TestCycler_ClearSettleTimeout_ClearsManagedSessionID(t *testing.T) {
 			return nil
 		},
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
@@ -1690,7 +1690,7 @@ func TestCycler_AntiLoopEscapeHatch_ResetOnSameSessionLowPct(t *testing.T) {
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
 
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	// Step 1: first MaybeRun at high pct → cycle fires; lastFiredSID = sid.
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: sid}
@@ -1794,7 +1794,7 @@ func TestCycler_ForcedClear_BypassesCrispIdle(t *testing.T) {
 		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	// Context at exactly the force threshold — cycle MUST fire despite CrispIdle=false.
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
@@ -1897,7 +1897,7 @@ func TestCycler_ForcedClear_RetryAfterInterval(t *testing.T) {
 		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	// Call 1: fires (above force), aborts (nonce timeout).
 	cf := &keeper.CtxFile{Pct: 97.0, SessionID: sid}
@@ -1994,7 +1994,7 @@ func TestCycler_ForcedClear_EscapeInjected(t *testing.T) {
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 		SendEscapeFn:        escapeFn,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	// Context at force threshold with CrispIdle=false → forced-clear fires.
 	cf := &keeper.CtxFile{Pct: 97.0, SessionID: prevSID}
@@ -2095,7 +2095,7 @@ func TestCycler_ForcedClear_EscalatesAfterNTimeouts(t *testing.T) {
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 		ForceRestartFn:      forceRestartFn,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	cf := &keeper.CtxFile{Pct: 97.0, SessionID: sid}
 
@@ -2183,7 +2183,7 @@ func TestCycler_BootGrace_SuppressesAndThenAllows(t *testing.T) {
 		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	// ── Part 1: first-boot does NOT trigger grace (no prior session evicted) ──
 
@@ -2277,7 +2277,7 @@ func TestCycler_YoungSessionGuard_NewBand_AbsTokens(t *testing.T) {
 		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	// Establish prevSID below the act threshold (50K < 215K) — no grace armed yet.
 	cfPrev := &keeper.CtxFile{Pct: 5.0, Tokens: 50_000, WindowSize: window, SessionID: prevSID}
@@ -2356,7 +2356,7 @@ func TestCycler_CleanHandoffGuard_DispatchingSuppressesAboveForce(t *testing.T) 
 		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	// Mark in-flight dispatch, then drive context ABOVE the force ceiling (245K).
 	if err := keeper.SetDispatching(projectDir, agent); err != nil {
@@ -2443,7 +2443,7 @@ func TestCycler_AbortClearsManaged(t *testing.T) {
 		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: setManagedFn,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	// Step 1: observe prevSID at low pct — establishes currentSessionID=prevSID
 	// without starting the grace timer (first SID, currentSessionIDSince stays Zero).
@@ -2536,7 +2536,7 @@ func TestCycler_ForcedClear_BelowThreshold_StillBlocked(t *testing.T) {
 		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	// Context above ActPct (90) but below ForceActPct (95) with CrispIdle=false.
 	// Cycle must NOT fire.
@@ -2604,7 +2604,7 @@ func TestCycler_ForceThresholdTracksActPct(t *testing.T) {
 		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	// pct=41: above ActPct (35) and above derived ForceActPct (40). CrispIdle=false
 	// must be bypassed so the cycle fires — verifies dead zone is eliminated.
@@ -2637,7 +2637,7 @@ func TestCycler_ForceThresholdTracksActPct(t *testing.T) {
 	cfg2.ReadGaugeFn = func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 		return &keeper.CtxFile{Pct: 37.0, SessionID: prevSID}, time.Now(), nil
 	}
-	cycler2 := keeper.NewCycler(cfg2, em2)
+	cycler2 := mustNewCycler(cfg2, em2)
 
 	cf2 := &keeper.CtxFile{Pct: 37.0, SessionID: prevSID}
 	if err := cycler2.MaybeRun(context.Background(), cf2); err != nil {
@@ -2698,7 +2698,7 @@ func TestCycler_BootGrace_ForcePathBypasses(t *testing.T) {
 		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	// Establish prevSID (first session, no grace armed).
 	cfPrev := &keeper.CtxFile{Pct: 70.0, SessionID: prevSID}
@@ -2784,7 +2784,7 @@ func TestCycler_AbortDoesNotClearManaged_FirstSession(t *testing.T) {
 		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: setManagedFn,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	// Directly observe sid as the first (and only) session — no prior session change,
 	// so currentSessionIDSince stays Zero.
@@ -2862,7 +2862,7 @@ func TestCycler_BootGrace_FlappingSID(t *testing.T) {
 		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	// ── Step 1: establish prevSID at low pct (no grace armed) ──
 	cfPrev := &keeper.CtxFile{Pct: 70.0, SessionID: prevSID}
@@ -2995,7 +2995,7 @@ func TestCycler_AbortToResumeGraceToRefire(t *testing.T) {
 		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: setManagedFn,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	// ── Phase A: establish prevSID → change to abortSID → abort ──
 
@@ -3172,7 +3172,7 @@ func TestCycler_CrossSID_ForceRetry_AfterAbort(t *testing.T) {
 				SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 				SetManagedSessionFn: func(_, _, _ string) error { return nil },
 			}
-			cycler := keeper.NewCycler(cfg, em)
+			cycler := mustNewCycler(cfg, em)
 			ctx := context.Background()
 
 			// ── Phase A: establish prevSID (if any) then abort on abortSID ──
@@ -3285,7 +3285,7 @@ func TestCycler_BootGrace_BurstRelativeCap(t *testing.T) {
 		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 	ctx := context.Background()
 
 	// 1. Observe prevSID at low pct — no grace armed (first SID seen, currentSessionID "").

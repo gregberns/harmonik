@@ -374,7 +374,7 @@ func TestAwaitAck_FakeClockTimeout(t *testing.T) {
 // residual time.Now() in the generator would make this id unpredictable.
 func TestCycler_UsesInjectedClock(t *testing.T) {
 	fixed := time.Date(2031, 3, 4, 5, 6, 7, 0, time.UTC)
-	c := NewCycler(CyclerConfig{AgentName: "x", Clock: substrate.NewFakeClock(fixed)}, nil)
+	c := mustNewCycler(CyclerConfig{AgentName: "x", Clock: substrate.NewFakeClock(fixed)}, nil)
 	got := c.cfg.CycleIDGen()
 	want := "cyc-20310304T050607-000001"
 	if got != want {

@@ -409,7 +409,7 @@ func TestIntegration_TwinClearRestartCycle_E2E(t *testing.T) {
 		// defaults.
 		InjectFn: keeper.InjectText,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	// Watch the gauge concurrently with the cycle so we capture the post-/clear
 	// token RESET directly. The twin's emitter keeps growing tokens after /clear
@@ -651,7 +651,7 @@ func TestIntegration_TwinE2E_OperatorRealEnv(t *testing.T) {
 		SetManagedSessionFn: recSetManaged,
 		OperatorAttachedFn:  operatorAttached,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	// Watch for the post-/clear token RESET on the rotated session (immune to the
 	// resumed emitter's regrowth), exactly as the happy-path E2E does.
@@ -864,7 +864,7 @@ func TestIntegration_TwinE2E_GaugeStateTransitions(t *testing.T) {
 				SetManagedSessionFn: func(_, _, _ string) error { return nil },
 				InjectFn:            func(_ context.Context, _, _ string) error { return nil },
 			}
-			cycler := keeper.NewCycler(cfg, em)
+			cycler := mustNewCycler(cfg, em)
 			cf := &keeper.CtxFile{
 				Tokens:     c.tokens,
 				WindowSize: c.window,

@@ -71,7 +71,7 @@ func newIdleCycler(
 		IdleRestartAbsTokens:     defaultIdleTokenThreshold,
 		IdleRestartCooldown:      idleRestartCooldown,
 	}
-	return keeper.NewCycler(cfg, em)
+	return mustNewCycler(cfg, em)
 }
 
 // defaultIdleTokenThreshold is the default IdleRestartAbsTokens (150_000).

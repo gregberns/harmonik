@@ -369,7 +369,7 @@ func TestCyclerMaybeRun_DeferredWhenHeld(t *testing.T) {
 		injectCount := 0
 		heldCalled := false
 		cfg := baseCfg(dir, agent, true, &injectCount, &heldCalled)
-		cycler := keeper.NewCycler(cfg, &keeper.RecordingEmitter{})
+		cycler := mustNewCycler(cfg, &keeper.RecordingEmitter{})
 		cf := &keeper.CtxFile{Pct: 90.0, SessionID: sessionID, Ts: time.Now().UTC().Format(time.RFC3339)}
 		if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 			t.Fatalf("MaybeRun returned error: %v", err)
@@ -395,7 +395,7 @@ func TestCyclerMaybeRun_DeferredWhenHeld(t *testing.T) {
 		injectCount := 0
 		heldCalled := false
 		cfg := baseCfg(dir, agent, false, &injectCount, &heldCalled)
-		cycler := keeper.NewCycler(cfg, &keeper.RecordingEmitter{})
+		cycler := mustNewCycler(cfg, &keeper.RecordingEmitter{})
 		cf := &keeper.CtxFile{Pct: 90.0, SessionID: sessionID, Ts: time.Now().UTC().Format(time.RFC3339)}
 
 		// Pre-cancelled context so runCycle returns immediately without blocking on
@@ -635,7 +635,7 @@ func TestRunForPrecompact_SuppressedWhenHeld(t *testing.T) {
 			WriteJournalFn:           jc.write,
 			ClearPrecompactTriggerFn: func(_, _ string) error { return nil },
 		}
-		cycler := keeper.NewCycler(cfg, em)
+		cycler := mustNewCycler(cfg, em)
 		cf := &keeper.CtxFile{Pct: 95.0, SessionID: "sess-abc"}
 		if err := cycler.RunForPrecompact(context.Background(), cf); err != nil {
 			t.Fatalf("RunForPrecompact: unexpected error: %v", err)
@@ -725,7 +725,7 @@ func TestRunForIdle_SuppressedWhenHeld(t *testing.T) {
 			IdleRestartAbsTokens:     150_000,
 			IdleRestartCooldown:      0,
 		}
-		cycler := keeper.NewCycler(cfg, em)
+		cycler := mustNewCycler(cfg, em)
 		// Tokens above IdleRestartAbsTokens (150k) but below actThreshold (300k).
 		cf := &keeper.CtxFile{Pct: 80.0, Tokens: 200_000, WindowSize: 400_000, SessionID: "sess-idle"}
 		if err := cycler.RunForIdle(context.Background(), cf); err != nil {

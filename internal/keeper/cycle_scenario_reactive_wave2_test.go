@@ -218,7 +218,7 @@ func TestKeeperCycle_ForcedClearAboveHardThreshold(t *testing.T) {
 		},
 		SendEscapeFn: escapeFn,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	// Tokens at/above the default ForceActAbsTokens (240_000) with CrispIdle=false.
 	cf := &keeper.CtxFile{Pct: 97.0, Tokens: 390_000, WindowSize: 1_000_000, SessionID: s1}
@@ -428,7 +428,7 @@ func TestKeeperCycle_PreCompactBackstop(t *testing.T) {
 			return nil
 		},
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	// Context BELOW the act threshold (pct 50, well under ActPct=90) AND
 	// CrispIdle=false. MaybeRun would NOT fire on this; RunForPrecompact must.
@@ -582,7 +582,7 @@ func TestKeeperCycle_ClearBriefHardGate_SlowClear(t *testing.T) {
 			return nil
 		},
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 
 	cf := &keeper.CtxFile{Pct: 95.0, Tokens: 320_000, WindowSize: 1_000_000, SessionID: s1}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {

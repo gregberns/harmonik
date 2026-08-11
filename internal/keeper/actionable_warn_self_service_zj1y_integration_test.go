@@ -297,7 +297,7 @@ func TestZJ1Y_SelfServiceRestart_GaugeDrop_ExactlyOneClear(t *testing.T) {
 		// only removes the 60s wait.
 		IdleMarkerModTimeFn: func(_, _ string) (time.Time, bool) { return time.Now(), true },
 	}
-	cycler := NewCycler(cfg, em)
+	cycler := mustNewCycler(cfg, em)
 	ctx := context.Background()
 
 	// Tick 1: gauge ABOVE the act threshold, agent has not yet self-restarted —

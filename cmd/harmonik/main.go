@@ -205,19 +205,41 @@ func run() int {
 		// --help/-h intercept (hk-y4e96).
 		for _, arg := range subArgs {
 			if arg == "--help" || arg == "-h" {
-				fmt.Print(`harmonik tmux-start — bootstrap a tmux session and start the daemon inside it
+				fmt.Print(`harmonik tmux-start — create a detached tmux session and attach to it
+
+This verb starts no daemon. It creates the session with one window running your
+login shell in the project directory, then replaces itself with
+'tmux attach-session'. To start a daemon, run 'harmonik start daemon' inside
+the session.
 
 USAGE
   harmonik tmux-start [--session-name NAME] [--project DIR]
 
 FLAGS
-  --session-name NAME  tmux session name (default: harmonik)
+  --session-name NAME  tmux session name. The default is
+                       harmonik-<project-hash>-default. A name you supply must
+                       start with 'harmonik-<project-hash>-', or the command
+                       exits 24. Run 'harmonik project-hash' for the current
+                       directory, or 'harmonik project-hash --project DIR' for
+                       another one. That verb ignores a bare positional path.
+
   --project DIR        Project directory (default: current working directory)
+
+EXIT
+  0   the session is ready, or you were already inside tmux and nothing was done
+  22  tmux is missing, or the tmux probe failed
+  24  any other unrecoverable failure. The known causes are a session name
+      without the required prefix, a project path that cannot be resolved, a
+      working directory that cannot be read, tmux refusing to create the
+      session, and a failed exec of 'tmux attach-session'.
+
+  On the success path this process is replaced by 'tmux attach-session', so the
+  status you finally see is tmux's, not harmonik's.
 
 EXAMPLES
   harmonik tmux-start
-  harmonik tmux-start --session-name my-project
-  harmonik tmux-start --project /path/to/project --session-name my-project
+  harmonik tmux-start --project /path/to/project
+  harmonik tmux-start --session-name "harmonik-$(harmonik project-hash)-scratch"
 `)
 				return 0
 			}

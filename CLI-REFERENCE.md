@@ -520,15 +520,27 @@ harmonik smoke --timeout 30m --branch integration
 
 ## `harmonik tmux-start`
 
-**Purpose:** bootstrap a tmux session and start the daemon inside it.
+**Purpose:** create a detached tmux session and attach to it. This verb starts no
+daemon. To start one, run `harmonik start daemon` inside the session.
 
 **Usage:** `harmonik tmux-start [--session-name NAME] [--project DIR]`
 
-**Flags:** `--session-name NAME` (default `harmonik`) · `--project DIR` (default cwd).
+**Flags:** `--session-name NAME` (default `harmonik-<project-hash>-default`) ·
+`--project DIR` (default cwd). A name you supply must start with
+`harmonik-<project-hash>-`, or the command exits 24. Run `harmonik project-hash`
+for the current directory, or `harmonik project-hash --project DIR` for another
+one. That verb ignores a bare positional path.
+
+**Exit codes:** 0 the session is ready, or you were already inside tmux and
+nothing was done · 22 tmux is missing, or the tmux probe failed · 24 any other
+unrecoverable failure, such as a session name without the required prefix, a
+project path that cannot be resolved, tmux refusing to create the session, or a
+failed exec of `tmux attach-session`. On the success path the process is
+replaced by `tmux attach-session`, so the status you finally see is tmux's.
 
 **Example**
 ```bash
-harmonik tmux-start --project /path/to/project --session-name my-project
+harmonik tmux-start --project /path/to/project
 ```
 
 ---

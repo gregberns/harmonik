@@ -99,7 +99,8 @@ Git merge-driver for `.beads/issues.jsonl` (union-by-bead-ID, registered via `.g
 
 ### `harmonik tmux-start`
 
-Bootstrap a tmux session and start the daemon inside it.
+Create a detached tmux session and attach to it. This verb starts no daemon. To
+start one, run `harmonik start daemon` inside the session.
 
 ### `harmonik hook-relay`
 

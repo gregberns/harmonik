@@ -127,7 +127,7 @@ SUBCOMMANDS
   goal-keeper      Update .harmonik/intent/goal-state.json from operator comms (flywheel V6)
   project-hash     Print the PL-006a project hash for a directory (no daemon required)
   remote-control-prefix  Print the per-project Claude RC label prefix (no daemon required)
-  tmux-start       Bootstrap a tmux session and start the daemon inside it
+  tmux-start       Create a detached tmux session and attach to it (starts no daemon)
   hook-relay       Forward a Claude hook event to the daemon (internal use)
   usage            Token cost analysis: join transcripts × events by run_id (no daemon required)
 

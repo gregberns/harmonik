@@ -77,9 +77,9 @@ func TestDecideReplayTypedClaimRefusals(t *testing.T) {
 		claim ClaimFact
 		want  ReplayAction
 	}{
-		{bead: BeadOpen, claim: ClaimDependencyRefusal, want: FailQueueItem},
+		{bead: BeadOpen, claim: ClaimDependencyRefusal, want: AdvanceClaimRefusal},
 		{bead: BeadOpen, claim: ClaimAlreadyAssigned, want: ReplayRepairRequired},
-		{bead: BeadOther, claim: ClaimExternalRefusal, want: ReleaseReservation},
+		{bead: BeadOther, claim: ClaimExternalRefusal, want: AdvanceClaimRefusal},
 		{bead: BeadOpen, claim: ClaimConflict, want: ReplayRepairRequired},
 	} {
 		facts := replayFacts(PhasePrepared, QueueReserved, tc.bead, RunRecordAbsent, WorktreeAbsent, SessionAbsent)
@@ -87,6 +87,78 @@ func TestDecideReplayTypedClaimRefusals(t *testing.T) {
 		if err != nil || got != tc.want {
 			t.Fatalf("claim %q = (%q, %v), want %q", tc.claim, got, err, tc.want)
 		}
+	}
+}
+
+func TestDecideReplayPreclaimCompensationStages(t *testing.T) {
+	tests := []struct {
+		name     string
+		facts    ReplayFacts
+		refusal  ClaimRefusalCause
+		preclaim PreclaimFact
+		want     ReplayAction
+	}{
+		{name: "dependency refusal before item failure", facts: replayFacts(PhaseClaimRefused, QueueReserved, BeadOpen, RunRecordAbsent, WorktreeAbsent, SessionAbsent), refusal: ClaimRefusalDependency, preclaim: PreclaimAbsent, want: FailQueueItem},
+		{name: "dependency item needs group", facts: replayFacts(PhaseClaimRefused, QueueTerminalUnreopened, BeadOpen, RunRecordAbsent, WorktreeAbsent, SessionAbsent), refusal: ClaimRefusalDependency, preclaim: PreclaimDependencyItemTerminal, want: FinalizePreclaimGroup},
+		{name: "dependency group permits removal", facts: replayFacts(PhaseClaimRefused, QueueTerminalUnreopened, BeadOpen, RunRecordAbsent, WorktreeAbsent, SessionAbsent), refusal: ClaimRefusalDependency, preclaim: PreclaimDependencyGroupDurable, want: RemoveDispatchIntent},
+		{name: "max attempts item needs group", facts: replayFacts(PhasePrepared, QueueTerminalUnreopened, BeadOpen, RunRecordAbsent, WorktreeAbsent, SessionAbsent), preclaim: PreclaimMaxAttemptsItemTerminal, want: FinalizePreclaimGroup},
+		{name: "max attempts group permits removal", facts: replayFacts(PhasePrepared, QueueTerminalUnreopened, BeadOpen, RunRecordAbsent, WorktreeAbsent, SessionAbsent), preclaim: PreclaimMaxAttemptsGroupDurable, want: RemoveDispatchIntent},
+		{name: "cross queue item needs group", facts: replayFacts(PhasePrepared, QueueTerminalUnreopened, BeadOpen, RunRecordAbsent, WorktreeAbsent, SessionAbsent), preclaim: PreclaimCrossQueueItemTerminal, want: FinalizePreclaimGroup},
+		{name: "cross queue group permits removal", facts: replayFacts(PhasePrepared, QueueTerminalUnreopened, BeadOpen, RunRecordAbsent, WorktreeAbsent, SessionAbsent), preclaim: PreclaimCrossQueueGroupDurable, want: RemoveDispatchIntent},
+		{name: "supported non-open needs release", facts: replayFacts(PhaseClaimRefused, QueueReserved, BeadOther, RunRecordAbsent, WorktreeAbsent, SessionAbsent), refusal: ClaimRefusalSupportedNonOpen, preclaim: PreclaimAbsent, want: ReleaseReservation},
+		{name: "durable release permits removal", facts: replayFacts(PhaseClaimRefused, QueueOfferable, BeadOther, RunRecordAbsent, WorktreeAbsent, SessionAbsent), refusal: ClaimRefusalSupportedNonOpen, preclaim: PreclaimReleased, want: RemoveDispatchIntent},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			facts := tc.facts
+			facts.RefusalCause = tc.refusal
+			facts.Preclaim = tc.preclaim
+			got, err := DecideReplay(facts)
+			if err != nil || got != tc.want {
+				t.Fatalf("DecideReplay() = (%q, %v), want %q", got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestDecideReplayPreclaimCrossCauseAndStageMismatchRepairs(t *testing.T) {
+	tests := []ReplayFacts{
+		withPreclaim(withRefusal(replayFacts(PhaseClaimRefused, QueueTerminalUnreopened, BeadOpen, RunRecordAbsent, WorktreeAbsent, SessionAbsent), ClaimRefusalDependency), PreclaimCrossQueueItemTerminal),
+		withPreclaim(replayFacts(PhasePrepared, QueueTerminalUnreopened, BeadOpen, RunRecordAbsent, WorktreeAbsent, SessionAbsent), PreclaimDependencyItemTerminal),
+		withPreclaim(withRefusal(replayFacts(PhaseClaimRefused, QueueReserved, BeadOther, RunRecordAbsent, WorktreeAbsent, SessionAbsent), ClaimRefusalSupportedNonOpen), PreclaimReleased),
+		withPreclaim(withRefusal(replayFacts(PhaseClaimRefused, QueueOfferable, BeadOther, RunRecordAbsent, WorktreeAbsent, SessionAbsent), ClaimRefusalDependency), PreclaimReleased),
+		withPreclaim(replayFacts(PhasePrepared, QueueTerminalUnreopened, BeadClosed, RunRecordAbsent, WorktreeAbsent, SessionAbsent), PreclaimMaxAttemptsGroupDurable),
+	}
+	for index, facts := range tests {
+		assertRepair(t, index, facts)
+	}
+}
+
+func TestDecideReplayPreclaimRejectsQueueStageAndLaterArtifacts(t *testing.T) {
+	base := withPreclaim(replayFacts(PhasePrepared, QueueTerminalUnreopened, BeadOpen, RunRecordAbsent, WorktreeAbsent, SessionAbsent), PreclaimMaxAttemptsItemTerminal)
+	mutations := []func(*ReplayFacts){
+		func(f *ReplayFacts) { f.Queue = QueueOfferable },
+		func(f *ReplayFacts) { f.Queue = QueueReserved },
+		func(f *ReplayFacts) { f.RunRecord = RunRecordBase },
+		func(f *ReplayFacts) { f.Worktree = WorktreeLeased },
+		func(f *ReplayFacts) { f.Session = SessionDead },
+		func(f *ReplayFacts) { f.Git = GitMatching },
+		func(f *ReplayFacts) { f.RunOutcomeDurable = true },
+		func(f *ReplayFacts) { f.Claim = ClaimMatching },
+	}
+	for index, mutate := range mutations {
+		facts := base
+		mutate(&facts)
+		assertRepair(t, index, facts)
+	}
+
+	refused := withRefusal(replayFacts(PhaseClaimRefused, QueueTerminalUnreopened, BeadOpen, RunRecordAbsent, WorktreeAbsent, SessionAbsent), ClaimRefusalDependency)
+	for index, stage := range []PreclaimFact{PreclaimDependencyItemTerminal, PreclaimDependencyGroupDurable} {
+		facts := withPreclaim(refused, stage)
+		facts.Queue = QueueOfferable
+		assertRepair(t, index+20, facts)
+		facts.Queue = QueueReserved
+		assertRepair(t, index+30, facts)
 	}
 }
 
@@ -200,7 +272,10 @@ func TestDecideReplayRejectsUnknownFacts(t *testing.T) {
 }
 
 func replayFacts(phase Phase, queue QueueFact, bead BeadFact, record RunRecordFact, worktree WorktreeFact, session SessionFact) ReplayFacts {
-	return ReplayFacts{IntentPhase: phase, Queue: queue, Bead: bead, RunRecord: record, Worktree: worktree, Session: session, Git: GitAbsent, Claim: ClaimNone}
+	return ReplayFacts{
+		IntentPhase: phase, Queue: queue, Bead: bead, RunRecord: record,
+		Worktree: worktree, Session: session, Git: GitAbsent, Claim: ClaimNone, Preclaim: PreclaimAbsent,
+	}
 }
 
 func withMatchingGit(facts ReplayFacts) ReplayFacts {
@@ -215,5 +290,15 @@ func withClaim(facts ReplayFacts, claim ClaimFact) ReplayFacts {
 
 func withOutcome(facts ReplayFacts) ReplayFacts {
 	facts.RunOutcomeDurable = true
+	return facts
+}
+
+func withPreclaim(facts ReplayFacts, preclaim PreclaimFact) ReplayFacts {
+	facts.Preclaim = preclaim
+	return facts
+}
+
+func withRefusal(facts ReplayFacts, cause ClaimRefusalCause) ReplayFacts {
+	facts.RefusalCause = cause
 	return facts
 }

@@ -1,6 +1,9 @@
 package dispatch
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // QueueFact is the exact queue-item state observed for one intent binding.
 type QueueFact string
@@ -108,6 +111,30 @@ const (
 	ClaimConflict ClaimFact = "conflict"
 )
 
+// PreclaimFact is one joined queue fact for pre-claim compensation.
+type PreclaimFact string
+
+const (
+	// PreclaimAbsent means no pre-claim compensation fact exists.
+	PreclaimAbsent PreclaimFact = "absent"
+	// PreclaimMaxAttemptsItemTerminal means the exact failed item needs group finalization.
+	PreclaimMaxAttemptsItemTerminal PreclaimFact = "max_attempts_item_terminal"
+	// PreclaimMaxAttemptsGroupDurable means max-attempt group finalization is durable.
+	PreclaimMaxAttemptsGroupDurable PreclaimFact = "max_attempts_group_durable"
+	// PreclaimCrossQueueItemTerminal means the exact duplicate item needs group finalization.
+	PreclaimCrossQueueItemTerminal PreclaimFact = "cross_queue_item_terminal"
+	// PreclaimCrossQueueGroupDurable means duplicate group finalization is durable.
+	PreclaimCrossQueueGroupDurable PreclaimFact = "cross_queue_group_durable"
+	// PreclaimDependencyItemTerminal means the exact refused item needs group finalization.
+	PreclaimDependencyItemTerminal PreclaimFact = "dependency_item_terminal"
+	// PreclaimDependencyGroupDurable means dependency-refusal group finalization is durable.
+	PreclaimDependencyGroupDurable PreclaimFact = "dependency_group_durable"
+	// PreclaimReleased means the exact reservation is durably pending again.
+	PreclaimReleased PreclaimFact = "released"
+	// PreclaimConflict means joined queue facts do not match the intent.
+	PreclaimConflict PreclaimFact = "conflict"
+)
+
 // ReplayAction is the one next transition startup may execute.
 type ReplayAction string
 
@@ -116,6 +143,8 @@ const (
 	ReplayReservation ReplayAction = "replay-reservation"
 	// ReplayClaim repeats the exact claim transition.
 	ReplayClaim ReplayAction = "replay-claim"
+	// AdvanceClaimRefusal makes a typed refusal durable before compensation.
+	AdvanceClaimRefusal ReplayAction = "advance-claim-refusal"
 	// FailQueueItem consumes a typed dependency refusal.
 	FailQueueItem ReplayAction = "fail-item"
 	// ReleaseReservation gives back a definitely unclaimed reservation.
@@ -144,6 +173,10 @@ const (
 	AdvanceClose ReplayAction = "advance-close"
 	// ReplayCleanupOnly removes residue after queue terminal application.
 	ReplayCleanupOnly ReplayAction = "cleanup-only"
+	// FinalizePreclaimGroup applies the exact failed-item group decision.
+	FinalizePreclaimGroup ReplayAction = "finalize-preclaim-group"
+	// RemoveDispatchIntent removes an exact finalized pre-claim intent.
+	RemoveDispatchIntent ReplayAction = "remove-dispatch-intent"
 	// ReplayRepairRequired preserves evidence for an invalid combination.
 	ReplayRepairRequired ReplayAction = "repair-required"
 )
@@ -158,6 +191,8 @@ type ReplayFacts struct {
 	Session           SessionFact
 	Git               GitFact
 	Claim             ClaimFact
+	RefusalCause      ClaimRefusalCause
+	Preclaim          PreclaimFact
 	RunOutcomeDurable bool
 }
 
@@ -168,6 +203,9 @@ func DecideReplay(f ReplayFacts) (ReplayAction, error) {
 	}
 	if f.hasConflict() {
 		return ReplayRepairRequired, nil
+	}
+	if action, handled := decidePreclaimReplay(f); handled {
+		return action, nil
 	}
 	if action, terminal := decideTerminalReplay(f); terminal {
 		return action, nil
@@ -217,11 +255,11 @@ func decideClaimRefusal(f ReplayFacts) (ReplayAction, bool) {
 	}
 	switch f.Claim {
 	case ClaimDependencyRefusal:
-		return FailQueueItem, true
+		return AdvanceClaimRefusal, true
 	case ClaimAlreadyAssigned, ClaimConflict:
 		return ReplayRepairRequired, true
 	case ClaimExternalRefusal:
-		return ReleaseReservation, true
+		return AdvanceClaimRefusal, true
 	case ClaimNone, ClaimMatching:
 		return "", false
 	default:
@@ -345,7 +383,8 @@ func decideHandoffReplay(f ReplayFacts) ReplayAction {
 
 func (f ReplayFacts) hasConflict() bool {
 	return f.Queue == QueueConflict || f.Bead == BeadConflict || f.RunRecord == RunRecordConflict ||
-		f.Worktree == WorktreeConflict || f.Session == SessionConflict || f.Git == GitConflict || f.Claim == ClaimConflict
+		f.Worktree == WorktreeConflict || f.Session == SessionConflict || f.Git == GitConflict ||
+		f.Claim == ClaimConflict || f.Preclaim == PreclaimConflict
 }
 
 func (f ReplayFacts) validate() error {
@@ -353,10 +392,121 @@ func (f ReplayFacts) validate() error {
 		return fmt.Errorf("dispatch: invalid replay phase %q", f.IntentPhase)
 	}
 	if !validQueueFact(f.Queue) || !validBeadFact(f.Bead) || !validRunRecordFact(f.RunRecord) ||
-		!validWorktreeFact(f.Worktree) || !validSessionFact(f.Session) || !validGitFact(f.Git) || !validClaimFact(f.Claim) {
+		!validWorktreeFact(f.Worktree) || !validSessionFact(f.Session) || !validGitFact(f.Git) ||
+		!validClaimFact(f.Claim) || !validPreclaimFact(f.Preclaim) {
 		return fmt.Errorf("dispatch: invalid replay facts")
 	}
+	if f.IntentPhase == PhaseClaimRefused {
+		if err := (ClaimRefusalBinding{Cause: f.RefusalCause}).validate(); err != nil {
+			return err
+		}
+	} else if f.RefusalCause != "" {
+		return errors.New("dispatch: replay refusal cause requires claim_refused phase")
+	}
 	return nil
+}
+
+func validPreclaimFact(v PreclaimFact) bool {
+	switch v {
+	case PreclaimAbsent, PreclaimMaxAttemptsItemTerminal, PreclaimMaxAttemptsGroupDurable,
+		PreclaimCrossQueueItemTerminal, PreclaimCrossQueueGroupDurable,
+		PreclaimDependencyItemTerminal, PreclaimDependencyGroupDurable,
+		PreclaimReleased, PreclaimConflict:
+		return true
+	default:
+		return false
+	}
+}
+
+func decidePreclaimReplay(f ReplayFacts) (ReplayAction, bool) {
+	if f.Preclaim == PreclaimAbsent && f.IntentPhase != PhaseClaimRefused {
+		return "", false
+	}
+	switch f.IntentPhase {
+	case PhasePrepared:
+		if !preclaimBaseCoherent(f) {
+			return ReplayRepairRequired, true
+		}
+		return decidePreparedPreclaim(f), true
+	case PhaseClaimRefused:
+		if !preclaimBaseCoherent(f) {
+			return ReplayRepairRequired, true
+		}
+		return decideRefusedPreclaim(f), true
+	default:
+		return ReplayRepairRequired, true
+	}
+}
+
+func preclaimBaseCoherent(f ReplayFacts) bool {
+	return f.Claim == ClaimNone && f.RunRecord == RunRecordAbsent && f.Worktree == WorktreeAbsent &&
+		f.Session == SessionAbsent && f.Git == GitAbsent && !f.RunOutcomeDurable
+}
+
+func decidePreparedPreclaim(f ReplayFacts) ReplayAction {
+	if f.Bead != BeadOpen {
+		return ReplayRepairRequired
+	}
+	switch f.Preclaim {
+	case PreclaimMaxAttemptsItemTerminal, PreclaimCrossQueueItemTerminal:
+		if f.Queue == QueueTerminalUnreopened {
+			return FinalizePreclaimGroup
+		}
+	case PreclaimMaxAttemptsGroupDurable, PreclaimCrossQueueGroupDurable:
+		if f.Queue == QueueTerminalUnreopened {
+			return RemoveDispatchIntent
+		}
+	default:
+		return ReplayRepairRequired
+	}
+	return ReplayRepairRequired
+}
+
+func decideRefusedPreclaim(f ReplayFacts) ReplayAction {
+	switch f.RefusalCause {
+	case ClaimRefusalDependency:
+		return decideDependencyRefusal(f)
+	case ClaimRefusalSupportedNonOpen:
+		return decideExternalRefusal(f)
+	default:
+		return ReplayRepairRequired
+	}
+}
+
+func decideDependencyRefusal(f ReplayFacts) ReplayAction {
+	if f.Bead != BeadOpen {
+		return ReplayRepairRequired
+	}
+	switch f.Preclaim {
+	case PreclaimAbsent:
+		if f.Queue == QueueReserved {
+			return FailQueueItem
+		}
+	case PreclaimDependencyItemTerminal:
+		if f.Queue == QueueTerminalUnreopened {
+			return FinalizePreclaimGroup
+		}
+	case PreclaimDependencyGroupDurable:
+		if f.Queue == QueueTerminalUnreopened {
+			return RemoveDispatchIntent
+		}
+	default:
+		return ReplayRepairRequired
+	}
+	return ReplayRepairRequired
+}
+
+func decideExternalRefusal(f ReplayFacts) ReplayAction {
+	if f.Bead != BeadOther {
+		return ReplayRepairRequired
+	}
+	if f.Preclaim == PreclaimAbsent && f.Queue == QueueReserved {
+		return ReleaseReservation
+	}
+	if f.Preclaim == PreclaimReleased && f.Queue == QueueOfferable {
+		return RemoveDispatchIntent
+	}
+	return ReplayRepairRequired
 }
 
 func validQueueFact(v QueueFact) bool {

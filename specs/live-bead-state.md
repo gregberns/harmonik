@@ -123,7 +123,7 @@ scheduler offers new work.
 | D0 before reservation | S0 facts | `offerable` | Mint a run or claim the bead |
 | D1 after intent prepare, before queue reservation | Prepared intent, offerable item, open bead | `replay-reservation` with the same IDs | Mint replacement IDs |
 | D2 after queue reservation, before claim | Reserved item, prepared intent, open bead | `replay-claim` | Release from elapsed time alone |
-| D3 claim refused | Reserved item, prepared intent, typed claim result | Use table 4.1 | Match error text |
+| D3 claim refused | Reserved item, prepared intent, typed claim result | Make the exact `claim_refused` phase durable | Compensate before refusal durability |
 | D3a after refusal phase | Reserved item, claim_refused intent | Apply the exact typed fail or release action | Re-run ClaimBead |
 | D3b after dependency compensation | Exact failed item with matching preclaim binding, claim_refused intent | Finalize the exact failed-item group decision | Remove the intent before group durability |
 | D3c after refusal finalization | Durable exact group result, or exact release to pending | Remove the exact intent | Repeat compensation |
@@ -153,10 +153,12 @@ scheduler offers new work.
 
 | Exact fact | Recovery result |
 | --- | --- |
-| Typed dependency refusal | `fail-item` |
+| Typed dependency refusal with a prepared intent | `advance-claim-refusal` |
+| Durable dependency refusal in a claim_refused intent | `fail-item` |
 | Typed already-assigned refusal with a different owner | `repair-required` |
 | Bead is closed with matching git completion evidence | `advance-close` |
-| Bead is in another supported non-open state | `release` |
+| Supported non-open refusal with a prepared intent | `advance-claim-refusal` |
+| Durable supported non-open refusal in a claim_refused intent | `release` |
 | Adapter or ledger result has uncertain identity | `repair-required` |
 
 ### 4.2 Claim write classification

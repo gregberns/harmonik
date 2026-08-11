@@ -26,7 +26,7 @@ Do not turn open research questions into implementation issues.
 - Evidence: `ON-027` and `QM-054` say a graceful stop moves an active queue to `paused-by-drain`. `QM-055` says that state survives restart. Production `daemon.drainCancelledQueue` instead calls `queue.CancelQueueOnShutdown`, archives the canonical queue as `*.cancelled-*`, and clears it from memory. The focused production tests `TestQueueCancel_TransitionsToCancelled` and `TestQueueCancel_NamedQueue_ArchivedOnShutdown` pass and pin this behavior.
 - Consequence: `harmonik queue resume` cannot recover the work after restart because it needs a live canonical queue in `paused-by-drain`. Open beads remain in Beads, but queue order, group shape, and the submitted set are no longer active. An agent or operator must submit them again.
 - Lowest failing layer: daemon clean-exit queue transition. The implementation and its tests disagree with the current queue and operator contracts.
-- State: confirmed by spec trace, production code trace, and focused tests. A real stop and start graph scenario is still required before a fix.
+- State: confirmed by spec trace, production code trace, focused tests, and a real daemon stop and start scenario. The scenario proves the second daemon has no canonical queue to resume and performs no dispatch.
 
 ## Open research gaps
 

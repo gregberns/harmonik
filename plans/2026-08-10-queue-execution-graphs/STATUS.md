@@ -26,11 +26,12 @@ Research and runtime proof. Serial and fan-out or fan-in graphs passed through t
 - Proved a failed root never launches its dependent. The queue pauses for an explicit recovery decision.
 - Confirmed that a clean daemon stop archives an active queue as cancelled. This conflicts with the specified resumable `paused-by-drain` restart path.
 - Confirmed that abrupt-crash recovery has tested run-session adoption and durable reservation release parts. A full killed-process graph run is still missing.
+- Proved the clean-stop gap through two real daemon starts. The first stop archived the active queue. The second start had no graph to continue.
 
 ## Next
 
 - Run an abrupt-crash graph recovery scenario. Keep it separate from the confirmed clean-stop cancellation gap.
-- Run a real stop and start scenario that captures the clean-stop gap before changing the transition.
+- Design and implement the clean-stop transition fix. Preserve a resumable queue instead of archiving it as cancelled.
 - Coordinate the abrupt-crash scenario with C21. Do not pin the old session-only recovery path as the final dispatch contract.
 - Run the focused package and scenario gates.
 - Decide whether to fix the confirmed parent-derived branch wiring and generated skill drift in this work or split them into tracked follow-up work.

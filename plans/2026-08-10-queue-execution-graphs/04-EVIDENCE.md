@@ -81,6 +81,20 @@ The queue and operator specs describe a graceful stop as a durable `paused-by-dr
 
 This is not crash-recovery evidence. It proves that a normal stop and start cannot continue the submitted graph from its queue record. The next restart has no active canonical queue to load or resume.
 
+### Real daemon stop and start
+
+Command:
+
+```text
+go test -tags=scenario ./internal/daemon -run '^TestScenario_QueueSubmit_CleanStopArchivesPendingGraph$' -count=1 -v
+```
+
+Result: PASS in 12.53 seconds on 2026-08-11.
+
+The scenario used the full daemon composition root, real Beads, real Git, and the canonical queue store. A handler pause held one open bead at a stable between-run point in an active stream queue. The first clean daemon stop archived `main.json` as `main.json.cancelled-*`. The bead stayed open. A second daemon started against the same project. It loaded no canonical queue, emitted no `run_started`, and left the bead open.
+
+This proves the consequence through the real start and stop boundary. The graph does not continue. An agent or operator must reconstruct and resubmit it.
+
 ## Abrupt-crash recovery components
 
 Command:

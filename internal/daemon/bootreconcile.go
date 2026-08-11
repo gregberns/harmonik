@@ -276,11 +276,14 @@ func (bs *bootState) reconcileInFlightRuns(ctx context.Context, daemonStartTime 
 		return
 	}
 	liveRunBeadIDs := make(map[core.BeadID]struct{})
-	if liveRecs, liveErr := runpkg.List(cfg.ProjectDir); liveErr == nil {
-		for _, rec := range liveRecs {
+	if registry, liveErr := runpkg.ScanRegistry(cfg.ProjectDir); liveErr == nil {
+		for _, rec := range registry.Legacy {
 			if rec.BeadID != "" {
 				liveRunBeadIDs[core.BeadID(rec.BeadID)] = struct{}{}
 			}
+		}
+		for _, rec := range registry.Dispatch {
+			liveRunBeadIDs[rec.BeadID] = struct{}{}
 		}
 	}
 	// hk-hju8n: snapshot the resettable-bead set in two bulk `br list` calls so the

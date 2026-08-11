@@ -706,7 +706,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 	// the bead and revert the queue item so the dispatch loop re-dispatches it.
 	if baseEnv.ProjectDir != "" {
 		if tmuxAdp := extractTmuxAdapterFromSubstrate(substratePort); tmuxAdp != nil {
-			if liveRecs, listErr := runpkg.List(baseEnv.ProjectDir); listErr == nil {
+			if liveRecs, listErr := legacyRunSessionsForAdoption(baseEnv.ProjectDir); listErr == nil {
 				for _, rec := range liveRecs {
 					//nolint:copyloopvar // pre-existing: Seam A moved this code out of workloop.go unchanged
 					rec := rec // capture loop variable
@@ -2526,26 +2526,35 @@ func adoptedReleaseReport(queueName, beadID string, runID core.RunID, release re
 	}
 }
 
+func legacyRunSessionsForAdoption(projectDir string) ([]runpkg.Record, error) {
+	registry, err := runpkg.ScanRegistry(projectDir)
+	if err != nil {
+		return nil, err
+	}
+	return registry.Legacy, nil
+}
+
 // strandedBeadHasOnDiskRun reports whether any record in .harmonik/runs/ is
-// associated with beadID. An on-disk record means an adoptLiveRunSession
-// goroutine is monitoring the independent tmux session; resetting the bead
-// in that case would race the live session, so the stranded-bead auto-reset
-// (hk-l2xd1) must skip.
+// associated with beadID. An on-disk record means a recovery owner can still
+// act on the run. Resetting the bead can race that owner.
 //
-// On a runpkg.List error the on-disk state is unknown, not empty — treat
-// that as race-conservative (report true, i.e. "assume a run may exist")
-// so the caller skips the reset rather than risking a race with a live
-// adoptLiveRunSession goroutine it failed to see (hk-r9edj).
+// On a runpkg.ScanRegistry error the on-disk state is unknown, not empty. The
+// caller skips the reset rather than risking a race with a run it cannot read.
 func strandedBeadHasOnDiskRun(projectDir string, beadID core.BeadID) bool {
 	if projectDir == "" {
 		return false
 	}
-	recs, err := runpkg.List(projectDir)
+	registry, err := runpkg.ScanRegistry(projectDir)
 	if err != nil {
 		return true
 	}
-	for _, r := range recs {
+	for _, r := range registry.Legacy {
 		if r.BeadID == string(beadID) {
+			return true
+		}
+	}
+	for _, r := range registry.Dispatch {
+		if r.BeadID == beadID {
 			return true
 		}
 	}

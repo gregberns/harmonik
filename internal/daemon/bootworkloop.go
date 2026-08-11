@@ -369,11 +369,11 @@ func (bs *bootState) wireStaleWatcherReapSeams(ctx context.Context, bus handlerc
 // Best-effort: any lookup error → false (never a spurious reap). Extracted from
 // wireStaleWatcherReapSeams for giant-retirement boot-config (B6 complexity).
 func (bs *bootState) probeRunProcessDead(ctx context.Context, reapAdapter ltmux.Adapter, runID core.RunID) bool {
-	recs, listErr := runpkg.List(bs.cfg.ProjectDir)
+	registry, listErr := runpkg.ScanRegistry(bs.cfg.ProjectDir)
 	if listErr != nil {
 		return false
 	}
-	for _, r := range recs {
+	for _, r := range registry.Legacy {
 		if r.RunID != runID.String() {
 			continue
 		}
@@ -388,6 +388,16 @@ func (bs *bootState) probeRunProcessDead(ctx context.Context, reapAdapter ltmux.
 			return true
 		}
 		return processDead(pid)
+	}
+	for _, r := range registry.Dispatch {
+		if r.RunID != runID || r.SessionName == "" {
+			continue
+		}
+		pid, pidErr := reapAdapter.WindowPanePID(ctx, ltmux.WindowHandle(r.SessionName+":"))
+		if pidErr != nil {
+			return false
+		}
+		return pid == 0 || processDead(pid)
 	}
 	return false
 }

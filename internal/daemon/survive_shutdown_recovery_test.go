@@ -446,6 +446,9 @@ func TestRunSessionAdoption_DoesNotResetUniversalDispatchRecords(t *testing.T) {
 	if err := runpkg.CreateDispatchRecord(projectDir, record); err != nil {
 		t.Fatal(err)
 	}
+	if !strandedBeadHasOnDiskRun(projectDir, binding.BeadID) {
+		t.Fatal("stranded-bead guard ignored a universal dispatch record")
+	}
 
 	resetter := &surviveRecoveryResetter{}
 	adoptDeadRunSessions(t.Context(), projectDir, surviveRecoveryHash, 0, t.TempDir(), nil, resetter)

@@ -653,7 +653,7 @@ func probeRunRegistrySessions(
 	if adapter == nil {
 		return liveRunIDs
 	}
-	records, err := runpkg.List(projectDir)
+	registry, err := runpkg.ScanRegistry(projectDir)
 	if err != nil {
 		if logger != nil {
 			logger.Printf("daemon: probeRunRegistrySessions: run registry list error (%v); no run session is exempt this boot", err)
@@ -661,35 +661,32 @@ func probeRunRegistrySessions(
 		return liveRunIDs
 	}
 
-	for _, rec := range records {
+	probe := func(runID, beadID, sessionName string) {
+		if sessionName == "" {
+			return
+		}
+		if _, present := sessionSnapshot[sessionName]; !present {
+			return
+		}
+		pid, pidErr := adapter.WindowPanePID(ctx, ltmux.WindowHandle(sessionName+":"))
+		if pidErr != nil || pid <= 0 || !pidIsLive(pid) {
+			return
+		}
+		excludeSessions[sessionName] = struct{}{}
+		liveRunIDs[runID] = struct{}{}
+		if logger != nil {
+			logger.Printf("daemon: probeRunRegistrySessions: bead %s is still being worked in session %q (PID %d); not sweeping it",
+				beadID, sessionName, pid)
+		}
+	}
+	for _, rec := range registry.Legacy {
+		probe(rec.RunID, rec.BeadID, rec.SessionName)
+	}
+	for _, rec := range registry.Dispatch {
 		if rec.SessionName == "" {
 			continue
 		}
-		if _, present := sessionSnapshot[rec.SessionName]; !present {
-			// The session is gone. adoptDeadRunSessions reads the same record a few
-			// steps later, sees the same absence, and resets the bead.
-			continue
-		}
-		pid, pidErr := adapter.WindowPanePID(ctx, ltmux.WindowHandle(rec.SessionName+":"))
-		if pidErr != nil || pid <= 0 {
-			continue
-		}
-		if !pidIsLive(pid) {
-			continue
-		}
-		// The two facts are recorded together, and neither is skipped because the
-		// other is already known. This loop used to give up on a record whose
-		// session an earlier probe had already excluded, on the reading that there
-		// was nothing left to do for it. There was: the exclusion set protects the
-		// SESSION, and the run id is what protects the WORKTREE. Leaving early
-		// kept the agent alive and handed the directory it works in to the
-		// force-remove below.
-		excludeSessions[rec.SessionName] = struct{}{}
-		liveRunIDs[rec.RunID] = struct{}{}
-		if logger != nil {
-			logger.Printf("daemon: probeRunRegistrySessions: bead %s is still being worked in session %q (PID %d); not sweeping it",
-				rec.BeadID, rec.SessionName, pid)
-		}
+		probe(rec.RunID.String(), string(rec.BeadID), rec.SessionName)
 	}
 	return liveRunIDs
 }

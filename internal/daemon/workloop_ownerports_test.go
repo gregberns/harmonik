@@ -82,8 +82,8 @@ func TestWorkLoopOwnerPorts_WaitsForSpawnReadiness(t *testing.T) {
 		if err != nil {
 			t.Fatalf("runWorkLoop = %v, want nil", err)
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("work loop did not stop after context cancellation")
+	case <-time.After(daemonExitHangBudget):
+		t.Fatalf("work loop did not stop within %s after context cancellation", daemonExitHangBudget)
 	}
 }
 

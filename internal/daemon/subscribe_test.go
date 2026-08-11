@@ -263,8 +263,8 @@ func TestSubscribeHub_GracefulCloseOnClientDisconnect(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("HandleSubscribe did not return within 3s of client close")
+	case <-time.After(daemonExitHangBudget):
+		t.Fatalf("HandleSubscribe did not return within %s of client close", daemonExitHangBudget)
 	}
 
 	// Subscriber must be deregistered.
@@ -798,8 +798,8 @@ func TestSubscribeHub_CapacityExceeded(t *testing.T) {
 	// HandleSubscribe for the rejected connection must have returned.
 	select {
 	case <-rejDone:
-	case <-time.After(3 * time.Second):
-		t.Fatal("HandleSubscribe did not return after capacity rejection")
+	case <-time.After(daemonExitHangBudget):
+		t.Fatalf("HandleSubscribe did not return within %s after capacity rejection", daemonExitHangBudget)
 	}
 
 	// connCount must not have been incremented for the rejected connection.
@@ -997,8 +997,8 @@ func TestSubscribeHub_DaemonShutdownMidSubscribe(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("HandleSubscribe did not return within 2s of daemon context cancellation")
+	case <-time.After(daemonExitHangBudget):
+		t.Fatalf("HandleSubscribe did not return within %s of daemon context cancellation", daemonExitHangBudget)
 	}
 
 	// Subscriber must be deregistered on shutdown.

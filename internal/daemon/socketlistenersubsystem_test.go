@@ -217,8 +217,8 @@ func sockpartRunDaemon(t *testing.T, projectDir, jsonlPath string) string {
 	select {
 	case startErr := <-done:
 		t.Logf("daemon.Start returned: %v", startErr)
-	case <-time.After(10 * time.Second):
-		t.Fatal("daemon.Start did not return within 10 s after context cancellation")
+	case <-time.After(daemonExitHangBudget):
+		t.Fatalf("daemon.Start did not return within %s after context cancellation", daemonExitHangBudget)
 	}
 	return logBuf.String()
 }

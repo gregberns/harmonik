@@ -265,8 +265,8 @@ func TestT3_DoubleInvocation(t *testing.T) {
 	select {
 	case err := <-d1Done:
 		t.Logf("T3-01: daemon 1 stopped: %v", err)
-	case <-time.After(5 * time.Second):
-		t.Error("T3-01: daemon 1 did not stop within 5s after cancel")
+	case <-time.After(daemon.ExportedDaemonExitHangBudget):
+		t.Errorf("T3-01: daemon 1 did not stop within %s after cancel", daemon.ExportedDaemonExitHangBudget)
 	}
 }
 
@@ -350,8 +350,8 @@ func TestT3_SIGINTMidRun(t *testing.T) {
 		} else {
 			t.Log("T3-02: daemon.Start returned nil (clean)")
 		}
-	case <-time.After(10 * time.Second):
-		t.Error("T3-02: daemon.Start did not return within 10s after cancel")
+	case <-time.After(daemon.ExportedDaemonExitHangBudget):
+		t.Errorf("T3-02: daemon.Start did not return within %s after cancel", daemon.ExportedDaemonExitHangBudget)
 	}
 
 	// Check bead status after shutdown.
@@ -461,8 +461,8 @@ func TestT3_SIGTERMMidRun(t *testing.T) {
 		} else {
 			t.Log("T3-03: daemon.Start returned nil (clean)")
 		}
-	case <-time.After(10 * time.Second):
-		t.Error("T3-03: daemon.Start did not return within 10s after cancel")
+	case <-time.After(daemon.ExportedDaemonExitHangBudget):
+		t.Errorf("T3-03: daemon.Start did not return within %s after cancel", daemon.ExportedDaemonExitHangBudget)
 	}
 
 	beadStatusAfter := t3FixtureBeadStatus(t, brWrapper, beadID)
@@ -542,8 +542,8 @@ func TestT3_StalePidfile(t *testing.T) {
 		} else {
 			t.Log("T3-04: PASS — daemon.Start succeeded after stale pidfile")
 		}
-	case <-time.After(5 * time.Second):
-		t.Error("T3-04: daemon.Start did not return within 5s (hung?)")
+	case <-time.After(daemon.ExportedDaemonExitHangBudget):
+		t.Errorf("T3-04: daemon.Start did not return within %s (hung?)", daemon.ExportedDaemonExitHangBudget)
 		cancel() // emergency stop; replaces syscall.Kill self-signal per hk-i4mtq
 	}
 }
@@ -595,8 +595,8 @@ func TestT3_StaleWorktreeOrphanSweep(t *testing.T) {
 		} else {
 			t.Log("T3-05: daemon.Start returned successfully")
 		}
-	case <-time.After(5 * time.Second):
-		t.Error("T3-05: daemon.Start hung for 5s")
+	case <-time.After(daemon.ExportedDaemonExitHangBudget):
+		t.Errorf("T3-05: daemon.Start hung for %s", daemon.ExportedDaemonExitHangBudget)
 		cancel() // emergency stop; replaces syscall.Kill self-signal per hk-i4mtq
 	}
 

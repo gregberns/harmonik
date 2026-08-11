@@ -175,7 +175,7 @@ func SetHold(projectDir, agent string) (sessionID string, err error) {
 
 // setHoldAt is SetHold with the marker timestamp read through the given
 // ClockPort (SK-008/SK-R3): the cycle path stamps holds via the injected
-// Clock (GaugePort.SetHold), while the public SetHold keeps the wall clock
+// Clock, while the public SetHold keeps the wall clock
 // for CLI callers. Nil clock falls back to the system clock.
 func setHoldAt(projectDir, agent string, clock substrate.ClockPort) (sessionID string, err error) {
 	if clock == nil {

@@ -157,21 +157,10 @@ type CyclerConfig struct {
 	// substrate.FakeClock can drive timeouts and poll cadences in virtual time.
 	Clock substrate.ClockPort
 
-	// Named ports (T6, session-keeper-design §1 / D10). When non-nil these
-	// OVERRIDE the corresponding function-field adapters below: the cycle core
-	// depends exclusively on the port interfaces (ports.go), and a nil port is
-	// filled by NewCycler with the fn* adapter over the (defaulted) function
-	// fields — so existing fn-field wiring and test fakes keep working while
-	// T7's Step reactor drives every side effect through a port.
-	Pane    PanePort
-	Gauge   GaugePort
-	Handoff HandoffPort
 	Respawn RespawnPort // nil AND ForceRestartFn nil → escalation dormant
 
-	// Injectable dependencies. Nil → production default. These are the WIRING
-	// INPUTS for the fn* port adapters (ports.go); the cycle core never calls
-	// them directly. CycleIDGen stays a config seam (not a port): the shell
-	// mints cycle ids (design §2a).
+	// Injectable dependencies. Nil means use the production default. Command
+	// composition converts these functions into the narrow ports in CycleDeps.
 	CycleIDGen      func() string
 	IsManagedFn     func(projectDir, agentName string) bool
 	HandoffFilePath func(projectDir, agentName string) string

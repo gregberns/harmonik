@@ -1266,25 +1266,6 @@ func (a *HandlerAdapter) HandleQueueSubmit(ctx context.Context, params json.RawM
 	return data, nil
 }
 
-// cloneQueue returns a deep, independent copy of q by round-tripping through
-// the same JSON representation Persist writes. Used by appendUnderLock to take
-// a snapshot before the in-place AppendItems mutation so a failed Persist never
-// leaves the in-memory store ahead of disk (hk-3hh9w). Round-tripping (rather
-// than a hand-written field copy) matches the legacy append path exactly, which
-// operates on a fresh disk-loaded copy (Load == UnmarshalQueue), and stays
-// correct as Queue/Group/Item fields evolve.
-func cloneQueue(q *Queue) (*Queue, error) {
-	data, err := json.Marshal(q)
-	if err != nil {
-		return nil, fmt.Errorf("clone queue: marshal: %w", err)
-	}
-	cloned, err := UnmarshalQueue(data)
-	if err != nil {
-		return nil, fmt.Errorf("clone queue: unmarshal: %w", err)
-	}
-	return &cloned, nil
-}
-
 // appendUnderLock performs the whole queue-append read-modify-write under the
 // queue mutation lock (B1: two-writer lost-update fix):
 //
@@ -1344,13 +1325,19 @@ func (a *HandlerAdapter) appendUnderLock(
 	// Persist succeeds — mirroring the legacy path, which operates on a fresh
 	// disk-loaded copy and SetQueues only on a successful persist. On Persist
 	// failure the live store is left untouched.
-	snapshot, cloneErr := cloneQueue(q)
-	if cloneErr != nil {
+	if _, err := json.Marshal(q); err != nil {
 		return QueueAppendResponse{}, nil, &RPCError{
 			Code: -32099, Message: "internal_error",
-			Detail: map[string]any{"error": fmt.Sprintf("snapshot queue before append: %v", cloneErr)},
+			Detail: map[string]any{"error": fmt.Sprintf("snapshot queue before append: clone queue: marshal: %v", err)},
 		}
 	}
+	if q.SchemaVersion != 1 {
+		return QueueAppendResponse{}, nil, &RPCError{
+			Code: -32099, Message: "internal_error",
+			Detail: map[string]any{"error": fmt.Sprintf("snapshot queue before append: clone queue: unmarshal: unsupported queue schema_version: got %d, want 1", q.SchemaVersion)},
+		}
+	}
+	snapshot := CloneQueue(q)
 
 	resp, mutated, events, rpcErr := HandleQueueAppendOnQueue(ctx, req, a.ledger, a.projectDir, snapshot)
 	if rpcErr != nil {

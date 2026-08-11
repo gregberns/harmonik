@@ -56,6 +56,35 @@ func TestQueueStoreSingleInstance(t *testing.T) {
 	}
 }
 
+func TestQueueStoreQueueDetachesNestedPointers(t *testing.T) {
+	runID := "run-original"
+	receiptID := "receipt-original"
+	stamp := time.Date(2026, 8, 10, 1, 2, 3, 0, time.UTC)
+	q := queueStoreFixtureQueue(t)
+	q.FailedRecoveryReceiptID = &receiptID
+	q.Groups = []queue.Group{{
+		StartedAt: &stamp,
+		Items: []queue.Item{{
+			RunID:          &runID,
+			TemplateParams: map[string]string{"mode": "original"},
+		}},
+	}}
+	qs := queuewiring.NewQueueStore()
+	qs.SetQueue(q)
+
+	snapshot := qs.Queue()
+	*snapshot.FailedRecoveryReceiptID = "changed-receipt"
+	*snapshot.Groups[0].StartedAt = stamp.Add(time.Hour)
+	*snapshot.Groups[0].Items[0].RunID = "changed-run"
+	snapshot.Groups[0].Items[0].TemplateParams["mode"] = "changed"
+
+	fresh := qs.Queue()
+	if *fresh.FailedRecoveryReceiptID != receiptID || *fresh.Groups[0].StartedAt != stamp ||
+		*fresh.Groups[0].Items[0].RunID != runID || fresh.Groups[0].Items[0].TemplateParams["mode"] != "original" {
+		t.Fatalf("snapshot mutation reached store: %+v", fresh)
+	}
+}
+
 // TestQueueStoreClearQueue asserts that ClearQueue removes the queue.
 func TestQueueStoreClearQueue(t *testing.T) {
 	t.Parallel()

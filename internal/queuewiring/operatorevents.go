@@ -282,17 +282,17 @@ func (c *QueueOperatorEventConsumer) transitionQueue(
 			locked.Done()
 			return nil, false, nil
 		}
-		candidate := *live
-		if err := mutate(&candidate); err != nil {
+		candidate := queue.CloneQueue(live)
+		if err := mutate(candidate); err != nil {
 			locked.Done()
 			return nil, false, err
 		}
-		locked.LockedSetQueueByName(name, &candidate)
+		locked.LockedSetQueueByName(name, candidate)
 		locked.Done()
 		if wake {
 			c.cfg.QueueStore.Wake()
 		}
-		return &candidate, true, nil
+		return candidate, true, nil
 	}
 
 	snapshot := c.cfg.QueueStore.Snapshot(name)

@@ -10,14 +10,26 @@ Charlie must deliberately break each new claim test before accepting it.
 Updated: 2026-08-10
 
 - Owner: Charlie.
-- Active slice: C12 is complete. C13 is next.
+- Active slice: C13 is complete. C14 is next.
 - Start revision: `b49210d67` on `work/alpha-integration-merge`.
 - State: C01 through C04 are complete and independently approved.
 - Implementation commit: `de0a6ca3`.
 - Integration reconciliation commit: `b0cac51a`.
 - Stop gate: C05 through C07 received independent approval before C08.
 - Coordination note: the queue RPC overlap retained both the active-run status work and the event-intent path.
-- Later tasks: C13 through C31 remain unstarted.
+- Later tasks: C14 through C31 remain unstarted.
+
+### C13 evidence
+
+- `queue.CloneQueue` is the single owner for detached queue copies.
+- It detaches all slices, maps, time pointers, run IDs, and receipt IDs.
+- It preserves nil fields, empty non-nil values, and canonical JSON bytes.
+- Queue decisions, transaction adapters, RPC append, operator transitions, and QueueStore reads use it.
+- The append boundary keeps its prior marshal and schema rejection behavior.
+- Focused queue, queue-store, and daemon tests pass with `-count=1`.
+- Repository compilation, `go vet ./...`, and the diff check pass.
+- A shallow map mutation made the clone detachment test fail.
+- Independent reviewer verdict: `APPROVE` after one blocking correction round.
 
 ### C12 evidence
 

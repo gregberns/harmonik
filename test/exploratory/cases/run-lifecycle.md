@@ -407,8 +407,24 @@ measurement.
 Class: protocol
 Exercises: `make full` / `make test-scenario`, `internal/workspace` `EnsureWorktreeTrustVia`
 Bead: `hk-g8d5x` (P0, the mechanism), `hk-n4vsc` (the leak), `hk-core-gate-nondeterministic-m9vlf`
-Status: OPEN at `4ebd8a334` — proved in both directions 2026-08-11; the repair exists at
-`d119d5149` on `work/alpha-trust-isolation` and is NOT merged
+Status: **FIXED at `f0704feee` (verified 2026-08-11 at `85f6b61b4`)** — was OPEN at `4ebd8a334`,
+proved in both directions the same day. Failures 15 → 3, the wedge signature 10 → **0**, all ten
+formerly-wedged tests pass in 1–4s against a 50s deadline.
+
+> **The contention is bounded now, not removed — keep reading.** The three surviving `TestT6_*`
+> failures still print a Claude-config lock timeout, in the fix's NEW bounded wording:
+> `write-lock acquire timed out on the Claude config` rather than the old
+> `(contended ~/.claude.json)`. `prune worktree trust` still loses the race and still fails, so the
+> beads do not close and T6 fails at its own budget — fast instead of hanging. `lsof` twice caught
+> live `daemon.test` binaries holding the operator's REAL `~/.claude.json.lock` after the fix, so
+> some path still reaches the real file rather than the hermetic redirect that
+> `hermetic.go` installs via `setIfUnset("HARMONIK_CLAUDE_CONFIG_PATH", ...)`. **Which path was not
+> traced** — that is the open question. In isolation on a quiet box all three pass in 5–11s against
+> 60 and 90 second budgets with zero lock timeouts, so they are not defects in the code they test.
+>
+> **Keep running this case.** The uniform-deadline tell in step 1 found the unbounded form; the
+> bounded form hides better, because a fast failure looks like a normal assertion failure and no
+> longer stands out as a wall-clock wedge.
 
 **LP-018 is the case before this one and it is not sufficient.** LP-018 separates "the code is
 broken" from "the box is busy". This case exists because on 2026-08-11 the box was NOT busy — load

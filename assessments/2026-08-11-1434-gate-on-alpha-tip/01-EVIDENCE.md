@@ -181,3 +181,109 @@ is in the corpus now as LP-019's closing trap.
   measurement.
 - **No bead was driven end to end through a live dispatched run.** A scratch daemon was stood up and
   probed, which is more than the previous session managed, but the standing gap is still open.
+
+---
+
+# ADDENDUM — 2026-08-11 15:30 to 16:10, after the lock fix landed
+
+Alpha cherry-picked the trust-isolation fix onto `work/alpha-integration-merge` as `f0704feee`.
+Verified byte-identical to the original: `diff` of the two commits' diffs is **empty**. It touches
+both python worker programs, `claudetrust_wm040b.go`, `remotematerialize.go`, and adds a 427-line
+isolation test.
+
+Bravo rebased onto it cleanly, 11 commits, zero conflicts. Backup at
+`backup/bravo-pre-rebase4-20260811`. Box before the run: **no lock holders, no leaked test
+binaries**, 17 GiB free.
+
+## A1. `make full` now fails EARLIER than it did before
+
+    make full  ->  LOGGED EXIT rc=2, at lint-allow, 15:40
+    zero test failures, because the test tier never ran
+
+Three findings, all inside the fix's own new test file, none on the allow list:
+
+    NOT ALLOWED  internal/workspace/workertrust_isolation_test.go  [errcheck]
+      :119  Error return value of os.ReadFile is not checked
+    NOT ALLOWED  internal/workspace/workertrust_isolation_test.go  [gosec]
+      :96   G204: Subprocess launched with a potential tainted input or cmd arguments
+      :240  G204: Subprocess launched with variable
+    NOT ALLOWED  internal/workspace/workertrust_isolation_test.go  [nolintlint]
+      :152  directive //nolint:gosec ... is unused for linter "gosec"
+
+**The merge decision moved backwards.** An hour earlier it ran to completion and named 15 real test
+failures; now it stops a stage sooner and names none. Filed as `hk-t18cz` (P1). **Not repaired by
+this lane on purpose** — it is the product change under assessment, and the assessor does not grade
+work it helped build.
+
+## A2. The scenario tier, reached directly, and the wedge is GONE
+
+`make test-scenario` is its own target gated only by `build-all`; `make full` merely runs lint
+first. That is this lane's own finding from 2026-08-10 and it is what made the answer reachable
+tonight without touching alpha's code.
+
+    make test-scenario  ->  LOGGED EXIT rc=2
+    THREE failures, down from FIFTEEN
+
+| Measure | Before the fix | After |
+|---|---|---|
+| Total failures | 15 | **3** |
+| `reached no terminal transition` (the wedge) | 10 | **0** |
+| `contended ~/.claude.json` in the log | 5 | **0** |
+| Failures at a uniform ~50.18s | 8 | **0** |
+
+All ten previously-wedged tests re-run explicitly, `-count=1`, same commit:
+
+    PASS x10, 1.03s to 3.80s, ok internal/daemon 4.442s, LOGGED EXIT rc=0
+
+Against a 50-second deadline. **The lock wedge is fixed.**
+
+## A3. The three that remain are the SAME lock, now bounded rather than unbounded
+
+    --- FAIL: TestT6_EmptyAndNearEmptyBody  (65.23s)   elapsed=60.07s, all_closed=false
+    --- FAIL: TestT6_UnicodeHeavyBody       (64.08s)   elapsed=60.10s, all_closed=false
+    --- FAIL: TestT6_LargeWorktreeBase      (96.66s)   elapsed=90.08s, all_closed=false
+
+Each preceded by the fix's own new error path:
+
+    daemon: runmerge: prune worktree trust for ... failed: workspace: handlercontract:
+    structural: write-lock acquire timed out on the Claude config
+
+**The wording changed and the change is the evidence.** Before: `write-lock acquire timed out
+(contended ~/.claude.json)`. Now: `timed out on the Claude config`. That is the bounded-wait path
+the fix added, firing as designed.
+
+So the fix did exactly what it says: **it bounds the wait.** What it does not do is remove the
+contention. `prune worktree trust` still loses the race and still fails, the beads do not close, and
+T6 fails at its own budget — quickly now, instead of hanging.
+
+**Direct evidence the REAL config is still being reached, after the fix.** Twice during the tier
+run, `lsof ~/.claude.json.lock` named live `daemon.test` binaries holding it:
+
+    daemon.te 17333 gb 8u REG /Users/gb/.claude.json.lock   (7m21s elapsed)
+    daemon.te 65768 gb 7u REG /Users/gb/.claude.json.lock   (1m57s elapsed, 100.0% CPU)
+
+`hermetic.go` redirects via `env.setIfUnset("HARMONIK_CLAUDE_CONFIG_PATH", <tmp>/.claude.json)`, so
+some path is still reaching the operator's real file rather than the redirect. **Which path was not
+pinned down** — that is the honest limit of this measurement.
+
+## A4. Isolation control on the three survivors
+
+Killed the one remaining leaked holder, confirmed `lsof` empty, load 3.19, same commit:
+
+    PASS TestT6_EmptyAndNearEmptyBody  11.20s   (budget 60s)
+    PASS TestT6_UnicodeHeavyBody        5.10s   (budget 60s)
+    PASS TestT6_LargeWorktreeBase       5.39s   (budget 90s)
+    LOGGED EXIT rc=0    lock timeouts during the run: 0
+
+Five to seventeen-fold margins, zero lock timeouts. **The three survivors are not defects in the
+code they test.** They fail only when the tier self-contends.
+
+## What this addendum does NOT establish
+
+- **Which code path still reaches the real `~/.claude.json`.** Observed twice by `lsof`; not traced
+  to a call site.
+- **Whether the three T6 failures are pure lock contention or lock plus load.** Load was 5–10 during
+  the tier run and 3.19 during isolation, so both variables moved. The zero-lock-timeouts reading in
+  isolation points at the lock, but it does not separate the two cleanly.
+- **`make full` has still never been green**, and it has still never once run to completion with
+  lint green AND the lock fixed. That combination has not existed yet.

@@ -89,3 +89,77 @@ one. A positive control alone would have let tonight's story stand as well.
    a Unix socket path is capped at 104 bytes. Three findings looked available and all three were the
    choice of directory. The daemon had said so plainly in its own log. The corpus README's
    `/tmp/h/<name>` is load-bearing.
+
+---
+
+# ADDENDUM — verdict after the fix landed, 2026-08-11 16:10
+
+## Still BLOCK, but the big one is genuinely closed
+
+Alpha landed the trust-isolation fix as `f0704feee`, byte-identical to the original. Bravo rebased
+onto it and re-measured.
+
+**The ten-test lock wedge is fixed.** Failures went 15 → 3. The wedge signature went 10 → **0**. The
+contended-config line went 5 → **0**. All ten previously-wedged tests now pass in 1–4 seconds
+against a 50-second deadline. That was the headline finding of this assessment and it is discharged.
+
+**The gate is still red, for two new reasons, and one of them is a regression.**
+
+### 1. `make full` now dies at lint, earlier than before — `hk-t18cz` (P1)
+
+Three lint findings, all inside the fix's own new 427-line test file, none on the allow list: an
+unchecked `os.ReadFile`, two `G204` subprocess warnings, and one `//nolint:gosec` directive that no
+longer matches a live finding.
+
+**This is a regression in the merge decision's usefulness, not just an annoyance.** An hour before
+the fix, the gate ran to completion and named 15 real failures. Now it stops a stage earlier and
+names none. The gate tells you less than it did.
+
+The gate's own output says adding the file to the allow list is explicitly *not* the intended
+repair. The `nolintlint` finding deserves a moment's thought rather than a blind delete — an unused
+`gosec` directive usually means the code beneath it changed shape.
+
+**This lane did not fix it, deliberately.** It is the product change under assessment.
+
+### 2. The same lock still contends — now bounded instead of unbounded
+
+The three surviving failures are all `TestT6_*`, and each is preceded by the fix's own new error
+path: `write-lock acquire timed out on the Claude config`. The wording changed from
+`(contended ~/.claude.json)`, which is how you can tell the bounded-wait path is the one firing.
+
+**The fix does exactly what it claims — it bounds the wait. It does not remove the contention.**
+`prune worktree trust` still loses the race and still fails; the beads never close; T6 fails at its
+own budget. Fast failure instead of a hang is a real improvement and it is not the same as fixed.
+
+Twice during the run, `lsof` caught live `daemon.test` binaries holding the operator's **real**
+`~/.claude.json.lock` — one at 100% CPU — so something still reaches the real file rather than the
+hermetic redirect. Which path was not traced. That is the next question and it is a short one.
+
+In isolation on a quiet box with no holders, all three pass in 5–11 seconds against 60 and 90 second
+budgets, with zero lock timeouts. **They are not defects in the code they test.**
+
+## Scoreboard
+
+| | Before tonight | Now |
+|---|---|---|
+| Disk floor stalling the fleet | blocking | cleared |
+| Two lint blockers | blocking | fixed |
+| Flag-first daemon start | blocking | fixed |
+| Stale codex test | blocking | fixed |
+| `set-concurrency` unbounded | blocking | fixed, probed live |
+| **Ten-test lock wedge** | **unknown, misattributed to load** | **fixed and verified** |
+| Lint on the fix's own test file | did not exist | **blocking (`hk-t18cz`)** |
+| Residual Claude-config contention | hidden under the wedge | **blocking, now visible** |
+
+Seven closed. Two open, both small and both named, and neither is a mystery.
+
+## The honest bottom line
+
+`make full` has still never been green, and **it has still never once run to completion with lint
+green and the lock fixed at the same time**. That combination has not existed yet. Tonight got
+closer than any previous attempt: the tier's dominant failure mode is gone, and what remains is
+three tests failing on residual contention plus a lint stop that is three small edits away.
+
+The correction this lane owes stands: for four days the redness was reported as load. It was a lock.
+The load class is real, separately filed, and **still unverified** — a quiet box cannot test a fix
+for load sensitivity, and nothing tonight tested one.

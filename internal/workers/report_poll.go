@@ -131,6 +131,27 @@ func RunReportLoop(ctx context.Context, cfg Config, reg *Registry, runnerFor Run
 	runReportLoopWithInterval(ctx, cfg, reg, runnerFor, emit, cfg.ReportInterval(), cfg.BreachSampleInterval())
 }
 
+// reportLoopInterval chooses the cadence for the loop's NEXT wait: fast while
+// any worker has a run in flight and breach detection is enabled, slow
+// otherwise.
+//
+// This is a pure decision, separated from the wait it feeds so a test can check
+// it WITHOUT measuring the machine (hk-vp02y). The test that covered this used
+// to run the real loop for 120 ms and assert it had swept at least five times.
+// That asserts the OS scheduled a goroutine at a given rate, which nothing in
+// the product promises: under the merge decision's own load — 110 test binaries
+// at once — it does not, and the gate returned a different verdict on an
+// unchanged commit. A cadence SELECTION is a property of the code. A cadence
+// RATE is a property of the box.
+//
+// Bead ref: hk-vp02y.
+func reportLoopInterval(breachEnabled bool, inFlight int, slowInterval, fastInterval time.Duration) time.Duration {
+	if breachEnabled && inFlight > 0 {
+		return fastInterval
+	}
+	return slowInterval
+}
+
 // runReportLoopWithInterval is the interval-injectable core of RunReportLoop.
 // Production passes cfg.ReportInterval() + cfg.BreachSampleInterval(); tests pass
 // sub-second intervals (the workers.yaml fields are whole-seconds, so test
@@ -157,13 +178,9 @@ func runReportLoopWithInterval(ctx context.Context, cfg Config, reg *Registry, r
 
 	st := newBreachLoopState(cfg)
 	for {
-		// Choose the cadence for the NEXT wait: fast while any worker is in flight
-		// and breach detection is enabled, slow otherwise. reg.InFlight() is the
-		// single global in-flight counter (v1 single-worker registry).
-		interval := slowInterval
-		if breachEnabled && reg.InFlight() > 0 {
-			interval = fastInterval
-		}
+		// reg.InFlight() is the single global in-flight counter (v1 single-worker
+		// registry).
+		interval := reportLoopInterval(breachEnabled, reg.InFlight(), slowInterval, fastInterval)
 		select {
 		case <-ctx.Done():
 			return

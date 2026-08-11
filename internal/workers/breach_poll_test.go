@@ -47,11 +47,22 @@ pagesize=16384
 type stdoutRunner struct {
 	stdout *string
 	calls  *int64
+	// swept, when set, is signalled once per invocation so a test can WAIT for
+	// a sweep instead of sleeping for a window and counting what arrived. It is
+	// buffered and the send is non-blocking, so a runner nobody is reading from
+	// behaves exactly as it did before this field existed.
+	swept chan<- struct{}
 }
 
 func (r stdoutRunner) Command(ctx context.Context, name string, args ...string) *exec.Cmd {
 	if r.calls != nil {
 		atomic.AddInt64(r.calls, 1)
+	}
+	if r.swept != nil {
+		select {
+		case r.swept <- struct{}{}:
+		default:
+		}
 	}
 	//nolint:gosec // G204: stdout is a controlled test fixture, passed as shell data rather than code.
 	return exec.CommandContext(ctx, "sh", "-c", `printf '%s' "$0"`, *r.stdout)
@@ -121,50 +132,97 @@ func regInFlight(n int) *Registry {
 
 // --- cadence-selection (fast only while InFlight>0) ---
 
-// TestRunReportLoop_FastOnlyWhenInFlight asserts the loop ticks at the FAST
-// cadence (more sweeps in a window) while a run is in flight, and SLOW (fewer
-// sweeps) while idle. Driven with sub-second intervals so the test is bounded.
-func TestRunReportLoop_FastWhenInFlight(t *testing.T) {
-	var calls int64
-	sout := highCPUCollectorStdout
-	runner := stdoutRunner{stdout: &sout, calls: &calls}
+// TestReportLoopInterval_SelectsFastOnlyWhenInFlight is where the cadence rule
+// is actually tested. It reads the decision the loop makes rather than timing
+// how often the OS ran it.
+//
+// This replaces a test that ran the real loop for 120 ms and asserted at least
+// five sweeps (hk-vp02y). Nothing in the product promises the OS schedules a
+// goroutine at a given rate, and under the merge decision's own load it does
+// not: that assertion failed inside `make full` while passing in isolation, so
+// the gate returned a different verdict on an unchanged commit.
+func TestReportLoopInterval_SelectsFastOnlyWhenInFlight(t *testing.T) {
+	const slow, fast = 200 * time.Millisecond, 5 * time.Millisecond
 
+	cases := []struct {
+		name          string
+		breachEnabled bool
+		inFlight      int
+		want          time.Duration
+	}{
+		{"in flight and breach on → fast", true, 1, fast},
+		{"several in flight → still fast", true, 4, fast},
+		{"idle → slow", true, 0, slow},
+		{"breach detection off → slow even in flight", false, 1, slow},
+		{"breach detection off and idle → slow", false, 0, slow},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := reportLoopInterval(tc.breachEnabled, tc.inFlight, slow, fast); got != tc.want {
+				t.Errorf("reportLoopInterval(breachEnabled=%v, inFlight=%d) = %v, want %v", tc.breachEnabled, tc.inFlight, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRunReportLoop_FastWhenInFlight keeps the integration half — that the LOOP
+// consults the rule above rather than holding a fixed cadence of its own — with
+// margins wide enough that box load cannot flip either answer.
+//
+// The margins are the whole design. In flight, the test waits for sweeps with a
+// generous deadline and no rate at all: a loop that wrongly chose the slow
+// cadence would wait an hour, so the deadline separates the two answers by four
+// orders of magnitude rather than by a scheduling delay. Idle, it asserts that
+// NO sweep happens in a short window against a correct answer of one hour. A
+// machine slow enough to fail either of these is a machine that is not running.
+func TestRunReportLoop_FastWhenInFlight(t *testing.T) {
+	// slow=1h: a loop that picks it never sweeps within any test's lifetime.
+	const slow, fast = time.Hour, 5 * time.Millisecond
+	const wantSweeps = 5
+
+	sout := highCPUCollectorStdout
 	capture := &safeCapture{}
 	cfg := Config{Version: 1, Workers: []Worker{reportTestWorker()}}
-	reg := regInFlight(1) // InFlight()==1 ⇒ fast cadence
+
+	// ── in flight: the loop must sweep repeatedly, however long it takes ──
+	var calls int64
+	swept := make(chan struct{}, 1)
+	runner := stdoutRunner{stdout: &sout, calls: &calls, swept: swept}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		// slow=200ms, fast=5ms: a ~120ms window should produce many fast sweeps.
-		runReportLoopWithInterval(ctx, cfg, reg, fixedRunnerFor(runner), capture.emit(), 200*time.Millisecond, 5*time.Millisecond)
+		runReportLoopWithInterval(ctx, cfg, regInFlight(1), fixedRunnerFor(runner), capture.emit(), slow, fast)
 		close(done)
 	}()
-	time.Sleep(120 * time.Millisecond)
+	deadline := time.After(60 * time.Second)
+	for atomic.LoadInt64(&calls) < wantSweeps {
+		select {
+		case <-swept:
+		case <-deadline:
+			cancel()
+			<-done
+			t.Fatalf("the loop swept %d times in 60s with fast=%v in flight; a loop holding the slow cadence (%v) would look exactly like this", atomic.LoadInt64(&calls), fast, slow)
+		}
+	}
 	cancel()
 	<-done
 
-	fastCalls := atomic.LoadInt64(&calls)
-	if fastCalls < 5 {
-		t.Fatalf("fast cadence: got %d sweeps in 120ms, want >=5 (fast=5ms)", fastCalls)
-	}
-
-	// Now idle: InFlight()==0 ⇒ slow cadence ⇒ far fewer sweeps in the same window.
+	// ── idle: the loop must NOT sweep, because the slow cadence is an hour away ──
 	atomic.StoreInt64(&calls, 0)
-	regIdle := NewRegistry(cfg) // InFlight()==0
+	idleRunner := stdoutRunner{stdout: &sout, calls: &calls}
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	done2 := make(chan struct{})
 	go func() {
-		runReportLoopWithInterval(ctx2, cfg, regIdle, fixedRunnerFor(runner), capture.emit(), 200*time.Millisecond, 5*time.Millisecond)
+		runReportLoopWithInterval(ctx2, cfg, NewRegistry(cfg), fixedRunnerFor(idleRunner), capture.emit(), slow, fast)
 		close(done2)
 	}()
-	time.Sleep(120 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 	cancel2()
 	<-done2
 
-	slowCalls := atomic.LoadInt64(&calls)
-	if slowCalls >= fastCalls {
-		t.Fatalf("idle should tick slower: idle sweeps=%d not < in-flight sweeps=%d", slowCalls, fastCalls)
+	if got := atomic.LoadInt64(&calls); got != 0 {
+		t.Errorf("an IDLE loop swept %d times inside 200ms; the slow cadence is %v away, so it took the fast one", got, slow)
 	}
 }
 

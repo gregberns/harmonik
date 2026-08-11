@@ -48,6 +48,8 @@ Core research and runtime proof are complete. Serial and fan-out or fan-in graph
 - Applied the same validation proof across abrupt restart. The recovered graph records exactly one gate pass for each child.
 - Strengthened the failed-blocker path. A real commit gate fails to its traversal cap, nothing merges, B never launches, and the queue pauses.
 - Confirmed that the real ledger rejects a dependency cycle when the closing edge is added.
+- Synced delta through alpha integration commit `4e149dff6` and re-ran the two large graph scenarios successfully.
+- Ran the current five-scenario gate with canonical validation paths. All scenarios passed in 101.43 seconds.
 
 ## Next
 

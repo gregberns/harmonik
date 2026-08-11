@@ -197,6 +197,8 @@ Result: all five scenarios passed in 118.51 seconds on 2026-08-11. The clean-res
 
 The strengthened gate passed again in 88.54 seconds after the dry-run and omitted-blocker assertions were added.
 
+After alpha sync, canonical validation was added to the fan, crash, and failed-blocker paths. The full five-scenario gate passed again in 101.43 seconds. This is the current combined result.
+
 The real merge conflict and merge serialization scenarios passed together in 5.57 seconds after all delta changes.
 
 The focused queue, queue-wiring, and workspace packages pass. The broad daemon package has three unrelated failures in `dot_node_baseline_test.go`. Each fixture reached no terminal transition within 50 seconds. Delta does not change those tests or their product path. The operator directed delta to disregard unrelated red tests and continue.

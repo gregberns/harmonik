@@ -51,10 +51,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
 	tmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
@@ -250,11 +253,36 @@ func WriteAgentTaskVia(ctx context.Context, runner tmux.CommandRunner, workspace
 // projects[<realpath>].hasTrustDialogAccepted = true, preserving every other
 // key, and (c) is a no-op when already trusted.
 //
-// The upsert is performed by a tiny Python one-liner (python3 is present on the
+// The upsert is performed by a small Python program (python3 is present on the
 // macOS worker — verified by probe). Python's json module is stdlib, so no extra
-// install is needed; the worktree path is passed via argv (not interpolated into
-// the script) so it needs no escaping beyond the single-quote wrap of the script
-// body itself.
+// install is needed.
+//
+// # Python floor: 3.6
+//
+// The program uses f-strings in its lock-timeout diagnostic, which need python
+// 3.6 or later. Everything else in it (os.replace, time.monotonic) needs only
+// 3.3. The floor is safe on the worker this runs on: macOS first shipped a
+// python3 at Catalina and it was 3.7, and every macOS since has shipped 3.8 or
+// later. A worker below the floor also fails loudly rather than silently — the
+// program is rejected at parse time with a SyntaxError on every launch, not on
+// some rare branch. Rewriting the diagnostic with .format() would return the
+// floor to 3.3 at the cost of a message that is harder to read and easier to get
+// wrong, which is the wrong trade for a floor nothing can reach.
+//
+// # What is interpolated and what rides argv
+//
+// The worktree path rides ARGV — the program reads it from sys.argv[1] and it is
+// never interpolated into the program text, so it needs no escaping here.
+//
+// The config path and the lock budget ARE interpolated into the program text, by
+// workerConfigProgramPrelude. They go in through %q, which emits a Go
+// double-quoted literal whose escaping python's lexer reads the same way, so a
+// path with a quote, a backslash or a newline in it stays one string literal and
+// cannot close the literal and inject statements.
+//
+// The program text itself never reaches a shell: it rides stdin. The single-quote
+// wrap that an earlier version of this comment described belonged to a retired
+// `python3 -c <prog>` form.
 func EnsureWorktreeTrustVia(ctx context.Context, runner tmux.CommandRunner, worktreePath string) error {
 	if runner == nil {
 		return EnsureWorktreeTrust(worktreePath)
@@ -284,20 +312,175 @@ func EnsureWorktreeTrustVia(ctx context.Context, runner tmux.CommandRunner, work
 	// writing atomically via a temp file + os.replace and preserving all other
 	// keys. It is a no-op (no rewrite) when the entry is already trusted.
 	cmd := runner.Command(ctx, "python3", "-", worktreePath)
-	cmd.Stdin = bytes.NewReader([]byte(workerTrustUpsertProgram))
+	cmd.Stdin = bytes.NewReader([]byte(workerTrustUpsertProgram(claudeConfigPathForWorker(), defaultTrustLockTimeout)))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		if workerConfigLockTimedOut(err) {
+			return fmt.Errorf("%w\nremote: %s", ErrTrustLockTimeout, out)
+		}
 		return fmt.Errorf("workspace: EnsureWorktreeTrustVia %s: %w\nremote: %s", worktreePath, err, out)
 	}
 	return nil
 }
 
-// workerTrustUpsertProgram is the python3 program (fed on STDIN to `python3 -`,
-// NOT via -c — see EnsureWorktreeTrustVia for why) that idempotently upserts the
-// worktree-trust entry in the worker's ~/.claude.json. It mirrors
-// ensureWorktreeTrustAt's contract: realpath-normalize the key, set
+// workerConfigLockTimeoutExit is the exit status the worker programs use for a
+// lock-acquire timeout, so the Go caller can tell that failure apart from every
+// other way python can exit non-zero and report it as the same structural error
+// the in-process path reports (ErrTrustLockTimeout).
+//
+// 75 is EX_TEMPFAIL from sysexits.h — a temporary failure, try again later —
+// which is what a contended lock is. It cannot be confused with ssh's own
+// failure status (255) on a remote run, and ssh passes the remote command's exit
+// status through unchanged, so the code survives the round trip.
+const workerConfigLockTimeoutExit = 75
+
+// workerConfigLockTimedOut reports whether err is a worker program exiting with
+// the lock-timeout status.
+func workerConfigLockTimedOut(err error) bool {
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr) && exitErr.ExitCode() == workerConfigLockTimeoutExit
+}
+
+// workerConfigProgramPrelude returns the head shared by the two worker programs
+// that write the SHARED Claude config: the trust upsert and the theme upsert. It
+// resolves the config path, and it defines the bounded lock acquire, the config
+// read, and the atomic write those programs use.
+//
+// # Where the config path comes from
+//
+// The program applies the same three-step precedence as
+// defaultClaudeGlobalConfigPath — HARMONIK_CLAUDE_CONFIG_PATH, then
+// CLAUDE_CONFIG_HOME, then ~/.claude.json. The steps differ only in WHICH MACHINE
+// evaluates them, and that split is the point:
+//
+//   - cfgPathForWorker is step 1, evaluated HERE and baked in as a value
+//     (claudeConfigPathForWorker). It is harmonik's own test seam:
+//     internal/testhelpers/hermetic points it at a temp file, and before this the
+//     python program ignored it and locked and rewrote the operator's REAL
+//     ~/.claude.json — three internal/daemon tests blocked about 50s each on that
+//     lock, and the failure named the dispatch path instead (hk-g8d5x). Passing
+//     it as a value rather than re-deriving it on the far side is what stops the
+//     two ends disagreeing about which file they mean.
+//   - Steps 2 and 3 are evaluated ON THE WORKER, in the worker's own environment.
+//     CLAUDE_CONFIG_HOME is Claude Code's variable and it describes the box it is
+//     set on; the claude that later reads this file is the WORKER's, and it reads
+//     the WORKER's copy. ~ is the worker user's home, which box A cannot resolve.
+//
+// So a real remote run is unchanged even when the daemon box exports
+// CLAUDE_CONFIG_HOME — which docs/live-twin-testing.md requires it to do. Baking
+// box A's CLAUDE_CONFIG_HOME into the program instead would point the worker at a
+// directory that need not exist there, and the program would die on the missing
+// lock file and fail the launch.
+//
+// The residual case, stated plainly: an operator who exports
+// HARMONIK_CLAUDE_CONFIG_PATH and dispatches to a real remote worker does send a
+// box-A path across. That variable is an explicit instruction to write exactly
+// that file, so obeying it is right; every setter of it in this repo runs the
+// program on the box that set it.
+//
+// # Why the lock wait is bounded
+//
+// An unbounded flock(LOCK_EX) lets ONE stuck holder starve every later run with
+// no diagnostic: the program never returns, the launch-spec build never
+// finishes, and the run dies at some later deadline that blames another
+// subsystem. lockTimeout is the same budget the in-process sibling
+// acquireExclusiveBounded uses, polled at the same trustLockRetryInterval, and
+// the message it prints names the lock file and how to find the holder.
+//
+// The program needs python 3.6 or later — see EnsureWorktreeTrustVia for the
+// floor and why it is safe.
+func workerConfigProgramPrelude(cfgPathForWorker string, lockTimeout time.Duration) string {
+	return fmt.Sprintf(workerConfigProgramPreludeTemplate,
+		cfgPathForWorker,
+		lockTimeout.Seconds(),
+		trustLockRetryInterval.Seconds(),
+		workerConfigLockTimeoutExit,
+	)
+}
+
+const workerConfigProgramPreludeTemplate = `
+import errno, fcntl, json, os, sys, tempfile, time
+
+# Step 1 of the config-path precedence, decided by the caller and baked in as a
+# value. "" means the caller had nothing to send, so this machine — the one that
+# owns the file — resolves steps 2 and 3 from its own environment.
+cfg_path = %q
+if not cfg_path:
+    cfg_home = os.environ.get("CLAUDE_CONFIG_HOME", "")
+    if cfg_home:
+        cfg_path = os.path.join(cfg_home, ".claude.json")
+    else:
+        cfg_path = os.path.join(os.path.expanduser("~"), ".claude.json")
+lock_path = cfg_path + ".lock"
+lock_timeout = %v
+lock_interval = %v
+
+def load_cfg():
+    try:
+        with open(cfg_path) as f:
+            cfg = json.load(f)
+    except FileNotFoundError:
+        return {}
+    except ValueError:
+        return {}
+    return cfg if isinstance(cfg, dict) else {}
+
+def acquire_bounded(fd):
+    # Same shape as internal/workspace acquireExclusiveBounded: retry the
+    # NON-blocking LOCK_EX until it succeeds or the budget runs out, then fail
+    # loudly. Only EWOULDBLOCK counts as contention, exactly as the Go side has
+    # it; every other errno (EBADF, EACCES, ...) is a real fault and is raised at
+    # once rather than retried for the whole budget and then misreported as a
+    # lock timeout. Two differences from the Go side that do not change the
+    # outcome: this uses a monotonic clock, so a wall-clock step cannot stretch
+    # or shrink the budget, and its deadline test fires AT the deadline where Go
+    # fires just after it — at most one poll interval apart.
+    deadline = time.monotonic() + lock_timeout
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except OSError as exc:
+            if exc.errno != errno.EWOULDBLOCK:
+                raise
+            if time.monotonic() >= deadline:
+                sys.stderr.write(
+                    f"workspace: write-lock acquire timed out after {lock_timeout}s "
+                    f"(contended {cfg_path})\n"
+                    f"lock file: {lock_path}\n"
+                    f"another process still holds this lock. Find it with: lsof {lock_path}\n"
+                    f"a stale claude, harmonik daemon or go test binary is the usual holder.\n")
+                sys.exit(%d)
+            time.sleep(lock_interval)
+
+def write_cfg(cfg):
+    d = os.path.dirname(cfg_path) or "."
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".claude.json.tmp-")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(cfg, f, indent=2)
+            f.write("\n")
+        os.replace(tmp, cfg_path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+`
+
+// workerTrustUpsertProgram builds the python3 program (fed on STDIN to
+// `python3 -`, NOT via -c — see EnsureWorktreeTrustVia for why) that
+// idempotently upserts the worktree-trust entry in the worker's Claude config
+// (~/.claude.json unless the precedence below names another file).
+// It mirrors ensureWorktreeTrustAt's contract: realpath-normalize the key, set
 // projects[key].hasTrustDialogAccepted = true, preserve all other content, write
 // atomically, and skip the rewrite when already trusted.
+//
+// The config path and the lock budget come from workerConfigProgramPrelude —
+// read its comment for which machine resolves which step of the config path, and
+// why the wait is bounded. Both are baked into the program TEXT, which rides stdin, so the argv
+// the worker sees (`python3 - <worktreePath>`) is the same as it ever was.
 //
 // # Cross-process lost-update safety (concurrent-slot race)
 //
@@ -327,24 +510,15 @@ func EnsureWorktreeTrustVia(ctx context.Context, runner tmux.CommandRunner, work
 // because a concurrent writer may have trusted this same key between the probe
 // and the lock acquisition, the program RE-READS the config under the lock and
 // re-checks the fast-path condition before writing.
-const workerTrustUpsertProgram = `
-import fcntl, json, os, sys, tempfile
+func workerTrustUpsertProgram(cfgPathForWorker string, lockTimeout time.Duration) string {
+	return workerConfigProgramPrelude(cfgPathForWorker, lockTimeout) + workerTrustUpsertProgramBody
+}
+
+const workerTrustUpsertProgramBody = `
 arg = sys.argv[1]
 if len(arg) >= 2 and arg[0] == "'" and arg[-1] == "'":
     arg = arg[1:-1]
 wt = os.path.realpath(arg)
-cfg_path = os.path.join(os.path.expanduser("~"), ".claude.json")
-lock_path = cfg_path + ".lock"
-
-def load_cfg():
-    try:
-        with open(cfg_path) as f:
-            cfg = json.load(f)
-    except FileNotFoundError:
-        return {}
-    except ValueError:
-        return {}
-    return cfg if isinstance(cfg, dict) else {}
 
 def is_trusted(cfg):
     projects = cfg.get("projects")
@@ -361,7 +535,7 @@ if is_trusted(load_cfg()):
 # read-modify-write so concurrent writers never lose each other's keys.
 lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
 try:
-    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    acquire_bounded(lock_fd)
     # Re-read UNDER the lock: another writer may have trusted this key (or added
     # other keys) between the lock-free probe and acquiring the lock.
     cfg = load_cfg()
@@ -376,19 +550,7 @@ try:
         entry = {}
         projects[wt] = entry
     entry["hasTrustDialogAccepted"] = True
-    d = os.path.dirname(cfg_path) or "."
-    fd, tmp = tempfile.mkstemp(dir=d, prefix=".claude.json.tmp-")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(cfg, f, indent=2)
-            f.write("\n")
-        os.replace(tmp, cfg_path)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    write_cfg(cfg)
 finally:
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_UN)
@@ -553,37 +715,40 @@ func EnsureClaudeThemeVia(ctx context.Context, runner tmux.CommandRunner) error 
 		return EnsureClaudeTheme()
 	}
 	cmd := runner.Command(ctx, "python3", "-")
-	cmd.Stdin = bytes.NewReader([]byte(workerThemeUpsertProgram))
+	cmd.Stdin = bytes.NewReader([]byte(workerThemeUpsertProgram(claudeConfigPathForWorker(), defaultTrustLockTimeout)))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		// Same structural classification as the in-process sibling: ensureClaudeThemeAt
+		// returns ErrTrustLockTimeout from acquireExclusiveBounded, so the remote leg
+		// returns it too rather than an opaque "exit status 75".
+		if workerConfigLockTimedOut(err) {
+			return fmt.Errorf("%w\nremote: %s", ErrTrustLockTimeout, out)
+		}
 		return fmt.Errorf("workspace: EnsureClaudeThemeVia: %w\nremote: %s", err, out)
 	}
 	return nil
 }
 
-// workerThemeUpsertProgram is the python3 program (fed on STDIN to `python3 -`,
-// NOT via -c) that idempotently seeds ~/.claude.json["theme"] = "dark" when it is
-// absent/null/empty on the worker. It mirrors workerTrustUpsertProgram's
-// concurrency contract — lock-free fast path when already set; a bounded
-// LOCK_EX sidecar-flock read-modify-write only when a mutation is needed; atomic
-// temp-file + os.replace; preserve all other keys; never clobber an operator's
-// explicit theme. The "dark" literal MUST stay in sync with claudeDefaultTheme in
-// claudetrust_wm040b.go.
-const workerThemeUpsertProgram = `
-import fcntl, json, os, sys, tempfile
-cfg_path = os.path.join(os.path.expanduser("~"), ".claude.json")
-lock_path = cfg_path + ".lock"
+// workerThemeUpsertProgram builds the python3 program (fed on STDIN to
+// `python3 -`, NOT via -c) that idempotently seeds ~/.claude.json["theme"] =
+// "dark" when it is absent/null/empty on the worker. It mirrors
+// workerTrustUpsertProgram's concurrency contract — lock-free fast path when
+// already set; a bounded LOCK_EX sidecar-flock read-modify-write only when a
+// mutation is needed; atomic temp-file + os.replace; preserve all other keys;
+// never clobber an operator's explicit theme. The "dark" literal MUST stay in
+// sync with claudeDefaultTheme in claudetrust_wm040b.go.
+//
+// It takes the SAME lock on the SAME file as the trust upsert and it runs
+// immediately after it in the launch-spec build, so it needs the same config
+// path and the same bounded wait. Fixing only the trust program would have moved
+// the hang one step down the launch path (hk-g8d5x). This comment claimed the
+// wait was bounded for a while before the code made it so, which is why the
+// package now has a test for the bound rather than a sentence about it.
+func workerThemeUpsertProgram(cfgPathForWorker string, lockTimeout time.Duration) string {
+	return workerConfigProgramPrelude(cfgPathForWorker, lockTimeout) + workerThemeUpsertProgramBody
+}
 
-def load_cfg():
-    try:
-        with open(cfg_path) as f:
-            cfg = json.load(f)
-    except FileNotFoundError:
-        return {}
-    except ValueError:
-        return {}
-    return cfg if isinstance(cfg, dict) else {}
-
+const workerThemeUpsertProgramBody = `
 def theme_set(cfg):
     t = cfg.get("theme")
     return isinstance(t, str) and t != ""
@@ -596,24 +761,12 @@ if theme_set(load_cfg()):
 # concurrent writers (incl. the trust upsert) never lose each other's keys.
 lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
 try:
-    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    acquire_bounded(lock_fd)
     cfg = load_cfg()
     if theme_set(cfg):
         sys.exit(0)
     cfg["theme"] = "dark"
-    d = os.path.dirname(cfg_path) or "."
-    fd, tmp = tempfile.mkstemp(dir=d, prefix=".claude.json.tmp-")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(cfg, f, indent=2)
-            f.write("\n")
-        os.replace(tmp, cfg_path)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    write_cfg(cfg)
 finally:
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_UN)

@@ -175,7 +175,7 @@ func CycleDepsFromConfig(cfg CyclerConfig, emitter Emitter) CycleDeps {
 		Managed:  boolProbe(func() bool { return cfg.IsManagedFn(cfg.ProjectDir, cfg.AgentName) }),
 		Idle:     boolProbe(func() bool { return cfg.CrispIdleFn(cfg.ProjectDir, cfg.AgentName) }),
 		Dispatch: boolProbe(func() bool { return cfg.HoldingDispatchFn(cfg.ProjectDir, cfg.AgentName) }),
-		Sleep:    sleepProbeFunc(func(sid string) bool { return cfg.SleepingCheckFn(cfg.ProjectDir, sid) }),
+		Sleep:    sleepProbeFunc(func(sid string) bool { return IsSleeping(cfg.ProjectDir, sid) }),
 		Hold:     boolProbe(func() bool { return cfg.HeldCheckFn(cfg.ProjectDir, cfg.AgentName) }),
 		Operator: operatorProbeFunc(cfg.OperatorAttachedFn),
 		Handoff:  configHandoffDocument{cfg: &cfg}, Journal: configJournalStore{cfg: &cfg},

@@ -46,6 +46,10 @@ func (f testRespawnFunc) ForceRestart(ctx context.Context, agent string) error {
 	return f(ctx, agent)
 }
 
+type testSleepProbe func(string) bool
+
+func (f testSleepProbe) Sleeping(sid string) bool { return f(sid) }
+
 type testActivityWithTurns struct {
 	keeper.ActivityProbe
 	dir  string

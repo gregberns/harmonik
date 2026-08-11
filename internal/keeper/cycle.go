@@ -262,15 +262,6 @@ type CyclerConfig struct {
 	// (no pane to inject into). Refs: hk-6qf.
 	OperatorAttachedFn func(target string) bool
 
-	// SleepingCheckFn reports whether the session identified by sessionID is
-	// currently parked by the QuiesceArbiter (.harmonik/.sleeping.<sessionID>,
-	// M1 / hk-jeby). MaybeRun returns nil (cycle deferred) when this returns
-	// true, so the keeper does not inject /session-handoff into a sleeping
-	// session. M1's max-sleep failsafe wakes the session first; the keeper acts
-	// on the next tick after the marker is cleared. When nil, IsSleeping is used.
-	// Refs: hk-l3gs, hk-jeby.
-	SleepingCheckFn func(projectDir, sessionID string) bool
-
 	// HoldTTL is the keeper HOLD timer backstop; zero → DefaultHoldTTL.
 	HoldTTL time.Duration
 
@@ -427,9 +418,6 @@ func (c *CyclerConfig) applyDefaults() {
 	}
 	if c.OperatorAttachedFn == nil {
 		c.OperatorAttachedFn = OperatorAttached
-	}
-	if c.SleepingCheckFn == nil {
-		c.SleepingCheckFn = IsSleeping
 	}
 	if c.HoldTTL <= 0 {
 		c.HoldTTL = DefaultHoldTTL

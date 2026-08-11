@@ -345,7 +345,6 @@ func TestCyclerMaybeRun_DeferredWhenHeld(t *testing.T) {
 			IsManagedFn:       func(_, _ string) bool { return true },
 			CrispIdleFn:       func(_, _ string) bool { return true },
 			HoldingDispatchFn: func(_, _ string) bool { return false },
-			SleepingCheckFn:   func(_, _ string) bool { return false },
 			HeldCheckFn: func(_, _ string) bool {
 				*heldCalled = true
 				return held
@@ -369,7 +368,9 @@ func TestCyclerMaybeRun_DeferredWhenHeld(t *testing.T) {
 		injectCount := 0
 		heldCalled := false
 		cfg := baseCfg(dir, agent, true, &injectCount, &heldCalled)
-		cycler := mustNewCycler(cfg, &keeper.RecordingEmitter{})
+		cycler := mustNewCyclerWithDeps(cfg, &keeper.RecordingEmitter{}, func(deps *keeper.CycleDeps) {
+			deps.Sleep = testSleepProbe(func(string) bool { return false })
+		})
 		cf := &keeper.CtxFile{Pct: 90.0, SessionID: sessionID, Ts: time.Now().UTC().Format(time.RFC3339)}
 		if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 			t.Fatalf("MaybeRun returned error: %v", err)
@@ -395,7 +396,9 @@ func TestCyclerMaybeRun_DeferredWhenHeld(t *testing.T) {
 		injectCount := 0
 		heldCalled := false
 		cfg := baseCfg(dir, agent, false, &injectCount, &heldCalled)
-		cycler := mustNewCycler(cfg, &keeper.RecordingEmitter{})
+		cycler := mustNewCyclerWithDeps(cfg, &keeper.RecordingEmitter{}, func(deps *keeper.CycleDeps) {
+			deps.Sleep = testSleepProbe(func(string) bool { return false })
+		})
 		cf := &keeper.CtxFile{Pct: 90.0, SessionID: sessionID, Ts: time.Now().UTC().Format(time.RFC3339)}
 
 		// Pre-cancelled context so runCycle returns immediately without blocking on

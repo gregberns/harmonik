@@ -343,9 +343,10 @@ func streamEligible(g *Group) []*Item {
 // resolved.
 //
 // A blocker B of item I is resolved when EITHER:
-//   - B is terminal within this queue group (completed/failed); the daemon
-//     marks the completing item terminal before the dispatch loop re-evaluates,
-//     so a chained predecessor that just finished satisfies this branch; or
+//   - B completed within this queue group; the daemon marks the successful item
+//     completed before the dispatch loop re-evaluates, so a predecessor that
+//     just landed satisfies this branch. A failed item is not resolved because
+//     its bead reopens and its dependents must remain blocked; or
 //   - B is no longer open in the Beads ledger — LookupStatus(B) reports a
 //     status other than open/in_progress (closed, tombstoned, not-found). This
 //     branch covers blockers closed externally via `br close` independent of
@@ -376,6 +377,7 @@ func ReevaluateDeferred(ctx context.Context, g *Group, ledger BeadLedger) ([]cor
 		// on intra-group BlocksEdge pairs (validation.go §QM-025), so the
 		// un-defer check scans the same sibling set.
 		allResolved := true
+		dependencyFailed := false
 		for j := range g.Items {
 			if j == i {
 				continue
@@ -388,9 +390,16 @@ func ReevaluateDeferred(ctx context.Context, g *Group, ledger BeadLedger) ([]cor
 			if !blocks {
 				continue
 			}
-			// blocker blocks blocked. It is resolved iff it is terminal in the
-			// queue OR no longer open in the ledger.
-			if itemIsTerminal(g.Items[j].Status) {
+			if g.Items[j].Status == ItemStatusFailed {
+				if err := FailDeferredItem(&g.Items[i], string(blocker)); err != nil {
+					return undeferred, err
+				}
+				dependencyFailed = true
+				break
+			}
+			// The blocker is resolved when it completed in the queue or is no
+			// longer open in the ledger. The failed case was handled above.
+			if g.Items[j].Status == ItemStatusCompleted {
 				continue
 			}
 			status, err := ledger.LookupStatus(ctx, blocker)
@@ -404,6 +413,9 @@ func ReevaluateDeferred(ctx context.Context, g *Group, ledger BeadLedger) ([]cor
 			}
 		}
 
+		if dependencyFailed {
+			continue
+		}
 		if allResolved {
 			if err := ResolveDeferredItem(&g.Items[i]); err != nil {
 				return undeferred, err
@@ -413,6 +425,42 @@ func ReevaluateDeferred(ctx context.Context, g *Group, ledger BeadLedger) ([]cor
 	}
 
 	return undeferred, nil
+}
+
+// FailDeferredDependents propagates one failed item through the dependency
+// edges in its group. It marks only descendants of failedBead. Independent
+// chains in the same group continue to run.
+func FailDeferredDependents(ctx context.Context, g *Group, failedBead core.BeadID, ledger BeadLedger) ([]core.BeadID, error) { //nolint:gocognit // Transitive graph propagation needs the fixed-point loop and edge checks together.
+	if g == nil || ledger == nil || failedBead == "" {
+		return nil, nil
+	}
+	failed := map[core.BeadID]bool{failedBead: true}
+	var propagated []core.BeadID
+	for changed := true; changed; {
+		changed = false
+		for i := range g.Items {
+			if g.Items[i].Status != ItemStatusDeferredForLedgerDep || failed[g.Items[i].BeadID] {
+				continue
+			}
+			for blocker := range failed {
+				blocks, err := ledger.BlocksEdge(ctx, blocker, g.Items[i].BeadID)
+				if err != nil {
+					return propagated, fmt.Errorf("queue: FailDeferredDependents: BlocksEdge %q→%q: %w", blocker, g.Items[i].BeadID, err)
+				}
+				if !blocks {
+					continue
+				}
+				if err := FailDeferredItem(&g.Items[i], string(blocker)); err != nil {
+					return propagated, err
+				}
+				failed[g.Items[i].BeadID] = true
+				propagated = append(propagated, g.Items[i].BeadID)
+				changed = true
+				break
+			}
+		}
+	}
+	return propagated, nil
 }
 
 // Sentinel errors returned by AdvanceGroup.

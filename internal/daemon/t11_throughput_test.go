@@ -11,8 +11,16 @@ package daemon_test
 //     sub-run with MaxConcurrent=1 over a smaller N is timed; per-bead
 //     averages are compared so the ratio is meaningful regardless of N).
 //  3. go test -race is clean.
-//  4. JSONL contains exactly 10 distinct run_started events with 10 distinct
-//     run_id values (verified via eventbus.Filter per hk-e61c3.5 / row 10).
+//  4. JSONL run accounting: every bead emitted at least one run_started, all
+//     run_id values are distinct, and any extra start for a bead is justified by
+//     a run_failed for that same bead (verified via eventbus.Filter per
+//     hk-e61c3.5 / row 10).  This assertion used to demand exactly 10 starts.
+//     That form asserted that a bead is never retried, which contradicts the
+//     designed fail-closed reopen path in internal/runmerge/merge.go
+//     resolveMergeTips — a real merge-preflight failure produced 11 starts over
+//     10 beads and red-lit a healthy run.  The double-dispatch detector is kept:
+//     an extra start with no run_failed behind it still fails hard.  The pure
+//     accounting is covered by TestThroughputRunAccounting below.
 //
 // Perf (hk-l6dsb): sequential baseline uses N=3 (seqBeadCount) and runs
 // concurrently with the parallel run in an independent project dir via
@@ -38,9 +46,12 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -212,20 +223,38 @@ func throughputFixturePollTerminalEvents(t *testing.T, jsonlPath string, target 
 	return throughputFixtureCountTerminalInJSONL(t, jsonlPath)
 }
 
-// throughputFixtureExtractRunStartedRunIDs reads the JSONL file and returns all
-// run_id values found in the envelope of run_started events.
-// After hk-a6nob, emitRunStarted uses EmitWithRunID, so run_id is stamped on
-// the EV-001 envelope and readable without payload extraction.
-func throughputFixtureExtractRunStartedRunIDs(t *testing.T, jsonlPath string) []core.RunID {
+// throughputRunStartedEntry holds the run_id (from the EV-001 envelope) and the
+// bead_id (from the payload) of one run_started JSONL line.
+//
+// bead_id is carried because the throughput property is PER-BEAD accounting, not
+// a global run count: the product deliberately reopens and re-dispatches a bead
+// whose merge preflight fails (internal/runmerge/merge.go resolveMergeTips,
+// covered by mergetomain_runbranchmissing_hc1jr_test.go), so "10 beads" and
+// "10 runs" are different numbers by design.  Same shape as
+// parallelSmokeRunStartedEntry in t7_parallel_smoke_test.go.
+type throughputRunStartedEntry struct {
+	runID  core.RunID
+	beadID string
+}
+
+// throughputFixtureExtractRunStarted reads the JSONL file and extracts run_id
+// (from the EV-001 envelope, stamped by EmitWithRunID per hk-a6nob) and bead_id
+// (from the payload, always set by emitRunStarted) for every run_started event.
+func throughputFixtureExtractRunStarted(t *testing.T, jsonlPath string) []throughputRunStartedEntry {
 	t.Helper()
 	//nolint:gosec // G304: path is t.TempDir()-based; not user input
 	f, err := os.Open(jsonlPath)
 	if err != nil {
-		t.Fatalf("throughputFixtureExtractRunStartedRunIDs: open %s: %v", jsonlPath, err)
+		t.Fatalf("throughputFixtureExtractRunStarted: open %s: %v", jsonlPath, err)
 	}
 	defer func() { _ = f.Close() }()
 
-	var runIDs []core.RunID
+	// bead_id is a payload field; run_id is on the envelope (hk-a6nob).
+	type startedPayload struct {
+		BeadID string `json:"bead_id"`
+	}
+
+	var entries []throughputRunStartedEntry
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -242,9 +271,156 @@ func throughputFixtureExtractRunStartedRunIDs(t *testing.T, jsonlPath string) []
 		if ev.RunID == nil {
 			continue
 		}
-		runIDs = append(runIDs, *ev.RunID)
+		var pl startedPayload
+		if unmarshalErr := json.Unmarshal(ev.Payload, &pl); unmarshalErr != nil {
+			continue
+		}
+		entries = append(entries, throughputRunStartedEntry{runID: *ev.RunID, beadID: pl.BeadID})
 	}
-	return runIDs
+	return entries
+}
+
+// throughputRunFailedEntry holds the bead_id and the human-readable failure text
+// of one run_failed JSONL line.
+//
+// The daemon work loop writes that text to `summary` (workloopRunCompletedPayload
+// in workloop.go); the spec payload core.RunFailedPayload names the same thing
+// `reason`.  Both spellings are read so a tolerated retry always reports WHY.
+type throughputRunFailedEntry struct {
+	beadID string
+	reason string
+}
+
+// throughputFixtureExtractRunFailed reads the JSONL file and extracts bead_id
+// and the failure text for every run_failed event.
+func throughputFixtureExtractRunFailed(t *testing.T, jsonlPath string) []throughputRunFailedEntry {
+	t.Helper()
+	//nolint:gosec // G304: path is t.TempDir()-based; not user input
+	f, err := os.Open(jsonlPath)
+	if err != nil {
+		t.Fatalf("throughputFixtureExtractRunFailed: open %s: %v", jsonlPath, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	type failedPayload struct {
+		BeadID  string `json:"bead_id"`
+		Reason  string `json:"reason"`
+		Summary string `json:"summary"`
+	}
+
+	var entries []throughputRunFailedEntry
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.Contains(line, `"run_failed"`) {
+			continue
+		}
+		var ev core.Event
+		if unmarshalErr := json.Unmarshal([]byte(line), &ev); unmarshalErr != nil {
+			continue
+		}
+		if ev.Type != "run_failed" {
+			continue
+		}
+		var pl failedPayload
+		if unmarshalErr := json.Unmarshal(ev.Payload, &pl); unmarshalErr != nil {
+			continue
+		}
+		reason := pl.Reason
+		if reason == "" {
+			reason = pl.Summary
+		}
+		entries = append(entries, throughputRunFailedEntry{beadID: pl.BeadID, reason: reason})
+	}
+	return entries
+}
+
+// throughputRunAccounting is the run_started / run_failed tally the throughput
+// assertion is built on.
+type throughputRunAccounting struct {
+	totalStarts    int
+	distinctRunIDs int
+	startsByBead   map[string]int
+	failuresByBead map[string]int
+	failureReasons map[string][]string
+}
+
+// throughputAccountRuns tallies run_started and run_failed events per bead.
+func throughputAccountRuns(
+	started []throughputRunStartedEntry,
+	failed []throughputRunFailedEntry,
+) throughputRunAccounting {
+	acct := throughputRunAccounting{
+		startsByBead:   make(map[string]int),
+		failuresByBead: make(map[string]int),
+		failureReasons: make(map[string][]string),
+	}
+	seenRunIDs := make(map[core.RunID]struct{}, len(started))
+	for _, entry := range started {
+		acct.totalStarts++
+		seenRunIDs[entry.runID] = struct{}{}
+		acct.startsByBead[entry.beadID]++
+	}
+	acct.distinctRunIDs = len(seenRunIDs)
+	for _, entry := range failed {
+		acct.failuresByBead[entry.beadID]++
+		acct.failureReasons[entry.beadID] = append(acct.failureReasons[entry.beadID], entry.reason)
+	}
+	return acct
+}
+
+// throughputAccountingProblems checks the three properties the throughput test
+// is really about and returns the violations plus the retries it tolerated.
+//
+// Properties:
+//  1. Every seeded bead emitted at least one run_started, and at least
+//     wantBeadCount distinct beads did.
+//  2. All run_id values are distinct, compared against the TOTAL number of
+//     run_started events seen — not against the bead count, because a retried
+//     bead legitimately produces more starts than there are beads.
+//  3. For each bead, starts-1 <= run_failed events for that bead.  An extra
+//     start with no failure behind it is a double dispatch and a hard failure.
+//     This is the anti-double-dispatch property.
+func throughputAccountingProblems(
+	acct throughputRunAccounting,
+	wantBeadIDs []string,
+	wantBeadCount int,
+) (problems, tolerated []string) {
+	for _, beadID := range wantBeadIDs {
+		if acct.startsByBead[beadID] == 0 {
+			problems = append(problems, fmt.Sprintf("bead %s never emitted run_started", beadID))
+		}
+	}
+	if len(acct.startsByBead) < wantBeadCount {
+		problems = append(problems, fmt.Sprintf(
+			"only %d distinct beads emitted run_started, want at least %d; a bead never started",
+			len(acct.startsByBead), wantBeadCount))
+	}
+
+	if acct.distinctRunIDs != acct.totalStarts {
+		problems = append(problems, fmt.Sprintf(
+			"run_id values are not distinct: %d run_started events carried only %d distinct run_ids",
+			acct.totalStarts, acct.distinctRunIDs))
+	}
+
+	for _, beadID := range slices.Sorted(maps.Keys(acct.startsByBead)) {
+		starts := acct.startsByBead[beadID]
+		if starts <= 1 {
+			continue
+		}
+		failures := acct.failuresByBead[beadID]
+		if starts-1 > failures {
+			problems = append(problems, fmt.Sprintf(
+				"bead %s started %d times with only %d run_failed; %d extra start(s) have no failure to "+
+					"justify a retry — this is a double dispatch",
+				beadID, starts, failures, starts-1-failures))
+			continue
+		}
+		tolerated = append(tolerated, fmt.Sprintf(
+			"bead %s started %d times after %d run_failed; reasons: %v",
+			beadID, starts, failures, acct.failureReasons[beadID]))
+	}
+	return problems, tolerated
 }
 
 // throughputFixtureRunDaemon runs daemon.Start with the given config and returns
@@ -305,8 +481,9 @@ func throughputFixtureRunDaemon(
 // Assertions:
 //   - All 10 beads close cleanly in both runs.
 //   - Parallel wall-clock < 3× sequential baseline.
-//   - JSONL contains exactly 10 distinct run_started events with 10 distinct
-//     run_id values (verified via eventbus.Filter per row 10 / hk-e61c3.5).
+//   - JSONL run accounting holds: every bead started, run_ids are all distinct,
+//     and every extra start is justified by a run_failed for the same bead
+//     (verified via eventbus.Filter per row 10 / hk-e61c3.5).
 //
 // Spec ref: POST_OPERATIONAL_PARALLELISM_ROADMAP.md row 11.
 // Bead ref: hk-e61c3.6.
@@ -402,27 +579,41 @@ func TestThroughput_TenBeadsAtMaxFour(t *testing.T) {
 		}
 	}
 
-	// ── Assert JSONL: exactly 10 distinct run_started events, 10 distinct run_ids ─
+	// ── Assert JSONL run accounting: every bead ran, run_ids distinct, no ──────
+	//    unjustified extra start.
 	//
-	// emitRunStarted now uses EmitWithRunID (hk-a6nob), so run_id is stamped on
-	// the EV-001 envelope.  Extract run_ids from the envelope directly, then use
-	// eventbus.Filter (hk-e61c3.5 / row 10) as the canonical per-run query API
-	// to verify each run_id's events are present and filter-reachable.
-	parRunIDs := throughputFixtureExtractRunStartedRunIDs(t, parJSONLPath)
-	if len(parRunIDs) != beadCount {
-		t.Errorf("expected %d run_started events in JSONL; got %d; "+
-			"lines: %v", beadCount, len(parRunIDs),
-			parallelSmokeFixtureReadAllJSONLLines(t, parJSONLPath))
+	// Deliberately NOT `run_started count == beadCount`.  That form asserts that a
+	// bead is never retried, which contradicts designed fail-closed behaviour: when
+	// the merge preflight cannot resolve a run branch the daemon reopens the bead
+	// and re-dispatches it (internal/runmerge/merge.go resolveMergeTips, covered by
+	// mergetomain_runbranchmissing_hc1jr_test.go), so 10 beads can legitimately
+	// produce 11 starts.  What must NOT happen is an extra start with no run_failed
+	// behind it — that is a double dispatch, and it stays a hard failure here.
+	// The sibling row-7 test t7_parallel_smoke_test.go already uses >= bounds for
+	// these same properties.
+	//
+	// emitRunStarted uses EmitWithRunID (hk-a6nob), so run_id is stamped on the
+	// EV-001 envelope; bead_id comes from the payload.
+	parStarted := throughputFixtureExtractRunStarted(t, parJSONLPath)
+	parFailed := throughputFixtureExtractRunFailed(t, parJSONLPath)
+	parAcct := throughputAccountRuns(parStarted, parFailed)
+	parProblems, parTolerated := throughputAccountingProblems(parAcct, parBeadIDs, beadCount)
+	for _, note := range parTolerated {
+		t.Logf("throughput: tolerated retry: %s", note)
+	}
+	for _, problem := range parProblems {
+		// No whole-JSONL dump: it is ~90 KB and unreadable.  Print the accounting
+		// that explains the failure instead.
+		t.Errorf("throughput run accounting: %s "+
+			"(run_started=%d distinct_run_ids=%d run_failed=%d starts_by_bead=%v failures_by_bead=%v)",
+			problem, parAcct.totalStarts, parAcct.distinctRunIDs, len(parFailed),
+			parAcct.startsByBead, parAcct.failuresByBead)
 	}
 
-	// Verify all envelope run_id values are distinct.
-	distinctRunIDs := make(map[core.RunID]struct{}, len(parRunIDs))
-	for _, id := range parRunIDs {
-		distinctRunIDs[id] = struct{}{}
-	}
-	if len(distinctRunIDs) != beadCount {
-		t.Errorf("expected %d distinct run_id values in run_started envelope; got %d; ids: %v",
-			beadCount, len(distinctRunIDs), parRunIDs)
+	// Collect the distinct envelope run_ids for the eventbus.Filter check below.
+	distinctRunIDs := make(map[core.RunID]struct{}, len(parStarted))
+	for _, entry := range parStarted {
+		distinctRunIDs[entry.runID] = struct{}{}
 	}
 
 	// Use eventbus.Filter (hk-e61c3.5 / row 10) to enumerate JSONL events by
@@ -445,7 +636,232 @@ func TestThroughput_TenBeadsAtMaxFour(t *testing.T) {
 		"(each run_id must yield >= 1 via envelope filter; hk-a6nob)",
 		len(distinctRunIDs), totalFiltered)
 
-	t.Logf("throughput: %d beads closed; %d distinct run_ids verified via eventbus.Filter; "+
-		"parallel=%v sequential=%v",
-		beadCount, len(distinctRunIDs), parElapsed, seqElapsed)
+	t.Logf("throughput: %d beads closed; %d run_started over %d beads; %d run_failed; "+
+		"%d distinct run_ids verified via eventbus.Filter; parallel=%v sequential=%v",
+		beadCount, parAcct.totalStarts, len(parAcct.startsByBead), len(parFailed),
+		len(distinctRunIDs), parElapsed, seqElapsed)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TestThroughputRunAccounting — deterministic cover for the accounting above
+// ─────────────────────────────────────────────────────────────────────────────
+
+// throughputFixtureSyntheticRunID returns a deterministic UUIDv7-shaped RunID
+// for slot n, so synthetic JSONL has distinct (or deliberately repeated) run_ids
+// without a random source.
+func throughputFixtureSyntheticRunID(t *testing.T, n int) core.RunID {
+	t.Helper()
+	var rid core.RunID
+	if err := rid.UnmarshalText([]byte(fmt.Sprintf("0189abcd-0000-7000-8000-%012d", n))); err != nil {
+		t.Fatalf("throughputFixtureSyntheticRunID(%d): %v", n, err)
+	}
+	return rid
+}
+
+// throughputFixtureSyntheticStart builds a run_started event for beadID with the
+// run_id in slot runSlot.  The payload carries the subset of
+// core.RunStartedPayload the extractor reads; the full payload type refuses to
+// marshal from a zero value (WorkflowID validates on MarshalText), and the other
+// fields are not what this test is about.
+func throughputFixtureSyntheticStart(t *testing.T, runSlot int, beadID string) core.Event {
+	t.Helper()
+	runID := throughputFixtureSyntheticRunID(t, runSlot)
+	payload, err := json.Marshal(struct {
+		RunID         string `json:"run_id"`
+		BeadID        string `json:"bead_id"`
+		WorkspacePath string `json:"workspace_path"`
+	}{RunID: runID.String(), BeadID: beadID, WorkspacePath: "/synthetic/" + beadID})
+	if err != nil {
+		t.Fatalf("throughputFixtureSyntheticStart: marshal payload: %v", err)
+	}
+	return core.Event{Type: core.EventTypeRunStarted, RunID: &runID, Payload: payload}
+}
+
+// throughputFixtureSyntheticFailure builds a run_failed event for beadID.  The
+// payload mirrors workloopRunCompletedPayload — the shape the daemon work loop
+// actually writes, which names the failure text `summary`, not `reason`.
+func throughputFixtureSyntheticFailure(t *testing.T, runSlot int, beadID, summary string) core.Event {
+	t.Helper()
+	runID := throughputFixtureSyntheticRunID(t, runSlot)
+	payload, err := json.Marshal(struct {
+		RunID   string `json:"run_id"`
+		BeadID  string `json:"bead_id"`
+		Success bool   `json:"success"`
+		Summary string `json:"summary"`
+	}{RunID: runID.String(), BeadID: beadID, Success: false, Summary: summary})
+	if err != nil {
+		t.Fatalf("throughputFixtureSyntheticFailure: marshal payload: %v", err)
+	}
+	return core.Event{Type: core.EventTypeRunFailed, RunID: &runID, Payload: payload}
+}
+
+// throughputFixtureWriteSyntheticJSONL writes one JSON line per event to a fresh
+// file under t.TempDir() and returns its path.
+func throughputFixtureWriteSyntheticJSONL(t *testing.T, events []core.Event) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	var buf strings.Builder
+	for _, ev := range events {
+		line, err := json.Marshal(ev)
+		if err != nil {
+			t.Fatalf("throughputFixtureWriteSyntheticJSONL: marshal event: %v", err)
+		}
+		buf.Write(line)
+		buf.WriteByte('\n')
+	}
+	if err := os.WriteFile(path, []byte(buf.String()), 0o600); err != nil {
+		t.Fatalf("throughputFixtureWriteSyntheticJSONL: WriteFile: %v", err)
+	}
+	return path
+}
+
+// TestThroughputRunAccounting is the deterministic cover for the run accounting
+// TestThroughput_TenBeadsAtMaxFour asserts.  It needs no daemon, no br, and no
+// git: it writes synthetic JSONL and runs the same extractors and checker.
+//
+// The case that earns this test its place is "extra start, no failure": that is
+// the double-dispatch detector, and it is the property the widened assertion had
+// to keep. Deleting the starts-1 <= failures clause in
+// throughputAccountingProblems turns that case red, and nothing else.
+func TestThroughputRunAccounting(t *testing.T) {
+	t.Parallel()
+
+	// Ten beads, named the way br names them.
+	beads := make([]string, 10)
+	for i := range beads {
+		beads[i] = fmt.Sprintf("t11p-%d", i+1)
+	}
+
+	cases := []struct {
+		name        string
+		events      []core.Event
+		wantBeads   []string
+		wantCount   int
+		wantProblem bool
+		// wantSubstr, when non-empty, must appear in the first problem reported.
+		wantSubstr    string
+		wantTolerated int
+	}{
+		{
+			// (a) The healthy run: one start per bead, no failures.
+			name: "ten starts no failures",
+			events: func() []core.Event {
+				evs := make([]core.Event, 0, len(beads))
+				for i, bead := range beads {
+					evs = append(evs, throughputFixtureSyntheticStart(t, i+1, bead))
+				}
+				return evs
+			}(),
+			wantBeads: beads,
+			wantCount: 10,
+		},
+		{
+			// (b) The run that used to red-light the branch: 11 starts over 10
+			// beads, where the extra start follows a run_failed for that bead.
+			name: "eleven starts with a justifying failure",
+			events: func() []core.Event {
+				evs := make([]core.Event, 0, len(beads)+2)
+				for i, bead := range beads {
+					evs = append(evs, throughputFixtureSyntheticStart(t, i+1, bead))
+				}
+				evs = append(evs,
+					throughputFixtureSyntheticFailure(t, 3, beads[2], "merge preflight: git rev-parse died on signal 11"),
+					throughputFixtureSyntheticStart(t, 11, beads[2]),
+				)
+				return evs
+			}(),
+			wantBeads:     beads,
+			wantCount:     10,
+			wantTolerated: 1,
+		},
+		{
+			// (c) The double-dispatch detector: 11 starts over 10 beads with NO
+			// run_failed anywhere.  Nothing justifies the extra start.
+			name: "eleven starts with no failure is a double dispatch",
+			events: func() []core.Event {
+				evs := make([]core.Event, 0, len(beads)+1)
+				for i, bead := range beads {
+					evs = append(evs, throughputFixtureSyntheticStart(t, i+1, bead))
+				}
+				evs = append(evs, throughputFixtureSyntheticStart(t, 11, beads[2]))
+				return evs
+			}(),
+			wantBeads:   beads,
+			wantCount:   10,
+			wantProblem: true,
+			wantSubstr:  "double dispatch",
+		},
+		{
+			// A bead that never ran must still fail — this is the property the
+			// widened assertion could most easily have lost.
+			name: "a bead that never started",
+			events: func() []core.Event {
+				evs := make([]core.Event, 0, len(beads)-1)
+				for i, bead := range beads[:len(beads)-1] {
+					evs = append(evs, throughputFixtureSyntheticStart(t, i+1, bead))
+				}
+				return evs
+			}(),
+			wantBeads:   beads,
+			wantCount:   10,
+			wantProblem: true,
+			wantSubstr:  "never emitted run_started",
+		},
+		{
+			// Distinctness is compared against the TOTAL starts, not the bead
+			// count, so a repeated run_id is caught even at 10 starts.
+			name: "a repeated run_id",
+			events: func() []core.Event {
+				evs := make([]core.Event, 0, len(beads))
+				for i, bead := range beads {
+					slot := i + 1
+					if slot == 10 {
+						slot = 9 // reuse bead 9's run_id
+					}
+					evs = append(evs, throughputFixtureSyntheticStart(t, slot, bead))
+				}
+				return evs
+			}(),
+			wantBeads:   beads,
+			wantCount:   10,
+			wantProblem: true,
+			wantSubstr:  "not distinct",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			jsonlPath := throughputFixtureWriteSyntheticJSONL(t, tc.events)
+			acct := throughputAccountRuns(
+				throughputFixtureExtractRunStarted(t, jsonlPath),
+				throughputFixtureExtractRunFailed(t, jsonlPath),
+			)
+			problems, tolerated := throughputAccountingProblems(acct, tc.wantBeads, tc.wantCount)
+
+			if tc.wantProblem && len(problems) == 0 {
+				t.Errorf("want a reported problem, got none; accounting: starts=%d distinct=%d "+
+					"starts_by_bead=%v failures_by_bead=%v",
+					acct.totalStarts, acct.distinctRunIDs, acct.startsByBead, acct.failuresByBead)
+			}
+			if !tc.wantProblem && len(problems) != 0 {
+				t.Errorf("want no problem, got %d: %v", len(problems), problems)
+			}
+			if tc.wantSubstr != "" {
+				found := false
+				for _, problem := range problems {
+					if strings.Contains(problem, tc.wantSubstr) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("no reported problem contains %q; problems: %v", tc.wantSubstr, problems)
+				}
+			}
+			if len(tolerated) != tc.wantTolerated {
+				t.Errorf("tolerated %d retries, want %d; tolerated: %v", len(tolerated), tc.wantTolerated, tolerated)
+			}
+		})
+	}
 }

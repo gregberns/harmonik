@@ -101,8 +101,14 @@ harmonik crew start assessor \
 
 The launch needs the fleet daemon. It serves the crew-start call and writes the
 registry record that keeps your session off the boot-time orphan sweep. Never
-stop it, restart it, or run a bare `harmonik <unknown-subcommand>`, which starts
-a daemon.
+stop it or restart it.
+
+The old third warning here — that a bare `harmonik <unknown-subcommand>` starts a
+daemon — was true when this mission was written and is **FIXED at `5dd157cb9`**
+(verified 2026-08-11, `hk-cli-flag-first-starts-daemon-gjhiy`). `harmonik start
+daemon` is now the only spelling that starts one. A bare `harmonik`, a flag-first
+argv and an unknown verb all print help, exit 2, and write nothing. Corrected
+rather than deleted because the warning was load-bearing while it stood.
 
 The daemon you kill is the **scratch** daemon in the throwaway clone. Two guards
 in `scripts/scratch-daemon.sh` hold the two apart. `guard_path` resolves symlinks

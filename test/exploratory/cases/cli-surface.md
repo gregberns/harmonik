@@ -12,7 +12,8 @@ Swept 2026-08-09 against a daemon at `89dc52d5`; statuses re-verified 2026-08-10
 Class: probe
 Exercises: `queue pause`, operator emergency stop
 Bead: `hk-queue-pause-succeeds-on-unknown-queue-nr18c`
-Status: FIXED at `953627f59` (verified 2026-08-10)
+Status: FIXED at `953627f59` (verified 2026-08-10; **re-verified live at `aedbd770`** — `pause`,
+`resume` and `recover` all now exit 2 on an unknown queue name and say what did not happen)
 
 Preconditions: live daemon, a queue named `main`, one bead dispatched and running.
 
@@ -39,27 +40,48 @@ tell that this was an omission and not a design limit.
 Class: probe
 Exercises: top-level argument parsing, `unknownSubcommand`
 Bead: `hk-cli-flag-first-starts-daemon-gjhiy` (operator-owned; carries an operator direction)
-Status: OPEN at `daf396b41` — deliberately, see the bead
+Status: **FIXED at `5dd157cb9` (verified 2026-08-11)** — was OPEN at `daf396b41`
 
 Preconditions: a directory that has NEVER been through `harmonik init`.
 
-Steps:
+Steps — **four spellings, not one.** The original case recorded only the first. Alpha's fix
+(`2b17e7111`) named two more, and a fourth falls out of the same defect:
 
     mkdir -p /tmp/h/never-inited
-    out=$(harmonik --project /tmp/h/never-inited queue list 2>&1); rc=$?
-    echo "rc=$rc"; echo "$out"
+    out=$(harmonik --project /tmp/h/never-inited queue list 2>&1); rc=$?   # flag-first + real verb
+    out=$(harmonik --project /tmp/h/never-inited 2>&1); rc=$?              # flags, no verb
+    out=$(harmonik --project /tmp/h/never-inited status 2>&1); rc=$?       # no such subcommand
+    (cd /tmp/h/never-inited && harmonik); rc=$?                            # no arguments at all
     ls -a /tmp/h/never-inited
 
-Expect: refusal. Exactly one command starts a daemon, and this is not it.
+Expect: refusal on all four. Exactly one command starts a daemon and none of these is it.
 
 Failure signature: a daemon starts and a full `.harmonik/` tree appears in a directory that
 was never initialised.
 
-Why it matters: the guard exists and works — `harmonik status` (bare) is refused with exit 2.
-The flag-first spelling bypasses it because the guard returns early on any argument beginning
-with `-`. **A reader who trusts `docs/daemon-redeploy.md` gets this exactly backwards**: that
-doc warns against the bare spelling, which is now safe, and says nothing about the flag-first
-spelling, which is not.
+**Verified fixed 2026-08-11 at `5dd157cb9`**, on a binary built from a clean tree. All four
+now exit 2 with an explicit refusal and leave the directory empty:
+
+    harmonik: no subcommand given, only flags — this does not start a daemon
+      "status" was ignored: a subcommand must come first, before any flags
+      To start a daemon, name it: `harmonik start daemon [--project DIR] [flags]`
+
+The message names the ignored word and points at the one spelling that does start a daemon,
+which is what makes the refusal useful rather than merely correct.
+
+Why it mattered: the guard existed and worked for `harmonik status` (bare, exit 2), but the
+flag-first spelling bypassed it because the guard returned early on any argument beginning
+with `-`. The root cause was more general than the guard — starting a daemon was simply what
+`run()` did when nothing else claimed the arguments, so every argv that ran out of verbs fell
+through to it. **The third spelling cost real time**: an operator poll-checking
+`harmonik --project X status` during a redeploy started a SECOND daemon that contended with
+the one being revived, and probably killed an early revive attempt on 2026-06-30.
+
+**Timing trap when re-running this.** If the defect ever returns, three of these four spellings
+BLOCK — a daemon starts and does not exit — so a bare `out=$(...)` hangs the session rather than
+failing. Guard each one, and note that macOS has no `timeout` (`rc=127`, and a 127 read as a
+refusal is a false PASS — this happened while verifying the fix). Background the command, poll
+`kill -0`, and kill it after ~15s.
 
 ---
 
@@ -115,7 +137,9 @@ compounds LP-003 and LP-010 — all three make a broken run look fine.
 Class: probe
 Exercises: `queue set-concurrency`
 Bead: `hk-set-concurrency-unbounded-ad79i`
-Status: OPEN at `daf396b41`
+Status: **FIXED at `1a33cd904` (verified live 2026-08-11 at `4ebd8a334`)** — was OPEN at
+`daf396b41`, re-verified OPEN at `aedbd770`. The upper bound now exists and is derived from the
+host rather than from a constant.
 
 Steps:
 
@@ -127,6 +151,29 @@ Expect: refusal above a sane ceiling, naming the ceiling.
 Failure signature: applied to the live daemon and reported back as safe. A lower bound is
 enforced (`n >= 1`); there is no upper bound.
 
+Verified by running, against a live scratch daemon on a 10-core host:
+
+    999999 -> rc=2  error: spawn_cap_exceeded (code -32099)
+     99999 -> rc=2  error: spawn_cap_exceeded (code -32099)
+         0 -> rc=2  n must be an integer >= 1, got "0"     (lower bound, unchanged)
+         2 -> rc=0  max_concurrent: 1 → 2
+         4 -> rc=0  max_concurrent: 2 → 4
+         8 -> rc=0  max_concurrent: 4 → 8
+        16 -> rc=0  max_concurrent: 8 → 16
+        32 -> rc=2  error: spawn_cap_exceeded (code -32099)
+
+The ceiling moves with the cap in force, so a sane raise still works and the typo is refused.
+**The refusal is checked as well as the acceptance** — a bound that refused everything would pass a
+test that only tried the big number, and that is the failure mode this library's README warns about.
+
+**Residual, and it is not release-critical.** The refusal names neither the ceiling nor the current
+value: the operator who types an extra digit gets `spawn_cap_exceeded (code -32099)` and no way to
+learn what would have worked. The SUCCESS path already prints the number
+(`safe max_concurrent = 16; restart to raise`), so the refusal is the one place the reader needs it
+and does not get it. The case's own "Expect" line asked for a refusal *naming the ceiling*, so this
+is a partial pass against the stated bar, not a clean one. Filed as `hk-qm3zv`. The dangerous
+behaviour — a fleet outage by typo — is gone, which is what made this case release-critical.
+
 Why it matters: once in production this is a fleet outage by typo, with no confirmation step
 between the keystroke and the effect.
 
@@ -136,17 +183,42 @@ between the keystroke and the effect.
 
 Class: probe
 Exercises: `promote --dry-run`
-Bead: `hk-promote-dryrun-validates-nothing-975nt`
-Status: OPEN at `daf396b41`
+Bead: `hk-promote-dryrun-validates-nothing-975nt`; repro defect `hk-q21jt`
+Status: OPEN at `938b3c4cb` — **bug re-confirmed live; the STEPS below were wrong until 2026-08-11**
 
-Steps:
+Steps — **both lines below were previously recorded with flags that do not exist.** SHAs are
+POSITIONAL (`harmonik promote <sha>...`); there is no `--sha`. Run these against any repo with at
+least one commit. `--dry-run` mutates nothing.
 
-    harmonik promote --dry-run --sha deadbeefdeadbeefdeadbeefdeadbeefdeadbeef --project "$SCRATCH"
-    harmonik promote --dry-run --target refs/heads/branch-that-does-not-exist --project "$SCRATCH"
+    SHA=$(git rev-parse HEAD)
+    # a commit that does not exist, real target
+    out=$(harmonik promote --dry-run deadbeefdeadbeefdeadbeefdeadbeefdeadbeef \
+          --target main --project "$SCRATCH" 2>&1); echo "rc=$?"; echo "$out"
+    # real commit, a target branch that does not exist
+    out=$(harmonik promote --dry-run "$SHA" \
+          --target refs/heads/branch-that-does-not-exist --project "$SCRATCH" 2>&1); echo "rc=$?"
 
 Expect: each refuses, naming which input could not be resolved.
 
-Failure signature: an identical plan printed for both, exit 0.
+Failure signature: **both exit 0** and print a full plan, including the push line:
+
+    harmonik promote (dry-run): would cherry-pick 938b3c4cb... onto
+      "refs/heads/branch-that-does-not-exist" in a temp worktree
+    harmonik promote (dry-run): would push: git push origin
+      HEAD:refs/heads/branch-that-does-not-exist (with up to 3 non-ff retries)
+
+**What the old steps did instead, and why this case is the library's own cautionary tale.** The
+recorded repro was written from memory of the command surface rather than from a run, and it was
+broken in two different ways, both of which read as a PASS:
+
+- `--sha deadbeef...` exited 1 with `unknown flag "--sha"` — dead on flag parsing, never reaching
+  the code under test.
+- `--target refs/heads/nope` with no SHA exited 1 with `push-mode requires at least one SHA
+  argument` — a refusal, but for the missing SHA, not the bad target.
+
+The case expects a refusal, so **both non-zero exits read as correct behaviour and the case
+reported this live bug as FIXED.** Found by alpha, filed as `hk-q21jt`, verified here. The bug was
+never fixed; only the test for it was broken.
 
 Why it matters: `promote` is how work reaches the target branch, so this is the release path's
 own safety check — and it cannot fail. A dry run that always succeeds trains the operator to
@@ -169,8 +241,11 @@ Steps:
 
 Failure signature: both point the operator at `harmonik status`, which does not exist.
 
-Why it matters: the phantom command compounds LP-002 — the flag-first spelling of the
-non-existent command starts a daemon. Following the help text is what triggers the trap.
+Why it matters: the phantom command used to compound LP-002 — the flag-first spelling of a
+non-existent command started a daemon, so following the help text was what triggered the trap.
+**That second half is FIXED at `5dd157cb9`** (verified 2026-08-11): `harmonik --project DIR status`
+now exits 2 and starts nothing. The phantom command in the help text is the part this case owns,
+and it was fixed earlier at `2c5b5b03b`.
 
 **Related, found while re-checking this one:** `hk-verdict-override-unwired-aqjxo` — no run
 can ever be parked awaiting a verdict, because the executor never calls `Await`. Both verdict
@@ -220,3 +295,161 @@ Why it matters here: recorded so the next session does not spend a day re-provin
 `handler status`, `crew list`, `release ledger`, `confirm-verdict` and `veto-verdict` all
 refuse bad input with clear messages and correct exit codes, and `subscribe --since-event-id`
 and `--heartbeat` validate properly.
+
+---
+
+## LP-015 — a message to a recipient that does not exist is accepted and never delivered
+
+Class: probe
+Exercises: `comms send`, `comms who`, the presence registry
+Bead: `hk-rtqmu`
+Status: OPEN at `aedbd770` (found 2026-08-10)
+
+Preconditions: a live scratch daemon. No agent named `nosuchlane` anywhere.
+
+Steps:
+
+    out=$(harmonik comms send --project "$S" --to nosuchlane --from alpha \
+          --no-wake --topic status "epic complete" 2>&1); rc=$?
+    echo "rc=$rc"; echo "$out"
+    harmonik comms log --project "$S" | tail -2
+
+Expect: a directed send to a name the daemon has never seen either fails, or returns a
+delivery status the sender can act on.
+
+Failure signature: `rc=0`, and the whole output is an event id:
+
+    019fef4e-9fbd-7ed0-9184-646377e53d07
+
+Drop `--no-wake` and one accidental signal appears on stderr — `can't find pane:
+harmonik-<hash>-nosuchlane` — but `comms send --help` states that wake failures "do not affect
+the exit code", so it is documented as not-a-signal, and `--no-wake` removes it. **Both spellings
+exit 0.**
+
+The message is not lost. It sits in `comms log` looking exactly like a delivered one:
+
+    2026-08-11T05:32:15Z  alpha → nosuchlane  [status]  epic complete
+
+**`comms who` cannot be used as the pre-flight check**, and this is the part worth remembering:
+
+    harmonik comms recv --project "$S" --agent phantom-never-existed >/dev/null
+    harmonik comms who --project "$S" | grep phantom
+    # phantom-never-existed    last_seen 2026-08-11T05:32:15Z
+
+`recv` emits a presence beat, so **typing a name once puts it in the registry**. A `--to` target
+never appears there at all. So `who` answers "which names did a process recently use", not "which
+agents exist", and the one name you wanted to validate is the one it will never show you. Entries
+do expire (120s online, 10m stale cutoff, `internal/presence`), so ghosts do not accumulate — but
+inside that window a name typed once reads as a live agent.
+
+Why it matters: this is the channel the captain uses to mail epics to crews and crews use to report
+completion. A misaddressed epic is a silent black hole — the captain sees success, the crew never
+hears, and the only symptom is an epic that never completes. **That is indistinguishable from a
+stalled crew, which is the thing everyone is already hunting.**
+
+---
+
+## LP-016 — `wake` says it nudged a session for any string you give it
+
+Class: probe
+Exercises: `harmonik wake`, the fleet-stall escape hatch
+Bead: `hk-o3mz8`
+Status: OPEN at `aedbd770` (found 2026-08-10)
+
+Preconditions: a live scratch daemon.
+
+Steps:
+
+    for n in nosuchagent ../../etc "a b c" alpha; do
+      out=$(harmonik wake --project "$S" --agent "$n" 2>&1); rc=$?
+      printf '%-14s rc=%s | %s\n' "$n" "$rc" "$out"
+    done
+
+Expect: a name matching no session is refused, or the output states how many sessions matched.
+
+Failure signature: every one of them exits 0 and claims success.
+
+    nosuchagent    rc=0 | wake: nosuchagent nudged
+    ../../etc      rc=0 | wake: ../../etc nudged
+    a b c          rc=0 | wake: a b c nudged
+    alpha          rc=0 | wake: alpha nudged
+
+The last is a real session. Nothing in the output separates it from the other three. Only the
+empty string is refused (rc=1).
+
+The counter-argument, and why it does not hold: `wake --help` says "Sessions that are not currently
+sleeping are silently skipped", which is reasonable for a REAL session that is already awake. It
+does not cover a name matching no session at all, and "nudged" is an affirmative claim either way.
+The documented meaning of exit 0 is "sessions nudged".
+
+Why it matters: `wake` is the fleet-stall human escape hatch — its own help says so. It gets used
+when the fleet is already wedged and the operator is deciding whether the wake path is broken or
+the session is. "Nudged" when zero sessions matched sends that operator off to debug a session they
+never woke. A count settles it: `0 sessions matched` versus `1 nudged`.
+
+Smaller, same family: `queue cancel --queue <does-not-exist>` exits 0 with "no active queue found
+(queue file absent)" and never echoes the name it was given.
+
+**The fix shape already exists in this codebase** — `queue pause/resume/recover` had this exact
+defect (LP-001) and now refuse:
+
+    rc=2  daemon: operator-pause: no queue named "ghostqueue":
+          `harmonik queue pause` changed nothing and no queue was paused
+
+---
+
+## LP-017 — held up: every daemon-requiring verb refuses correctly when the daemon is down
+
+Class: probe
+Exercises: the `17 = daemon not running` contract across the whole CLI
+Bead: `hk-11zpm` (the amendment below); the original sweep found nothing
+Status: HELD UP at `aedbd770` (swept 2026-08-10) — **partially OVERTURNED at `4ebd8a334`
+2026-08-11 for `comms who` against an empty registry, and for `comms log`, which was never swept**
+
+Preconditions: a scratch daemon that has been brought DOWN. The point is the socket's absence.
+
+Steps:
+
+    bash scripts/scratch-daemon.sh down "$S"
+    for v in "queue status" "queue list" "queue pause --queue main" \
+             "queue set-concurrency 4" "comms send --to alpha --from bravo --no-wake hi" \
+             "comms recv --agent alpha" "wake --all" "sleep"; do
+      out=$(harmonik $v --project "$S" 2>&1); echo "$v -> rc=$?"
+    done
+
+Expect: exit 17 and a message naming the missing socket. Anything that hangs, or exits 0, or
+starts a daemon of its own, is the finding.
+
+Result: **all eight exit 17**, each naming the socket path it looked for:
+
+    harmonik queue status: daemon not running (no socket at <project>/.harmonik/daemon.sock)
+
+`comms who` correctly exits 0 — its help lists it as one of the two verbs needing no daemon — and
+it degrades honestly rather than pretending, marking the registry entries `stale (last seen 3m
+ago)` instead of reporting them online.
+
+> **AMENDED 2026-08-11 at `4ebd8a334` — that holds only while the registry has entries in it.**
+> Re-hit with the fleet daemon down and an EMPTY registry, `comms who` prints
+> `no agents currently online` and exits 0. There is nothing in that sentence to mark stale, so the
+> honest-degradation mechanism has no surface to act on and silently does not fire. A live bus that
+> nobody has joined prints the identical line, so the operator cannot tell the two apart — and the
+> empty registry is the normal state after a restart, which is exactly when someone asks. `comms
+> log` is worse and was never in the verb list below: it served traffic from 2026-06-02 with nothing
+> marking it as history. Filed as `hk-11zpm`.
+>
+> **The lesson is about the sweep, not the verb.** A `HELD UP` result is only as strong as its verb
+> list and the fixture state it ran against. This one was careful and still generalised from one
+> registry state to all of them. When you record a surface as holding up, record what state it was
+> in.
+
+Why it matters: this is the failure every operator and every agent hits constantly, and it is the
+one place a CLI is most tempted to be helpful by starting a daemon for you. Nothing here does.
+
+**The contrast this used to record is gone, and that is the update.** When this was swept, the
+flag-first hole (LP-002) reached daemon-start through the same binary, so "the daemon-down path is
+safe" held for the verb-first spelling and NOT for `harmonik --project DIR queue list`. **LP-002 is
+FIXED at `5dd157cb9`**, so all four spellings now refuse and the distinction no longer exists.
+Both surfaces are safe today; do not re-derive the old asymmetry from this paragraph.
+
+Do not re-sweep this surface looking for silent-success defects. The two found in this pass
+(LP-015, LP-016) are on the *live-daemon* path, not this one.

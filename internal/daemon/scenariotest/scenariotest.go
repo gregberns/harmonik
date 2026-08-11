@@ -621,3 +621,26 @@ func WriteReviewLoopWorkflowDot(t *testing.T, projectDir string) {
 		t.Fatalf("WriteReviewLoopWorkflowDot: write %s: %v", dst, err)
 	}
 }
+
+// WriteStandardWorkflowDot installs the canonical workflow with its explicit
+// commit gate. Scenario fixtures use this when the gate itself is part of the
+// claim under test and provide a small project-local `make full` target.
+func WriteStandardWorkflowDot(t *testing.T, projectDir string) {
+	t.Helper()
+
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("WriteStandardWorkflowDot: runtime.Caller failed")
+	}
+	root := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(thisFile))))
+	src := filepath.Join(root, "specs", "examples", "standard-bead.dot")
+
+	//nolint:gosec // G304: path derived from this source file's location, not user input
+	content, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("WriteStandardWorkflowDot: read %s: %v", src, err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "workflow.dot"), content, 0o600); err != nil {
+		t.Fatalf("WriteStandardWorkflowDot: write workflow.dot: %v", err)
+	}
+}

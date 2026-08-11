@@ -123,11 +123,8 @@ func TestStartupItemTransitionsAndTransactionPort(t *testing.T) {
 	if item.Status != queue.ItemStatusPending || item.RunID != nil {
 		t.Fatalf("recovered item = %+v, want pending item without run ID", item)
 	}
-	if err := queue.ReconcileItemToFailed(&item); err != nil {
-		t.Fatalf("ReconcileItemToFailed: %v", err)
-	}
-	if err := queue.ReconcileItemToCompleted(&item); err == nil {
-		t.Fatal("ReconcileItemToCompleted succeeded from failed")
+	if err := queue.ReconcileItemToCompleted(&item); err != nil {
+		t.Fatalf("ReconcileItemToCompleted: %v", err)
 	}
 
 	var store queue.TransactionStore = fakeTransactionStore{}

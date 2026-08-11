@@ -211,6 +211,10 @@ func (r OrphanSweepResult) ToPayload() core.DaemonOrphanSweepCompletedPayload {
 // OrphanSweepConfig carries injected dependencies for RunOrphanSweep. Nil
 // fields fall back to OS-backed production implementations.
 type OrphanSweepConfig struct {
+	// DispatchOwnership contains exact identities held by dispatch replay. The
+	// generic sweep must not reset or remove these facts.
+	DispatchOwnership DispatchReplayOwnership
+
 	// TmuxLister overrides the tmux session lister. Nil → OSTmuxSessionLister.
 	TmuxLister lifecycle.TmuxSessionLister
 
@@ -327,6 +331,15 @@ type OrphanSweepConfig struct {
 
 	// Logger receives diagnostic messages. Nil → silent.
 	Logger *log.Logger
+}
+
+// DispatchReplayOwnership is the identity set that startup replay retains
+// while generic orphan cleanup runs.
+type DispatchReplayOwnership struct {
+	Beads     map[core.BeadID]struct{}
+	Runs      map[core.RunID]struct{}
+	Sessions  map[string]struct{}
+	Worktrees map[core.RunID]struct{}
 }
 
 // coordinatorSentinelDir returns the path to .harmonik/cognition/ for projectDir.
@@ -862,12 +875,21 @@ func RunOrphanSweep(
 	// session kill pass, which must not kill their tmux sessions, and the worktree
 	// force-removal, which must not delete the directories they are working in.
 	liveRunIDs := map[string]struct{}{}
+	for runID := range cfg.DispatchOwnership.Runs {
+		liveRunIDs[runID.String()] = struct{}{}
+	}
+	for runID := range cfg.DispatchOwnership.Worktrees {
+		liveRunIDs[runID.String()] = struct{}{}
+	}
 
 	// (PL-006d) Probe the coordinator (flywheel) sentinel before the tmux sweep.
 	// If the sentinel is present and the supervisor PID is live, exclude the
 	// flywheel session from the sweep. If the sentinel is stale (dead PID), kill
 	// the session normally and remove the sentinel.
 	excludedTmuxSessions := map[string]struct{}{}
+	for sessionName := range cfg.DispatchOwnership.Sessions {
+		excludedTmuxSessions[sessionName] = struct{}{}
+	}
 	// hk-9vp51: ALWAYS exclude the daemon's own spawn-target session from the
 	// session-level sweep — regardless of coordinator state. In the fix-forward
 	// fallback case the daemon EnsureSessions a fresh "harmonik-<hash>-default"
@@ -958,10 +980,13 @@ func RunOrphanSweep(
 		// still working. It runs HERE, before the kill pass below, because the
 		// adoption pass that looks for these runs comes after the sweep — a session
 		// killed here is already gone by the time anything asks whether to adopt it.
-		liveRunIDs = probeRunRegistrySessions(
+		registryRunIDs := probeRunRegistrySessions(
 			ctx, projectDir, cfg.TmuxAdapter, cfg.Logger,
 			sessionSnapshot, excludedTmuxSessions,
 		)
+		for runID := range registryRunIDs {
+			liveRunIDs[runID] = struct{}{}
+		}
 	}
 
 	// (a) Tmux sessions — two passes:
@@ -1116,6 +1141,7 @@ func RunOrphanSweep(
 	// sequencing rationale). Skipped silently when the bead-ledger / resetter
 	// adapter isn't wired (unit-test mode).
 	if cfg.BeadLedger != nil && cfg.BeadResetter != nil {
+		queueDispatched, queueOwned := queueOwnershipWithDispatch(cfg)
 		sweepResult, beadResetErr := lifecycle.SweepStaleInProgressBeads(ctx, lifecycle.SweepStaleInProgressBeadsConfig{
 			Ledger:          cfg.BeadLedger,
 			Resetter:        cfg.BeadResetter,
@@ -1126,8 +1152,8 @@ func RunOrphanSweep(
 			ProjectHash:     projectHash,
 			DaemonStartNS:   cfg.DaemonStartNS,
 			BrTimeoutCfg:    cfg.BrTimeoutCfg,
-			QueueDispatched: cfg.QueueDispatched,
-			QueueOwned:      cfg.QueueOwned,
+			QueueDispatched: queueDispatched,
+			QueueOwned:      queueOwned,
 			Logger:          cfg.Logger,
 		})
 		if beadResetErr != nil {
@@ -1166,6 +1192,22 @@ func RunOrphanSweep(
 		return result, fmt.Errorf("daemon: RunOrphanSweep: %s", strings.Join(errs, "; "))
 	}
 	return result, nil
+}
+
+func queueOwnershipWithDispatch(cfg OrphanSweepConfig) (lifecycle.QueueDispatchedSet, lifecycle.QueueOwnedSet) {
+	dispatched := make(lifecycle.QueueDispatchedSet, len(cfg.QueueDispatched)+len(cfg.DispatchOwnership.Beads))
+	owned := make(lifecycle.QueueOwnedSet, len(cfg.QueueOwned)+len(cfg.DispatchOwnership.Beads))
+	for beadID := range cfg.QueueDispatched {
+		dispatched[beadID] = struct{}{}
+	}
+	for beadID := range cfg.QueueOwned {
+		owned[beadID] = struct{}{}
+	}
+	for beadID := range cfg.DispatchOwnership.Beads {
+		dispatched[beadID] = struct{}{}
+		owned[beadID] = struct{}{}
+	}
+	return dispatched, owned
 }
 
 // runPeriodicCoordinatorReap is the work-loop periodic counterpart of the

@@ -10,14 +10,25 @@ Charlie must deliberately break each new claim test before accepting it.
 Updated: 2026-08-10
 
 - Owner: Charlie.
-- Active slice: C13 is complete. C14 is next.
+- Active slice: C14 is complete. C15 is next.
 - Start revision: `b49210d67` on `work/alpha-integration-merge`.
 - State: C01 through C04 are complete and independently approved.
 - Implementation commit: `de0a6ca3`.
 - Integration reconciliation commit: `b0cac51a`.
 - Stop gate: C05 through C07 received independent approval before C08.
 - Coordination note: the queue RPC overlap retained both the active-run status work and the event-intent path.
-- Later tasks: C14 through C31 remain unstarted.
+- Later tasks: C15 through C31 remain unstarted.
+
+### C14 evidence
+
+- Typed values name item outcomes, locations, dispositions, no-change reasons, and decision inputs.
+- A receipt-required result lets the shell mint an ID without duplicating finality policy.
+- Result validation rejects inconsistent changed, no-change, and receipt-required values.
+- Typed input, stored-state, and conflict errors retain their reason and location facts.
+- The C17 boundary requires durable validation of the exact detached decision candidate.
+- Focused queue tests, repository compilation, `go vet ./...`, and the diff check pass.
+- Weakening no-change reason validation made its invariant test fail.
+- Independent reviewer verdict: `APPROVE` after one blocking correction round.
 
 ### C13 evidence
 
@@ -301,6 +312,8 @@ Updated: 2026-08-10
 **Problem:** The live function owns policy, durability, memory mutation, cancellation, wake, emission, and refill.
 
 **Scope:** Call the decision, execute the receipt-aware transaction, apply the durability policy, then perform outer effects. Keep slow work outside locks when the writer rule allows it.
+
+The completion transaction must accept the exact detached candidate returned by the decision. It must validate that candidate against the prior snapshot. The shell must not install the candidate in live memory before durable commit.
 
 **Acceptance:** Positive effect counters prove exact calls and order for each disposition. Focused force-reap, claim-failure, reservation-failure, and normal-completion tests pass.
 

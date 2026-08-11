@@ -118,6 +118,27 @@ func queueSubmitDispatchSubmitCLI(t *testing.T, projectDir string, ids []core.Be
 	}
 }
 
+func queueSubmitDispatchDryRunCLI(t *testing.T, projectDir string, ids []core.BeadID) queue.QueueDryRunResponse {
+	t.Helper()
+	beadIDs := make([]string, len(ids))
+	for i, id := range ids {
+		beadIDs[i] = string(id)
+	}
+	var out strings.Builder
+	var errOut strings.Builder
+	exitCode := queuecli.RunQueueDryRun(t.Context(), []string{
+		"--project", projectDir,
+		"--beads", strings.Join(beadIDs, ","),
+		"--json",
+	}, &out, &errOut)
+	require.Equal(t, 0, exitCode, "queue dry-run CLI: %s", errOut.String())
+
+	var response queue.QueueDryRunResponse
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(out.String())), &response),
+		"decode queue dry-run response: %s", out.String())
+	return response
+}
+
 // queueSubmitDispatchGitRepo initialises a git repository with one commit in
 // dir, and wires a bare-repo "origin" remote so that mergeRunBranchToMain's
 // git-push step succeeds (avoiding push_failed run_failed events in scenario
@@ -828,6 +849,17 @@ func TestScenario_QueueSubmit_FanOutFanIn(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	queueSubmitDispatchWaitSocket(t, projectDir)
+	dryRun := queueSubmitDispatchDryRunCLI(t, projectDir, ids)
+	require.True(t, dryRun.ParallelismNarrowed, "dependency graph must narrow initial parallelism")
+	require.Len(t, dryRun.LedgerDepNotices, 6, "A→B/C/D and B/C/D→E must produce six edge notices")
+	require.Equal(t, queue.ItemStatusPending, dryRun.ResolvedQueue.Groups[0].Items[0].Status,
+		"root must be ready in the dry-run plan")
+	for _, item := range dryRun.ResolvedQueue.Groups[0].Items[1:] {
+		require.Equal(t, queue.ItemStatusDeferredForLedgerDep, item.Status,
+			"blocked item %s must be deferred in the dry-run plan", item.BeadID)
+	}
+	_, statErr := os.Stat(filepath.Join(projectDir, ".harmonik", "queues", "main.json"))
+	require.ErrorIs(t, statErr, os.ErrNotExist, "dry-run must not persist the queue")
 	_ = queueSubmitDispatchSubmitCLI(t, projectDir, ids)
 
 	const terminalBudget = 90 * time.Second

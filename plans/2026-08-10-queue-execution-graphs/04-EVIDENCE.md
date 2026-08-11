@@ -30,6 +30,8 @@ Result: PASS in 27.15 seconds on 2026-08-10.
 
 The scenario created `A -> [B, C, D] -> E` in real Beads. It submitted all five IDs once through the real Unix-socket CLI. The client created the normal stream group. The daemon ran with a global and per-queue concurrency ceiling of three.
 
+The scenario now runs the real `queue dry-run` client before submission. The returned plan marks only A as pending. It marks B, C, D, and E as dependency-deferred and reports all six graph edges. The dry run does not create the canonical queue file. The strengthened scenario passed in 28.47 seconds on 2026-08-11.
+
 The durable event log proved:
 
 - A was the first run.

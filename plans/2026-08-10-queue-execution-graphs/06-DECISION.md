@@ -45,14 +45,17 @@ A daemon restart should also be a core recovery action when the stored facts giv
 
 ### Human or release owner
 
-- Approve the integration branch into `main` or the release branch.
+- Decide when a completed epic integration branch moves onward under the current policy.
+- Approve the project integration branch into `main` or the release branch.
 - Decide policy changes and unresolved semantic conflicts.
 
 ## Current gaps
 
-The per-epic integration branch is now wired in delta. The daemon reads the child record's parent edge. It derives and creates one integration branch for the parent when no higher branch setting overrides that field. The focused proof passes. The live graph proof still needs a run above the disk watermark.
+The per-epic integration branch is wired and proven. The daemon reads the child record's parent edge. It derives and creates one integration branch for the parent when no higher branch setting overrides that field. The live graph landed all five children there.
 
 Clean stop and start now continues without supervisor action in delta. A clean shutdown writes `paused-by-drain` with a one-shot restart intent. Startup consumes that intent before reconciliation and returns the queue to active. An explicit operator pause does not set the intent. It remains paused and keeps its pending work for a later operator resume.
+
+Automatic promotion after `epic_completed` is not in the current contract. The core must not invent a target. A later design can make derived-branch to project-integration promotion mechanical after it defines one target and one conflict path. The project-integration to `main` boundary remains human.
 
 Use this test for each action:
 

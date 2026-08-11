@@ -81,10 +81,12 @@ The agent must submit every child bead that it wants the queue to execute. The a
 
 A JSON queue document is useful when the agent needs more than one ordered group, an explicit wave, a named queue, queue-specific workers, per-item context, or per-item workflow settings. The dependency graph remains in Beads. Queue groups add execution-plan barriers and append rules. They do not replace ledger dependencies.
 
-### Epic integration branch is specified but not composed
+### Epic integration branch composition and promotion
 
-`specs/workspace-model.md` `WM-006` requires a parent bead to derive `harmonik/integration/<parent>`. `internal/workspace/integrationbranch.go` implements the pure name function. No production caller uses `IntegrationBranchName`.
+`specs/workspace-model.md` `WM-006` requires a parent bead to derive `harmonik/integration/<parent>`. Delta now composes that rule into the run plan and creates the branch when it does not exist.
 
-`internal/daemon/branching.go` `resolveBranchingFrom` resolves only the per-bead body, project defaults, and a daemon target. It does not query parent edges. Therefore the daemon does not currently derive one branch from an epic parent. It lands children on the configured target branch unless each bead body overrides it.
+Each child lands on that branch through the normal task-branch merge. The live graph proves that all five child changes collect there.
 
-The daemon also does not merge an epic integration branch into `main`. `WM-007` leaves that step to developer or operator policy. This matches the project rule that a human merges the integration branch into `main`.
+The daemon does not promote the completed epic branch to another branch. `maybeEmitEpicCompleted` emits the completion fact only. `WM-007` says that Harmonik's contract ends when the integration branch holds one commit per task. It leaves the next merge to developer or operator policy. The project branch rule also requires a human pull request into `main`.
+
+This means the lack of automatic promotion is current policy, not a queue defect. A future contract can add mechanical epic-branch promotion into a project integration branch. It must keep the human boundary before `main`. It must also define the promotion target, validation gate, serialization, restart identity, and conflict path first.

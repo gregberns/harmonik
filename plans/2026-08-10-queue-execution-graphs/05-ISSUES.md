@@ -39,3 +39,12 @@ Do not turn open research questions into implementation issues.
 
 - The queue accepts named bead IDs. It does not expand an epic into children. Confirm whether this is intentional in the queue contract.
 - Alpha's durable dispatch replay producer and startup replay paths are not on the integration branch yet. Reconcile the abrupt-crash scenario with their final contract when they land.
+
+## Confirmed policy boundaries
+
+### Epic integration branch promotion is external
+
+- Claim: the daemon should automatically merge a completed parent-derived branch onward.
+- Evidence: `workspace-model` `WM-007` ends Harmonik's contract when the integration branch holds one commit per task. `daemon.maybeEmitEpicCompleted` emits a fact and does not mutate Git. The project branch rule requires a human pull request into `main`.
+- State: not an implementation issue under the current contract. The live fan graph proves the derived branch advances while its configured base stays unchanged.
+- Future design need: distinguish derived epic branch to project integration from project integration to `main`. Define the target and conflict contract before code performs either merge.

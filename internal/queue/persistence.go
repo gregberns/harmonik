@@ -118,6 +118,9 @@ func harmonikDir(projectDir string) string {
 // Spec ref: specs/queue-model.md §3.1 QM-001.
 // Spec ref: specs/workspace-model.md §4.7 WM-026.
 func Persist(_ context.Context, projectDir string, q *Queue) error {
+	if err := validatePreclaimTerminalItems(q); err != nil {
+		return fmt.Errorf("queue: persist: %w", err)
+	}
 	data, err := json.Marshal(q)
 	if err != nil {
 		return fmt.Errorf("%w: marshal: %w", ErrPersistFailed, err)

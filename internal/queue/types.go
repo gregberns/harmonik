@@ -156,6 +156,10 @@ type Item struct {
 	// For now, the canonical UUID string is used to stay JSON-clean.
 	RunID *string `json:"run_id"`
 
+	// PreclaimTerminal is durable authority for a failed dispatch that ended
+	// before Beads accepted its claim. It is nil for normal run outcomes.
+	PreclaimTerminal *PreclaimTerminalBinding `json:"preclaim_terminal,omitempty"`
+
 	// AppendedAt is set when the item was appended post-submit (streams only).
 	// None (nil) for submit-time items.
 	AppendedAt *time.Time `json:"appended_at"`
@@ -380,6 +384,9 @@ func UnmarshalQueue(data []byte) (Queue, error) {
 	}
 	if q.SchemaVersion != schemaVersion {
 		return Queue{}, fmt.Errorf("%w: got %d, want %d", ErrSchemaVersion, q.SchemaVersion, schemaVersion)
+	}
+	if err := validatePreclaimTerminalItems(&q); err != nil {
+		return Queue{}, err
 	}
 	return q, nil
 }

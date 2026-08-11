@@ -128,12 +128,27 @@ RECORD Item:
   bead_id           : BeadID                -- Beads ledger reference; immutable
   status            : ItemStatus            -- per-item state (see §2.7)
   run_id            : UUID | None           -- daemon-minted on transition to dispatched per [execution-model.md §4.3]
+  preclaim_terminal : PreclaimTerminalBinding | None -- exact typed authority when dispatch ends before claim
   appended_at       : Timestamp | None      -- set when appended post-submit (streams only); None for submit-time items
   workflow_mode     : String | None         -- optional per-item workflow-mode override (EM-012a)
   workflow_ref      : String | None         -- optional path to the dot workflow when workflow_mode="dot"
   context           : String | None         -- optional free-form Extra Context injected into the agent brief
   template_params   : Map<String,String> | None  -- launch-time __KEY__ substitution params for the dot workflow ([workflow-graph.md §4 WG-045])
 ```
+
+`preclaim_terminal` is present only when one exact dispatch attempt ends before
+Beads accepts its claim. It binds the canonical UUIDv7 `run_id`, the canonical
+UUIDv7 `claim_transition_id`, and one typed cause: `max_attempts`,
+`cross_queue_duplicate`, or `dependency_refusal`. Replay must match this value
+with the dispatch intent and the item's queue ID, queue name, group index, item
+index, and bead ID. Diagnostic text is not authority. A mismatch requires
+repair and keeps both records.
+
+The binding is valid only when the item status is `failed`. A
+`dependency_refusal` keeps the item `run_id`, and that value must equal the
+binding `run_id`. A `max_attempts` or `cross_queue_duplicate` failure occurs
+before reservation, so the item `run_id` must be `None`. An explicit retry
+clears `preclaim_terminal` before it changes the item to `pending`.
 
 **`template_params` ingestion validation (normative).** Template params are **UNTRUSTED** ([workflow-graph.md §4 WG-045]): they are settable by any local agent over the queue-submit RPC and MAY carry external data. The daemon MUST validate `template_params` at submit time and **reject** the request (typed JSON-RPC error, before persist) when any key does not match `^[A-Z][A-Z0-9_]*$` (or exceeds 128 bytes), or any value contains a NUL/newline/other ASCII or Unicode control character, or any value exceeds an 8192-byte cap. Shell metacharacters in values are NOT rejected here — neutralising them is the post-parse shell-quoting close of [workflow-graph.md §4 WG-045], not the validator's job. The same validation is re-applied at the substitution chokepoint to cover the daemon-down local-persist path that bypasses the RPC. `queue-append` carries no `template_params`, so `queue-submit` is the sole ingestion chokepoint.
 

@@ -33,6 +33,7 @@ func cloneQueueGroup(group Group) Group {
 func cloneQueueItem(item Item) Item {
 	out := item
 	out.RunID = clonePointer(item.RunID)
+	out.PreclaimTerminal = clonePointer(item.PreclaimTerminal)
 	out.AppendedAt = clonePointer(item.AppendedAt)
 	if item.TemplateParams != nil {
 		out.TemplateParams = make(map[string]string, len(item.TemplateParams))

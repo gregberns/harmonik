@@ -21,10 +21,106 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/queue"
 )
+
+func TestLoadQueueAtStartupInstallsMarkerForReceiptOnlyCrashState(t *testing.T) {
+	projectDir := t.TempDir()
+	completedAt := time.Date(2026, 8, 10, 18, 12, 13, 456000000, time.UTC)
+	q := queue.Queue{
+		SchemaVersion: 1,
+		QueueID:       "0197c453-0000-7000-8000-000000000001",
+		Name:          queue.QueueNameMain,
+		Status:        queue.QueueStatusActive,
+		Groups: []queue.Group{{
+			GroupIndex:  0,
+			Kind:        queue.GroupKindStream,
+			Status:      queue.GroupStatusCompleteSuccess,
+			CompletedAt: &completedAt,
+			Items: []queue.Item{{
+				BeadID: core.BeadID("hk-marker-restart"),
+				Status: queue.ItemStatusCompleted,
+			}},
+		}},
+	}
+	if err := queue.Persist(t.Context(), projectDir, &q); err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := queue.PrepareCompletion(
+		q,
+		"0197c453-0000-7000-8000-000000000002",
+		"0197c453-0000-7000-8000-000000000003",
+		completedAt,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	priorBytes, err := json.Marshal(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := queue.WriteReplacement(t.Context(), queue.ReplacementPlan{
+		ProjectDir:               projectDir,
+		TransactionID:            prepared.TransactionID,
+		OperationKind:            queue.OperationCompletion,
+		NormalizedName:           q.Name,
+		QueueID:                  q.QueueID,
+		PriorBytes:               priorBytes,
+		CandidateBytes:           prepared.CandidateBytes,
+		CompletionReceiptBinding: prepared.Binding,
+	})
+	if !commit.Committed() {
+		t.Fatalf("completion commit = %+v", commit)
+	}
+	if _, err := queue.RecoverReplaceIntents(projectDir); err != nil {
+		t.Fatal(err)
+	}
+	markerBase, err := queue.CompletionReleaseMarkerBasename(q.QueueID, prepared.Receipt.ReceiptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	markerPath := filepath.Join(projectDir, ".harmonik", "queues", ".completion-receipts", markerBase)
+	if _, err := os.Stat(markerPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("fixture already has marker: %v", err)
+	}
+
+	loaded, err := LoadQueueAtStartup(
+		t.Context(), projectDir, emptyBeadLedger{}, nil, slog.New(slog.DiscardHandler),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded) != 0 {
+		t.Fatalf("completed queue loaded after cleanup: %+v", loaded)
+	}
+	data, err := os.ReadFile(markerPath) //nolint:gosec // path is under t.TempDir
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker, err := queue.DecodeCompletionReleaseMarker(data)
+	if err != nil || marker.ReceiptID != prepared.Receipt.ReceiptID {
+		t.Fatalf("marker = %+v, err=%v", marker, err)
+	}
+}
+
+func TestLoadQueueAtStartupRefusesInvalidCompletionReceiptRoot(t *testing.T) {
+	projectDir := t.TempDir()
+	receiptRoot := filepath.Join(projectDir, ".harmonik", "queues", ".completion-receipts")
+	if err := os.MkdirAll(filepath.Dir(receiptRoot), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(receiptRoot, []byte("wrong type"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadQueueAtStartup(
+		t.Context(), projectDir, emptyBeadLedger{}, nil, slog.New(slog.DiscardHandler),
+	); err == nil {
+		t.Fatal("startup accepted an invalid completion receipt root")
+	}
+}
 
 // emptyBeadLedger answers every cross-check with "nothing here". The queues in
 // this file hold no dispatched or in-flight items, so no answer it gives can

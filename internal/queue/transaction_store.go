@@ -59,6 +59,7 @@ type CompletionRequest struct {
 	TransactionID string
 	ReceiptID     string
 	CompletedAt   time.Time
+	ReleaseTime   func() time.Time
 	Observe       func(CompletionReceipt) error
 }
 
@@ -70,6 +71,7 @@ type CompletionResult struct {
 	Receipt        CompletionReceipt
 	ObservationErr error
 	CleanupErr     error
+	MarkerErr      error
 }
 
 // CompletionStore owns final-success durability and queue-name release.

@@ -289,6 +289,7 @@ const (
 	CompletionPhaseObservationAttempted CompletionPhase = "observation_attempted"
 	CompletionPhaseCleaned              CompletionPhase = "cleaned"
 	CompletionPhaseOwnershipReleased    CompletionPhase = "ownership_released"
+	CompletionPhaseMarkerDurable        CompletionPhase = "marker_durable"
 	CompletionPhaseMarkerFailed         CompletionPhase = "marker_failed"
 )
 

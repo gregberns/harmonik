@@ -740,7 +740,10 @@ func (s *QueueStore) Transact(ctx context.Context, req TransactionRequest) Trans
 // Complete executes the QM-053 final-success transaction for one exact live
 // snapshot. It retains name ownership on every pre-release failure.
 func (s *QueueStore) Complete(ctx context.Context, req queue.CompletionRequest) queue.CompletionResult {
-	return s.complete(ctx, req, queue.CleanupCompletedCanonical, queue.CleanupReplaceIntent)
+	return s.complete(
+		ctx, req, queue.CleanupCompletedCanonical, queue.CleanupReplaceIntent,
+		queue.InstallCompletionReleaseMarker,
+	)
 }
 
 func (s *QueueStore) complete(
@@ -748,6 +751,7 @@ func (s *QueueStore) complete(
 	req queue.CompletionRequest,
 	cleanupCanonical func(string, string, string, string) error,
 	cleanupIntent func(string, string) error,
+	installMarker func(string, queue.CompletionReleaseMarkerInputs, time.Time) (queue.CompletionReleaseMarker, error),
 ) queue.CompletionResult {
 	name := queue.NormaliseQueueName(req.Snapshot.Name)
 	s.queueMu.Lock()
@@ -768,10 +772,10 @@ func (s *QueueStore) complete(
 			Phase:           queue.CompletionPhaseRejected,
 		}
 	}
-	if req.Observe == nil {
+	if req.Observe == nil || req.ReleaseTime == nil {
 		s.queueMu.Unlock()
 		return queue.CompletionResult{
-			NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeRejected, Err: errors.New("completion observation is required")},
+			NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeRejected, Err: errors.New("completion observation and release time source are required")},
 			Phase:           queue.CompletionPhaseRejected,
 		}
 	}
@@ -818,7 +822,10 @@ func (s *QueueStore) complete(
 		s.queueMu.Unlock()
 		return result
 	}
-	return s.finishCompletion(req, prepared, result, name, cleanupCanonical, cleanupIntent)
+	return s.finishCompletion(
+		req, prepared, result, name, cleanupCanonical, cleanupIntent,
+		installMarker,
+	)
 }
 
 func (s *QueueStore) finishCompletion(
@@ -828,6 +835,7 @@ func (s *QueueStore) finishCompletion(
 	name string,
 	cleanupCanonical func(string, string, string, string) error,
 	cleanupIntent func(string, string) error,
+	installMarker func(string, queue.CompletionReleaseMarkerInputs, time.Time) (queue.CompletionReleaseMarker, error),
 ) queue.CompletionResult {
 	// The completed canonical and receipt are durable. Retain the completed
 	// queue in memory until canonical and intent absence are also durable.
@@ -871,6 +879,13 @@ func (s *QueueStore) finishCompletion(
 	s.generations[name]++
 	result.Phase = queue.CompletionPhaseOwnershipReleased
 	s.queueMu.Unlock()
+	releasedAt := req.ReleaseTime()
+	if _, err := installMarker(req.ProjectDir, prepared.MarkerInputs, releasedAt); err != nil {
+		result.Phase = queue.CompletionPhaseMarkerFailed
+		result.MarkerErr = err
+		return result
+	}
+	result.Phase = queue.CompletionPhaseMarkerDurable
 	return result
 }
 

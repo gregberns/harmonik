@@ -43,12 +43,20 @@ func TestQueueStoreCompleteOrdersReceiptObservationCleanupAndRelease(t *testing.
 		t.Fatal(err)
 	}
 	observed := false
+	releaseSampled := false
 	result := store.Complete(t.Context(), queue.CompletionRequest{
 		Snapshot:      store.Snapshot(queue.QueueNameMain),
 		ProjectDir:    projectDir,
 		TransactionID: storeCompletionTransactionID,
 		ReceiptID:     storeCompletionReceiptID,
 		CompletedAt:   stamp,
+		ReleaseTime: func() time.Time {
+			releaseSampled = true
+			if snapshot := store.Snapshot(queue.QueueNameMain); snapshot.Queue != nil {
+				t.Fatalf("release time sampled while ownership remained: %+v", snapshot.Queue)
+			}
+			return stamp.Add(time.Minute)
+		},
 		Observe: func(receipt queue.CompletionReceipt) error {
 			observed = true
 			before := store.Snapshot(queue.QueueNameMain)
@@ -87,7 +95,10 @@ func TestQueueStoreCompleteOrdersReceiptObservationCleanupAndRelease(t *testing.
 	if !observed {
 		t.Fatal("completion observation was not attempted")
 	}
-	if result.Phase != queue.CompletionPhaseOwnershipReleased || !result.Committed() {
+	if !releaseSampled {
+		t.Fatal("release time was not sampled")
+	}
+	if result.Phase != queue.CompletionPhaseMarkerDurable || !result.Committed() {
 		t.Fatalf("result = %+v", result)
 	}
 	if result.ObservationErr == nil {
@@ -141,8 +152,9 @@ func TestQueueStoreCompleteCleanupFailureRetainsOwnershipAndQuarantine(t *testin
 				TransactionID: storeCompletionTransactionID,
 				ReceiptID:     storeCompletionReceiptID,
 				CompletedAt:   stamp,
+				ReleaseTime:   func() time.Time { return stamp.Add(time.Minute) },
 				Observe:       func(queue.CompletionReceipt) error { return nil },
-			}, tc.cleanupCanonical, tc.cleanupIntent)
+			}, tc.cleanupCanonical, tc.cleanupIntent, queue.InstallCompletionReleaseMarker)
 			if result.CleanupErr == nil || result.Phase != queue.CompletionPhaseObservationAttempted {
 				t.Fatalf("result = %+v", result)
 			}
@@ -160,6 +172,56 @@ func TestQueueStoreCompleteCleanupFailureRetainsOwnershipAndQuarantine(t *testin
 				t.Fatalf("retained name was not quarantined: %v", transact.Err)
 			}
 		})
+	}
+}
+
+func TestQueueStoreCompleteMarkerFailureKeepsReleasedNameAndRetriesSameReceipt(t *testing.T) {
+	store := NewQueueStore()
+	q, stamp := storeCompletionFixture()
+	store.SetQueue(q)
+	projectDir := t.TempDir()
+	if err := queue.Persist(t.Context(), projectDir, q); err != nil {
+		t.Fatal(err)
+	}
+	markerFailure := errors.New("cut marker install")
+	result := store.complete(t.Context(), queue.CompletionRequest{
+		Snapshot:      store.Snapshot(queue.QueueNameMain),
+		ProjectDir:    projectDir,
+		TransactionID: storeCompletionTransactionID,
+		ReceiptID:     storeCompletionReceiptID,
+		CompletedAt:   stamp,
+		ReleaseTime:   func() time.Time { return stamp.Add(time.Minute) },
+		Observe:       func(queue.CompletionReceipt) error { return nil },
+	}, queue.CleanupCompletedCanonical, queue.CleanupReplaceIntent,
+		func(string, queue.CompletionReleaseMarkerInputs, time.Time) (queue.CompletionReleaseMarker, error) {
+			return queue.CompletionReleaseMarker{}, markerFailure
+		},
+	)
+	if result.Phase != queue.CompletionPhaseMarkerFailed || !errors.Is(result.MarkerErr, markerFailure) {
+		t.Fatalf("result = %+v", result)
+	}
+	if snapshot := store.Snapshot(queue.QueueNameMain); snapshot.Queue != nil {
+		t.Fatalf("marker failure reacquired ownership: %+v", snapshot.Queue)
+	}
+
+	newQueue := cloneQueue(q)
+	newQueue.QueueID = "0197c452-0000-7000-8000-000000000099"
+	store.SetQueueByName(queue.QueueNameMain, newQueue)
+	if snapshot := store.Snapshot(queue.QueueNameMain); snapshot.Queue == nil || snapshot.Queue.QueueID != newQueue.QueueID {
+		t.Fatalf("released name did not accept a new identity: %+v", snapshot.Queue)
+	}
+
+	prepared, err := queue.PrepareCompletion(*q, storeCompletionTransactionID, storeCompletionReceiptID, stamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker, err := queue.InstallCompletionReleaseMarker(projectDir, prepared.MarkerInputs, stamp.Add(2*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repeated, err := queue.InstallCompletionReleaseMarker(projectDir, prepared.MarkerInputs, stamp.Add(3*time.Minute))
+	if err != nil || repeated != marker {
+		t.Fatalf("marker retry = %+v, err=%v; want %+v", repeated, err, marker)
 	}
 }
 
@@ -184,6 +246,30 @@ func TestQueueStoreCompleteRequiresObserverBeforeIO(t *testing.T) {
 	retained := store.Snapshot(queue.QueueNameMain)
 	if retained.Queue == nil || retained.Queue.QueueID != q.QueueID {
 		t.Fatalf("missing observer released ownership: %+v", retained.Queue)
+	}
+}
+
+func TestQueueStoreCompleteRequiresReleaseTimeBeforeIO(t *testing.T) {
+	store := NewQueueStore()
+	q, stamp := storeCompletionFixture()
+	store.SetQueue(q)
+	projectDir := t.TempDir()
+	result := store.Complete(t.Context(), queue.CompletionRequest{
+		Snapshot:      store.Snapshot(queue.QueueNameMain),
+		ProjectDir:    projectDir,
+		TransactionID: storeCompletionTransactionID,
+		ReceiptID:     storeCompletionReceiptID,
+		CompletedAt:   stamp,
+		Observe:       func(queue.CompletionReceipt) error { return nil },
+	})
+	if result.Phase != queue.CompletionPhaseRejected || result.Outcome != queue.OutcomeRejected {
+		t.Fatalf("result = %+v", result)
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, ".harmonik")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing release time performed I/O: %v", err)
+	}
+	if retained := store.Snapshot(queue.QueueNameMain); retained.Queue == nil || retained.Queue.QueueID != q.QueueID {
+		t.Fatalf("missing release time released ownership: %+v", retained.Queue)
 	}
 }
 

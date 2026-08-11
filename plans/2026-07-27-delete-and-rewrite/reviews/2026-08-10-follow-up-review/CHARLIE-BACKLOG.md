@@ -10,14 +10,29 @@ Charlie must deliberately break each new claim test before accepting it.
 Updated: 2026-08-10
 
 - Owner: Charlie.
-- Active slice: C10 is complete. C11 is next.
+- Active slice: C11 is complete. C12 is next.
 - Start revision: `b49210d67` on `work/alpha-integration-merge`.
 - State: C01 through C04 are complete and independently approved.
 - Implementation commit: `de0a6ca3`.
 - Integration reconciliation commit: `b0cac51a`.
 - Stop gate: C05 through C07 received independent approval before C08.
 - Coordination note: the queue RPC overlap retained both the active-run status work and the event-intent path.
-- Later tasks: C11 through C31 remain unstarted.
+- Later tasks: C12 through C31 remain unstarted.
+
+### C11 evidence
+
+- The queue store samples release time only after it releases ownership.
+- Marker installation validates the exact receipt and never replaces a valid marker.
+- A root-sync retry keeps the first durable marker time.
+- Marker failure retains the receipt and does not reacquire or block the queue name.
+- Startup recovers both the C09 pending handoff and a receipt-only crash state.
+- Startup refuses a wrong receipt-root type.
+- Recovery rejects an old live identity, corrupt canonical identity, symlinks, and other non-regular canonical state before it samples time.
+- A newer same-name queue with a different valid ID does not block marker recovery.
+- Focused queue, queue-store, and lifecycle tests pass with `-count=1`.
+- Repository compilation, `go vet ./...`, and the diff check pass.
+- Bypassing the production startup marker call makes the lifecycle marker test fail.
+- Independent reviewer verdict: `APPROVE` after two blocking correction rounds.
 
 ### C10 evidence
 

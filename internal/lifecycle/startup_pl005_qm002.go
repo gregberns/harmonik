@@ -172,6 +172,11 @@ func LoadQueueAtStartup(
 	if err := recoverReplaceIntents(ctx, projectDir, logger); err != nil {
 		return nil, err
 	}
+	if err := recoverCompletionReleaseMarkers(
+		ctx, projectDir, logger, func() time.Time { return time.Now().UTC() },
+	); err != nil {
+		return nil, err
+	}
 
 	names, err := queue.EnumerateQueueNames(projectDir)
 	if err != nil {
@@ -193,6 +198,36 @@ func LoadQueueAtStartup(
 		}
 	}
 	return loaded, nil
+}
+
+func recoverCompletionReleaseMarkers(
+	ctx context.Context,
+	projectDir string,
+	logger *slog.Logger,
+	releaseTime func() time.Time,
+) error {
+	recoveries, err := queue.RecoverCompletionReleaseMarkers(projectDir, releaseTime)
+	if err != nil {
+		logger.ErrorContext(ctx, "queue: completion marker recovery could not read the receipt root", "error", err)
+		return fmt.Errorf("lifecycle: recover completion release markers: %w", err)
+	}
+	for _, recovery := range recoveries {
+		if recovery.Err != nil {
+			logger.WarnContext(ctx, "queue: completion release marker remains pending",
+				"queue_id", recovery.QueueID,
+				"receipt_id", recovery.ReceiptID,
+				"error", recovery.Err,
+			)
+			continue
+		}
+		if recovery.Marker != nil {
+			logger.InfoContext(ctx, "queue: installed a completion release marker after restart",
+				"queue_id", recovery.QueueID,
+				"receipt_id", recovery.ReceiptID,
+			)
+		}
+	}
+	return nil
 }
 
 // recoverReplaceIntents resolves every leftover durable replace intent and logs

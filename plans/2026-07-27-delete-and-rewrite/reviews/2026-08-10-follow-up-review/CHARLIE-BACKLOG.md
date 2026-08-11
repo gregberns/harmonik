@@ -10,9 +10,9 @@ Charlie must deliberately break each new claim test before accepting it.
 Updated: 2026-08-11
 
 - Owner: Charlie.
-- Active slice: C21 design is approved. C21a is the next implementation unit.
+- Active slice: C21 startup replay coordinator and scheduler integration.
 - Start revision: `b49210d67` on `work/alpha-integration-merge`.
-- State: C01 through C04 are complete and independently approved.
+- State: C01 through C20 are complete. C21 implementation is active.
 - Implementation commit: `de0a6ca3`.
 - Integration reconciliation commit: `b0cac51a`.
 - Stop gate: C05 through C07 received independent approval before C08.
@@ -391,7 +391,7 @@ The completion transaction must accept the exact detached candidate returned by 
 
 **Limits:** Do not change code until the model closes.
 
-**Status:** Review-ready on 2026-08-11.
+**Status:** Complete and independently approved on 2026-08-11.
 
 **Evidence:** `specs/live-bead-state.md` defines the authority order, state
 vocabulary, valid steady combinations, invalid combinations, transition
@@ -409,7 +409,7 @@ bindings and result classes. This slice changes no runtime code.
 
 **Limits:** Do not add another best-effort repair record.
 
-**Status:** Review-ready on 2026-08-11.
+**Status:** Complete and independently approved on 2026-08-11.
 
 **Evidence:** `internal/dispatch` defines a value-only intent for prepared,
 claim-durable, run-durable, and handoff-durable phases. Strict JSON decoding
@@ -427,7 +427,13 @@ no persistence or daemon wiring.
 
 **Limits:** Do not use log text or event presence as authority.
 
-**Status:** Design-approved on 2026-08-11. Implementation has not started.
+**Status:** Implementation active on 2026-08-11.
+
+**Implementation status:** C21a and C21b are complete. The pure replay
+classifier is complete. Queue namespace recovery now has a separate startup
+seam. Mixed schema run-registry readers protect valid schema-v2 run facts. The
+startup action executor, sweep ownership handoff, resumable
+provisioning, and queue-path producer wiring remain.
 
 **Evidence:** `C21-DESIGN.md` defines four review units. It requires a
 fail-closed intent store, a universal run record, an amended startup order, and

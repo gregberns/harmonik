@@ -28,7 +28,7 @@ Prove whether a crew can submit a planned bead graph once and let the determinis
 - Serial: for `A -> B -> C`, one valid submission can finish all three in order without a supervisor transition.
 - Parallel: for `A -> [B, C, D] -> E`, the core starts only A, then starts B, C, and D up to the concurrency cap, then starts E only after all three succeed.
 - Safety: a blocked bead never starts. A failed dependency prevents its dependent from starting.
-- Merge: each successful child lands in one explicit epic integration branch. The core never chooses a semantic conflict resolution.
+- Validation and merge: each child passes an explicit fail-closed tool gate and independent review before it lands in one epic integration branch. The core never chooses a semantic conflict resolution.
 - Recovery: retry, repair, or replan decisions are explicit agent decisions. The core reports typed facts and waits.
 - Observability: the evidence can distinguish dispatch, agent work, validation, merge, ledger transition, and dependency release.
 - Repeatability: the real runtime scenarios become durable tests in the existing harness.

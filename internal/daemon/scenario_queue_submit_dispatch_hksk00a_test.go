@@ -182,7 +182,13 @@ func queueSubmitDispatchGitRepo(t *testing.T, dir string) {
 	readmePath := filepath.Join(dir, "README")
 	require.NoError(t, os.WriteFile(readmePath, []byte("queue-submit-dispatch scenario\n"), 0o644),
 		"queueSubmitDispatchGitRepo: WriteFile README")
-	run("add", "README")
+	makefile := "full:\n\t@latest=$$(git diff-tree --no-commit-id --name-only -r HEAD); " +
+		"printf '%s\\n' \"$$latest\" | grep -q '^.harmonik-twin-commit-'; " +
+		"mkdir -p $$(git rev-parse --git-common-dir)/../.harmonik; " +
+		"printf '%s\\n' \"$$latest\" >> $$(git rev-parse --git-common-dir)/../.harmonik/validation-runs\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "Makefile"), []byte(makefile), 0o644),
+		"queueSubmitDispatchGitRepo: WriteFile Makefile")
+	run("add", "README", "Makefile")
 	run("commit", "-m", "Initial commit")
 	run("branch", "integration")
 
@@ -835,7 +841,7 @@ func TestScenario_QueueSubmit_FanOutFanIn(t *testing.T) {
 	brWrapper := queueSubmitDispatchBrWrapper(t, realBrPath, dbPath)
 	epicID, ids := queueSubmitDispatchInitBrFanGraph(t, realBrPath, projectDir, brWrapper)
 	twinWrapper := queueSubmitDispatchTwinWrapper(t, twinPath)
-	scenariotest.WriteReviewLoopWorkflowDot(t, projectDir)
+	scenariotest.WriteStandardWorkflowDot(t, projectDir)
 
 	claudeConfigPath := filepath.Join(t.TempDir(), ".claude.json")
 	prevClaudeCfg, hadClaudeCfg := os.LookupEnv("HARMONIK_CLAUDE_CONFIG_PATH")
@@ -909,6 +915,9 @@ func TestScenario_QueueSubmit_FanOutFanIn(t *testing.T) {
 	for _, id := range ids {
 		scenariotest.AssertBeadStatus(t, brWrapper, string(id), "closed")
 	}
+	validationData, validationErr := os.ReadFile(filepath.Join(projectDir, ".harmonik", "validation-runs"))
+	require.NoError(t, validationErr, "read durable validation evidence")
+	require.Len(t, strings.Fields(string(validationData)), len(ids), "every child must pass the commit gate once")
 	scenariotest.AssertBeadStatus(t, brWrapper, string(epicID), "open")
 	epicEvents := queueSubmitDispatchEpicCompleted(t, jsonlPath, epicID)
 	require.Len(t, epicEvents, 1, "the last child must emit one epic completion fact")

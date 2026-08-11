@@ -40,6 +40,12 @@ The strengthened live fan graph passed in 31.13 seconds after parent assertions 
 
 The event is a fact, not a ledger transition. `QuiesceArbiter.handleEpicCompleted` routes that fact to the captain wake path. The current design therefore needs no supervisor during successful child processing. It asks for one supervisor decision after the whole child set finishes.
 
+### Explicit validation gate
+
+The fan graph now uses the canonical `standard-bead.dot` topology instead of the reduced review-only fixture. Every child runs implement, `make full`, independent review, and close before merge. The throwaway project supplies a small real `make full` target. It checks that the implementer commit contains the expected artifact and appends durable gate evidence outside the disposable worktree.
+
+The strengthened graph passed in 32.65 seconds. The durable evidence contains five gate passes. This proves “validated and tested before merge” through the running DOT tool-node path. It is no longer inferred from a successful review-only fixture.
+
 The durable event log proved:
 
 - A was the first run.

@@ -18,6 +18,8 @@ Graph: `A -> [B, C, D] -> E`.
 
 Submit all five once with concurrency three. Prove only A starts first. Prove B, C, and D become runnable after A. Prove at least two run at the same time. Prove E does not start until all three close and merge.
 
+Run each child through the canonical implement, commit-gate, review, and close topology. Use a small real `make full` target that checks the implementer commit and writes durable gate evidence outside the disposable worktree. Prove five gate passes before accepting the graph result.
+
 ## Scenario S3: failed dependency
 
 Use the S2 graph and make C fail validation. Prove E never starts. Prove the queue reaches a typed terminal or paused state that names the cause. Prove no supervisor action silently changes a bead state.

@@ -1,5 +1,7 @@
 package core
 
+import "github.com/google/uuid"
+
 // queueevents_extqueue.go — event-bus payload types for §8.10 queue lifecycle
 // events (extqueue v0.1):
 //
@@ -173,6 +175,7 @@ func (p QueueGroupStartedPayload) Valid() bool {
 //   - success_count — number of successful items
 //   - fail_count    — number of failed items
 //   - completed_at  — RFC 3339 wall-clock timestamp
+//   - completion_receipt_id — final-success receipt UUIDv7; absent otherwise
 type QueueGroupCompletedPayload struct {
 	// QueueID is the daemon-minted UUIDv7 string identifying the queue.
 	// Required (non-empty).
@@ -195,6 +198,10 @@ type QueueGroupCompletedPayload struct {
 	// CompletedAt is the RFC 3339 wall-clock timestamp when the group completed.
 	// Required (non-empty).
 	CompletedAt string `json:"completed_at"`
+
+	// CompletionReceiptID binds the final successful group observation to its
+	// durable completion receipt. It is absent for all non-final groups.
+	CompletionReceiptID string `json:"completion_receipt_id,omitempty"`
 }
 
 // Valid reports whether p is a well-formed QueueGroupCompletedPayload.
@@ -224,6 +231,12 @@ func (p QueueGroupCompletedPayload) Valid() bool {
 	}
 	if p.CompletedAt == "" {
 		return false
+	}
+	if p.CompletionReceiptID != "" {
+		id, err := uuid.Parse(p.CompletionReceiptID)
+		if err != nil || id.Version() != 7 || id.String() != p.CompletionReceiptID || p.FinalStatus != "complete-success" {
+			return false
+		}
 	}
 	return true
 }

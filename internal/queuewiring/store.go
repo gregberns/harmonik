@@ -730,8 +730,32 @@ func (s *QueueStore) complete(
 			Phase:           queue.CompletionPhaseRejected,
 		}
 	}
+	if req.Candidate == nil || req.Candidate.QueueID != req.Snapshot.Queue.QueueID ||
+		req.Candidate.Name != name {
+		s.queueMu.Unlock()
+		return queue.CompletionResult{
+			NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeRejected, Err: errors.New("completion candidate does not match snapshot identity")},
+			Phase:           queue.CompletionPhaseRejected,
+		}
+	}
+	if req.ReceiptID != req.DecisionInput.CompletionReceiptID {
+		s.queueMu.Unlock()
+		return queue.CompletionResult{
+			NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeRejected, Err: errors.New("completion receipt does not match decision")},
+			Phase:           queue.CompletionPhaseRejected,
+		}
+	}
+	expected, err := queue.DecideGroupCompletion(*req.Snapshot.Queue, req.DecisionInput) //nolint:contextcheck // Candidate validation must replay the same value-only decision.
+	if err != nil || expected.Disposition != queue.GroupCompletionDispositionQueueCompleted ||
+		!sameQueue(expected.NextQueue, req.Candidate) {
+		s.queueMu.Unlock()
+		return queue.CompletionResult{
+			NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeRejected, Err: errors.Join(errors.New("completion candidate does not match decision"), err)},
+			Phase:           queue.CompletionPhaseRejected,
+		}
+	}
 	prepared, err := queue.PrepareCompletion(
-		*req.Snapshot.Queue,
+		*req.Candidate,
 		req.TransactionID,
 		req.ReceiptID,
 		req.CompletedAt,

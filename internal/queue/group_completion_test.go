@@ -24,6 +24,11 @@ func TestGroupCompletionInputValidationReasons(t *testing.T) {
 		{name: "outcome", mutate: func(v *GroupCompletionInput) { v.Outcome = "unknown" }, want: GroupCompletionErrorInvalidOutcome},
 		{name: "queue ID", mutate: func(v *GroupCompletionInput) { v.ExpectedQueueID = "" }, want: GroupCompletionErrorInvalidQueueID},
 		{name: "time", mutate: func(v *GroupCompletionInput) { v.CompletedAt = time.Time{} }, want: GroupCompletionErrorInvalidCompletionTime},
+		{name: "year zero", mutate: func(v *GroupCompletionInput) { v.CompletedAt = time.Date(0, 1, 1, 0, 0, 0, 0, time.UTC) }, want: GroupCompletionErrorInvalidCompletionTime},
+		{name: "year ten thousand", mutate: func(v *GroupCompletionInput) { v.CompletedAt = time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC) }, want: GroupCompletionErrorInvalidCompletionTime},
+		{name: "offset crosses year zero", mutate: func(v *GroupCompletionInput) {
+			v.CompletedAt = time.Date(1, 1, 1, 0, 0, 0, 0, time.FixedZone("east", 3600))
+		}, want: GroupCompletionErrorInvalidCompletionTime},
 		{name: "group index", mutate: func(v *GroupCompletionInput) { v.Location.GroupIndex = -1 }, want: GroupCompletionErrorNegativeGroupIndex},
 		{name: "item index", mutate: func(v *GroupCompletionInput) { v.Location.ItemIndex = -1 }, want: GroupCompletionErrorNegativeItemIndex},
 		{name: "receipt ID", mutate: func(v *GroupCompletionInput) { v.CompletionReceiptID = "bad" }, want: GroupCompletionErrorInvalidReceiptID},

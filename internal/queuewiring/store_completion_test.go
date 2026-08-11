@@ -25,13 +25,31 @@ func storeCompletionFixture() (*queue.Queue, time.Time) {
 		Name:          queue.QueueNameMain,
 		Status:        queue.QueueStatusActive,
 		Groups: []queue.Group{{
-			GroupIndex:  0,
-			Kind:        queue.GroupKindStream,
-			Status:      queue.GroupStatusCompleteSuccess,
-			CompletedAt: &stamp,
-			Items:       []queue.Item{{BeadID: core.BeadID("hk-store-complete"), Status: queue.ItemStatusCompleted}},
+			GroupIndex: 0,
+			Kind:       queue.GroupKindStream,
+			Status:     queue.GroupStatusActive,
+			Items:      []queue.Item{{BeadID: core.BeadID("hk-store-complete"), Status: queue.ItemStatusDispatched}},
 		}},
 	}, stamp
+}
+
+func storeCompletionInput(q *queue.Queue, stamp time.Time) queue.GroupCompletionInput {
+	return queue.GroupCompletionInput{
+		ExpectedQueueID:     q.QueueID,
+		Location:            queue.GroupCompletionLocation{GroupIndex: 0, ItemIndex: 0},
+		Outcome:             queue.GroupCompletionOutcomeCompleted,
+		CompletedAt:         stamp,
+		CompletionReceiptID: storeCompletionReceiptID,
+	}
+}
+
+func storeCompletionCandidate(t testing.TB, q *queue.Queue, stamp time.Time) *queue.Queue {
+	t.Helper()
+	result, err := queue.DecideGroupCompletion(*q, storeCompletionInput(q, stamp))
+	if err != nil || result.Disposition != queue.GroupCompletionDispositionQueueCompleted {
+		t.Fatalf("completion fixture decision: disposition=%q err=%v", result.Disposition, err)
+	}
+	return result.NextQueue
 }
 
 func TestQueueStoreCompleteOrdersReceiptObservationCleanupAndRelease(t *testing.T) {
@@ -46,6 +64,8 @@ func TestQueueStoreCompleteOrdersReceiptObservationCleanupAndRelease(t *testing.
 	releaseSampled := false
 	result := store.Complete(t.Context(), queue.CompletionRequest{
 		Snapshot:      store.Snapshot(queue.QueueNameMain),
+		Candidate:     storeCompletionCandidate(t, q, stamp),
+		DecisionInput: storeCompletionInput(q, stamp),
 		ProjectDir:    projectDir,
 		TransactionID: storeCompletionTransactionID,
 		ReceiptID:     storeCompletionReceiptID,
@@ -148,6 +168,8 @@ func TestQueueStoreCompleteCleanupFailureRetainsOwnershipAndQuarantine(t *testin
 			}
 			result := store.complete(t.Context(), queue.CompletionRequest{
 				Snapshot:      store.Snapshot(queue.QueueNameMain),
+				Candidate:     storeCompletionCandidate(t, q, stamp),
+				DecisionInput: storeCompletionInput(q, stamp),
 				ProjectDir:    projectDir,
 				TransactionID: storeCompletionTransactionID,
 				ReceiptID:     storeCompletionReceiptID,
@@ -186,6 +208,8 @@ func TestQueueStoreCompleteMarkerFailureKeepsReleasedNameAndRetriesSameReceipt(t
 	markerFailure := errors.New("cut marker install")
 	result := store.complete(t.Context(), queue.CompletionRequest{
 		Snapshot:      store.Snapshot(queue.QueueNameMain),
+		Candidate:     storeCompletionCandidate(t, q, stamp),
+		DecisionInput: storeCompletionInput(q, stamp),
 		ProjectDir:    projectDir,
 		TransactionID: storeCompletionTransactionID,
 		ReceiptID:     storeCompletionReceiptID,
@@ -211,7 +235,7 @@ func TestQueueStoreCompleteMarkerFailureKeepsReleasedNameAndRetriesSameReceipt(t
 		t.Fatalf("released name did not accept a new identity: %+v", snapshot.Queue)
 	}
 
-	prepared, err := queue.PrepareCompletion(*q, storeCompletionTransactionID, storeCompletionReceiptID, stamp)
+	prepared, err := queue.PrepareCompletion(*storeCompletionCandidate(t, q, stamp), storeCompletionTransactionID, storeCompletionReceiptID, stamp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,6 +256,8 @@ func TestQueueStoreCompleteRequiresObserverBeforeIO(t *testing.T) {
 	projectDir := t.TempDir()
 	result := store.Complete(t.Context(), queue.CompletionRequest{
 		Snapshot:      store.Snapshot(queue.QueueNameMain),
+		Candidate:     storeCompletionCandidate(t, q, stamp),
+		DecisionInput: storeCompletionInput(q, stamp),
 		ProjectDir:    projectDir,
 		TransactionID: storeCompletionTransactionID,
 		ReceiptID:     storeCompletionReceiptID,
@@ -256,6 +282,8 @@ func TestQueueStoreCompleteRequiresReleaseTimeBeforeIO(t *testing.T) {
 	projectDir := t.TempDir()
 	result := store.Complete(t.Context(), queue.CompletionRequest{
 		Snapshot:      store.Snapshot(queue.QueueNameMain),
+		Candidate:     storeCompletionCandidate(t, q, stamp),
+		DecisionInput: storeCompletionInput(q, stamp),
 		ProjectDir:    projectDir,
 		TransactionID: storeCompletionTransactionID,
 		ReceiptID:     storeCompletionReceiptID,
@@ -282,6 +310,8 @@ func TestQueueStoreCompleteRejectsStaleSnapshotBeforeIO(t *testing.T) {
 	projectDir := t.TempDir()
 	result := store.Complete(t.Context(), queue.CompletionRequest{
 		Snapshot:      stale,
+		Candidate:     storeCompletionCandidate(t, q, stamp),
+		DecisionInput: storeCompletionInput(q, stamp),
 		ProjectDir:    projectDir,
 		TransactionID: storeCompletionTransactionID,
 		ReceiptID:     storeCompletionReceiptID,
@@ -292,5 +322,85 @@ func TestQueueStoreCompleteRejectsStaleSnapshotBeforeIO(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(projectDir, ".harmonik")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("stale completion performed I/O: %v", err)
+	}
+}
+
+func TestQueueStoreCompleteRejectsCandidateThatDoesNotMatchDecisionBeforeIO(t *testing.T) {
+	store := NewQueueStore()
+	q, stamp := storeCompletionFixture()
+	store.SetQueue(q)
+	candidate := storeCompletionCandidate(t, q, stamp)
+	candidate.Workers++
+	projectDir := t.TempDir()
+	result := store.Complete(t.Context(), queue.CompletionRequest{
+		Snapshot:      store.Snapshot(queue.QueueNameMain),
+		Candidate:     candidate,
+		DecisionInput: storeCompletionInput(q, stamp),
+		ProjectDir:    projectDir,
+		TransactionID: storeCompletionTransactionID,
+		ReceiptID:     storeCompletionReceiptID,
+		CompletedAt:   stamp,
+		ReleaseTime:   func() time.Time { return stamp.Add(time.Minute) },
+		Observe:       func(queue.CompletionReceipt) error { return nil },
+	})
+	if result.Phase != queue.CompletionPhaseRejected || result.Outcome != queue.OutcomeRejected {
+		t.Fatalf("result = %+v", result)
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, ".harmonik")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("mismatched candidate performed I/O: %v", err)
+	}
+	retained := store.Snapshot(queue.QueueNameMain)
+	if !sameQueue(retained.Queue, q) {
+		t.Fatalf("mismatched candidate changed live queue: %+v", retained.Queue)
+	}
+}
+
+func TestQueueStoreCompleteRejectsReceiptThatDoesNotMatchDecisionBeforeIO(t *testing.T) {
+	store := NewQueueStore()
+	q, stamp := storeCompletionFixture()
+	store.SetQueue(q)
+	projectDir := t.TempDir()
+	result := store.Complete(t.Context(), queue.CompletionRequest{
+		Snapshot:      store.Snapshot(queue.QueueNameMain),
+		Candidate:     storeCompletionCandidate(t, q, stamp),
+		DecisionInput: storeCompletionInput(q, stamp),
+		ProjectDir:    projectDir,
+		TransactionID: storeCompletionTransactionID,
+		ReceiptID:     "0197c452-0000-7000-8000-000000000099",
+		CompletedAt:   stamp,
+		ReleaseTime:   func() time.Time { return stamp.Add(time.Minute) },
+		Observe:       func(queue.CompletionReceipt) error { return nil },
+	})
+	if result.Phase != queue.CompletionPhaseRejected || result.Outcome != queue.OutcomeRejected {
+		t.Fatalf("result = %+v", result)
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, ".harmonik")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("mismatched receipt performed I/O: %v", err)
+	}
+}
+
+func TestQueueStoreCompleteRejectsNormalizedButNonExactCandidateNameBeforeIO(t *testing.T) {
+	store := NewQueueStore()
+	q, stamp := storeCompletionFixture()
+	store.SetQueue(q)
+	candidate := storeCompletionCandidate(t, q, stamp)
+	candidate.Name = ""
+	projectDir := t.TempDir()
+	result := store.Complete(t.Context(), queue.CompletionRequest{
+		Snapshot:      store.Snapshot(queue.QueueNameMain),
+		Candidate:     candidate,
+		DecisionInput: storeCompletionInput(q, stamp),
+		ProjectDir:    projectDir,
+		TransactionID: storeCompletionTransactionID,
+		ReceiptID:     storeCompletionReceiptID,
+		CompletedAt:   stamp,
+		ReleaseTime:   func() time.Time { return stamp.Add(time.Minute) },
+		Observe:       func(queue.CompletionReceipt) error { return nil },
+	})
+	if result.Phase != queue.CompletionPhaseRejected || result.Outcome != queue.OutcomeRejected {
+		t.Fatalf("result = %+v", result)
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, ".harmonik")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("non-exact candidate name performed I/O: %v", err)
 	}
 }

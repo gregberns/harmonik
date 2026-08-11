@@ -84,13 +84,17 @@ func TestWireStaleWatcherReapSeams_ForceReapPersistsGroupAdvance(t *testing.T) {
 		QueueItemIndex:  1,
 	})
 
-	if got, want := q.Groups[0].Items[1].Status, queue.ItemStatusFailed; got != want {
+	installed := queueStore.QueueByName(queueName)
+	if installed == nil {
+		t.Fatal("force reap did not install the durable queue candidate")
+	}
+	if got, want := installed.Groups[0].Items[1].Status, queue.ItemStatusFailed; got != want {
 		t.Errorf("in-memory force-reaped item status = %q, want %q", got, want)
 	}
-	if got, want := q.Groups[0].Status, queue.GroupStatusCompleteWithFailures; got != want {
+	if got, want := installed.Groups[0].Status, queue.GroupStatusCompleteWithFailures; got != want {
 		t.Errorf("in-memory group status = %q, want %q", got, want)
 	}
-	if got, want := q.Status, queue.QueueStatusPausedByFailure; got != want {
+	if got, want := installed.Status, queue.QueueStatusPausedByFailure; got != want {
 		t.Errorf("in-memory queue status = %q, want %q", got, want)
 	}
 	if got, want := runFailedCount, 1; got != want {

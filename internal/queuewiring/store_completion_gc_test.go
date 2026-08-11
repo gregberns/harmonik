@@ -24,6 +24,8 @@ func TestQueueStoreSerializesCompletionMarkerInstallWithGC(t *testing.T) {
 	go func() {
 		completionDone <- store.complete(t.Context(), queue.CompletionRequest{
 			Snapshot:      store.Snapshot(queue.QueueNameMain),
+			Candidate:     storeCompletionCandidate(t, q, stamp),
+			DecisionInput: storeCompletionInput(q, stamp),
 			ProjectDir:    projectDir,
 			TransactionID: storeCompletionTransactionID,
 			ReceiptID:     storeCompletionReceiptID,

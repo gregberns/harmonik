@@ -7,17 +7,54 @@ Charlie must deliberately break each new claim test before accepting it.
 
 ## Charlie status
 
-Updated: 2026-08-10
+Updated: 2026-08-11
 
 - Owner: Charlie.
-- Active slice: C14 is complete. C15 is next.
+- Active slice: C17 is complete. C18 is next.
 - Start revision: `b49210d67` on `work/alpha-integration-merge`.
 - State: C01 through C04 are complete and independently approved.
 - Implementation commit: `de0a6ca3`.
 - Integration reconciliation commit: `b0cac51a`.
 - Stop gate: C05 through C07 received independent approval before C08.
 - Coordination note: the queue RPC overlap retained both the active-run status work and the event-intent path.
-- Later tasks: C15 through C31 remain unstarted.
+- Later tasks: C18 through C31 remain unstarted.
+
+### C17 evidence
+
+- The daemon completion path calls the pure decision. Each changed result uses one queue-owned transaction.
+- The completion store validates the exact detached candidate and its bound receipt before I/O.
+- Live memory changes only after a durable non-final commit.
+- Final observation stays inside the receipt-aware completion transaction.
+- The outer shell does not install, clear, wake, or emit final state a second time.
+- Exact effect tests cover each disposition and each commit, cleanup, marker, and emit fault.
+- Receipt and effect-order mutations made their named tests fail.
+- Focused force-reap, claim, reservation, and normal-completion tests pass.
+- `make fast` passed with 8,437 tests across nine packages.
+- Independent reviewer verdict: `APPROVE` after two blocking correction rounds.
+
+### C16 evidence
+
+- A pure daemon policy maps durable facts to only the remaining outer effects.
+- It never authorizes a second raw queue install, clear, or final event emit.
+- The policy authorizes refill after every terminal call except the internal receipt retry.
+- Final cancellation requires proven queue-name ownership release.
+- Contradictory disposition, outcome, phase, and diagnostic facts fail closed.
+- Exact tables cover every completion transaction phase and the receipt-install fault boundary.
+- Named daemon tests, focused vet, and the diff check pass.
+- A receipt-retry refill mutation made the effect table fail.
+- Independent reviewer verdict: `APPROVE` after two blocking correction rounds.
+
+### C15 evidence
+
+- `DecideGroupCompletion` returns detached, value-only results for every disposition.
+- Matching terminal outcomes still finish an available aggregate transition.
+- Final success uses a receipt-required retry and binds the receipt to its one completion intent.
+- The decision validates the full dense queue topology, group kinds, statuses, and sibling items.
+- One supplied time controls canonical UTC millisecond state and payload times.
+- The event payload now implements the specified optional final completion receipt ID.
+- Focused queue and core tests, repository compilation, `go vet ./...`, and the diff check pass.
+- An incorrect early terminal no-change mutation made its aggregate-transition test fail.
+- Independent reviewer verdict: `APPROVE` after two blocking correction rounds.
 
 ### C14 evidence
 

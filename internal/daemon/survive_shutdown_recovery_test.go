@@ -33,8 +33,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/dispatch"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	runpkg "github.com/gregberns/harmonik/internal/run"
@@ -47,7 +50,7 @@ const surviveRecoveryHash = core.ProjectHash("abcdef012345")
 
 // surviveRecoveryRunID is a fixed run id so the derived session name is stable
 // and a reader can see it is the same one in each test.
-const surviveRecoveryRunID = "0f0e0d0c-0b0a-0908-0706-050403020100"
+const surviveRecoveryRunID = "0f0e0d0c-0b0a-4908-8706-050403020100"
 
 // surviveRecoveryRunSessionName returns the tmux session name a bead run in its
 // own session carries, built by the production namer rather than by a literal,
@@ -330,6 +333,9 @@ func (a *surviveRecoveryAdapter) ListSessions(context.Context) ([]string, error)
 func surviveRecoveryProject(t *testing.T, rec runpkg.Record) string {
 	t.Helper()
 	dir := t.TempDir()
+	if rec.StartedAt.IsZero() {
+		rec.StartedAt = time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
+	}
 	if err := runpkg.Write(dir, rec); err != nil {
 		t.Fatalf("surviveRecovery: write run record: %v", err)
 	}
@@ -419,14 +425,67 @@ func TestRunSessionAdoption_ALiveSessionKeepsItsBeadAndItsRecord(t *testing.T) {
 	}
 }
 
-// TestRunSessionAdoption_ARecordWithNoSessionNameIsTreatedAsDead pins the
-// fallback. A registry write that could not resolve a session name leaves the
-// field empty, and there is then no way to ask whether anything is alive.
-//
-// The pass treats that as dead and resets the bead. That is the safe direction:
-// a bead reset while its agent still runs is re-dispatched, while a bead left
-// in progress behind a name nobody can check is stuck for ever.
-func TestRunSessionAdoption_ARecordWithNoSessionNameIsTreatedAsDead(t *testing.T) {
+func TestRunSessionAdoption_DoesNotResetUniversalDispatchRecords(t *testing.T) {
+	t.Parallel()
+
+	projectDir := t.TempDir()
+	runID := core.RunID(uuid.MustParse("0197d100-0000-7000-8000-000000000021"))
+	binding := dispatch.Binding{
+		QueueID:           "0197d100-0000-7000-8000-000000000022",
+		QueueName:         "main",
+		GroupIndex:        0,
+		ItemIndex:         0,
+		BeadID:            "hk-universal-run",
+		RunID:             runID,
+		ClaimTransitionID: core.TransitionID(uuid.MustParse("0197d100-0000-7000-8000-000000000023")),
+	}
+	record, err := runpkg.NewDispatchRecord(binding, time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runpkg.CreateDispatchRecord(projectDir, record); err != nil {
+		t.Fatal(err)
+	}
+
+	resetter := &surviveRecoveryResetter{}
+	adoptDeadRunSessions(t.Context(), projectDir, surviveRecoveryHash, 0, t.TempDir(), nil, resetter)
+
+	if resets := resetter.resets(); len(resets) != 0 {
+		t.Fatalf("universal dispatch record caused bead resets: %v", resets)
+	}
+	snapshot, err := runpkg.ScanRegistry(projectDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Dispatch) != 1 || snapshot.Dispatch[0].RunID != runID {
+		t.Fatalf("dispatch records after legacy adoption = %+v", snapshot.Dispatch)
+	}
+}
+
+func TestRunSessionAdoption_InvalidLegacyRunIdentityFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	const invalidRunID = "00000000-0000-0000-0000-000000000000"
+	projectDir := surviveRecoveryProject(t, runpkg.Record{
+		SchemaVersion: 1,
+		RunID:         invalidRunID,
+		BeadID:        "hk-invalid-run",
+		SessionName:   "harmonik-invalid-run",
+	})
+	resetter := &surviveRecoveryResetter{}
+	adoptDeadRunSessions(t.Context(), projectDir, surviveRecoveryHash, 0, t.TempDir(), nil, resetter)
+
+	if resets := resetter.resets(); len(resets) != 0 {
+		t.Fatalf("invalid run identity caused bead resets: %v", resets)
+	}
+	if _, err := runpkg.Load(projectDir, invalidRunID); err != nil {
+		t.Fatalf("invalid run identity was removed: %v", err)
+	}
+}
+
+// TestRunSessionAdoption_ARecordWithNoSessionNameFailsClosed pins the strict
+// registry boundary. A partial record cannot authorize a bead reset.
+func TestRunSessionAdoption_ARecordWithNoSessionNameFailsClosed(t *testing.T) {
 	t.Parallel()
 
 	projectDir := surviveRecoveryProject(t, runpkg.Record{
@@ -446,9 +505,11 @@ func TestRunSessionAdoption_ARecordWithNoSessionNameIsTreatedAsDead(t *testing.T
 	adoptDeadRunSessions(t.Context(), projectDir, surviveRecoveryHash, 0, t.TempDir(),
 		adapter, resetter)
 
-	if resets := resetter.resets(); len(resets) != 1 {
-		t.Errorf("bead resets = %v, want exactly one.\n"+
-			"A record with no session name cannot be checked for liveness. Leaving its bead in progress strands it behind a question nobody can answer.", resets)
+	if resets := resetter.resets(); len(resets) != 0 {
+		t.Errorf("partial record caused bead resets: %v", resets)
+	}
+	if _, err := runpkg.Load(projectDir, surviveRecoveryRunID); err != nil {
+		t.Errorf("partial record was removed: %v", err)
 	}
 }
 

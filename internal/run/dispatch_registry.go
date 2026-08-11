@@ -267,7 +267,7 @@ func ScanRegistry(projectDir string) (RegistrySnapshot, error) {
 		if filepath.Ext(entry.Name()) != ".json" {
 			continue
 		}
-		runID, parseErr := canonicalRunBasename(entry.Name())
+		runID, parseErr := canonicalRegistryBasename(entry.Name())
 		if parseErr != nil {
 			return RegistrySnapshot{}, parseErr
 		}
@@ -299,6 +299,18 @@ func ScanRegistry(projectDir string) (RegistrySnapshot, error) {
 		}
 	}
 	return result, nil
+}
+
+func canonicalRegistryBasename(name string) (core.RunID, error) {
+	if filepath.Ext(name) != ".json" {
+		return core.RunID{}, fmt.Errorf("run: invalid record basename %q", name)
+	}
+	raw := name[:len(name)-len(".json")]
+	id, err := uuid.Parse(raw)
+	if err != nil || id == uuid.Nil || id.Version() == 0 || id.String() != raw {
+		return core.RunID{}, fmt.Errorf("run: invalid record basename %q", name)
+	}
+	return core.RunID(id), nil
 }
 
 func validDispatchAdvance(prior, next DispatchRecord) error {

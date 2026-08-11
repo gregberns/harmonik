@@ -155,8 +155,8 @@ func adoptDeadRunSessions(
 	if projectDir == "" {
 		return
 	}
-	recs, err := runpkg.List(projectDir)
-	if err != nil || len(recs) == 0 {
+	snapshot, err := runpkg.ScanRegistry(projectDir)
+	if err != nil || len(snapshot.Legacy) == 0 {
 		return
 	}
 
@@ -170,7 +170,7 @@ func adoptDeadRunSessions(
 		}
 	}
 
-	for _, rec := range recs {
+	for _, rec := range snapshot.Legacy {
 		if rec.SessionName == "" {
 			// No session name recorded — treat as dead (can't verify liveness).
 		} else if _, alive := liveSessions[rec.SessionName]; alive {

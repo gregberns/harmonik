@@ -104,6 +104,77 @@ func TestStoreAdvancesPreparedIntentToClaimRefused(t *testing.T) {
 	}
 }
 
+func TestStoreRemovesOnlyExactReplayTerminalPhases(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		intent func(t *testing.T, store *Store) dispatch.Intent
+	}{
+		{name: "prepared compensation", intent: func(t *testing.T, store *Store) dispatch.Intent {
+			t.Helper()
+			prepared := testIntent(dispatch.PhasePrepared)
+			if err := store.Create(prepared); err != nil {
+				t.Fatal(err)
+			}
+			return prepared
+		}},
+		{name: "durable refusal compensation", intent: func(t *testing.T, store *Store) dispatch.Intent {
+			t.Helper()
+			prepared := testIntent(dispatch.PhasePrepared)
+			if err := store.Create(prepared); err != nil {
+				t.Fatal(err)
+			}
+			refused, err := prepared.WithClaimRefused(dispatch.ClaimRefusalDependency)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Advance(prepared, refused); err != nil {
+				t.Fatal(err)
+			}
+			return refused
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := New(t.TempDir())
+			intent := tc.intent(t, store)
+			if err := store.Remove(intent); err != nil {
+				t.Fatalf("Remove() = %v", err)
+			}
+			if _, err := store.Load(intent.Binding.RunID); err == nil {
+				t.Fatal("Load() after Remove = nil error")
+			}
+		})
+	}
+}
+
+func TestStoreRefusesRemovalWhileSuccessReplayCanAdvance(t *testing.T) {
+	store := New(t.TempDir())
+	prepared := testIntent(dispatch.PhasePrepared)
+	if err := store.Create(prepared); err != nil {
+		t.Fatal(err)
+	}
+	claim := testIntent(dispatch.PhaseClaimDurable)
+	if err := store.Advance(prepared, claim); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Remove(claim); err == nil {
+		t.Fatal("Remove(claim_durable) = nil error")
+	}
+	if _, err := store.Load(claim.Binding.RunID); err != nil {
+		t.Fatalf("active intent changed: %v", err)
+	}
+	run := testIntent(dispatch.PhaseRunDurable)
+	if err := store.Advance(claim, run); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Remove(run); err == nil {
+		t.Fatal("Remove(run_durable) = nil error")
+	}
+	loaded, err := store.Load(run.Binding.RunID)
+	if err != nil || loaded.Phase != dispatch.PhaseRunDurable {
+		t.Fatalf("run_durable intent changed: (%q, %v)", loaded.Phase, err)
+	}
+}
+
 func TestStoreClaimRefusedCannotRejoinSuccessPath(t *testing.T) {
 	store := New(t.TempDir())
 	prepared := testIntent(dispatch.PhasePrepared)

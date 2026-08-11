@@ -206,12 +206,16 @@ func (s *Store) List() ([]dispatch.Intent, error) {
 	return intents, nil
 }
 
-// Remove deletes one exact terminal intent and syncs the root.
+// Remove deletes one exact intent after replay proves its terminal effect.
 func (s *Store) Remove(intent dispatch.Intent) error {
 	namespaceMu.Lock()
 	defer namespaceMu.Unlock()
-	if intent.Phase != dispatch.PhaseHandoffDurable {
-		return errors.New("dispatchstore: remove requires handoff_durable phase")
+	switch intent.Phase {
+	case dispatch.PhasePrepared, dispatch.PhaseClaimRefused, dispatch.PhaseHandoffDurable:
+	case dispatch.PhaseClaimDurable, dispatch.PhaseRunDurable:
+		return errors.New("dispatchstore: remove requires a terminal replay phase")
+	default:
+		return fmt.Errorf("dispatchstore: remove rejects phase %q", intent.Phase)
 	}
 	expected, err := canonicalBytes(intent)
 	if err != nil {

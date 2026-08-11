@@ -43,6 +43,7 @@ Core research and runtime proof are complete. Serial and fan-out or fan-in graph
 - Re-ran conflict handling and merge serialization. Both passed in 5.57 seconds.
 - Ran the broad focused package set. Queue, queue wiring, and workspace passed. Three unrelated DOT baseline tests timed out in the daemon package.
 - Proved the parent terminal boundary in the live graph. Five children close, the parent stays open, and one run-scoped `epic_completed` fact asks the captain for one final decision.
+- Proved the same parent decision boundary across abrupt daemon death. Restart produces one epic completion fact, not zero or two.
 
 ## Next
 

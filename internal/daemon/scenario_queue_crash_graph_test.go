@@ -143,6 +143,9 @@ func TestScenario_QueueSubmit_AbruptCrashResumesFanGraph(t *testing.T) {
 	for _, id := range ids {
 		scenariotest.AssertBeadStatus(t, brWrapper, string(id), "closed")
 	}
+	scenariotest.AssertBeadStatus(t, brWrapper, string(epicID), "open")
+	epicEvents := queueSubmitDispatchEpicCompleted(t, jsonlPath, epicID)
+	require.Len(t, epicEvents, 1, "restart must retain one epic completion decision point")
 	derivedBranch, err := workspace.IntegrationBranchName(t.Context(), string(epicID))
 	require.NoError(t, err)
 	queueSubmitDispatchAssertLanded(t, projectDir, derivedBranch, ids)

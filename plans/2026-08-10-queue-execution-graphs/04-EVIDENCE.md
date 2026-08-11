@@ -173,6 +173,8 @@ The second full daemon used the same Git repository, Beads database, queue file,
 
 This proves abrupt process death for the current queue and run-session contract. Alpha's durable dispatch replay work can add stronger intent-level assertions when its producer and startup replay paths land.
 
+The restart scenario now also proves the parent decision point survives the process boundary. The parent stays open and the combined event log contains exactly one `epic_completed`. The strengthened scenario passed in 29.08 seconds.
+
 ## Combined queue scenario gate
 
 Command:

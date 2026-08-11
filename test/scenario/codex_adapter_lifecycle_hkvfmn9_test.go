@@ -356,8 +356,15 @@ func codexEmptyModelFixtureInitBr(t *testing.T, realBrPath, projectDir, brWrappe
 	}
 	//nolint:gosec // G204: br args are test-internal literals
 	createCmd := exec.CommandContext(t.Context(), brWrapperPath,
+		// workflow:single is LOAD-BEARING, not decoration. It is the tier-1
+		// per-bead label — the only audited input that selects single mode
+		// (moderesolve.go resolveWorkflowMode; a daemon-level default naming
+		// single is deliberately refused). Without it the run falls through to
+		// dot mode on the embedded standard-bead.dot, whose commit_gate node
+		// runs `make full` inside this three-file temp dir that is not a Go
+		// module, and the run dies on the traversal cap (hk-5ji8t).
 		"create", "codex empty-model lifecycle test bead",
-		"--status", "open", "--labels", "harness:codex", "--silent")
+		"--status", "open", "--labels", "harness:codex,workflow:single", "--silent")
 	createOut, createErr := createCmd.CombinedOutput()
 	if createErr != nil {
 		t.Fatalf("codexEmptyModelFixtureInitBr: br create: %v\n%s", createErr, createOut)
@@ -493,14 +500,22 @@ func TestScenario_Codex_EmptyModel_FullLifecycle(t *testing.T) {
 	brWrapper := codexLifecycleFixtureBrWrapperScript(t, realBrPath, dbPath)
 	beadID := codexEmptyModelFixtureInitBr(t, realBrPath, projectDir, brWrapper)
 
+	// Single mode — codex implementer only (no reviewer), matching the
+	// codex:local matrix cell. The twin's trailer-commit lands a Refs: commit;
+	// the daemon merges it to main and closes the bead.
+	//
+	// Single mode is selected by the fixture bead's workflow:single label, NOT
+	// by WorkflowModeDefault. Setting the daemon default to single does not work
+	// and is not a shortcut for the label: resolveWorkflow refuses a daemon-level
+	// default that names single, because it is not one of the two audited
+	// compatibility inputs. The default below is therefore the standard dot one
+	// PL-004a requires every daemon to declare — daemon.Start rejects a zero
+	// WorkflowModeDefault outright, so it cannot simply be omitted.
 	cfg := daemon.Config{
-		ProjectDir:   projectDir,
-		JSONLLogPath: jsonlPath,
-		BrPath:       brWrapper,
-		// Single mode: codex implementer only (no reviewer), matching the
-		// codex:local matrix cell. The twin's trailer-commit lands a Refs: commit;
-		// the daemon merges it to main and closes the bead.
-		WorkflowModeDefault: core.WorkflowModeSingle,
+		ProjectDir:          projectDir,
+		JSONLLogPath:        jsonlPath,
+		BrPath:              brWrapper,
+		WorkflowModeDefault: core.WorkflowModeDot,
 		HandlerEnv:          os.Environ(), // carries the shimmed PATH + hermetic HOME
 	}
 
@@ -524,27 +539,36 @@ func TestScenario_Codex_EmptyModel_FullLifecycle(t *testing.T) {
 
 	lines := scenarioFixtureReadJSONLLines(t, jsonlPath)
 
-	// The run must have COMPLETED (not failed). A run_failed here most likely
-	// means the shim's --model sensor tripped (exit 3) — i.e. the daemon leaked
-	// --model into the empty-model codex argv.
+	// The run must have COMPLETED (not failed). Report the failure's OWN summary
+	// rather than naming a likely cause: a leaked --model (shim exit 3) is only
+	// one of the ways this can go red, and guessing sends the reader after a
+	// product bug that may not be there (hk-5ji8t).
 	// Decode each envelope and compare its Type rather than substring-matching the
 	// raw line: "run_failed" can appear inside an unrelated payload (e.g. a stderr
 	// tail quoting it), which would false-positive this sensor.
 	sawFailed := false
+	failedSummary := ""
 	for _, line := range lines {
 		var env struct {
-			Type string `json:"type"`
+			Type    string `json:"type"`
+			Payload struct {
+				Summary string `json:"summary"`
+			} `json:"payload"`
 		}
 		if err := json.Unmarshal([]byte(line), &env); err != nil {
 			continue
 		}
 		if env.Type == string(core.EventTypeRunFailed) {
 			sawFailed = true
+			if failedSummary == "" {
+				failedSummary = env.Payload.Summary
+			}
 		}
 	}
 	if sawFailed {
-		t.Errorf("run_failed present — the codex shim likely rejected a leaked --model; JSONL:\n%s",
-			strings.Join(lines, "\n"))
+		t.Errorf("run_failed present, summary=%q (a shim exit 3 means the daemon leaked --model into the "+
+			"empty-model codex argv; any other summary is a different failure — read it before assuming); JSONL:\n%s",
+			failedSummary, strings.Join(lines, "\n"))
 	}
 
 	// GAP-6 core: model_selected must report harness=codex with an EMPTY model.
@@ -578,5 +602,10 @@ func TestScenario_Codex_EmptyModel_FullLifecycle(t *testing.T) {
 		t.Errorf("bead %s not closed after run_completed", beadID)
 	}
 
-	t.Logf("PASS beadID=%s gotTerminal=%v modelSelectedFound=%v", beadID, gotTerminal, found)
+	// Guarded by t.Failed(): this line used to print unconditionally, so it
+	// emitted "PASS" after t.Errorf had already failed the test and a reader
+	// tailing the log saw PASS on a red run (hk-5ji8t).
+	if !t.Failed() {
+		t.Logf("PASS beadID=%s gotTerminal=%v modelSelectedFound=%v", beadID, gotTerminal, found)
+	}
 }

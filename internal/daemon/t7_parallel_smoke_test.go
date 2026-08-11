@@ -352,8 +352,8 @@ func TestParallelSmoke_TwoBeadsConcurrent(t *testing.T) {
 		if err != nil {
 			t.Errorf("daemon.Start returned error after context cancel: %v", err)
 		}
-	case <-time.After(5 * time.Second):
-		t.Error("daemon.Start did not return within 5 s after context cancel")
+	case <-time.After(daemon.ExportedDaemonExitHangBudget):
+		t.Errorf("daemon.Start did not return within %s after context cancel", daemon.ExportedDaemonExitHangBudget)
 	}
 
 	// ── Assert both beads closed ───────────────────────────────────────────────

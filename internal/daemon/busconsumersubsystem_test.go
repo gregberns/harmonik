@@ -331,8 +331,8 @@ func buspartProbeSubscribeOp(t *testing.T, yamlContent string) (first map[string
 		cancel()
 		select {
 		case <-done:
-		case <-time.After(10 * time.Second):
-			t.Error("daemon.Start did not return within 10 s after context cancellation")
+		case <-time.After(daemonExitHangBudget):
+			t.Errorf("daemon.Start did not return within %s after context cancellation", daemonExitHangBudget)
 		}
 	})
 

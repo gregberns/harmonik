@@ -218,8 +218,8 @@ func TestSignalResumeWatcher_RunExitsOnContextCancel(t *testing.T) {
 	select {
 	case <-done:
 		// Run exited as expected.
-	case <-time.After(time.Second):
-		t.Fatal("Run did not exit after context cancellation")
+	case <-time.After(daemon.ExportedDaemonExitHangBudget):
+		t.Fatalf("Run did not exit within %s after context cancellation", daemon.ExportedDaemonExitHangBudget)
 	}
 }
 

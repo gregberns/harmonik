@@ -361,7 +361,7 @@ func TestScenario_WorkLoop_HandlerFatalTripsGate(t *testing.T) {
 	cancel()
 	select {
 	case <-loopDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("work loop did not exit after context cancellation")
+	case <-time.After(daemon.ExportedDaemonExitHangBudget):
+		t.Fatalf("work loop did not exit within %s after context cancellation", daemon.ExportedDaemonExitHangBudget)
 	}
 }

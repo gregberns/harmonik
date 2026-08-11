@@ -249,15 +249,23 @@ func heartbeatSessionID(managedSID string, last *CtxFile) string {
 // goes idle, the heartbeat stops, and the gauge is allowed to go stale so the
 // respawn path (maybeRespawn) can fire. The heartbeat ONLY suppresses the false
 // no_gauge:stale on a LIVE agent.
-func (w *Watcher) maybeHeartbeat(ctx context.Context, last *CtxFile, age time.Duration) {
+//
+// It reports whether it WROTE a fresh gauge. The caller needs that answer
+// because it holds a modTime read BEFORE this call: without it, the caller
+// re-tests staleness against the age of a file this function has just replaced,
+// and declares a gauge stale in the same pass that refreshed it (hk-oduuc).
+// Every early return below reports false, which is what keeps the two
+// suppression contracts intact — a pane-idle agent and a derive-miss-budget
+// exhaustion must both still reach genuine staleness.
+func (w *Watcher) maybeHeartbeat(ctx context.Context, last *CtxFile, age time.Duration) (wrote bool) {
 	if !w.cfg.HeartbeatEnabled || w.cfg.TmuxTarget == "" {
-		return
+		return false
 	}
 	if age < w.cfg.HeartbeatThreshold {
-		return
+		return false
 	}
 	if w.cfg.IsPaneIdleFn(ctx, w.cfg.TmuxTarget) {
-		return // agent has exited — let the gauge go stale so respawn can fire
+		return false // agent has exited — let the gauge go stale so respawn can fire
 	}
 
 	managedSID, err := w.cfg.ReadManagedSessionFn(w.cfg.ProjectDir, w.cfg.AgentName)
@@ -325,14 +333,15 @@ func (w *Watcher) maybeHeartbeat(ctx context.Context, last *CtxFile, age time.Du
 				slog.WarnContext(ctx, "keeper: heartbeat derive-miss budget exceeded, suppressing carry-forward write",
 					"agent", w.cfg.AgentName, "miss_count", w.heartbeatMissCount)
 			}
-			return
+			return false
 		}
 	}
 
 	if err := WriteCtxFile(w.cfg.ProjectDir, w.cfg.AgentName, &fresh); err != nil {
 		slog.WarnContext(ctx, "keeper: heartbeat write ctx failed", "agent", w.cfg.AgentName, "err", err)
-		return
+		return false
 	}
 	slog.DebugContext(ctx, "keeper: heartbeat refreshed gauge on live pane",
 		"agent", w.cfg.AgentName, "age", age, "tokens", fresh.Tokens, "session_id", sid)
+	return true
 }

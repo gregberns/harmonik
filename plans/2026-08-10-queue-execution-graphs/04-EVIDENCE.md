@@ -215,4 +215,6 @@ The restart design made the old shutdown-cancel APIs and their tests unreachable
 
 The last pre-commit `make fast` run reached changed-line lint. It stopped on five findings in `internal/keeper/heartbeat.go` and `internal/workspace/workertrust_isolation_test.go`. Those files are unchanged from alpha. The operator directed delta to disregard red tests outside its scope.
 
+After commit `2881c0c4`, `PATH=/opt/homebrew/bin:$PATH make fast` passed. It ran 8,482 tests across nine packages. All packages passed and 45 tests were skipped by the fast target.
+
 Use one section per scenario. Include the exact command, binary commit, fixture commit, event IDs or stable log paths, branch graph, ledger state, and result.

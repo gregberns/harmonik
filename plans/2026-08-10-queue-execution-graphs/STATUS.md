@@ -67,7 +67,7 @@ Delta's queue graph work is complete. Serial and fan-out or fan-in graphs pass t
 - The shared checkout belongs to lane alpha and is dirty. Delta does not edit it.
 - Kerf cannot create a work from this worktree because its global project link points to the shared checkout.
 - The default macOS Bash 3 cannot run one script test because it lacks `mapfile`. Bash 5 is installed at `/opt/homebrew/bin/bash`.
-- The final pre-commit `make fast` reached changed-line lint. It found five issues in current-alpha keeper and workspace files. Delta does not change those files. Run the gate again after this commit so it checks delta's patch.
+- The pre-commit `make fast` found five issues in current-alpha keeper and workspace files. Delta does not change those files. The post-commit gate checked delta's patch and passed. It ran 8,482 tests across nine packages and skipped 45 tests.
 - `PATH=/opt/homebrew/bin:$PATH make full` ran 75,687 tests across 108 packages. All tests passed and 54 tests were skipped. The final repository-wide lint allow-list step failed on ten file and linter pairs outside delta's diff. The files belong to other active lanes and were present in delta's base. Delta did not change them or weaken the allow list.
 - Delta has committed graph tests, restart fixes, parent branch wiring, and abrupt-crash proof.
 - Free disk recovered above the watermark. The parent branch and clean restart scenarios now pass.

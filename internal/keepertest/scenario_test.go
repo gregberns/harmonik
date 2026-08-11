@@ -32,6 +32,30 @@ func waitForScenarioEffect(t *testing.T, ports *RecordingPorts, count int) []str
 	return nil
 }
 
+func waitForScenarioEffectContaining(t *testing.T, ports *RecordingPorts, want string) []string {
+	return waitForScenarioEffectCount(t, ports, want, 1)
+}
+
+func waitForScenarioEffectCount(t *testing.T, ports *RecordingPorts, want string, count int) []string {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		effects := ports.EffectsSnapshot()
+		found := 0
+		for _, effect := range effects {
+			if strings.Contains(effect, want) {
+				found++
+			}
+		}
+		if found >= count {
+			return effects
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d effect(s) containing %q; got %v", count, want, ports.EffectsSnapshot())
+	return nil
+}
+
 func TestScenarioRequiresReasonsForGateOptOuts(t *testing.T) {
 	s := NewScenario(productionLikePolicy())
 	for name, disable := range map[string]func(string) error{
@@ -177,5 +201,86 @@ func TestScenarioOperatorTurnDuringHandoffParksAndCanRetry(t *testing.T) {
 	}
 	if !foundRetry {
 		t.Fatalf("parked cycle did not retry: %v", s.Ports().EffectsSnapshot())
+	}
+}
+
+func TestScenarioSuccessfulCycleRecordsOrderedEffects(t *testing.T) {
+	policy := keeper.CyclePolicyFromConfig(keeper.CyclerConfig{})
+	policy.BootGracePeriod = 0
+	policy.MaxBootGraceTotal = 0
+	policy.OperatorTurnLookback = 0
+	policy.PostAnswerGrace = 0
+	policy.PollInterval = 100 * time.Millisecond
+	policy.ClearSettle = time.Second
+	policy.HandoffTimeout = 30 * time.Second
+	policy.ModelDoneTimeout = 30 * time.Second
+
+	s := NewScenario(policy)
+	s.Ports().NextCycleID = "cyc-success"
+	cycler, err := s.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- cycler.MaybeRun(context.Background(), s.Ports().Gauge) }()
+	waitForScenarioEffectContaining(t, s.Ports(), "KEEPER:cyc-success")
+
+	s.Ports().HandoffText = "# ready\n<!-- KEEPER:cyc-success -->\n"
+	s.Clock().Advance(policy.PollInterval)
+	waitForScenarioEffectContaining(t, s.Ports(), "journal:confirmed")
+
+	s.Ports().IdleMarker = s.Clock().Now()
+	s.Clock().Advance(policy.PollInterval)
+	waitForScenarioEffectContaining(t, s.Ports(), "inject:/clear")
+
+	// At the settle deadline the old high gauge causes the defensive second
+	// clear. The next poll then observes the new session and completes.
+	s.Ports().Gauge = &keeper.CtxFile{Pct: 90, SessionID: "11111111-1111-4111-8111-111111111111"}
+	s.Clock().Advance(policy.ClearSettle)
+	waitForScenarioEffectCount(t, s.Ports(), "inject:/clear", 2)
+	s.Ports().Gauge = &keeper.CtxFile{Pct: 2, SessionID: "22222222-2222-4222-8222-222222222222"}
+	// The second clear effect is recorded before the shell finishes arming the
+	// next fake ticker generation. Let that goroutine reach its select before
+	// advancing virtual time again.
+	time.Sleep(time.Millisecond)
+	var cycleErr error
+	completed := false
+	for range 5 {
+		s.Clock().Advance(policy.PollInterval)
+		select {
+		case cycleErr = <-done:
+			completed = true
+		default:
+			time.Sleep(time.Millisecond)
+		}
+		if completed {
+			break
+		}
+	}
+	if !completed {
+		t.Fatalf("cycle did not complete: %v", s.Ports().EffectsSnapshot())
+	}
+	if cycleErr != nil {
+		t.Fatal(cycleErr)
+	}
+
+	effects := s.Ports().EffectsSnapshot()
+	wantOrdered := []string{
+		"journal:opened", "escape", "KEEPER:cyc-success", "journal:handoff_injected",
+		"journal:confirmed", "inject:/clear", "journal:cleared", "managed:22222222-2222-4222-8222-222222222222",
+		"inject:harmonik agent brief", "journal:resumed", "journal:complete",
+	}
+	position := 0
+	for _, effect := range effects {
+		if position < len(wantOrdered) && strings.Contains(effect, wantOrdered[position]) {
+			position++
+		}
+	}
+	if position != len(wantOrdered) {
+		t.Fatalf("ordered effects stopped at %q (%d/%d): %v", wantOrdered[position], position, len(wantOrdered), effects)
+	}
+	if s.Ports().Journal == nil || s.Ports().Journal.Phase != "complete" {
+		t.Fatalf("journal = %+v, want complete", s.Ports().Journal)
 	}
 }

@@ -175,8 +175,18 @@ A single green pass here does not mean the gate is green, and a single red pass 
 
 Pass 3 then failed at the step AFTER the tests — `lint-allow`, on six file/linter pairs in newly
 added code (`hk-pw1wv`). That failure is deterministic and it is the honest state of the branch:
-the tests are clean, the lint gate is not, and `make test-scenario` sits behind `lint-allow` and
-has still never been reached above the floor.
+the tests are clean and the lint gate is not.
+
+**Correction, 2026-08-11 at `84ad44e20`: the sentence that used to end this paragraph was wrong.**
+It said `make test-scenario` "sits behind `lint-allow`" and so could not be reached. It does not.
+`test-scenario` is its own `.PHONY` target and its only prerequisite is `build-all`. Only `make
+full` orders `lint-allow` ahead of it, so a red lint aborts `full` before the tier — but nothing
+stops you running the tier directly. **The tier was never blocked. It was unreached by the one
+command anybody ran**, and it cost this bead four days of waiting on a lint fix it never needed.
+
+The general lesson is the one already in this case, applied to a target instead of a gate: **read
+the `Makefile` before you write down what depends on what.** A step failing before another step
+in one recipe is not a dependency.
 
 Two earlier blockers recorded in this case are now closed and are kept only so the next reader
 does not re-derive them:
@@ -251,3 +261,111 @@ Clearing the shared `go-build` mid-build has produced builds that reported succe
 rebuilding — a wrong answer that looks like a right one, on a box where several agents are
 deciding whether to merge. Deleting `~/Library/Caches/harmonik-lane-gocache/<dir>` for a
 checkout that no longer exists is always safe and costs nothing that still exists a rebuild.
+
+---
+
+## LP-018 — protocol: is this suite red because the code is broken, or because the box is busy?
+
+Class: protocol
+Exercises: any parallel test tier with wall-clock deadlines — `make full`, `make core`,
+`make test-scenario`
+Bead: `hk-scenario-tier-nondeterministic-xt1wa`, `hk-core-gate-nondeterministic-m9vlf`
+Status: OPEN at `84ad44e20` — the tier is red for both reasons at once, and they separate cleanly
+
+**The question:** a tier named N failing tests. How many of those are defects?
+
+`LP-013` asks whether the gate can pass at all and `LP-014` asks whether the box has disk. This
+case is the step after both come back clean and the suite is *still* red. It exists because the
+honest answer on 2026-08-11 was "9 failures, 1 defect", and nothing in the log distinguishes them.
+
+Preconditions: above the disk floor (`LP-014`), or you are measuring the wrong thing.
+
+### Steps
+
+**1. Read the exit code from inside the log. Never from the runner.**
+
+    (make test-scenario 2>&1; echo "EXIT_LINE rc=$?") > run1.log 2>&1
+    grep EXIT_LINE run1.log
+
+A pipeline returns its LAST command's status, so `make ... | tee ... | tail` reports `tail`'s zero
+whatever the tier did. Measured: the harness reported run 1 as "completed (exit code 0)" while the
+log's own line was `EXIT_LINE rc=2`. `hk-core-gate-nondeterministic-m9vlf` records a session that
+made this exact mistake and recorded a red gate as green.
+
+**2. Confirm the disk guard did not fire — and filter the fixtures, or you will get a false yes.**
+
+    grep -c "dispatch paused" run1.log                                        # 306
+    grep -o "disk-check:[^\"]*" run1.log | grep -viE "TestDiskLow|TestAdmissionOrder" | wc -l   # 0
+
+The tier contains tests that inject synthetic disk readings on purpose — `available=0MiB`,
+`available=4398046511104MiB`. **An unfiltered grep says the daemon paused 306 times on a box with
+23 GiB free.** Only the second number means anything.
+
+**3. Run the tier TWICE and intersect the failure sets.** One run names nothing; that is the whole
+content of both beads above.
+
+    run 1, box load 10.89 → 9 failures
+    run 2, box load  5.4  → 6 failures
+    intersection          → 3
+
+**4. Run each survivor of the intersection ALONE, and time it.**
+
+    go test -race -tags=scenario -count=1 -run '^<TestName>$' ./internal/daemon/
+
+Expect: a defect fails alone. A starved test passes alone, **and the margin is the evidence** —
+
+    TestWorkLoop_HC056Timeout_ReopenAndRepickup         3.878s alone, vs a 20s deadline it blew
+    TestWorkLoop_ClaimSemaphore_BoundsClaimConcurrency 13.695s alone, vs 60s
+
+A 5x-plus headroom that vanishes under parallelism is starvation, not a race you got lucky on.
+
+**5. For anything still failing alone, read the failure PAYLOAD, not the test's message.** See the
+failure signature below — this is where the one real defect was, and where two hours nearly went
+to a bug that does not exist.
+
+### Failure signature
+
+Starvation looks like this, and all nine failures in run 1 had this shape: an elapsed time sitting
+at or just above the test's own `WithTimeout` value, and a message that says *timed out waiting
+for* something. **Not one was a failed logical assertion.** Deadlines in this tier are 3s, 15s,
+20s, 30s and 60s — grep `WithTimeout` in the failing file and compare it to the elapsed time.
+
+Two shapes that look worse than they are:
+
+- `CloseBead call count = 0; want ≥ 1` reads like a logic failure. It is what the assertion prints
+  *after* its wait context expired. Check for a `timed out` line above it.
+- `the traversal cap did NOT bound the implement↔commit_gate loop (infinite-loop regression)`
+  (`TestScenario_CommitGateCapTerminates_hki8g59`) reads like a live regression. Its budget is a
+  60s clock its own comment calls "the safety net", its trace showed two completed passes against
+  a cap of 3, and it passed in run 2. Slow box, working cap.
+
+One shape that is worse than it looks — **the test's stated cause was not the real one**:
+
+    codex_adapter_lifecycle_hkvfmn9_test.go:546:
+      run_failed present — the codex shim likely rejected a leaked --model
+
+The real payload said something else entirely:
+
+    "summary":"dot: traversal cap hit at node \"commit_gate\" (traversal cap reached)"
+
+No `--model` leak occurred. The run walked a `commit_gate` node that runs `make full` inside a
+three-file temp dir that is not a Go module. Cause: the test sets a daemon-level
+`WorkflowModeSingle` default that `resolveWorkflow` deliberately refuses ("a stale daemon default
+may still name single ... it cannot select no_review"), so the run fell through to dot mode. **The
+daemon is right and the test is stale** — `hk-5ji8t`. Always read the event payload before you
+believe the assertion's guess at why it fired.
+
+And the same test prints `PASS beadID=... gotTerminal=true` from an unconditional `t.Logf` after
+`t.Errorf` has already failed it. A reader tailing the log sees PASS on a red test.
+
+### Why it matters
+
+A tier that names a different set every run gets read as "flaky, ignore it", and the one real
+defect inside it ships. It also runs the other way: nine starved tests get filed as nine bugs, and
+a week goes into code that was never broken. Both have happened here. The intersect-then-isolate
+step costs two runs and separates them.
+
+**And the environment cause is not exotic — it is the normal state of this box.** These lanes run
+two or three agents at once, so the contended run IS the condition under test. A suite of
+wall-clock deadlines cannot be trusted on it, which is the finding, not a caveat about the
+measurement.

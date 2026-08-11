@@ -591,7 +591,11 @@ func TestHeartbeat_CrossingPassDoesNotCallItsOwnFreshGaugeStale(t *testing.T) {
 		staleness          = 2 * time.Second
 		pollInterval       = 3 * time.Second // > staleness, so the crossing is guaranteed
 		heartbeatThreshold = 200 * time.Millisecond
-		runFor             = 4 * time.Second // long enough for exactly one tick
+		// runFor must cover the single tick at t=3s with enough margin that a
+		// starved box still SERVICES that tick — if ctx.Done wins the select the
+		// tick never runs and both arms fail. 5s leaves ~2s of service margin and
+		// still cannot admit a second tick, which would arrive at t=6s.
+		runFor = 5 * time.Second
 	)
 
 	cases := []struct {

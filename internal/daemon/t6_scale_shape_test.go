@@ -354,8 +354,8 @@ func TestT6_10BeadSequentialDrain(t *testing.T) {
 		if err != nil {
 			t.Errorf("daemon.Start returned error after cancel: %v", err)
 		}
-	case <-time.After(10 * time.Second):
-		t.Error("daemon.Start did not return within 10s after cancel")
+	case <-time.After(daemon.ExportedDaemonExitHangBudget):
+		t.Errorf("daemon.Start did not return within %s after cancel", daemon.ExportedDaemonExitHangBudget)
 	}
 
 	t.Logf("T6-1: all_closed=%v elapsed=%.2fs per_bead=%.2fs", allClosed, elapsed.Seconds(), elapsed.Seconds()/10)
@@ -457,8 +457,8 @@ func TestT6_1MBBeadBody(t *testing.T) {
 		if err != nil {
 			t.Errorf("daemon.Start returned error after cancel: %v", err)
 		}
-	case <-time.After(10 * time.Second):
-		t.Error("daemon.Start did not return within 10s after cancel")
+	case <-time.After(daemon.ExportedDaemonExitHangBudget):
+		t.Errorf("daemon.Start did not return within %s after cancel", daemon.ExportedDaemonExitHangBudget)
 	}
 
 	t.Logf("T6-2: all_closed=%v elapsed=%.2fs", allClosed, elapsed.Seconds())
@@ -536,8 +536,8 @@ func TestT6_EmptyAndNearEmptyBody(t *testing.T) {
 		if err != nil {
 			t.Errorf("daemon.Start returned error after cancel: %v", err)
 		}
-	case <-time.After(10 * time.Second):
-		t.Error("daemon.Start did not return within 10s after cancel")
+	case <-time.After(daemon.ExportedDaemonExitHangBudget):
+		t.Errorf("daemon.Start did not return within %s after cancel", daemon.ExportedDaemonExitHangBudget)
 	}
 
 	t.Logf("T6-3: all_closed=%v elapsed=%.2fs no-body=%s whitespace-only=%s",
@@ -614,8 +614,8 @@ func TestT6_UnicodeHeavyBody(t *testing.T) {
 		if err != nil {
 			t.Errorf("daemon.Start returned error after cancel: %v", err)
 		}
-	case <-time.After(10 * time.Second):
-		t.Error("daemon.Start did not return within 10s after cancel")
+	case <-time.After(daemon.ExportedDaemonExitHangBudget):
+		t.Errorf("daemon.Start did not return within %s after cancel", daemon.ExportedDaemonExitHangBudget)
 	}
 
 	t.Logf("T6-4: all_closed=%v elapsed=%.2fs", allClosed, elapsed.Seconds())
@@ -681,8 +681,8 @@ func TestT6_LargeWorktreeBase(t *testing.T) {
 		if err != nil {
 			t.Errorf("daemon.Start returned error after cancel: %v", err)
 		}
-	case <-time.After(10 * time.Second):
-		t.Error("daemon.Start did not return within 10s after cancel")
+	case <-time.After(daemon.ExportedDaemonExitHangBudget):
+		t.Errorf("daemon.Start did not return within %s after cancel", daemon.ExportedDaemonExitHangBudget)
 	}
 
 	t.Logf("T6-5: all_closed=%v elapsed=%.2fs (1000 subdirs in worktree base)", allClosed, elapsed.Seconds())
@@ -745,8 +745,8 @@ func TestT6_ConcurrentBeadCreate(t *testing.T) {
 		if err != nil {
 			t.Errorf("daemon.Start returned error after cancel: %v", err)
 		}
-	case <-time.After(10 * time.Second):
-		t.Error("daemon.Start did not return within 10s after cancel")
+	case <-time.After(daemon.ExportedDaemonExitHangBudget):
+		t.Errorf("daemon.Start did not return within %s after cancel", daemon.ExportedDaemonExitHangBudget)
 	}
 
 	t.Logf("T6-6: all_closed=%v elapsed=%.2fs (1 initial + 3 late-arriving beads)", allClosed, elapsed.Seconds())

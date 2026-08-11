@@ -1311,10 +1311,29 @@ func (w *Watcher) Run(ctx context.Context) error {
 			// with a fresh ts (transcript-derived tokens when available) so a live
 			// agent's gauge NEVER goes stale. No-op when the pane is idle so the
 			// respawn path stays intact.
-			w.maybeHeartbeat(ctx, ctxFile, w.cfg.Clock.Since(modTime))
+			refreshed := w.maybeHeartbeat(ctx, ctxFile, w.cfg.Clock.Since(modTime))
 
 			// ── gauge stale ──────────────────────────────────────────────────
-			if w.cfg.Clock.Since(modTime) >= w.cfg.Staleness {
+			// `refreshed` is load-bearing, not a tidy-up. modTime was read at the
+			// top of this pass, BEFORE maybeHeartbeat ran, and maybeHeartbeat may
+			// have replaced the gauge since. Without this guard the crossing pass
+			// — the one where the age first reaches Staleness — refreshes a live
+			// agent's gauge and then declares that same, just-written gauge stale:
+			// a false no_gauge:stale, and a `continue` past session_id binding, the
+			// warn ladder, idle-quiesce and cycle triggering. That directly
+			// contradicts the invariant stated above ("so a live agent's gauge
+			// NEVER goes stale"). Refs hk-oduuc.
+			//
+			// modTime itself is deliberately NOT re-read, and the reason is about
+			// MEANING rather than timing. The only other consumer of modTime in
+			// this loop is the idle-quiesce gate below, whose subject is whether
+			// the AGENT has touched the gauge — the statusline repainting is agent
+			// activity. The keeper's own heartbeat write is not, so the pre-write
+			// value is the input that gate actually wants. Re-reading here would
+			// also make the ordinary 60s heartbeat pass and the crossing pass
+			// disagree, when the whole point of this guard is to make them behave
+			// alike.
+			if !refreshed && w.cfg.Clock.Since(modTime) >= w.cfg.Staleness {
 				w.maybeEmitNoGauge(ctx, "stale")
 				warnArmed = true
 				warnFired = false

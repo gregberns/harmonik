@@ -206,8 +206,8 @@ func TestIntegration_HandlerPausePolicyGoroutineWiredBeforeSeal(t *testing.T) {
 		if startErr != nil {
 			t.Fatalf("t3hp: daemon.StartForTesting returned error: %v", startErr)
 		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("t3hp: daemon.StartForTesting did not return within 10s in no-op mode")
+	case <-time.After(daemon.ExportedDaemonExitHangBudget):
+		t.Fatalf("t3hp: daemon.StartForTesting did not return within %s in no-op mode", daemon.ExportedDaemonExitHangBudget)
 	}
 
 	// Assertion 2 — behavioural wiring:

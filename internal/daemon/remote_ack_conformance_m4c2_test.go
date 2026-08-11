@@ -296,7 +296,7 @@ func TestT2_PartitionedWorker_ReachesStale_NoSilentWedge(t *testing.T) {
 	// must NOT wedge SubmitInput forever. When the bounding context is torn down
 	// (deadline/cancel — the daemon's submission bound), SubmitInput returns the
 	// context terminal PROMPTLY. Deterministic: the return is driven by
-	// cancellation, not a real-time sleep; the 5s guard only trips on a genuine
+	// cancellation, not a real-time sleep; the guard only trips on a genuine
 	// hang (a real AIS-INV-001 violation).
 	t.Run("partition_bounded_by_context_no_hang", func(t *testing.T) {
 		t.Parallel()
@@ -330,10 +330,10 @@ func TestT2_PartitionedWorker_ReachesStale_NoSilentWedge(t *testing.T) {
 			if r.ack != (handler.Ack{}) {
 				t.Errorf("T2: SubmitInput returned non-zero Ack %+v on a never-landed write, want zero Ack", r.ack)
 			}
-		case <-time.After(5 * time.Second):
+		case <-time.After(daemonExitHangBudget):
 			// Hang detector, not a timing assertion — the happy path resolves on
 			// cancellation, so this never contributes to flakiness.
-			t.Fatal("T2: SubmitInput did not return within the guard window after cancel — AIS-INV-001 violation (silent wedge)")
+			t.Fatalf("T2: SubmitInput did not return within %s after cancel — AIS-INV-001 violation (silent wedge)", daemonExitHangBudget)
 		}
 	})
 }

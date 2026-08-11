@@ -189,8 +189,8 @@ func TestScenario_HandlerPause_EventTripsPolicy(t *testing.T) {
 		if startErr != nil {
 			t.Fatalf("hpScenario: daemon.Start returned error: %v", startErr)
 		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("hpScenario: daemon.Start did not return within 10s in no-op mode")
+	case <-time.After(daemon.ExportedDaemonExitHangBudget):
+		t.Fatalf("hpScenario: daemon.Start did not return within %s in no-op mode", daemon.ExportedDaemonExitHangBudget)
 	}
 
 	// Emit a synthetic budget_exhausted event on the captured (sealed) bus.

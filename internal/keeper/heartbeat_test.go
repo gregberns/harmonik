@@ -553,3 +553,133 @@ func TestHeartbeat_SIDChange_ResetsMissBudget(t *testing.T) {
 		t.Fatalf("phase 2: gauge not refreshed after SID change: mod-time %v is not after sidWriteTime %v — heartbeat miss-count was not reset on SID change", modTime, sidWriteTime)
 	}
 }
+
+// TestHeartbeat_CrossingPassDoesNotCallItsOwnFreshGaugeStale pins hk-oduuc: on
+// the pass where the gauge age first reaches Staleness, the watcher refreshes a
+// live agent's gauge and must NOT then declare that same, just-written gauge
+// stale.
+//
+// THE DEFECT. Watcher.Run reads modTime once at the top of a pass, calls
+// maybeHeartbeat (which may replace the gauge), and then re-tests staleness
+// against that same pre-write modTime. Before the fix the crossing pass emitted
+// a false no_gauge:stale for a healthy agent and `continue`d past session_id
+// binding, the warn ladder, idle-quiesce and cycle triggering.
+//
+// WHY THIS TEST CANNOT BE FAILED BY A BUSY BOX, which is the whole point — the
+// three gate failures that led here (hk-vp02y) were this defect being tripped by
+// scheduler starvation, and a test that reproduces it by ALSO relying on timing
+// would be the same defect in a new place. Every inequality below is one-sided
+// in the safe direction:
+//
+//   - PollInterval (3s) is deliberately LONGER than Staleness (2s). The crossing
+//     therefore happens by arithmetic, not by luck: at the first tick the gauge
+//     age is at least seedAge+PollInterval = 3.4s, against a 2s window. A slower
+//     box makes that age LARGER, so load can only make the crossing more certain.
+//   - The boot-time check in Run emits no_gauge:stale before any heartbeat can
+//     run, so the seeded gauge must start BELOW Staleness or the test measures
+//     nothing. seedAge (400ms) sits 1.6s under the window — a margin the box
+//     would have to stall through between two adjacent statements to erase.
+//
+// The idle-pane arm is what stops this test from being one-directional. Merely
+// suppressing the alarm everywhere would pass the live arm and break the respawn
+// path; the idle arm fails if the fix over-suppresses.
+func TestHeartbeat_CrossingPassDoesNotCallItsOwnFreshGaugeStale(t *testing.T) {
+	t.Parallel()
+
+	const (
+		seedAge            = 400 * time.Millisecond
+		staleness          = 2 * time.Second
+		pollInterval       = 3 * time.Second // > staleness, so the crossing is guaranteed
+		heartbeatThreshold = 200 * time.Millisecond
+		// runFor must cover the single tick at t=3s with enough margin that a
+		// starved box still SERVICES that tick — if ctx.Done wins the select the
+		// tick never runs and both arms fail. 5s leaves ~2s of service margin and
+		// still cannot admit a second tick, which would arrive at t=6s.
+		runFor = 5 * time.Second
+	)
+
+	cases := []struct {
+		name string
+		// paneIdle reports whether the agent process has exited.
+		paneIdle bool
+		// wantStale is the number of no_gauge:stale events the pass must emit.
+		wantStale int
+		// wantRefreshed is whether the heartbeat must have re-written the gauge.
+		wantRefreshed bool
+		why           string
+	}{
+		{
+			name:          "live_pane_is_refreshed_not_called_stale",
+			paneIdle:      false,
+			wantStale:     0,
+			wantRefreshed: true,
+			why:           "the heartbeat wrote a fresh gauge on this very pass, so the gauge is not stale",
+		},
+		{
+			name:          "idle_pane_still_goes_stale_so_respawn_can_fire",
+			paneIdle:      true,
+			wantStale:     1,
+			wantRefreshed: false,
+			why:           "the agent has exited, the heartbeat must not write, and the alarm is the respawn trigger",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			projectDir := t.TempDir()
+			agent := "test-agent"
+			managedSID := "11111111-2222-4333-8444-555555555555"
+			if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "keeper"), 0o700); err != nil {
+				t.Fatalf("MkdirAll: %v", err)
+			}
+			if err := keeper.WriteManagedSessionID(projectDir, agent, managedSID); err != nil {
+				t.Fatalf("WriteManagedSessionID: %v", err)
+			}
+
+			// Seed a gauge that is already past HeartbeatThreshold but still
+			// comfortably inside the Staleness window, so the boot-time check is
+			// silent and the FIRST TICK is the crossing pass.
+			writeStaleCtx(t, projectDir, agent, keeper.CtxFile{
+				Pct:       50.0,
+				Tokens:    100_000,
+				SessionID: managedSID,
+				Ts:        time.Now().UTC().Format(time.RFC3339),
+			}, seedAge)
+			_, seededModTime := readCtxFor(t, projectDir, agent)
+
+			em := &keeper.RecordingEmitter{}
+			cfg := keeper.WatcherConfig{
+				AgentName:          agent,
+				ProjectDir:         projectDir,
+				PollInterval:       pollInterval,
+				WarnPct:            80.0,
+				IdleQuiesce:        1 * time.Millisecond,
+				Staleness:          staleness,
+				HeartbeatEnabled:   true,
+				HeartbeatThreshold: heartbeatThreshold,
+				TmuxTarget:         "fake:0.0",
+				IsPaneIdleFn:       func(context.Context, string) bool { return tc.paneIdle },
+				// No transcript on disk → the heartbeat carries last-good tokens
+				// forward rather than deriving. Keeps this test about the ordering.
+				TranscriptDir: filepath.Join(projectDir, "no-such-transcript-dir"),
+			}
+
+			runWatcherFor(context.Background(), cfg, em, runFor)
+
+			if got := noGaugeStaleCount(em); got != tc.wantStale {
+				t.Errorf("no_gauge:stale count = %d, want %d — %s", got, tc.wantStale, tc.why)
+			}
+
+			_, modTime := readCtxFor(t, projectDir, agent)
+			// An OCCURRENCE assertion, not a rate: did the heartbeat write at all?
+			// Deliberately not "the gauge is younger than Staleness", which is the
+			// wall-clock shape this whole sweep exists to remove.
+			if refreshed := modTime.After(seededModTime); refreshed != tc.wantRefreshed {
+				t.Errorf("gauge refreshed = %v, want %v (seeded mod-time %v, now %v)",
+					refreshed, tc.wantRefreshed, seededModTime, modTime)
+			}
+		})
+	}
+}

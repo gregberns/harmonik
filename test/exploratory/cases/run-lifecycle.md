@@ -308,6 +308,18 @@ content of both beads above.
     run 2 → 6 failures
     intersection → 3
 
+**Re-check free disk BETWEEN the runs, not once at the start.** This step used to say "above the
+disk floor" as a precondition and leave it there, which is wrong, because **the runs themselves are
+what eat the disk.** Measured 2026-08-11 in one assessor session: the box went from 23144 MiB free
+to 9868 MiB across two scenario tiers under `-race`, two `make fast` runs, two lint runs and one
+`make full` — about 13 GiB in four hours. The final `make full` then failed three `TestT6_*` tests
+on a real `dispatch paused`, below the watermark, and those three were nearly filed as defects.
+
+So later runs in a session are systematically more starved than earlier ones, and **a naive
+intersection reads that as "the tests got flakier as I went"**. `LP-014` frames the floor as a
+condition a busy box drifts into over about a week; a session doing repeat gate runs gets there in
+an afternoon, and it is the measurer who put it there.
+
 **Do not try to explain the difference in counts by box load, and do not sample load the lazy way.**
 The first version of this case did both and was wrong. It read the opening samples of run 2, called
 it "the quieter box", and presented 9-vs-6 as a load correlation. Sampling every 20s for the whole

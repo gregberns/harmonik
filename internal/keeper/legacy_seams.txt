@@ -20,7 +20,3 @@ SetTmuxEnvFn
 SleepingCheckFn
 TruncateHandoffFn
 WriteJournalFn
-fnGauge
-fnHandoff
-fnPane
-fnRespawn

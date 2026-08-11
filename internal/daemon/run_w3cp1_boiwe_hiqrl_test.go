@@ -104,7 +104,9 @@ func awaitWorkLoopExit(t *testing.T, workDone context.Context, loopDone <-chan e
 // concurrently up to max_concurrent=2); §4.11 EM-051 (max_concurrent configuration).
 // Bead ref: hk-w3cp1.
 func TestMultiBead_TwoBeadsCompleteBothClose(t *testing.T) {
-	t.Parallel()
+	// This is the normal-completion durability gate. Keep it serial so package
+	// scenario load cannot consume its wall-clock backstop before the drain path
+	// runs.
 
 	projectDir, _ := workloopFixtureProjectDir(t)
 	workloopFixtureGitRepo(t, projectDir)

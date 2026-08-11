@@ -1,8 +1,11 @@
 package daemon
 
 import (
+	"errors"
+	"reflect"
 	"testing"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
@@ -98,5 +101,55 @@ func TestGroupCompletionEffectsAcceptReceiptInstallFailureBoundary(t *testing.T)
 	want := groupCompletionEffects{Refill: true, LogFailure: true}
 	if err != nil || got != want {
 		t.Fatalf("effects=%+v err=%v, want %+v", got, err, want)
+	}
+}
+
+func TestPerformGroupCompletionEffectsCallsEachAuthorizedBoundaryInOrder(t *testing.T) {
+	diagnostic := errors.New("durability fault")
+	intents := []queue.EventIntent{{Type: core.EventTypeQueueGroupCompleted}, {Type: core.EventTypeQueueGroupStarted}}
+	tests := []struct {
+		name       string
+		durability groupCompletionDurability
+		intents    []queue.EventIntent
+		diagnostic error
+		emitError  bool
+		want       []string
+	}{
+		{name: "stale no change", durability: groupCompletionDurability{Disposition: queue.GroupCompletionDispositionNoChange}, want: []string{"refill"}},
+		{name: "receipt retry", durability: groupCompletionDurability{Disposition: queue.GroupCompletionDispositionReceiptRequired}},
+		{name: "intermediate committed", durability: groupCompletionDurability{Disposition: queue.GroupCompletionDispositionIntermediate, Outcome: queue.OutcomeCommittedDurable}, intents: intents[:1], want: []string{"emit:" + string(intents[0].Type), "wake", "refill"}},
+		{name: "successor committed", durability: groupCompletionDurability{Disposition: queue.GroupCompletionDispositionSuccessorActivated, Outcome: queue.OutcomeCommittedDurable}, intents: intents, want: []string{"emit:" + string(intents[0].Type), "emit:" + string(intents[1].Type), "wake", "refill"}},
+		{name: "successor emit failure stays diagnostic", durability: groupCompletionDurability{Disposition: queue.GroupCompletionDispositionSuccessorActivated, Outcome: queue.OutcomeCommittedDurable}, intents: intents, emitError: true, want: []string{"emit:" + string(intents[0].Type), "emit:" + string(intents[1].Type), "log:emit group completion intents", "wake", "refill"}},
+		{name: "paused committed", durability: groupCompletionDurability{Disposition: queue.GroupCompletionDispositionPausedByFailure, Outcome: queue.OutcomeCommittedDurable}, intents: intents[:1], want: []string{"emit:" + string(intents[0].Type), "wake", "cancel-exit", "refill"}},
+		{name: "final marker durable", durability: groupCompletionDurability{Disposition: queue.GroupCompletionDispositionQueueCompleted, Outcome: queue.OutcomeCommittedDurable, Phase: queue.CompletionPhaseMarkerDurable}, want: []string{"cancel-drain", "cancel-exit", "refill"}},
+		{name: "final cleanup failure", durability: groupCompletionDurability{Disposition: queue.GroupCompletionDispositionQueueCompleted, Outcome: queue.OutcomeCommittedDurable, Phase: queue.CompletionPhaseObservationAttempted, CleanupError: true}, diagnostic: diagnostic, want: []string{"log:group completion durability", "refill"}},
+		{name: "final marker failure", durability: groupCompletionDurability{Disposition: queue.GroupCompletionDispositionQueueCompleted, Outcome: queue.OutcomeCommittedDurable, Phase: queue.CompletionPhaseMarkerFailed, MarkerError: true}, diagnostic: diagnostic, want: []string{"log:group completion durability", "cancel-drain", "cancel-exit", "refill"}},
+		{name: "commit failure", durability: groupCompletionDurability{Disposition: queue.GroupCompletionDispositionIntermediate, Outcome: queue.OutcomeNotCommitted}, diagnostic: diagnostic, want: []string{"log:group completion durability", "refill"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			effects, err := decideGroupCompletionEffects(tc.durability)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var calls []string
+			performGroupCompletionEffects(tc.intents, effects, tc.diagnostic, groupCompletionEffectSink{
+				log: func(label string, _ error) { calls = append(calls, "log:"+label) },
+				emit: func(intent queue.EventIntent) error {
+					calls = append(calls, "emit:"+string(intent.Type))
+					if tc.emitError && len(calls) == 1 {
+						return diagnostic
+					}
+					return nil
+				},
+				wake:        func() { calls = append(calls, "wake") },
+				cancelDrain: func() { calls = append(calls, "cancel-drain") },
+				cancelExit:  func() { calls = append(calls, "cancel-exit") },
+				refill:      func() { calls = append(calls, "refill") },
+			})
+			if !reflect.DeepEqual(calls, tc.want) {
+				t.Fatalf("calls = %v, want %v", calls, tc.want)
+			}
+		})
 	}
 }

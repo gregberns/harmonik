@@ -75,30 +75,38 @@ func validateGroupCompletionDurability(in groupCompletionDurability) error {
 		}
 		return nil
 	case queue.GroupCompletionDispositionIntermediate, queue.GroupCompletionDispositionSuccessorActivated, queue.GroupCompletionDispositionPausedByFailure:
-		if in.Phase != "" || in.ObservationError || in.MarkerError || !validNamespaceOutcome(in.Outcome) {
-			return fmt.Errorf("group completion %s has invalid transaction facts", in.Disposition)
-		}
-		if in.CleanupError && in.Outcome != queue.OutcomeCommittedDurable {
-			return fmt.Errorf("group completion cleanup diagnostic contradicts outcome %q", in.Outcome)
-		}
-		return nil
+		return validateNonFinalGroupCompletionDurability(in)
 	case queue.GroupCompletionDispositionQueueCompleted:
-		if !validFinalCompletionPhaseOutcome(in.Phase, in.Outcome) {
-			return fmt.Errorf("group completion final phase %q contradicts outcome %q", in.Phase, in.Outcome)
-		}
-		if in.MarkerError != (in.Phase == queue.CompletionPhaseMarkerFailed) {
-			return fmt.Errorf("group completion marker diagnostic contradicts phase %q", in.Phase)
-		}
-		if in.CleanupError && in.Phase != queue.CompletionPhaseObservationAttempted {
-			return fmt.Errorf("group completion cleanup diagnostic contradicts phase %q", in.Phase)
-		}
-		if in.ObservationError && !completionReachedObservation(in.Phase) {
-			return fmt.Errorf("group completion observation diagnostic contradicts phase %q", in.Phase)
-		}
-		return nil
+		return validateFinalGroupCompletionDurability(in)
 	default:
 		return fmt.Errorf("unknown group completion disposition %q", in.Disposition)
 	}
+}
+
+func validateNonFinalGroupCompletionDurability(in groupCompletionDurability) error {
+	if in.Phase != "" || in.ObservationError || in.MarkerError || !validNamespaceOutcome(in.Outcome) {
+		return fmt.Errorf("group completion %s has invalid transaction facts", in.Disposition)
+	}
+	if in.CleanupError && in.Outcome != queue.OutcomeCommittedDurable {
+		return fmt.Errorf("group completion cleanup diagnostic contradicts outcome %q", in.Outcome)
+	}
+	return nil
+}
+
+func validateFinalGroupCompletionDurability(in groupCompletionDurability) error {
+	if !validFinalCompletionPhaseOutcome(in.Phase, in.Outcome) {
+		return fmt.Errorf("group completion final phase %q contradicts outcome %q", in.Phase, in.Outcome)
+	}
+	if in.MarkerError != (in.Phase == queue.CompletionPhaseMarkerFailed) {
+		return fmt.Errorf("group completion marker diagnostic contradicts phase %q", in.Phase)
+	}
+	if in.CleanupError && in.Phase != queue.CompletionPhaseObservationAttempted {
+		return fmt.Errorf("group completion cleanup diagnostic contradicts phase %q", in.Phase)
+	}
+	if in.ObservationError && !completionReachedObservation(in.Phase) {
+		return fmt.Errorf("group completion observation diagnostic contradicts phase %q", in.Phase)
+	}
+	return nil
 }
 
 func validNamespaceOutcome(outcome queue.NamespaceOutcome) bool {

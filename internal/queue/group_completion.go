@@ -101,8 +101,8 @@ const (
 func (v GroupCompletionNoChangeReason) String() string { return string(v) }
 
 func (v GroupCompletionNoChangeReason) valid() bool {
-	switch v {
-	case GroupCompletionNoChangeStaleQueue, GroupCompletionNoChangeMatchingTerminalOutcome:
+	switch v.String() {
+	case string(GroupCompletionNoChangeStaleQueue), string(GroupCompletionNoChangeMatchingTerminalOutcome):
 		return true
 	default:
 		return false

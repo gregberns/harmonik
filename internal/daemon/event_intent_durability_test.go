@@ -38,6 +38,12 @@ func (e *intentDurabilityEmitter) count() int {
 
 type intentDurabilityLedger struct{}
 
+type intentCompletionStore func(context.Context, queue.CompletionRequest) queue.CompletionResult
+
+func (f intentCompletionStore) Complete(ctx context.Context, req queue.CompletionRequest) queue.CompletionResult {
+	return f(ctx, req)
+}
+
 func (intentDurabilityLedger) LookupStatus(context.Context, core.BeadID) (queue.BeadStatus, error) {
 	return queue.BeadStatusOpen, nil
 }
@@ -84,6 +90,10 @@ func TestGroupCompletionCommitFailureEmitsNoIntent(t *testing.T) {
 	if got := emitter.count(); got != 0 {
 		t.Fatalf("emit calls = %d, want 0 after completion commit failure", got)
 	}
+	retained := store.Queue()
+	if retained == nil || retained.Status != queue.QueueStatusActive || retained.Groups[0].Items[0].Status != queue.ItemStatusPending {
+		t.Fatalf("failed commit installed decision candidate in memory: %+v", retained)
+	}
 }
 
 func TestGroupCompletionCleanupFailureEmitsCommittedIntent(t *testing.T) {
@@ -108,15 +118,33 @@ func TestGroupCompletionCleanupFailureEmitsCommittedIntent(t *testing.T) {
 		queueStore:    store,
 		runRegistry:   newLocalRunRegistry(),
 		maxConcurrent: 1,
-		completeQueue: func(context.Context, string, *queue.Queue) queue.TerminalResult {
-			return queue.TerminalResult{Committed: true, CleanupErr: errors.New("cleanup failed")}
-		},
+		completionStore: intentCompletionStore(func(_ context.Context, req queue.CompletionRequest) queue.CompletionResult {
+			observationErr := req.Observe(queue.CompletionReceipt{})
+			return queue.CompletionResult{
+				NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeCommittedDurable},
+				Phase:           queue.CompletionPhaseObservationAttempted,
+				ObservationErr:  observationErr,
+				CleanupErr:      errors.New("cleanup failed"),
+			}
+		}),
 	}
 
 	evaluateGroupAdvanceWithOutcome(t.Context(), port, queue.QueueNameMain, q.QueueID, 0, 0, true, time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC))
 
 	if got := emitter.count(); got != 1 {
 		t.Fatalf("emit calls = %d, want 1 after durable completion with cleanup failure", got)
+	}
+}
+
+func TestFinalGroupCompletionMintFailureKeepsOriginalDiagnostic(t *testing.T) {
+	want := errors.New("mint failed")
+	execution := failedGroupCompletionExecution(queue.GroupCompletionDispositionQueueCompleted, want)
+	effects, err := decideGroupCompletionEffects(execution.durability)
+	if err != nil {
+		t.Fatalf("policy replaced mint diagnostic: %v", err)
+	}
+	if !errors.Is(execution.err, want) || !effects.LogFailure || !effects.Refill {
+		t.Fatalf("execution=%+v effects=%+v", execution, effects)
 	}
 }
 

@@ -66,7 +66,7 @@ func TestScenario_QueueSubmit_AbruptCrashResumesFanGraph(t *testing.T) {
 	brWrapper := queueSubmitDispatchBrWrapper(t, realBrPath, dbPath)
 	epicID, ids := queueSubmitDispatchInitBrFanGraph(t, realBrPath, projectDir, brWrapper)
 	twinWrapper := queueSubmitDispatchTwinWrapper(t, twinPath)
-	scenariotest.WriteReviewLoopWorkflowDot(t, projectDir)
+	scenariotest.WriteStandardWorkflowDot(t, projectDir)
 
 	helper := exec.Command(os.Args[0], "-test.run=^TestScenario_QueueCrashGraphHelper$", "-test.v") //nolint:gosec,noctx // test binary and fixed arguments
 	helper.Env = append(os.Environ(),
@@ -143,6 +143,10 @@ func TestScenario_QueueSubmit_AbruptCrashResumesFanGraph(t *testing.T) {
 	for _, id := range ids {
 		scenariotest.AssertBeadStatus(t, brWrapper, string(id), "closed")
 	}
+	validationData, validationErr := os.ReadFile(filepath.Join(projectDir, ".harmonik", "validation-runs"))
+	require.NoError(t, validationErr, "read durable validation evidence after restart")
+	require.Len(t, strings.Fields(string(validationData)), len(ids),
+		"restart must not bypass or duplicate a child's commit gate")
 	scenariotest.AssertBeadStatus(t, brWrapper, string(epicID), "open")
 	epicEvents := queueSubmitDispatchEpicCompleted(t, jsonlPath, epicID)
 	require.Len(t, epicEvents, 1, "restart must retain one epic completion decision point")

@@ -45,6 +45,7 @@ Core research and runtime proof are complete. Serial and fan-out or fan-in graph
 - Proved the parent terminal boundary in the live graph. Five children close, the parent stays open, and one run-scoped `epic_completed` fact asks the captain for one final decision.
 - Proved the same parent decision boundary across abrupt daemon death. Restart produces one epic completion fact, not zero or two.
 - Replaced the fan graph's reduced workflow with the canonical implement, commit-gate, review, and close topology. All five children produced durable validation-gate evidence before merge.
+- Applied the same validation proof across abrupt restart. The recovered graph records exactly one gate pass for each child.
 
 ## Next
 

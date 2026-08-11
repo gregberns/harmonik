@@ -181,6 +181,8 @@ This proves abrupt process death for the current queue and run-session contract.
 
 The restart scenario now also proves the parent decision point survives the process boundary. The parent stays open and the combined event log contains exactly one `epic_completed`. The strengthened scenario passed in 29.08 seconds.
 
+The crash graph now uses the same canonical validation topology as the normal fan graph. After restart, its durable gate evidence contains exactly five passes. No child bypassed validation and no completed child ran the gate twice. The strengthened crash scenario passed in 31.14 seconds.
+
 ## Combined queue scenario gate
 
 Command:

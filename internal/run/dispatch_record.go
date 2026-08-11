@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/dispatch"
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
@@ -45,6 +46,25 @@ type DispatchRecord struct {
 	Location          *ExecutionLocation `json:"execution_location,omitempty"`
 	SessionName       string             `json:"session_name,omitempty"`
 	StartedAt         time.Time          `json:"started_at"`
+}
+
+// NewDispatchRecord returns the base durable record for one claimed dispatch.
+func NewDispatchRecord(binding dispatch.Binding, startedAt time.Time) (DispatchRecord, error) {
+	record := DispatchRecord{
+		SchemaVersion:     dispatchRecordSchemaVersion,
+		RunID:             binding.RunID,
+		BeadID:            binding.BeadID,
+		QueueName:         binding.QueueName,
+		QueueID:           binding.QueueID,
+		GroupIndex:        binding.GroupIndex,
+		ItemIndex:         binding.ItemIndex,
+		ClaimTransitionID: binding.ClaimTransitionID,
+		StartedAt:         startedAt.UTC().Truncate(time.Millisecond),
+	}
+	if err := record.Validate(); err != nil {
+		return DispatchRecord{}, err
+	}
+	return record, nil
 }
 
 // Validate rejects partial records and non-canonical durable identity.

@@ -10,7 +10,40 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/dispatch"
 )
+
+func TestNewDispatchRecordBindsPreparedIntent(t *testing.T) {
+	base := testDispatchRecord()
+	binding := dispatch.Binding{
+		QueueID:           base.QueueID,
+		QueueName:         base.QueueName,
+		GroupIndex:        base.GroupIndex,
+		ItemIndex:         base.ItemIndex,
+		BeadID:            base.BeadID,
+		RunID:             base.RunID,
+		ClaimTransitionID: base.ClaimTransitionID,
+	}
+	startedAt := base.StartedAt.Add(456 * time.Microsecond).In(time.FixedZone("offset", 3600))
+	record, err := NewDispatchRecord(binding, startedAt)
+	if err != nil {
+		t.Fatalf("NewDispatchRecord: %v", err)
+	}
+	if record.SchemaVersion != dispatchRecordSchemaVersion ||
+		record.RunID != binding.RunID ||
+		record.BeadID != binding.BeadID ||
+		record.QueueName != binding.QueueName ||
+		record.QueueID != binding.QueueID ||
+		record.GroupIndex != binding.GroupIndex ||
+		record.ItemIndex != binding.ItemIndex ||
+		record.ClaimTransitionID != binding.ClaimTransitionID {
+		t.Fatalf("record identity = %+v", record)
+	}
+	wantTime := startedAt.UTC().Truncate(time.Millisecond)
+	if !record.StartedAt.Equal(wantTime) || record.StartedAt.Location() != time.UTC {
+		t.Fatalf("StartedAt = %v, want %v", record.StartedAt, wantTime)
+	}
+}
 
 const (
 	dispatchTestQueueID      = "0197d200-0000-7000-8000-000000000001"

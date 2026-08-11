@@ -80,6 +80,64 @@ type Intent struct {
 	Handoff       *HandoffBinding `json:"handoff,omitempty"`
 }
 
+// NewPrepared returns the first durable intent for one queue reservation.
+func NewPrepared(binding Binding) (Intent, error) {
+	intent := Intent{SchemaVersion: intentSchemaVersion, Phase: PhasePrepared, Binding: binding}
+	if err := intent.Validate(); err != nil {
+		return Intent{}, err
+	}
+	return intent, nil
+}
+
+// WithClaimDurable returns the next intent after the exact claim is durable.
+func (i Intent) WithClaimDurable() (Intent, error) {
+	if err := i.Validate(); err != nil {
+		return Intent{}, fmt.Errorf("dispatch: invalid prepared predecessor: %w", err)
+	}
+	if i.Phase != PhasePrepared {
+		return Intent{}, fmt.Errorf("dispatch: claim advance requires prepared phase, got %q", i.Phase)
+	}
+	i.Phase = PhaseClaimDurable
+	if err := i.Validate(); err != nil {
+		return Intent{}, err
+	}
+	return i, nil
+}
+
+// WithRunDurable returns the next intent after the universal run record exists.
+func (i Intent) WithRunDurable() (Intent, error) {
+	if err := i.Validate(); err != nil {
+		return Intent{}, fmt.Errorf("dispatch: invalid claim predecessor: %w", err)
+	}
+	if i.Phase != PhaseClaimDurable {
+		return Intent{}, fmt.Errorf("dispatch: run advance requires claim_durable phase, got %q", i.Phase)
+	}
+	i.Phase = PhaseRunDurable
+	i.Run = &RunBinding{RecordRunID: i.Binding.RunID}
+	if err := i.Validate(); err != nil {
+		return Intent{}, err
+	}
+	return i, nil
+}
+
+// WithHandoffDurable returns the next intent after handoff identity is durable.
+func (i Intent) WithHandoffDurable(sessionName string) (Intent, error) {
+	if err := i.Validate(); err != nil {
+		return Intent{}, fmt.Errorf("dispatch: invalid run predecessor: %w", err)
+	}
+	if i.Phase != PhaseRunDurable {
+		return Intent{}, fmt.Errorf("dispatch: handoff advance requires run_durable phase, got %q", i.Phase)
+	}
+	i.Phase = PhaseHandoffDurable
+	runBinding := *i.Run
+	i.Run = &runBinding
+	i.Handoff = &HandoffBinding{SessionName: sessionName, WorktreeLeaseRunID: i.Binding.RunID}
+	if err := i.Validate(); err != nil {
+		return Intent{}, err
+	}
+	return i, nil
+}
+
 // Validate rejects incomplete phases and identity conflicts.
 func (i Intent) Validate() error {
 	if i.SchemaVersion != intentSchemaVersion {

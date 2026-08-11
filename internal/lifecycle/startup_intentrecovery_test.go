@@ -343,6 +343,30 @@ func TestLoadQueueAtStartup_RollsForwardBeforeItLoads(t *testing.T) {
 	}
 }
 
+func TestPrepareQueueNamespaceAtStartupSettlesTransactionsBeforeFactReads(t *testing.T) {
+	t.Parallel()
+
+	projectDir, intentPath := crashedReplaceFixture(t)
+	if err := PrepareQueueNamespaceAtStartup(
+		context.Background(),
+		projectDir,
+		slog.New(slog.DiscardHandler),
+	); err != nil {
+		t.Fatalf("PrepareQueueNamespaceAtStartup() = %v", err)
+	}
+
+	loaded, err := queue.Load(context.Background(), projectDir, "main")
+	if err != nil {
+		t.Fatalf("queue.Load() after namespace preparation = %v", err)
+	}
+	if loaded.Status != queue.QueueStatusPausedByDrain {
+		t.Fatalf("queue fact after namespace preparation = %q", loaded.Status)
+	}
+	if _, err := os.Stat(intentPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("replace intent remains after namespace preparation: %v", err)
+	}
+}
+
 func TestLoadQueueAtStartup_ResolvesAReplaceIntentLeftByACrash(t *testing.T) {
 	t.Parallel()
 

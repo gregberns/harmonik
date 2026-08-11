@@ -155,26 +155,7 @@ func LoadQueueAtStartup(
 		classBReap = reapCfg[0]
 	}
 
-	// NQ-A2: migrate legacy .harmonik/queue.json → .harmonik/queues/main.json
-	// before enumeration so the per-queue scan picks it up.
-	if err := queue.MigrateFromLegacy(ctx, projectDir); err != nil {
-		logger.ErrorContext(ctx, "queue: MigrateFromLegacy failed; startup refuses to choose a queue",
-			"error", err,
-		)
-		return nil, fmt.Errorf("lifecycle: queue migration failed: %w", err)
-	}
-
-	// Finish or roll back any durable replace intent a crash left behind, before
-	// a single queue file is read. A leftover intent refuses the next install
-	// for its queue, which the QueueStore reads as an indeterminate commit and
-	// quarantines on — so an unresolved intent wedges that queue for every later
-	// boot as well.
-	if err := recoverReplaceIntents(ctx, projectDir, logger); err != nil {
-		return nil, err
-	}
-	if err := recoverCompletionReleaseMarkers(
-		ctx, projectDir, logger, func() time.Time { return time.Now().UTC() },
-	); err != nil {
+	if err := PrepareQueueNamespaceAtStartup(ctx, projectDir, logger); err != nil {
 		return nil, err
 	}
 
@@ -198,6 +179,36 @@ func LoadQueueAtStartup(
 		}
 	}
 	return loaded, nil
+}
+
+// PrepareQueueNamespaceAtStartup resolves queue namespace transactions before
+// any caller reads queue facts for dispatch replay or normal reconciliation.
+func PrepareQueueNamespaceAtStartup(ctx context.Context, projectDir string, logger *slog.Logger) error {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return prepareQueueNamespaceAtStartup(ctx, projectDir, logger, func() time.Time { return time.Now().UTC() })
+}
+
+func prepareQueueNamespaceAtStartup(
+	ctx context.Context,
+	projectDir string,
+	logger *slog.Logger,
+	releaseTime func() time.Time,
+) error {
+	// NQ-A2: migrate legacy .harmonik/queue.json → .harmonik/queues/main.json
+	// before enumeration so every later reader uses the per-queue namespace.
+	if err := queue.MigrateFromLegacy(ctx, projectDir); err != nil {
+		logger.ErrorContext(ctx, "queue: MigrateFromLegacy failed; startup refuses to choose a queue", "error", err)
+		return fmt.Errorf("lifecycle: queue migration failed: %w", err)
+	}
+
+	// Resolve every queue namespace transaction before dispatch replay reads an
+	// exact canonical queue identity.
+	if err := recoverReplaceIntents(ctx, projectDir, logger); err != nil {
+		return err
+	}
+	return recoverCompletionReleaseMarkers(ctx, projectDir, logger, releaseTime)
 }
 
 func recoverCompletionReleaseMarkers(

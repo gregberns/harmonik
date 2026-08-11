@@ -10,20 +10,28 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
+// CycleIDGenerator returns a fresh identifier for each run of the cycle.
 type CycleIDGenerator interface{ Next() string }
 
+// PaneWriter is the write side of the agent's tmux pane. It injects text,
+// sends an Escape keystroke, and sets a tmux environment value.
 type PaneWriter interface {
 	Inject(context.Context, string, string) error
 	SendEscape(context.Context, string) error
 	SetEnv(context.Context, string, string, string) error
 }
 
+// ContextStore is the keeper's own file state for one agent. It reads the
+// context gauge, records the managed session id, and clears the precompact
+// trigger.
 type ContextStore interface {
 	ReadGauge() (*CtxFile, time.Time, error)
 	SetManagedSession(string) error
 	ClearPrecompactTrigger() error
 }
 
+// ActivityProbe reports the time of the last idle marker, the last user turn,
+// and the last assistant turn for a session.
 type ActivityProbe interface {
 	IdleMarkerModTime() (time.Time, bool)
 	LastUserTurn(string) (time.Time, bool)
@@ -31,14 +39,29 @@ type ActivityProbe interface {
 }
 
 type (
-	ManagedProbe          interface{ IsManaged() bool }
-	IdleProbe             interface{ CrispIdle() bool }
-	DispatchProbe         interface{ HoldingDispatch() bool }
-	SleepProbe            interface{ Sleeping(string) bool }
-	HoldProbe             interface{ Held() bool }
+	// ManagedProbe reports whether the agent is under keeper control.
+	ManagedProbe interface{ IsManaged() bool }
+
+	// IdleProbe reports whether the session waits at a clean input prompt.
+	IdleProbe interface{ CrispIdle() bool }
+
+	// DispatchProbe reports whether the agent has queue work in flight.
+	DispatchProbe interface{ HoldingDispatch() bool }
+
+	// SleepProbe reports whether the daemon parked the named session.
+	SleepProbe interface{ Sleeping(string) bool }
+
+	// HoldProbe reports whether an operator hold is active.
+	HoldProbe interface{ Held() bool }
+
+	// OperatorPresenceProbe reports whether an operator is attached to the
+	// named tmux target and was recently active there.
 	OperatorPresenceProbe interface{ Attached(string) bool }
 )
 
+// HandoffDocument is the handoff file that the agent writes. It gives the
+// path, the content, and the modification time, and it scrubs the keeper nonce
+// marker from the file.
 type HandoffDocument interface {
 	Path() string
 	Read() (string, error)
@@ -46,6 +69,8 @@ type HandoffDocument interface {
 	ScrubNonce() error
 }
 
+// CycleJournalStore reads and writes the one record that says which phase the
+// cycle is in.
 type CycleJournalStore interface {
 	Write(*CycleJournal) error
 	Read() (*CycleJournal, error)

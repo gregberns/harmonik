@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"strings"
@@ -59,7 +60,7 @@ func TestPrepareCompletionProducesExactStableDetachedValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(firstBytes) != string(secondBytes) {
+	if !bytes.Equal(firstBytes, secondBytes) {
 		t.Fatalf("fixed input changed output:\n%s\n%s", firstBytes, secondBytes)
 	}
 	if first.TransactionID != completionTransactionID || first.Receipt.ReceiptID != completionReceiptID {
@@ -74,7 +75,7 @@ func TestPrepareCompletionProducesExactStableDetachedValues(t *testing.T) {
 	if first.Candidate.Status != QueueStatusCompleted {
 		t.Fatalf("candidate status = %q", first.Candidate.Status)
 	}
-	if string(first.CandidateBytes) == "" || string(first.ReceiptBytes) == "" {
+	if len(first.CandidateBytes) == 0 || len(first.ReceiptBytes) == 0 {
 		t.Fatal("completion plan did not retain exact candidate and receipt bytes")
 	}
 	if !strings.Contains(string(first.CandidateBytes), `"completed_at":"2026-08-10T18:12:13.456Z"`) ||

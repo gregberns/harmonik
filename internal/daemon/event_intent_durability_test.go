@@ -26,8 +26,8 @@ func (e *intentDurabilityEmitter) Emit(context.Context, core.EventType, []byte) 
 	return nil
 }
 
-func (e *intentDurabilityEmitter) EmitWithRunID(context.Context, core.RunID, core.EventType, []byte) error {
-	return e.Emit(context.Background(), "", nil)
+func (e *intentDurabilityEmitter) EmitWithRunID(ctx context.Context, _ core.RunID, _ core.EventType, _ []byte) error {
+	return e.Emit(ctx, "", nil)
 }
 
 func (e *intentDurabilityEmitter) count() int {
@@ -128,7 +128,8 @@ func TestEagerRefillPersistFailureEmitsNoIntent(t *testing.T) {
 	root := t.TempDir()
 	kerfPath := filepath.Join(root, "kerf")
 	writeTestFile(t, kerfPath, "#!/bin/sh\nprintf '[{\"bead_id\":\"hk-eager-intent\"}]\\n'\n")
-	if err := os.Chmod(kerfPath, 0o755); err != nil {
+	//nolint:gosec // G302: the fixture is a shell script this test runs as a subprocess, so it needs the owner execute bit. 0o700 is the tightest mode that still runs.
+	if err := os.Chmod(kerfPath, 0o700); err != nil {
 		t.Fatalf("chmod kerf fixture: %v", err)
 	}
 
@@ -157,7 +158,8 @@ func TestEagerRefillStaleQueueIdentityDoesNotMutateReplacement(t *testing.T) {
 	kerfPath := filepath.Join(root, "kerf")
 	script := "#!/bin/sh\n: > '" + readyPath + "'\nwhile [ ! -e '" + releasePath + "' ]; do sleep 0.01; done\nprintf '[{\"bead_id\":\"hk-stale-intent\"}]\\n'\n"
 	writeTestFile(t, kerfPath, script)
-	if err := os.Chmod(kerfPath, 0o755); err != nil {
+	//nolint:gosec // G302: the fixture is a shell script this test runs as a subprocess, so it needs the owner execute bit. 0o700 is the tightest mode that still runs.
+	if err := os.Chmod(kerfPath, 0o700); err != nil {
 		t.Fatalf("chmod kerf fixture: %v", err)
 	}
 

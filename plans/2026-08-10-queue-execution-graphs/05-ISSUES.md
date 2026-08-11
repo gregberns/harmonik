@@ -38,4 +38,4 @@ Do not turn open research questions into implementation issues.
 ## Open research gaps
 
 - The queue accepts named bead IDs. It does not expand an epic into children. Confirm whether this is intentional in the queue contract.
-- Crash recovery still needs a graph-specific run with an abrupt process death. A clean stop is a separate confirmed gap.
+- Alpha's durable dispatch replay producer and startup replay paths are not on the integration branch yet. Reconcile the abrupt-crash scenario with their final contract when they land.

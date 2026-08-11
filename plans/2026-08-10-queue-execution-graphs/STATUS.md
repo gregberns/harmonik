@@ -33,11 +33,10 @@ Research and runtime proof. Serial and fan-out or fan-in graphs passed through t
 - Proved the epic fan graph lands all five children on one parent-derived integration branch.
 - Replaced clean-shutdown cancellation with a durable one-shot restart drain.
 - Proved a second real daemon continues the pending queue without resubmit or supervisor action.
+- Proved a killed daemon process group resumes the fan graph on a second daemon. The completed root does not run twice and fan-in does not start early.
 
 ## Next
 
-- Run an abrupt-crash graph recovery scenario. Keep it separate from the confirmed clean-stop cancellation gap.
-- Run the abrupt-crash graph recovery scenario after alpha's durable dispatch replay contract lands.
 - Coordinate the abrupt-crash scenario with C21. Do not pin the old session-only recovery path as the final dispatch contract.
 - Run the focused package and scenario gates.
 
@@ -47,5 +46,5 @@ Research and runtime proof. Serial and fan-out or fan-in graphs passed through t
 - Kerf cannot create a work from this worktree because its global project link points to the shared checkout.
 - The default macOS Bash 3 cannot run one script test because it lacks `mapfile`. Bash 5 is installed at `/opt/homebrew/bin/bash`. `PATH=/opt/homebrew/bin:$PATH make fast` is green: 8,342 tests passed and 45 existing tests were skipped.
 - `PATH=/opt/homebrew/bin:$PATH make full` ran 75,687 tests across 108 packages. All tests passed and 54 tests were skipped. The final repository-wide lint allow-list step failed on ten file and linter pairs outside delta's diff. The files belong to other active lanes and were present in delta's base. Delta did not change them or weaken the allow list.
-- Delta has three saved commits for the graph tests, clean-stop proof, and parent branch wiring.
+- Delta has five saved commits for the graph tests, restart fixes, and parent branch wiring. The abrupt-crash proof is the current change.
 - Free disk recovered above the watermark. The parent branch and clean restart scenarios now pass.

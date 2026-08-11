@@ -147,6 +147,20 @@ Result: all three tests passed on 2026-08-10.
 
 The startup path has the parts needed for abrupt-crash recovery. A dead recorded run resets its `in_progress` bead to `open`. The startup queue cross-check then changes its queue item from `dispatched` to `pending`. A live independent tmux session is adopted until it exits, then the same durable release returns the item for dispatch. The release matches queue name, queue ID, group index, item index, bead ID, and run ID. This prevents an old monitor from releasing a newer reservation.
 
-These are focused component tests. They do not yet prove that a full dependency graph survives a process kill. The required child-process scenario remains open.
+### Real process-group death during a fan graph
+
+Command:
+
+```text
+go test -tags=scenario ./internal/daemon -run '^TestScenario_QueueSubmit_AbruptCrashResumesFanGraph$' -count=1 -v
+```
+
+Result: PASS in 30.03 seconds on 2026-08-11.
+
+The scenario started the first full daemon in a separate process group. It submitted the real epic graph through the socket. It waited for A to complete and for branch runs to start, then sent `SIGKILL` to the daemon and its handler children.
+
+The second full daemon used the same Git repository, Beads database, queue file, and event log. Startup returned the three dispatched branch items to pending. The daemon completed the graph without resubmit. A did not run or merge twice. E started once and only after B, C, and D completed. All five beads closed. The parent-derived integration branch advanced by exactly five commits.
+
+This proves abrupt process death for the current queue and run-session contract. Alpha's durable dispatch replay work can add stronger intent-level assertions when its producer and startup replay paths land.
 
 Use one section per scenario. Include the exact command, binary commit, fixture commit, event IDs or stable log paths, branch graph, ledger state, and result.

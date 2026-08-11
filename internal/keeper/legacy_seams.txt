@@ -10,7 +10,6 @@ IsManagedFn
 OperatorAttachedFn
 ReadGaugeFn
 ReadHandoff
-ReadJournalFn
 SetManagedSessionFn
 SetTmuxEnvFn
 TruncateHandoffFn

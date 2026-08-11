@@ -55,6 +55,14 @@ type testHandoffWithModTime struct {
 	modTime func(string) (time.Time, bool)
 }
 
+type testJournalStore struct {
+	write func(*keeper.CycleJournal) error
+	read  func() (*keeper.CycleJournal, error)
+}
+
+func (s testJournalStore) Write(j *keeper.CycleJournal) error  { return s.write(j) }
+func (s testJournalStore) Read() (*keeper.CycleJournal, error) { return s.read() }
+
 func (h testHandoffWithModTime) ModTime() (time.Time, bool) {
 	return h.modTime(h.Path())
 }

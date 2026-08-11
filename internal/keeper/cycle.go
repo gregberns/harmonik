@@ -181,7 +181,6 @@ type CyclerConfig struct {
 	CrispIdleFn              func(projectDir, agentName string) bool
 	HoldingDispatchFn        func(projectDir, agentName string) bool
 	WriteJournalFn           func(path string, j *CycleJournal) error
-	ReadJournalFn            func(path string) (*CycleJournal, error)
 	ClearPrecompactTriggerFn func(projectDir, agentName string) error
 
 	// SetManagedSessionFn writes the new session_id into .managed after a cycle
@@ -394,9 +393,6 @@ func (c *CyclerConfig) applyDefaults() {
 	}
 	if c.WriteJournalFn == nil {
 		c.WriteJournalFn = writeJournalFile
-	}
-	if c.ReadJournalFn == nil {
-		c.ReadJournalFn = defaultReadJournal
 	}
 	if c.ClearPrecompactTriggerFn == nil {
 		c.ClearPrecompactTriggerFn = ClearPrecompactTrigger

@@ -62,4 +62,4 @@ func (s configJournalStore) path() string { return journalFilePath(s.cfg.Project
 func (s configJournalStore) Write(j *CycleJournal) error {
 	return s.cfg.WriteJournalFn(s.path(), j)
 }
-func (s configJournalStore) Read() (*CycleJournal, error) { return s.cfg.ReadJournalFn(s.path()) }
+func (s configJournalStore) Read() (*CycleJournal, error) { return defaultReadJournal(s.path()) }

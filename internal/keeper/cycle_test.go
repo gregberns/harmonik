@@ -146,6 +146,10 @@ func (js *journalStore) read(_ string) (*keeper.CycleJournal, error) {
 	return &cp, nil
 }
 
+func (js *journalStore) Write(j *keeper.CycleJournal) error { return js.write("", j) }
+
+func (js *journalStore) Read() (*keeper.CycleJournal, error) { return js.read("") }
+
 func (js *journalStore) lastJournal() *keeper.CycleJournal {
 	js.mu.Lock()
 	defer js.mu.Unlock()
@@ -845,9 +849,8 @@ func TestCycler_BootRecovery_PhaseCleared(t *testing.T) {
 		CrispIdleFn:         func(_, _ string) bool { return true },
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      js.write,
-		ReadJournalFn:       js.read,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) { deps.Journal = js })
 
 	if err := cycler.RecoverFromCrash(context.Background()); err != nil {
 		t.Fatalf("RecoverFromCrash: %v", err)
@@ -922,9 +925,8 @@ func TestCycler_BootRecovery_PhaseHandoff(t *testing.T) {
 		CrispIdleFn:         func(_, _ string) bool { return true },
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      js.write,
-		ReadJournalFn:       js.read,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) { deps.Journal = js })
 
 	if err := cycler.RecoverFromCrash(context.Background()); err != nil {
 		t.Fatalf("RecoverFromCrash: %v", err)
@@ -992,9 +994,13 @@ func TestCycler_BootRecovery_PhaseComplete(t *testing.T) {
 					writeCount++
 					return js.write("", &keeper.CycleJournal{})
 				},
-				ReadJournalFn: js.read,
 			}
-			cycler := mustNewCycler(cfg, em)
+			cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+				deps.Journal = testJournalStore{
+					write: func(*keeper.CycleJournal) error { writeCount++; return nil },
+					read:  js.Read,
+				}
+			})
 
 			if err := cycler.RecoverFromCrash(context.Background()); err != nil {
 				t.Fatalf("RecoverFromCrash: %v", err)
@@ -1033,9 +1039,8 @@ func TestCycler_BootRecovery_NoJournal(t *testing.T) {
 		CrispIdleFn:         func(_, _ string) bool { return true },
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      js.write,
-		ReadJournalFn:       js.read,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) { deps.Journal = js })
 
 	if err := cycler.RecoverFromCrash(context.Background()); err != nil {
 		t.Fatalf("RecoverFromCrash with no journal: %v", err)
@@ -1072,9 +1077,8 @@ func TestCycler_BootRecovery_UnmanagedNoOp(t *testing.T) {
 		CrispIdleFn:         func(_, _ string) bool { return true },
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      js.write,
-		ReadJournalFn:       js.read,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) { deps.Journal = js })
 
 	if err := cycler.RecoverFromCrash(context.Background()); err != nil {
 		t.Fatalf("RecoverFromCrash unmanaged: %v", err)

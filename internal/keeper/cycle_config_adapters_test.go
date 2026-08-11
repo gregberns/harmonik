@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -59,7 +60,7 @@ func TestConfigAdaptersKeepEntryTranscriptReadsLazy(t *testing.T) {
 func TestConfigAdaptersSeparateHandoffAndJournalPaths(t *testing.T) {
 	project := t.TempDir()
 	handoffPath := filepath.Join(project, "HANDOFF-custom.md")
-	var readHandoffPath, readJournalPath string
+	var readHandoffPath string
 	cfg := CyclerConfig{
 		AgentName: "adapter", ProjectDir: project,
 		HandoffFilePath: func(string, string) string { return handoffPath },
@@ -67,23 +68,27 @@ func TestConfigAdaptersSeparateHandoffAndJournalPaths(t *testing.T) {
 			readHandoffPath = path
 			return "handoff", nil
 		},
-		ReadJournalFn: func(path string) (*CycleJournal, error) {
-			readJournalPath = path
-			return nil, nil
-		},
 	}
 	deps := CycleDepsFromConfig(cfg, nil)
 	if _, err := deps.Handoff.Read(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := deps.Journal.Read(); err != nil {
+	journal := &CycleJournal{CycleID: "path-test", Phase: "opened"}
+	if err := deps.Journal.Write(journal); err != nil {
 		t.Fatal(err)
 	}
 	if readHandoffPath != handoffPath {
 		t.Fatalf("handoff path = %q, want %q", readHandoffPath, handoffPath)
 	}
 	wantJournal := journalFilePath(project, "adapter")
-	if readJournalPath != wantJournal {
-		t.Fatalf("journal path = %q, want %q", readJournalPath, wantJournal)
+	if _, err := os.Stat(wantJournal); err != nil {
+		t.Fatalf("journal was not written at %q: %v", wantJournal, err)
+	}
+	read, err := deps.Journal.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read.CycleID != journal.CycleID || read.Phase != journal.Phase {
+		t.Fatalf("journal = %+v, want %+v", read, journal)
 	}
 }

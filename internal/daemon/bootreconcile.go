@@ -39,17 +39,18 @@ type reconcileState struct {
 	sweepResult OrphanSweepResult
 }
 
-// runStartupReconcile performs PL-005 / PL-006 step 3: the boot-time orphan
-// sweep + in-flight-run reconcile, BEFORE any socket or listener bind. It holds
-// the single ProjectDir guard and drives three sub-helpers (build adapters →
-// sweep+adopt+reconcile → Cat-BL sweeps), each under the funlen/cyclop ceilings.
-// All reconcile work uses context.Background() (matching the pre-extraction
-// block); sweep/reconcile errors are non-fatal. The only fatal path is the
-// BI-024a `br` existence check (exit code 8), surfaced from buildReconcileAdapters.
+// runStartupReconcile prepares the queue namespace before PL-005 / PL-006 step
+// 3. It then runs the boot orphan sweep and in-flight-run reconciliation before
+// any socket or listener bind. Queue namespace recovery errors are fatal.
+// The BI-024a `br` existence check is also fatal. Later sweep and reconciliation
+// errors remain non-fatal.
 func (bs *bootState) runStartupReconcile(ctx context.Context, daemonStartTime time.Time, resolvedTargetBranch string) error {
 	cfg := bs.cfg
 	if cfg.ProjectDir == "" {
 		return nil
+	}
+	if err := lifecycle.PrepareQueueNamespaceAtStartup(ctx, cfg.ProjectDir, nil); err != nil {
+		return fmt.Errorf("daemon: prepare queue namespace before dispatch replay: %w", err)
 	}
 	st := &reconcileState{projectHash: lifecycle.ComputeProjectHash(cfg.ProjectDir)}
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -290,5 +291,26 @@ func TestQueueOwnershipWithDispatchAddsReplayBeadsWithoutMutation(t *testing.T) 
 	}
 	if _, changed := cfg.QueueOwned[replayBead]; changed {
 		t.Fatal("queue ownership input was mutated")
+	}
+}
+
+func TestStartupReconcilePreparesQueueNamespaceBeforeOtherRecovery(t *testing.T) {
+	projectDir := t.TempDir()
+	queuesDir := filepath.Join(projectDir, ".harmonik", "queues")
+	if err := os.MkdirAll(queuesDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	receiptRoot := filepath.Join(queuesDir, ".completion-receipts")
+	if err := os.WriteFile(receiptRoot, []byte("wrong type"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	bs := &bootState{cfg: Config{ProjectDir: projectDir}}
+	err := bs.runStartupReconcile(t.Context(), time.Now(), "main")
+	if err == nil {
+		t.Fatal("runStartupReconcile() accepted an invalid queue namespace")
+	}
+	if !strings.Contains(err.Error(), "prepare queue namespace before dispatch replay") {
+		t.Fatalf("runStartupReconcile() error = %v", err)
 	}
 }

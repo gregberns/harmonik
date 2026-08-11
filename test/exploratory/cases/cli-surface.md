@@ -12,7 +12,8 @@ Swept 2026-08-09 against a daemon at `89dc52d5`; statuses re-verified 2026-08-10
 Class: probe
 Exercises: `queue pause`, operator emergency stop
 Bead: `hk-queue-pause-succeeds-on-unknown-queue-nr18c`
-Status: FIXED at `953627f59` (verified 2026-08-10)
+Status: FIXED at `953627f59` (verified 2026-08-10; **re-verified live at `aedbd770`** — `pause`,
+`resume` and `recover` all now exit 2 on an unknown queue name and say what did not happen)
 
 Preconditions: live daemon, a queue named `main`, one bead dispatched and running.
 
@@ -115,7 +116,9 @@ compounds LP-003 and LP-010 — all three make a broken run look fine.
 Class: probe
 Exercises: `queue set-concurrency`
 Bead: `hk-set-concurrency-unbounded-ad79i`
-Status: OPEN at `daf396b41`
+Status: OPEN at `daf396b41`; **still OPEN, re-verified live at `aedbd770`** — `set-concurrency 99999`
+exits 0 and prints `max_concurrent: 1 → 99999`. The lower bound IS enforced (`0` exits 2 with "n
+must be an integer >= 1"), so the guard exists and only the upper end is missing.
 
 Steps:
 
@@ -220,3 +223,103 @@ Why it matters here: recorded so the next session does not spend a day re-provin
 `handler status`, `crew list`, `release ledger`, `confirm-verdict` and `veto-verdict` all
 refuse bad input with clear messages and correct exit codes, and `subscribe --since-event-id`
 and `--heartbeat` validate properly.
+
+---
+
+## LP-015 — a message to a recipient that does not exist is accepted and never delivered
+
+Class: probe
+Exercises: `comms send`, `comms who`, the presence registry
+Bead: `hk-rtqmu`
+Status: OPEN at `aedbd770` (found 2026-08-10)
+
+Preconditions: a live scratch daemon. No agent named `nosuchlane` anywhere.
+
+Steps:
+
+    out=$(harmonik comms send --project "$S" --to nosuchlane --from alpha \
+          --no-wake --topic status "epic complete" 2>&1); rc=$?
+    echo "rc=$rc"; echo "$out"
+    harmonik comms log --project "$S" | tail -2
+
+Expect: a directed send to a name the daemon has never seen either fails, or returns a
+delivery status the sender can act on.
+
+Failure signature: `rc=0`, and the whole output is an event id:
+
+    019fef4e-9fbd-7ed0-9184-646377e53d07
+
+Drop `--no-wake` and one accidental signal appears on stderr — `can't find pane:
+harmonik-<hash>-nosuchlane` — but `comms send --help` states that wake failures "do not affect
+the exit code", so it is documented as not-a-signal, and `--no-wake` removes it. **Both spellings
+exit 0.**
+
+The message is not lost. It sits in `comms log` looking exactly like a delivered one:
+
+    2026-08-11T05:32:15Z  alpha → nosuchlane  [status]  epic complete
+
+**`comms who` cannot be used as the pre-flight check**, and this is the part worth remembering:
+
+    harmonik comms recv --project "$S" --agent phantom-never-existed >/dev/null
+    harmonik comms who --project "$S" | grep phantom
+    # phantom-never-existed    last_seen 2026-08-11T05:32:15Z
+
+`recv` emits a presence beat, so **typing a name once puts it in the registry**. A `--to` target
+never appears there at all. So `who` answers "which names did a process recently use", not "which
+agents exist", and the one name you wanted to validate is the one it will never show you. Entries
+do expire (120s online, 10m stale cutoff, `internal/presence`), so ghosts do not accumulate — but
+inside that window a name typed once reads as a live agent.
+
+Why it matters: this is the channel the captain uses to mail epics to crews and crews use to report
+completion. A misaddressed epic is a silent black hole — the captain sees success, the crew never
+hears, and the only symptom is an epic that never completes. **That is indistinguishable from a
+stalled crew, which is the thing everyone is already hunting.**
+
+---
+
+## LP-016 — `wake` says it nudged a session for any string you give it
+
+Class: probe
+Exercises: `harmonik wake`, the fleet-stall escape hatch
+Bead: `hk-o3mz8`
+Status: OPEN at `aedbd770` (found 2026-08-10)
+
+Preconditions: a live scratch daemon.
+
+Steps:
+
+    for n in nosuchagent ../../etc "a b c" alpha; do
+      out=$(harmonik wake --project "$S" --agent "$n" 2>&1); rc=$?
+      printf '%-14s rc=%s | %s\n' "$n" "$rc" "$out"
+    done
+
+Expect: a name matching no session is refused, or the output states how many sessions matched.
+
+Failure signature: every one of them exits 0 and claims success.
+
+    nosuchagent    rc=0 | wake: nosuchagent nudged
+    ../../etc      rc=0 | wake: ../../etc nudged
+    a b c          rc=0 | wake: a b c nudged
+    alpha          rc=0 | wake: alpha nudged
+
+The last is a real session. Nothing in the output separates it from the other three. Only the
+empty string is refused (rc=1).
+
+The counter-argument, and why it does not hold: `wake --help` says "Sessions that are not currently
+sleeping are silently skipped", which is reasonable for a REAL session that is already awake. It
+does not cover a name matching no session at all, and "nudged" is an affirmative claim either way.
+The documented meaning of exit 0 is "sessions nudged".
+
+Why it matters: `wake` is the fleet-stall human escape hatch — its own help says so. It gets used
+when the fleet is already wedged and the operator is deciding whether the wake path is broken or
+the session is. "Nudged" when zero sessions matched sends that operator off to debug a session they
+never woke. A count settles it: `0 sessions matched` versus `1 nudged`.
+
+Smaller, same family: `queue cancel --queue <does-not-exist>` exits 0 with "no active queue found
+(queue file absent)" and never echoes the name it was given.
+
+**The fix shape already exists in this codebase** — `queue pause/resume/recover` had this exact
+defect (LP-001) and now refuse:
+
+    rc=2  daemon: operator-pause: no queue named "ghostqueue":
+          `harmonik queue pause` changed nothing and no queue was paused

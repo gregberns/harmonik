@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -23,6 +24,8 @@ const (
 
 // ErrNotFound is returned by Load and Remove when the record file is absent.
 var ErrNotFound = errors.New("run: record not found")
+
+var runNamespaceMu sync.Mutex
 
 // Record is a single run-session registry entry.
 // Persisted to .harmonik/runs/<RunID>.json when a bead-run starts in an
@@ -50,6 +53,17 @@ func recordPath(projectDir, runID string) string {
 // Write atomically writes r to .harmonik/runs/<r.RunID>.json.
 // The directory is created if absent.
 func Write(projectDir string, r Record) error {
+	runNamespaceMu.Lock()
+	defer runNamespaceMu.Unlock()
+	if existing, err := os.ReadFile(recordPath(projectDir, r.RunID)); err == nil {
+		pathRunID, pathErr := canonicalRunBasename(r.RunID + ".json")
+		_, decodeErr := decodeLegacyRecord(existing, pathRunID)
+		if pathErr != nil || decodeErr != nil {
+			return &DispatchConflictError{Detail: "legacy writer cannot replace an unclassified or non-legacy record"}
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("run: inspect existing record %q: %w", r.RunID, err)
+	}
 	dir := runsDir(projectDir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("run: mkdir %q: %w", dir, err)
@@ -77,6 +91,12 @@ func Write(projectDir string, r Record) error {
 // Load reads the record for runID from .harmonik/runs/<runID>.json.
 // Returns ErrNotFound when the file is absent.
 func Load(projectDir, runID string) (Record, error) {
+	runNamespaceMu.Lock()
+	defer runNamespaceMu.Unlock()
+	return loadLegacyUnlocked(projectDir, runID)
+}
+
+func loadLegacyUnlocked(projectDir, runID string) (Record, error) {
 	data, err := os.ReadFile(recordPath(projectDir, runID))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -94,6 +114,8 @@ func Load(projectDir, runID string) (Record, error) {
 // Remove deletes .harmonik/runs/<runID>.json.
 // Returns ErrNotFound when the file is absent.
 func Remove(projectDir, runID string) error {
+	runNamespaceMu.Lock()
+	defer runNamespaceMu.Unlock()
 	path := recordPath(projectDir, runID)
 	if err := os.Remove(path); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -107,6 +129,8 @@ func Remove(projectDir, runID string) error {
 // List returns all run records found in .harmonik/runs/.
 // An empty or missing directory returns a nil slice without error.
 func List(projectDir string) ([]Record, error) {
+	runNamespaceMu.Lock()
+	defer runNamespaceMu.Unlock()
 	dir := runsDir(projectDir)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -122,7 +146,7 @@ func List(projectDir string) ([]Record, error) {
 		}
 		name := e.Name()
 		runID := name[:len(name)-len(".json")]
-		r, loadErr := Load(projectDir, runID)
+		r, loadErr := loadLegacyUnlocked(projectDir, runID)
 		if loadErr != nil {
 			continue // skip corrupt or tmp records
 		}

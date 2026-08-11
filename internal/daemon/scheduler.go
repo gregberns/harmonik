@@ -1658,9 +1658,13 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 			// to pending and retrying creates a live-lock that starves the remaining
 			// pending items in the wave group.
 			//
-			// Detection: check both the error message from br claim (which includes
-			// "cannot claim blocked issue" when deps are open) AND the ShowBead
+			// Detection: check the TYPED refusal from brcli AND the ShowBead
 			// status. A bead can be status=open but still unclaimable due to deps.
+			//
+			// Do not route on the words in claimErr. An unrelated failure whose
+			// message contains "blocked" then fails the queue item instead of
+			// releasing its reservation for retry (hk-s23kb). brcli owns the one
+			// place that reads br's presentation text: classifyClaimRefusal.
 			if queueItemIndex >= 0 && queueStore != nil && queueIDField != nil && queueGroupIdxFd != nil {
 				kind := orchestrator.ClaimFailureOther
 				if errors.Is(claimErr, brcli.ErrClaimDependencyBlocked) {

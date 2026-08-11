@@ -50,6 +50,12 @@ func (s *Scenario) Ports() *RecordingPorts { return s.record }
 // Clock returns the fake clock that drives the cycle.
 func (s *Scenario) Clock() *substrate.FakeClock { return s.clock }
 
+// Dependencies returns the narrow dependency graph backed by these recording
+// ports and the given clock.
+func (r *RecordingPorts) Dependencies(clock substrate.ClockPort) keeper.CycleDeps {
+	return r.deps(clock)
+}
+
 // DisabledGates returns a copy of the gates the test turned off, with the
 // reason it gave for each one.
 func (s *Scenario) DisabledGates() map[string]string {

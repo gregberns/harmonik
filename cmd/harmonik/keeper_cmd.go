@@ -141,12 +141,12 @@ func buildKeeperConfigs(resolved ResolvedKeeperConfig, p keeperBuildParams) (kee
 	return cyclerCfg, watcherCfg
 }
 
-func constructKeeperCycler(cfg keeper.CyclerConfig, emitter keeper.Emitter) (*keeper.Cycler, error) {
-	return keeper.NewCyclerWithDeps(
-		keeper.CyclePolicyFromConfig(cfg),
-		keeper.CycleEnvFromConfig(cfg),
-		keeper.CycleDepsFromConfig(cfg, emitter),
-	)
+func constructKeeperCycler(
+	policy keeper.CyclePolicy,
+	env keeper.CycleEnv,
+	deps keeper.CycleDeps,
+) (*keeper.Cycler, error) {
+	return keeper.NewCyclerWithDeps(policy, env, deps)
 }
 
 // runKeeperSubcommand implements `harmonik keeper`.
@@ -495,7 +495,11 @@ func runKeeperSubcommand(args []string) int {
 	var cycler *keeper.Cycler
 	if !warnOnlyFlag {
 		var constructErr error
-		cycler, constructErr = constructKeeperCycler(cyclerCfg, emitter)
+		cycler, constructErr = constructKeeperCycler(
+			keeper.CyclePolicyFromConfig(cyclerCfg),
+			keeper.CycleEnvFromConfig(cyclerCfg),
+			keeper.CycleDepsFromConfig(cyclerCfg, emitter),
+		)
 		if constructErr != nil {
 			fmt.Fprintf(os.Stderr, "harmonik keeper: construct cycle: %v\n", constructErr)
 			return 1

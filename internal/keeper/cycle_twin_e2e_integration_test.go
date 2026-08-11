@@ -405,7 +405,7 @@ func TestIntegration_TwinClearRestartCycle_E2E(t *testing.T) {
 		// flatten). The twin now parses the multi-line directive natively
 		// (hk-fan), so the E2E exercises the maximally-faithful path. Everything
 		// else (ReadGaugeFn, ReadHandoff, CrispIdleFn, HoldingDispatchFn,
-		// IsManagedFn, managed-session port, HandoffFilePath, TruncateHandoffFn,
+		// ManagedProbe, managed-session port, HandoffFilePath, TruncateHandoffFn,
 		// defaults.
 		InjectFn: keeper.InjectText,
 	}
@@ -857,7 +857,6 @@ func TestIntegration_TwinE2E_GaugeStateTransitions(t *testing.T) {
 				HandoffTimeout:    200 * time.Millisecond,
 				PollInterval:      30 * time.Millisecond,
 				ClearSettle:       30 * time.Millisecond,
-				IsManagedFn:       func(_, _ string) bool { return true },
 				CrispIdleFn:       func(_, _ string) bool { return c.crispIdle },
 				HoldingDispatchFn: func(_, _ string) bool { return false },
 				HandoffFilePath:   func(_, _ string) string { return filepath.Join(t.TempDir(), "HANDOFF.md") },

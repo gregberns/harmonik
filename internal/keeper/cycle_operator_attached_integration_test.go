@@ -274,7 +274,6 @@ func TestIntegration_OperatorAttached_SuppressesAndResumes(t *testing.T) {
 		ClearSettle:       200 * time.Millisecond,
 		PollInterval:      10 * time.Millisecond,
 		CycleIDGen:        func() string { return cycleID },
-		IsManagedFn:       func(_, _ string) bool { return true },
 		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
 		ReadHandoff:       readHandoff,
 		TruncateHandoffFn: func(_ string) error { return nil },

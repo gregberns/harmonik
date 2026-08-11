@@ -4,7 +4,6 @@ HandoffFilePath
 HoldingDispatchFn
 IdleMarkerModTimeFn
 InjectFn
-IsManagedFn
 ReadGaugeFn
 ReadHandoff
 TruncateHandoffFn

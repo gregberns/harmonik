@@ -55,7 +55,6 @@ func newIdleCycler(
 		ClearSettle:         50 * time.Millisecond,
 		PollInterval:        10 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, agent string) string {
 			return filepath.Join(projectDir, "HANDOFF-"+agent+".md")
 		},

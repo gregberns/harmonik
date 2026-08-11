@@ -97,7 +97,6 @@ func newConvoAwareCycler(
 		ClearSettle:         50 * time.Millisecond,
 		PollInterval:        5 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return filepath.Join(projectDir, "HANDOFF-"+a+".md")
 		},
@@ -193,7 +192,6 @@ func TestCycler_StaleOperatorTurn_DoesNotSuppress(t *testing.T) {
 		ClearSettle:         50 * time.Millisecond,
 		PollInterval:        5 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return filepath.Join(projectDir, "HANDOFF-"+a+".md")
 		},
@@ -259,7 +257,6 @@ func TestCycler_ToolResultUserTurn_DoesNotSuppress(t *testing.T) {
 		ClearSettle:         50 * time.Millisecond,
 		PollInterval:        5 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return filepath.Join(projectDir, "HANDOFF-"+a+".md")
 		},
@@ -325,7 +322,6 @@ func TestCycler_OperatorTurnLookbackZero_DisablesGate5d(t *testing.T) {
 		ClearSettle:         50 * time.Millisecond,
 		PollInterval:        5 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return filepath.Join(projectDir, "HANDOFF-"+a+".md")
 		},
@@ -480,7 +476,6 @@ func TestCycler_PostAnswerGrace_Expired_DoesNotSuppress(t *testing.T) {
 		ClearSettle:         50 * time.Millisecond,
 		PollInterval:        5 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return filepath.Join(projectDir, "HANDOFF-"+a+".md")
 		},
@@ -545,7 +540,6 @@ func TestCycler_AssistantToolUseTurn_DoesNotTriggerGrace(t *testing.T) {
 		ClearSettle:         50 * time.Millisecond,
 		PollInterval:        5 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return filepath.Join(projectDir, "HANDOFF-"+a+".md")
 		},

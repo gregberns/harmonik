@@ -160,7 +160,6 @@ type CyclerConfig struct {
 	// Injectable dependencies. Nil means use the production default. Command
 	// composition converts these functions into the narrow ports in CycleDeps.
 	CycleIDGen      func() string
-	IsManagedFn     func(projectDir, agentName string) bool
 	HandoffFilePath func(projectDir, agentName string) string
 	ReadHandoff     func(path string) (string, error)
 	// TruncateHandoffFn SCRUBS the keeper's own `<!-- KEEPER:... -->` nonce
@@ -325,9 +324,6 @@ func (c *CyclerConfig) applyDefaults() {
 	}
 	if c.CycleIDGen == nil {
 		c.CycleIDGen = newCycleIDGen(c.Clock)
-	}
-	if c.IsManagedFn == nil {
-		c.IsManagedFn = IsManaged
 	}
 	if c.HandoffFilePath == nil {
 		c.HandoffFilePath = defaultHandoffFilePath

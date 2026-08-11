@@ -18,6 +18,7 @@ func mustNewCyclerWithDeps(
 ) *keeper.Cycler {
 	deps := keeper.CycleDepsFromConfig(cfg, emitter)
 	deps.Operator = testOperatorProbe(func(string) bool { return false })
+	deps.Managed = testManagedProbe(true)
 	deps.Pane = testPaneWithEnv{PaneWriter: deps.Pane}
 	deps.Context = testContextWithManaged{ContextStore: deps.Context}
 	if modify != nil {
@@ -68,6 +69,10 @@ func (f testSleepProbe) Sleeping(sid string) bool { return f(sid) }
 type testHoldProbe func() bool
 
 func (f testHoldProbe) Held() bool { return f() }
+
+type testManagedProbe bool
+
+func (p testManagedProbe) IsManaged() bool { return bool(p) }
 
 type testOperatorProbe func(string) bool
 

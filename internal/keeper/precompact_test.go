@@ -65,7 +65,6 @@ func newPrecompactCycler(
 		ClearSettle:         50 * time.Millisecond,
 		PollInterval:        10 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return isManaged },
 		HandoffFilePath: func(_, agent string) string {
 			return filepath.Join(projectDir, "HANDOFF-"+agent+".md")
 		},
@@ -79,6 +78,7 @@ func newPrecompactCycler(
 	}
 	return mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
 		deps.Context = testContextWithClear{ContextStore: deps.Context, clear: func() error { return nil }}
+		deps.Managed = testManagedProbe(isManaged)
 	})
 }
 

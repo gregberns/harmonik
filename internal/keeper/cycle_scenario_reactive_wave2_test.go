@@ -200,7 +200,6 @@ func TestKeeperCycle_ForcedClearAboveHardThreshold(t *testing.T) {
 		ClearSettle:         300 * time.Millisecond,
 		PollInterval:        5 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
@@ -407,7 +406,6 @@ func TestKeeperCycle_PreCompactBackstop(t *testing.T) {
 		ClearSettle:         300 * time.Millisecond,
 		PollInterval:        5 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
@@ -562,7 +560,6 @@ func TestKeeperCycle_ClearBriefHardGate_SlowClear(t *testing.T) {
 		ClearConfirmBackstop: clearConfirmBackstop,
 		ClearConfirmRetries:  clearConfirmRetries,
 		CycleIDGen:           func() string { return cycleID },
-		IsManagedFn:          func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},

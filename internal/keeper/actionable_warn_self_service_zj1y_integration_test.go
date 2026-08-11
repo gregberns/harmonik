@@ -275,7 +275,6 @@ func TestZJ1Y_SelfServiceRestart_GaugeDrop_ExactlyOneClear(t *testing.T) {
 		ClearSettle:    20 * time.Millisecond,
 		PollInterval:   5 * time.Millisecond,
 		CycleIDGen:     func() string { return cycleID },
-		IsManagedFn:    func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-zj1y-" + a + ".md"
 		},

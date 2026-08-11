@@ -46,7 +46,6 @@ func newModelDoneCycler(
 		ClearConfirmRetries:  5,
 		ModelDoneTimeout:     modelDoneTimeout,
 		CycleIDGen:           func() string { return cycleID },
-		IsManagedFn:          func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},

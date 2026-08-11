@@ -200,7 +200,7 @@ func gaugeReturnsNewSIDAfter(n int, prevSID, newSID string) func(string, string)
 }
 
 // newTestCycler builds a Cycler wired with test fakes.
-// isManaged controls whether the IsManagedFn returns true (managed) or false.
+// isManaged controls the managed-state probe result.
 func newTestCycler(
 	agentName string,
 	projectDir string,
@@ -244,7 +244,6 @@ func newTestCyclerManaged(
 		ClearSettle:    clearSettle,
 		PollInterval:   10 * time.Millisecond,
 		CycleIDGen:     func() string { return cycleID },
-		IsManagedFn:    func(_, _ string) bool { return isManaged },
 		HandoffFilePath: func(_, agent string) string {
 			return "/tmp/HANDOFF-" + agent + ".md"
 		},
@@ -261,7 +260,9 @@ func newTestCyclerManaged(
 		// with no added wait (the pre-T8 clear-right-after-confirm cadence).
 		IdleMarkerModTimeFn: idleMarkerFreshNow,
 	}
-	return mustNewCycler(cfg, em)
+	return mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Managed = testManagedProbe(isManaged)
+	})
 }
 
 // idleMarkerFreshNow is the shared test IdleMarkerModTimeFn: a Stop-hook
@@ -764,7 +765,6 @@ func TestCycler_SuppressionRequiresBothConditions(t *testing.T) {
 		ClearSettle:         50 * time.Millisecond,
 		PollInterval:        10 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath:     func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
 		ReadHandoff:         readHandoff,
 		TruncateHandoffFn:   func(_ string) error { return nil },
@@ -841,7 +841,6 @@ func TestCycler_BootRecovery_PhaseCleared(t *testing.T) {
 		TmuxTarget:          "fake-pane",
 		ActPct:              90.0,
 		WarnPct:             80.0,
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath:     func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
 		TruncateHandoffFn:   func(_ string) error { return nil },
 		InjectFn:            spy.inject,
@@ -849,7 +848,9 @@ func TestCycler_BootRecovery_PhaseCleared(t *testing.T) {
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      js.write,
 	}
-	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) { deps.Journal = js })
+	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Journal = js
+	})
 
 	if err := cycler.RecoverFromCrash(context.Background()); err != nil {
 		t.Fatalf("RecoverFromCrash: %v", err)
@@ -917,7 +918,6 @@ func TestCycler_BootRecovery_PhaseHandoff(t *testing.T) {
 		TmuxTarget:          "fake-pane",
 		ActPct:              90.0,
 		WarnPct:             80.0,
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath:     func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
 		TruncateHandoffFn:   func(_ string) error { return nil },
 		InjectFn:            spy.inject,
@@ -925,7 +925,9 @@ func TestCycler_BootRecovery_PhaseHandoff(t *testing.T) {
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      js.write,
 	}
-	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) { deps.Journal = js })
+	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Journal = js
+	})
 
 	if err := cycler.RecoverFromCrash(context.Background()); err != nil {
 		t.Fatalf("RecoverFromCrash: %v", err)
@@ -983,7 +985,6 @@ func TestCycler_BootRecovery_PhaseComplete(t *testing.T) {
 				TmuxTarget:          "fake-pane",
 				ActPct:              90.0,
 				WarnPct:             80.0,
-				IsManagedFn:         func(_, _ string) bool { return true },
 				HandoffFilePath:     func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
 				TruncateHandoffFn:   func(_ string) error { return nil },
 				InjectFn:            spy.inject,
@@ -1031,7 +1032,6 @@ func TestCycler_BootRecovery_NoJournal(t *testing.T) {
 		TmuxTarget:          "fake-pane",
 		ActPct:              90.0,
 		WarnPct:             80.0,
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath:     func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
 		TruncateHandoffFn:   func(_ string) error { return nil },
 		InjectFn:            spy.inject,
@@ -1069,7 +1069,6 @@ func TestCycler_BootRecovery_UnmanagedNoOp(t *testing.T) {
 		AgentName:           "unmanaged-recover-agent",
 		ProjectDir:          t.TempDir(),
 		TmuxTarget:          "fake-pane",
-		IsManagedFn:         func(_, _ string) bool { return false }, // unmanaged
 		HandoffFilePath:     func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
 		TruncateHandoffFn:   func(_ string) error { return nil },
 		InjectFn:            spy.inject,
@@ -1077,7 +1076,10 @@ func TestCycler_BootRecovery_UnmanagedNoOp(t *testing.T) {
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      js.write,
 	}
-	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) { deps.Journal = js })
+	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Journal = js
+		deps.Managed = testManagedProbe(false)
+	})
 
 	if err := cycler.RecoverFromCrash(context.Background()); err != nil {
 		t.Fatalf("RecoverFromCrash unmanaged: %v", err)
@@ -1149,7 +1151,6 @@ func TestCycler_TruncateCalledBeforePoll(t *testing.T) {
 		ClearSettle:         100 * time.Millisecond,
 		PollInterval:        10 * time.Millisecond,
 		CycleIDGen:          func() string { return newCycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath:     func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
 		ReadHandoff:         readHandoff,
 		TruncateHandoffFn:   truncateFn,
@@ -1240,7 +1241,6 @@ func TestCycler_BriefRestartAfterNonceConfirm(t *testing.T) {
 		ClearSettle:         100 * time.Millisecond,
 		PollInterval:        10 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
@@ -1342,7 +1342,6 @@ func TestCycler_AbsoluteTokenGate(t *testing.T) {
 		ClearSettle:         50 * time.Millisecond,
 		PollInterval:        10 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
@@ -1400,7 +1399,6 @@ func TestCycler_AbsoluteTokenGate_BelowThreshold(t *testing.T) {
 		ClearSettle:         30 * time.Millisecond,
 		PollInterval:        10 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
@@ -1466,7 +1464,6 @@ func TestCycler_AbsoluteTokenGate_200kWindow(t *testing.T) {
 		ClearSettle:         50 * time.Millisecond,
 		PollInterval:        10 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
@@ -1525,7 +1522,6 @@ func TestCycler_UpdatesManagedSessionAfterCycle(t *testing.T) {
 		ClearSettle:         200 * time.Millisecond,
 		PollInterval:        10 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
@@ -1599,7 +1595,6 @@ func TestCycler_ClearSettleTimeout_ClearsManagedSessionID(t *testing.T) {
 		ClearSettle:         50 * time.Millisecond, // short so the test is fast
 		PollInterval:        10 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
@@ -1671,7 +1666,6 @@ func TestCycler_AntiLoopEscapeHatch_ResetOnSameSessionLowPct(t *testing.T) {
 		ClearSettle:         20 * time.Millisecond,
 		PollInterval:        5 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
@@ -1774,7 +1768,6 @@ func TestCycler_ForcedClear_BypassesCrispIdle(t *testing.T) {
 		ClearSettle:         200 * time.Millisecond,
 		PollInterval:        10 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
@@ -1875,7 +1868,6 @@ func TestCycler_ForcedClear_RetryAfterInterval(t *testing.T) {
 		ClearSettle:         10 * time.Millisecond,
 		PollInterval:        5 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
@@ -1969,7 +1961,6 @@ func TestCycler_ForcedClear_EscapeInjected(t *testing.T) {
 		ClearSettle:         100 * time.Millisecond,
 		PollInterval:        10 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
@@ -2067,7 +2058,6 @@ func TestCycler_ForcedClear_EscalatesAfterNTimeouts(t *testing.T) {
 		ClearSettle:         5 * time.Millisecond,
 		PollInterval:        2 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
@@ -2159,7 +2149,6 @@ func TestCycler_BootGrace_SuppressesAndThenAllows(t *testing.T) {
 		PollInterval:        10 * time.Millisecond,
 		BootGracePeriod:     bootGrace,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath:     func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
 		ReadHandoff:         readHandoff,
 		TruncateHandoffFn:   func(_ string) error { return nil },
@@ -2251,7 +2240,6 @@ func TestCycler_YoungSessionGuard_NewBand_AbsTokens(t *testing.T) {
 		PollInterval:        10 * time.Millisecond,
 		BootGracePeriod:     bootGrace,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath:     func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
 		ReadHandoff:         readHandoff,
 		TruncateHandoffFn:   func(_ string) error { return nil },
@@ -2326,7 +2314,6 @@ func TestCycler_CleanHandoffGuard_DispatchingSuppressesAboveForce(t *testing.T) 
 		ClearSettle:         50 * time.Millisecond,
 		PollInterval:        10 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath:     func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
 		ReadHandoff:         readHandoff,
 		TruncateHandoffFn:   func(_ string) error { return nil },
@@ -2411,7 +2398,6 @@ func TestCycler_AbortClearsManaged(t *testing.T) {
 		ClearSettle:         10 * time.Millisecond,
 		PollInterval:        5 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath:     func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
 		ReadHandoff:         handoffNeverReturnsNonce,
 		TruncateHandoffFn:   func(_ string) error { return nil },
@@ -2502,7 +2488,6 @@ func TestCycler_ForcedClear_BelowThreshold_StillBlocked(t *testing.T) {
 		ClearSettle:         50 * time.Millisecond,
 		PollInterval:        10 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
@@ -2570,7 +2555,6 @@ func TestCycler_ForceThresholdTracksActPct(t *testing.T) {
 		ClearSettle:    200 * time.Millisecond,
 		PollInterval:   10 * time.Millisecond,
 		CycleIDGen:     func() string { return cycleID },
-		IsManagedFn:    func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
@@ -2664,7 +2648,6 @@ func TestCycler_BootGrace_ForcePathBypasses(t *testing.T) {
 		PollInterval:        10 * time.Millisecond,
 		BootGracePeriod:     bootGrace,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath:     func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
 		ReadHandoff:         readHandoff,
 		TruncateHandoffFn:   func(_ string) error { return nil },
@@ -2746,7 +2729,6 @@ func TestCycler_AbortDoesNotClearManaged_FirstSession(t *testing.T) {
 		ClearSettle:         10 * time.Millisecond,
 		PollInterval:        5 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath:     func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
 		ReadHandoff:         handoffNeverReturnsNonce,
 		TruncateHandoffFn:   func(_ string) error { return nil },
@@ -2826,7 +2808,6 @@ func TestCycler_BootGrace_FlappingSID(t *testing.T) {
 		PollInterval:        10 * time.Millisecond,
 		BootGracePeriod:     bootGrace,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath:     func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
 		ReadHandoff:         readHandoff,
 		TruncateHandoffFn:   func(_ string) error { return nil },
@@ -2957,7 +2938,6 @@ func TestCycler_AbortToResumeGraceToRefire(t *testing.T) {
 		PollInterval:        5 * time.Millisecond,
 		BootGracePeriod:     bootGrace,
 		CycleIDGen:          cycleIDGen,
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath:     func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
 		ReadHandoff:         readHandoff,
 		TruncateHandoffFn:   func(_ string) error { return nil },
@@ -3134,7 +3114,6 @@ func TestCycler_CrossSID_ForceRetry_AfterAbort(t *testing.T) {
 				PollInterval:        5 * time.Millisecond,
 				// BootGracePeriod disabled: this test focuses on Gate-6, not boot-grace.
 				CycleIDGen:        cycleIDGen,
-				IsManagedFn:       func(_, _ string) bool { return true },
 				HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
 				ReadHandoff:       readHandoff,
 				TruncateHandoffFn: func(_ string) error { return nil },
@@ -3243,7 +3222,6 @@ func TestCycler_BootGrace_BurstRelativeCap(t *testing.T) {
 		BootGracePeriod:     bootGrace,
 		MaxBootGraceTotal:   maxBootGraceTotal,
 		CycleIDGen:          func() string { return "cyc-burst-cap" },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath:     func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
 		ReadHandoff:         func(_ string) (string, error) { return "", nil }, // abort
 		TruncateHandoffFn:   func(_ string) error { return nil },

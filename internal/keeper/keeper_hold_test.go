@@ -342,7 +342,6 @@ func TestCyclerMaybeRun_DeferredWhenHeld(t *testing.T) {
 			TmuxTarget:        "",
 			ActPct:            80.0,
 			WarnPct:           70.0,
-			IsManagedFn:       func(_, _ string) bool { return true },
 			CrispIdleFn:       func(_, _ string) bool { return true },
 			HoldingDispatchFn: func(_, _ string) bool { return false },
 			InjectFn: func(_ context.Context, _, _ string) error {
@@ -618,7 +617,6 @@ func TestRunForPrecompact_SuppressedWhenHeld(t *testing.T) {
 			ClearSettle:         20 * time.Millisecond,
 			PollInterval:        10 * time.Millisecond,
 			CycleIDGen:          func() string { return cycleID },
-			IsManagedFn:         func(_, _ string) bool { return true },
 			HandoffFilePath: func(_, a string) string {
 				return filepath.Join(dir, "HANDOFF-"+a+".md")
 			},
@@ -704,7 +702,6 @@ func TestRunForIdle_SuppressedWhenHeld(t *testing.T) {
 			ClearSettle:         20 * time.Millisecond,
 			PollInterval:        10 * time.Millisecond,
 			CycleIDGen:          func() string { return cycleID },
-			IsManagedFn:         func(_, _ string) bool { return true },
 			HandoffFilePath: func(_, a string) string {
 				return filepath.Join(dir, "HANDOFF-"+a+".md")
 			},

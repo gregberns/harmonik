@@ -117,7 +117,6 @@ func TestCycler_DelayedPollTick_HandoffTimeoutStaysPunctual(t *testing.T) {
 		// ~200ms, call-1's wall time crosses 150ms, and call-2 wrongly fires.
 		Clock:             &delayedTickClock{delayInterval: pollInterval, firstDelay: tickWithheldFor},
 		CycleIDGen:        func() string { return cycleID },
-		IsManagedFn:       func(_, _ string) bool { return true },
 		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
 		ReadHandoff:       handoffNeverReturnsNonce, // always abort
 		TruncateHandoffFn: func(_ string) error { return nil },
@@ -224,7 +223,6 @@ func TestCycler_ClearingElapsedBackstop_NoHotSpin(t *testing.T) {
 		ClearConfirmBackstop: 50 * time.Microsecond,
 		ClearConfirmRetries:  5,
 		CycleIDGen:           func() string { return cycleID },
-		IsManagedFn:          func(_, _ string) bool { return true },
 		HandoffFilePath:      func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
 		ReadHandoff:          readHandoff,
 		TruncateHandoffFn:    func(_ string) error { return nil },

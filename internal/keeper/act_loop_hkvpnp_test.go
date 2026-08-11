@@ -45,7 +45,6 @@ func realHandoffCycler(t *testing.T, agent, projectDir, cycleID string, spy *cyc
 		ClearSettle:         30 * time.Millisecond,
 		PollInterval:        10 * time.Millisecond,
 		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, _ string) string {
 			return handoffPath
 		},
@@ -149,7 +148,6 @@ func TestActLoop_HKVPNP_DoesNotRefireSecondNonceAfterTimeout(t *testing.T) {
 		ClearSettle:         20 * time.Millisecond,
 		PollInterval:        10 * time.Millisecond,
 		CycleIDGen:          idGen,
-		IsManagedFn:         func(_, _ string) bool { return true },
 		HandoffFilePath: func(_, _ string) string {
 			return handoffPath
 		},

@@ -696,8 +696,7 @@ func validateCompletionPlan(plan ReplacementPlan, candidate Queue, candidateSHA2
 	); err != nil {
 		return err
 	}
-	data, _ := base64.StdEncoding.DecodeString(binding.CanonicalBytesBase64)
-	receipt, err := DecodeCompletionReceipt(data)
+	receipt, err := decodeBoundCompletionReceipt(binding)
 	if err != nil {
 		return err
 	}
@@ -727,12 +726,11 @@ func validateCompletionReceiptBinding(
 		!validSHA256(completedQueueSHA256) {
 		return errors.New("invalid completion receipt binding")
 	}
-	data, err := base64.StdEncoding.DecodeString(binding.CanonicalBytesBase64)
-	if err != nil || len(data) == 0 || digestHex(data) != binding.SHA256 {
-		return errors.New("invalid completion receipt bytes")
+	receipt, err := decodeBoundCompletionReceipt(binding)
+	if err != nil {
+		return err
 	}
-	receipt, err := DecodeCompletionReceipt(data)
-	if err != nil || receipt.SchemaVersion != binding.SchemaVersion ||
+	if receipt.SchemaVersion != binding.SchemaVersion ||
 		receipt.QueueID != queueID ||
 		receipt.ReceiptID != binding.ReceiptID ||
 		receipt.TransactionID != transactionID ||
@@ -741,6 +739,18 @@ func validateCompletionReceiptBinding(
 		return errors.New("completion receipt does not match binding")
 	}
 	return nil
+}
+
+// decodeBoundCompletionReceipt returns the receipt a binding carries. The
+// binding holds the exact receipt bytes, so a caller that has already
+// validated the binding gets the same receipt back without a second copy of
+// the decode rules.
+func decodeBoundCompletionReceipt(binding *CompletionReceiptBinding) (CompletionReceipt, error) {
+	data, err := base64.StdEncoding.DecodeString(binding.CanonicalBytesBase64)
+	if err != nil || len(data) == 0 || digestHex(data) != binding.SHA256 {
+		return CompletionReceipt{}, errors.New("invalid completion receipt bytes")
+	}
+	return DecodeCompletionReceipt(data)
 }
 
 // DecodeCompletionReceipt accepts only canonical receipt v1 bytes.
@@ -778,13 +788,14 @@ func validateCompletionReleaseMarker(marker CompletionReleaseMarker) error {
 		validateUUIDv7(marker.ReceiptID) != nil ||
 		validateUUIDv7(marker.TransactionID) != nil ||
 		!validSHA256(marker.ReceiptSHA256) ||
-		!validSHA256(marker.CompletedQueueSHA256) ||
-		!validRecoveryTimestamp(marker.ReleasedAt) ||
-		!validRecoveryTimestamp(marker.GCNotBefore) {
+		!validSHA256(marker.CompletedQueueSHA256) {
 		return errors.New("invalid completion release marker")
 	}
-	releasedAt, _ := time.Parse("2006-01-02T15:04:05.000Z", marker.ReleasedAt)
-	gcNotBefore, _ := time.Parse("2006-01-02T15:04:05.000Z", marker.GCNotBefore)
+	releasedAt, releasedOK := parseRecoveryTimestamp(marker.ReleasedAt)
+	gcNotBefore, gcOK := parseRecoveryTimestamp(marker.GCNotBefore)
+	if !releasedOK || !gcOK {
+		return errors.New("invalid completion release marker")
+	}
 	want := releasedAt.Add(720 * time.Hour)
 	if want.Before(releasedAt) || !gcNotBefore.Equal(want) {
 		return errors.New("invalid completion release retention interval")
@@ -942,8 +953,18 @@ func validateFailedRecoveryReceiptBinding(
 }
 
 func validRecoveryTimestamp(value string) bool {
+	_, ok := parseRecoveryTimestamp(value)
+	return ok
+}
+
+// parseRecoveryTimestamp accepts only the one canonical millisecond UTC form a
+// recovery record may carry, and reports whether the text was that form.
+func parseRecoveryTimestamp(value string) (time.Time, bool) {
 	parsed, err := time.Parse("2006-01-02T15:04:05.000Z", value)
-	return err == nil && parsed.UTC().Format("2006-01-02T15:04:05.000Z") == value
+	if err != nil || parsed.UTC().Format("2006-01-02T15:04:05.000Z") != value {
+		return time.Time{}, false
+	}
+	return parsed, true
 }
 
 func validFailedRecoveryItems(items []FailedRecoveryItem) bool {

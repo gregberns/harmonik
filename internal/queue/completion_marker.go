@@ -222,7 +222,7 @@ func RecoverCompletionReleaseMarkers(
 	return results, nil
 }
 
-func completionReceiptIdentityFromName(name string) (string, string, bool) {
+func completionReceiptIdentityFromName(name string) (queueID, receiptID string, selected bool) {
 	if !strings.HasSuffix(name, ".json") || strings.HasSuffix(name, ".release-v1.json") ||
 		strings.Contains(name, ".tmp-") {
 		return "", "", false
@@ -261,33 +261,10 @@ func recoverOneCompletionReleaseMarker(
 	} else if present {
 		return CompletionReleaseMarker{}, errors.New("completion intent still owns the receipt")
 	}
-	canonicalPath := queuePath(projectDir, receipt.NormalizedName)
-	canonicalInfo, statErr := os.Lstat(canonicalPath)
-	present := statErr == nil
-	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
-		return CompletionReleaseMarker{}, statErr
+	if err := confirmCompletedIdentityReleased(projectDir, receipt); err != nil {
+		return CompletionReleaseMarker{}, err
 	}
-	if present && !canonicalInfo.Mode().IsRegular() {
-		return CompletionReleaseMarker{}, errors.New("canonical queue is not a regular file")
-	}
-	if present {
-		canonical, readErr := os.ReadFile(canonicalPath) //nolint:gosec // validated receipt name selects the exact canonical
-		if readErr != nil {
-			return CompletionReleaseMarker{}, readErr
-		}
-		live, decodeErr := UnmarshalQueue(canonical)
-		if decodeErr != nil {
-			return CompletionReleaseMarker{}, fmt.Errorf("classify completion marker canonical: %w", decodeErr)
-		}
-		if validateUUIDv7(live.QueueID) != nil || live.Name != receipt.NormalizedName ||
-			NormaliseQueueName(live.Name) != live.Name {
-			return CompletionReleaseMarker{}, errors.New("canonical queue has invalid identity")
-		}
-		if live.QueueID == receipt.QueueID {
-			return CompletionReleaseMarker{}, errors.New("completed queue identity still owns its canonical name")
-		}
-	}
-	receiptBytes, err := os.ReadFile(filepath.Join(completionReceiptsDir(projectDir), receipt.QueueID+"--"+receipt.ReceiptID+".json")) //nolint:gosec // decoded canonical IDs select the path
+	receiptBytes, err := os.ReadFile(filepath.Join(completionReceiptsDir(projectDir), receipt.QueueID+"--"+receipt.ReceiptID+".json"))
 	if err != nil {
 		return CompletionReleaseMarker{}, err
 	}
@@ -299,4 +276,38 @@ func recoverOneCompletionReleaseMarker(
 		CompletedQueueSHA256: receipt.CompletedQueueSHA256,
 	}
 	return InstallCompletionReleaseMarker(projectDir, inputs, releaseTime())
+}
+
+// confirmCompletedIdentityReleased reports an error unless the completed queue
+// identity has given up its canonical name. An absent canonical file counts as
+// released. A canonical file that a different, valid queue identity now owns
+// also counts as released.
+func confirmCompletedIdentityReleased(projectDir string, receipt CompletionReceipt) error {
+	canonicalPath := queuePath(projectDir, receipt.NormalizedName)
+	canonicalInfo, statErr := os.Lstat(canonicalPath)
+	if errors.Is(statErr, os.ErrNotExist) {
+		return nil
+	}
+	if statErr != nil {
+		return statErr
+	}
+	if !canonicalInfo.Mode().IsRegular() {
+		return errors.New("canonical queue is not a regular file")
+	}
+	canonical, readErr := os.ReadFile(canonicalPath) //nolint:gosec // validated receipt name selects the exact canonical
+	if readErr != nil {
+		return readErr
+	}
+	live, decodeErr := UnmarshalQueue(canonical)
+	if decodeErr != nil {
+		return fmt.Errorf("classify completion marker canonical: %w", decodeErr)
+	}
+	if validateUUIDv7(live.QueueID) != nil || live.Name != receipt.NormalizedName ||
+		NormaliseQueueName(live.Name) != live.Name {
+		return errors.New("canonical queue has invalid identity")
+	}
+	if live.QueueID == receipt.QueueID {
+		return errors.New("completed queue identity still owns its canonical name")
+	}
+	return nil
 }

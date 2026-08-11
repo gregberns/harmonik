@@ -20,6 +20,8 @@ type Scenario struct {
 	disabled map[string]string
 }
 
+// NewScenario returns a Scenario for the given policy with a fake clock and
+// recording ports that start managed, idle, and 95 percent full.
 func NewScenario(policy keeper.CyclePolicy) *Scenario {
 	clock := substrate.NewFakeClock(time.Unix(1_700_000_000, 0))
 	r := &RecordingPorts{
@@ -32,12 +34,22 @@ func NewScenario(policy keeper.CyclePolicy) *Scenario {
 	}
 }
 
+// Build makes the cycle under test from the policy as it stands now, wired to
+// the recording ports. Call it after every Disable call, because Build copies
+// the policy.
 func (s *Scenario) Build() (*keeper.Cycler, error) {
 	return keeper.NewCyclerWithDeps(s.policy, s.env, s.record.deps(s.clock))
 }
 
-func (s *Scenario) Ports() *RecordingPorts      { return s.record }
+// Ports returns the recording ports that carry the test inputs and the
+// recorded effects.
+func (s *Scenario) Ports() *RecordingPorts { return s.record }
+
+// Clock returns the fake clock that drives the cycle.
 func (s *Scenario) Clock() *substrate.FakeClock { return s.clock }
+
+// DisabledGates returns a copy of the gates the test turned off, with the
+// reason it gave for each one.
 func (s *Scenario) DisabledGates() map[string]string {
 	out := make(map[string]string, len(s.disabled))
 	for k, v := range s.disabled {
@@ -55,14 +67,23 @@ func (s *Scenario) disable(name, reason string, apply func()) error {
 	return nil
 }
 
+// DisableBootGrace removes the wait that holds the cycle off a session that
+// only just started. Give the reason the case does not need that wait. An
+// empty reason is an error.
 func (s *Scenario) DisableBootGrace(reason string) error {
 	return s.disable("boot_grace", reason, func() { s.policy.BootGracePeriod = 0; s.policy.MaxBootGraceTotal = 0 })
 }
 
+// DisableOperatorTurnGate stops the cycle from parking because the operator
+// spoke a moment ago. Give the reason the case does not need that gate. An
+// empty reason is an error.
 func (s *Scenario) DisableOperatorTurnGate(reason string) error {
 	return s.disable("operator_turn", reason, func() { s.policy.OperatorTurnLookback = 0 })
 }
 
+// DisablePostAnswerGrace removes the pause the cycle takes after the agent
+// answers the operator. Give the reason the case does not need that pause. An
+// empty reason is an error.
 func (s *Scenario) DisablePostAnswerGrace(reason string) error {
 	return s.disable("post_answer_grace", reason, func() { s.policy.PostAnswerGrace = 0 })
 }
@@ -87,6 +108,7 @@ func (r *RecordingPorts) add(effect string) {
 	r.Effects = append(r.Effects, effect)
 }
 
+// Next returns NextCycleID when the test set one, and a fixed value otherwise.
 func (r *RecordingPorts) Next() string {
 	if r.NextCycleID != "" {
 		return r.NextCycleID
@@ -94,38 +116,66 @@ func (r *RecordingPorts) Next() string {
 	return "cyc-scenario"
 }
 
+// Inject records the injected text. Nothing reaches a real tmux pane.
 func (r *RecordingPorts) Inject(_ context.Context, _, text string) error {
 	r.add("inject:" + text)
 	return nil
 }
+
+// SendEscape records an Escape keystroke.
 func (r *RecordingPorts) SendEscape(context.Context, string) error { r.add("escape"); return nil }
+
+// SetEnv records the tmux environment name and value.
 func (r *RecordingPorts) SetEnv(_ context.Context, _, key, value string) error {
 	r.add("env:" + key + "=" + value)
 	return nil
 }
 
+// ReadGauge returns the Gauge field and a zero modification time.
 func (r *RecordingPorts) ReadGauge() (*keeper.CtxFile, time.Time, error) {
 	return r.Gauge, time.Time{}, nil
 }
+
+// SetManagedSession records the session id it was given.
 func (r *RecordingPorts) SetManagedSession(sid string) error { r.add("managed:" + sid); return nil }
-func (r *RecordingPorts) ClearPrecompactTrigger() error      { r.add("precompact:clear"); return nil }
+
+// ClearPrecompactTrigger records that the precompact trigger was cleared.
+func (r *RecordingPorts) ClearPrecompactTrigger() error { r.add("precompact:clear"); return nil }
+
+// IdleMarkerModTime returns the IdleMarker field. A zero time reports false.
 func (r *RecordingPorts) IdleMarkerModTime() (time.Time, bool) {
 	return r.IdleMarker, !r.IdleMarker.IsZero()
 }
 
+// LastUserTurn returns the UserTurn field. A zero time reports false. The
+// session id is ignored.
 func (r *RecordingPorts) LastUserTurn(string) (time.Time, bool) {
 	return r.UserTurn, !r.UserTurn.IsZero()
 }
 
+// LastAssistantTurn returns the AssistantTurn field. A zero time reports
+// false. The session id is ignored.
 func (r *RecordingPorts) LastAssistantTurn(string) (time.Time, bool) {
 	return r.AssistantTurn, !r.AssistantTurn.IsZero()
 }
-func (r *RecordingPorts) IsManaged() bool       { return r.Managed }
-func (r *RecordingPorts) CrispIdle() bool       { return r.Idle }
+
+// IsManaged returns the Managed field.
+func (r *RecordingPorts) IsManaged() bool { return r.Managed }
+
+// CrispIdle returns the Idle field.
+func (r *RecordingPorts) CrispIdle() bool { return r.Idle }
+
+// HoldingDispatch returns the Dispatch field.
 func (r *RecordingPorts) HoldingDispatch() bool { return r.Dispatch }
-func (r *RecordingPorts) Sleeping(string) bool  { return r.SleepingState }
-func (r *RecordingPorts) Held() bool            { return r.HeldState }
-func (r *RecordingPorts) Attached(string) bool  { return r.AttachedState }
+
+// Sleeping returns the SleepingState field for every session id.
+func (r *RecordingPorts) Sleeping(string) bool { return r.SleepingState }
+
+// Held returns the HeldState field.
+func (r *RecordingPorts) Held() bool { return r.HeldState }
+
+// Attached returns the AttachedState field for every target.
+func (r *RecordingPorts) Attached(string) bool { return r.AttachedState }
 
 func (r *RecordingPorts) deps(clock substrate.ClockPort) keeper.CycleDeps {
 	return keeper.CycleDeps{
@@ -147,8 +197,8 @@ func (h scenarioHandoff) ScrubNonce() error { h.r.add("handoff:scrub"); return n
 type scenarioJournal struct{ r *RecordingPorts }
 
 func (j scenarioJournal) Write(v *keeper.CycleJournal) error {
-	copy := *v
-	j.r.Journal = &copy
+	saved := *v
+	j.r.Journal = &saved
 	j.r.add("journal:" + v.Phase)
 	return nil
 }

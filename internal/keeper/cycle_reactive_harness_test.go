@@ -315,10 +315,17 @@ func newReactiveCyclerWithBackstop(
 	clearConfirmRetries int,
 ) *keeper.Cycler {
 	var mu sync.Mutex
+	cfgOverrides := testCycleOverrides{CycleIDs:
+
+	// non-empty so injection branches run
+
+	func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: rs.readHandoff, HandoffScrub: rs.truncate, Inject: rs.inject, Gauge: rs.readGauge, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:            agent,
 		ProjectDir:           projectDir,
-		TmuxTarget:           "fake-pane", // non-empty so injection branches run
+		TmuxTarget:           "fake-pane",
 		ActPct:               90.0,
 		WarnPct:              80.0,
 		HandoffTimeout:       handoffTimeout,
@@ -326,20 +333,12 @@ func newReactiveCyclerWithBackstop(
 		PollInterval:         5 * time.Millisecond,
 		ClearConfirmBackstop: clearConfirmBackstop,
 		ClearConfirmRetries:  clearConfirmRetries,
-		CycleIDGen:           func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:       rs.readHandoff,
-		TruncateHandoffFn: rs.truncate,
-		InjectFn:          rs.inject,
-		ReadGaugeFn:       rs.readGauge,
-		WriteJournalFn:    jc.write,
+
 		// Stop hook wired and freshly fired (T8, SK-014): ModelDone{idle_marker}
 		// lands on the first AwaitModelDone detection tick, preserving the
 		// pre-T8 clear-right-after-confirm scenario cadence.
 	}
-	return mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+	return mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Handoff = testHandoffWithModTime{HandoffDocument: deps.Handoff, modTime: rs.handoffModTime}
 		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error {
 			mu.Lock()

@@ -42,7 +42,9 @@ func newIdleCycler(
 			return &keeper.CtxFile{Pct: 10.0, Tokens: 5_000, WindowSize: 200_000, SessionID: "sess-new"}, time.Now(), nil
 		}
 	}
-
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, agent string) string {
+		return filepath.Join(projectDir, "HANDOFF-"+agent+".md")
+	}, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: readGaugeFn, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      "idle-agent",
 		ProjectDir:     projectDir,
@@ -53,19 +55,11 @@ func newIdleCycler(
 		HandoffTimeout: 500 * time.Millisecond,
 		ClearSettle:    50 * time.Millisecond,
 		PollInterval:   10 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		HandoffFilePath: func(_, agent string) string {
-			return filepath.Join(projectDir, "HANDOFF-"+agent+".md")
-		},
-		ReadHandoff:          readHandoff,
-		TruncateHandoffFn:    func(_ string) error { return nil },
-		InjectFn:             spy.inject,
-		ReadGaugeFn:          readGaugeFn,
-		WriteJournalFn:       jc.write,
+
 		IdleRestartAbsTokens: defaultIdleTokenThreshold,
 		IdleRestartCooldown:  idleRestartCooldown,
 	}
-	return mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+	return mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Context = testContextWithClear{ContextStore: deps.Context, clear: func() error { return nil }}
 		deps.Dispatch = testDispatchProbe(holdingDispatch)
 		deps.Idle = testIdleProbe(crispIdle)

@@ -53,7 +53,9 @@ func newPrecompactCycler(
 			return &keeper.CtxFile{Pct: 95.0, SessionID: "sess-new"}, time.Now(), nil
 		}
 	}
-
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, agent string) string {
+		return filepath.Join(projectDir, "HANDOFF-"+agent+".md")
+	}, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: readGaugeFn, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      "precompact-agent",
 		ProjectDir:     projectDir,
@@ -63,17 +65,8 @@ func newPrecompactCycler(
 		HandoffTimeout: 500 * time.Millisecond,
 		ClearSettle:    50 * time.Millisecond,
 		PollInterval:   10 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		HandoffFilePath: func(_, agent string) string {
-			return filepath.Join(projectDir, "HANDOFF-"+agent+".md")
-		},
-		ReadHandoff:       readHandoff,
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		ReadGaugeFn:       readGaugeFn,
-		WriteJournalFn:    jc.write,
 	}
-	return mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+	return mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Context = testContextWithClear{ContextStore: deps.Context, clear: func() error { return nil }}
 		deps.Managed = testManagedProbe(isManaged)
 		deps.Dispatch = testDispatchProbe(holdingDispatch)

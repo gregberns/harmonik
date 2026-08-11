@@ -187,7 +187,9 @@ func TestKeeperCycle_ForcedClearAboveHardThreshold(t *testing.T) {
 		mu.Unlock()
 		return rs.inject(ctx, target, text)
 	}
-
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: rs.readHandoff, HandoffScrub: rs.truncate, Inject: injectFn, Gauge: rs.readGauge, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agent,
 		ProjectDir:     t.TempDir(),
@@ -198,17 +200,8 @@ func TestKeeperCycle_ForcedClearAboveHardThreshold(t *testing.T) {
 		HandoffTimeout: 500 * time.Millisecond,
 		ClearSettle:    300 * time.Millisecond,
 		PollInterval:   5 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:       rs.readHandoff,
-		TruncateHandoffFn: rs.truncate,
-		InjectFn:          injectFn,
-		ReadGaugeFn:       rs.readGauge,
-		WriteJournalFn:    jc.write,
 	}
-	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+	cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Pane = testPaneWithEscape{PaneWriter: deps.Pane, sendEscape: escapeFn}
 		deps.Idle = testIdleProbe(false)
 		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error {
@@ -393,6 +386,9 @@ func TestKeeperCycle_PreCompactBackstop(t *testing.T) {
 	rs := newReactiveSession(s1, s2, true /*writeNonce*/, true /*flipOnClear*/)
 
 	var markerCleared bool
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: rs.readHandoff, HandoffScrub: rs.truncate, Inject: rs.inject, Gauge: rs.readGauge, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agent,
 		ProjectDir:     t.TempDir(),
@@ -402,17 +398,8 @@ func TestKeeperCycle_PreCompactBackstop(t *testing.T) {
 		HandoffTimeout: 500 * time.Millisecond,
 		ClearSettle:    300 * time.Millisecond,
 		PollInterval:   5 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:       rs.readHandoff,
-		TruncateHandoffFn: rs.truncate,
-		InjectFn:          rs.inject,
-		ReadGaugeFn:       rs.readGauge,
-		WriteJournalFn:    jc.write,
 	}
-	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+	cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Idle = testIdleProbe(false)
 		deps.Context = testContextWithClear{ContextStore: deps.Context, clear: func() error {
 			markerCleared = true
@@ -543,6 +530,9 @@ func TestKeeperCycle_ClearBriefHardGate_SlowClear(t *testing.T) {
 	}
 
 	var mu sync.Mutex
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: rs.readHandoff, HandoffScrub: rs.truncate, Inject: witnessInject, Gauge: rs.readGauge, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:            agent,
 		ProjectDir:           t.TempDir(),
@@ -554,17 +544,8 @@ func TestKeeperCycle_ClearBriefHardGate_SlowClear(t *testing.T) {
 		PollInterval:         5 * time.Millisecond,
 		ClearConfirmBackstop: clearConfirmBackstop,
 		ClearConfirmRetries:  clearConfirmRetries,
-		CycleIDGen:           func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:       rs.readHandoff,
-		TruncateHandoffFn: rs.truncate,
-		InjectFn:          witnessInject,
-		ReadGaugeFn:       rs.readGauge,
-		WriteJournalFn:    jc.write,
 	}
-	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+	cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Handoff = testHandoffWithModTime{HandoffDocument: deps.Handoff, modTime: rs.handoffModTime}
 		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error {
 			mu.Lock()

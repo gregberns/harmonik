@@ -315,6 +315,11 @@ func TestIntegration_Twin1mGauge_CycleFiresOnInferredWindow(t *testing.T) {
 	}
 
 	em := &keeper.RecordingEmitter{}
+	cfgOverrides := testCycleOverrides{Inject:
+
+	// REAL, UNMODIFIED keeper.InjectText (no flatten): the twin parses the
+	// production MULTI-LINE /session-handoff directive natively (hk-fan).
+	keeper.InjectText}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agent,
 		ProjectDir:     project,
@@ -322,11 +327,8 @@ func TestIntegration_Twin1mGauge_CycleFiresOnInferredWindow(t *testing.T) {
 		HandoffTimeout: 10 * time.Second,
 		ClearSettle:    5 * time.Second,
 		PollInterval:   150 * time.Millisecond,
-		// REAL, UNMODIFIED keeper.InjectText (no flatten): the twin parses the
-		// production MULTI-LINE /session-handoff directive natively (hk-fan).
-		InjectFn: keeper.InjectText,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 
 	if err := cycler.MaybeRun(context.Background(), seed); err != nil {
 		t.Fatalf("tw: MaybeRun: %v", err)

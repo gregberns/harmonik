@@ -33,6 +33,9 @@ func newModelDoneCycler(
 	modelDoneTimeout time.Duration,
 ) *keeper.Cycler {
 	var mu sync.Mutex
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: rs.readHandoff, HandoffScrub: rs.truncate, Inject: rs.inject, Gauge: rs.readGauge, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:            agent,
 		ProjectDir:           projectDir,
@@ -45,17 +48,8 @@ func newModelDoneCycler(
 		ClearConfirmBackstop: 900 * time.Millisecond,
 		ClearConfirmRetries:  5,
 		ModelDoneTimeout:     modelDoneTimeout,
-		CycleIDGen:           func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:       rs.readHandoff,
-		TruncateHandoffFn: rs.truncate,
-		InjectFn:          rs.inject,
-		ReadGaugeFn:       rs.readGauge,
-		WriteJournalFn:    jc.write,
 	}
-	return mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+	return mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Handoff = testHandoffWithModTime{HandoffDocument: deps.Handoff, modTime: rs.handoffModTime}
 		deps.Activity = testActivityWithTurns{
 			ActivityProbe: deps.Activity,

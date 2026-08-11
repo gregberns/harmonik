@@ -118,7 +118,14 @@ func TestScenario_LateHandoff300sFakeClock_Aborts_qji8g(t *testing.T) {
 
 	rs := newReactiveSession(s1, s2, false /*writeNonce*/, true /*flipOnClear*/)
 	clock := substrate.NewFakeClock(time.Unix(1_700_000_000, 0))
+	cfgOverrides := testCycleOverrides{CycleIDs:
 
+	// the real 300s K2 window
+	// unreached
+	// coarse virtual cadence
+	func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: rs.readHandoff, HandoffScrub: rs.truncate, Inject: rs.inject, Gauge: rs.readGauge, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agent,
 		ProjectDir:     t.TempDir(),
@@ -126,20 +133,11 @@ func TestScenario_LateHandoff300sFakeClock_Aborts_qji8g(t *testing.T) {
 		Clock:          clock,
 		ActPct:         90.0,
 		WarnPct:        80.0,
-		HandoffTimeout: keeper.DefaultHandoffTimeout, // the real 300s K2 window
-		ClearSettle:    10 * time.Second,             // unreached
-		PollInterval:   30 * time.Second,             // coarse virtual cadence
-		CycleIDGen:     func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:       rs.readHandoff,
-		TruncateHandoffFn: rs.truncate,
-		InjectFn:          rs.inject,
-		ReadGaugeFn:       rs.readGauge,
-		WriteJournalFn:    jc.write,
+		HandoffTimeout: keeper.DefaultHandoffTimeout,
+		ClearSettle:    10 * time.Second,
+		PollInterval:   30 * time.Second,
 	}
-	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+	cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Handoff = testHandoffWithModTime{HandoffDocument: deps.Handoff, modTime: rs.handoffModTime}
 		deps.Activity = testActivityWithIdle{ActivityProbe: deps.Activity, idleMarker: func() (time.Time, bool) { return clock.Now(), true }}
 	})
@@ -264,10 +262,16 @@ func TestScenario_ForceAct_NeverIdleStillCut_qji8g(t *testing.T) {
 	// writeNonce=true so /clear is reachable (proving the nonce gate is NOT skipped
 	// on the force path); flipOnClear=true so /clear causally rotates S1→S2.
 	rs := newReactiveSession(s1, s2, true /*writeNonce*/, true /*flipOnClear*/)
+	cfgOverrides := testCycleOverrides{CycleIDs:
 
+	// Stop hook wired and freshly fired (T8, SK-014): ModelDone lands on the
+	// first AwaitModelDone poll so the force cycle does not stall the phase.
+
+	func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: rs.readHandoff, HandoffScrub: rs.truncate, Inject: rs.inject, Gauge: rs.readGauge, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
-		// Stop hook wired and freshly fired (T8, SK-014): ModelDone lands on the
-		// first AwaitModelDone poll so the force cycle does not stall the phase.
+
 		AgentName:      agent,
 		ProjectDir:     t.TempDir(),
 		TmuxTarget:     "fake-pane",
@@ -277,17 +281,8 @@ func TestScenario_ForceAct_NeverIdleStillCut_qji8g(t *testing.T) {
 		HandoffTimeout: 500 * time.Millisecond,
 		ClearSettle:    300 * time.Millisecond,
 		PollInterval:   5 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:       rs.readHandoff,
-		TruncateHandoffFn: rs.truncate,
-		InjectFn:          rs.inject,
-		ReadGaugeFn:       rs.readGauge,
-		WriteJournalFn:    jc.write,
 	}
-	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+	cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Handoff = testHandoffWithModTime{HandoffDocument: deps.Handoff, modTime: rs.handoffModTime}
 		deps.Idle = testIdleProbe(false)
 		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error {

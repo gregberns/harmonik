@@ -59,6 +59,9 @@ func newAttachTestCycler(
 	readGaugeFn func(string, string) (*keeper.CtxFile, time.Time, error),
 	attachFn func(string) bool,
 ) *keeper.Cycler {
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: readGaugeFn, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agent,
 		ProjectDir:     projectDir,
@@ -68,17 +71,8 @@ func newAttachTestCycler(
 		HandoffTimeout: 200 * time.Millisecond,
 		ClearSettle:    50 * time.Millisecond,
 		PollInterval:   5 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:       readHandoff,
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		ReadGaugeFn:       readGaugeFn,
-		WriteJournalFn:    jc.write,
 	}
-	return mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+	return mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Operator = testOperatorProbe(attachFn)
 	})
 }
@@ -260,6 +254,9 @@ func TestCycler_Precompact_OperatorAttached_Suppresses(t *testing.T) {
 	}
 
 	var cleared int
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: alwaysNonce, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: noopGauge, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agent,
 		ProjectDir:     t.TempDir(),
@@ -269,17 +266,8 @@ func TestCycler_Precompact_OperatorAttached_Suppresses(t *testing.T) {
 		HandoffTimeout: 200 * time.Millisecond,
 		ClearSettle:    50 * time.Millisecond,
 		PollInterval:   5 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:       alwaysNonce,
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		ReadGaugeFn:       noopGauge,
-		WriteJournalFn:    jc.write,
 	}
-	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+	cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Context = testContextWithClear{ContextStore: deps.Context, clear: func() error { cleared++; return nil }}
 		deps.Operator = testOperatorProbe(attach.fn)
 	})

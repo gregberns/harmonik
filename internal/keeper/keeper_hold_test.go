@@ -335,20 +335,21 @@ func TestCyclerMaybeRun_DeferredWhenHeld(t *testing.T) {
 	// baseCfg builds a CyclerConfig whose gates ALL pass except (optionally) the
 	// hold gate. injectCount records cycle firings; heldCalled records that the HOLD
 	// gate (Gate 5c) was actually consulted.
-	baseCfg := func(projectDir, agent string, injectCount *int) keeper.CyclerConfig {
+	baseCfg := func(projectDir, agent string, injectCount *int) (keeper.CyclerConfig, testCycleOverrides) {
 		return keeper.CyclerConfig{
-			AgentName:  agent,
-			ProjectDir: projectDir,
-			TmuxTarget: "",
-			ActPct:     80.0,
-			WarnPct:    70.0,
-			InjectFn: func(_ context.Context, _, _ string) error {
-				*injectCount++
-				return nil
-			},
-			ReadHandoff:     func(_ string) (string, error) { return "", nil },
-			HandoffFilePath: func(_, agentName string) string { return filepath.Join(projectDir, "HANDOFF-"+agentName+".md") },
-		}
+				AgentName:  agent,
+				ProjectDir: projectDir,
+				TmuxTarget: "",
+				ActPct:     80.0,
+				WarnPct:    70.0,
+			}, testCycleOverrides{
+				Inject: func(_ context.Context, _, _ string) error {
+					*injectCount++
+					return nil
+				},
+				HandoffRead: func(_ string) (string, error) { return "", nil },
+				HandoffPath: func(_, agentName string) string { return filepath.Join(projectDir, "HANDOFF-"+agentName+".md") },
+			}
 	}
 
 	t.Run("held_suppresses", func(t *testing.T) {
@@ -360,8 +361,8 @@ func TestCyclerMaybeRun_DeferredWhenHeld(t *testing.T) {
 
 		injectCount := 0
 		heldCalled := false
-		cfg := baseCfg(dir, agent, &injectCount)
-		cycler := mustNewCyclerWithDeps(cfg, &keeper.RecordingEmitter{}, func(deps *keeper.CycleDeps) {
+		cfg, cfgOverrides := baseCfg(dir, agent, &injectCount)
+		cycler := mustNewCyclerWithOverridesAndDeps(cfg, &keeper.RecordingEmitter{}, cfgOverrides, func(deps *keeper.CycleDeps) {
 			deps.Sleep = testSleepProbe(func(string) bool { return false })
 			deps.Hold = testHoldProbe(func() bool { heldCalled = true; return true })
 		})
@@ -389,8 +390,8 @@ func TestCyclerMaybeRun_DeferredWhenHeld(t *testing.T) {
 
 		injectCount := 0
 		heldCalled := false
-		cfg := baseCfg(dir, agent, &injectCount)
-		cycler := mustNewCyclerWithDeps(cfg, &keeper.RecordingEmitter{}, func(deps *keeper.CycleDeps) {
+		cfg, cfgOverrides := baseCfg(dir, agent, &injectCount)
+		cycler := mustNewCyclerWithOverridesAndDeps(cfg, &keeper.RecordingEmitter{}, cfgOverrides, func(deps *keeper.CycleDeps) {
 			deps.Sleep = testSleepProbe(func(string) bool { return false })
 			deps.Hold = testHoldProbe(func() bool { heldCalled = true; return false })
 		})
@@ -603,7 +604,13 @@ func TestRunForPrecompact_SuppressedWhenHeld(t *testing.T) {
 		jc := &journalCapture{}
 		const cycleID = "cyc-prec-hold"
 		nonce := "<!-- KEEPER:" + cycleID + " -->"
-
+		cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+			return filepath.Join(dir, "HANDOFF-"+a+".md")
+		}, HandoffRead: func(_ string) (string, error) {
+			return "# Handoff\n\n" + nonce + "\n", nil
+		}, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+			return &keeper.CtxFile{Pct: 95.0, SessionID: "sess-new"}, time.Now(), nil
+		}, JournalWrite: jc.write}
 		cfg := keeper.CyclerConfig{
 			AgentName:      agent,
 			ProjectDir:     dir,
@@ -613,21 +620,8 @@ func TestRunForPrecompact_SuppressedWhenHeld(t *testing.T) {
 			HandoffTimeout: 200 * time.Millisecond,
 			ClearSettle:    20 * time.Millisecond,
 			PollInterval:   10 * time.Millisecond,
-			CycleIDGen:     func() string { return cycleID },
-			HandoffFilePath: func(_, a string) string {
-				return filepath.Join(dir, "HANDOFF-"+a+".md")
-			},
-			ReadHandoff: func(_ string) (string, error) {
-				return "# Handoff\n\n" + nonce + "\n", nil
-			},
-			TruncateHandoffFn: func(_ string) error { return nil },
-			InjectFn:          spy.inject,
-			ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
-				return &keeper.CtxFile{Pct: 95.0, SessionID: "sess-new"}, time.Now(), nil
-			},
-			WriteJournalFn: jc.write,
 		}
-		cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 			deps.Hold = testHoldProbe(func() bool { return held })
 			deps.Idle = testIdleProbe(false)
 			deps.Context = testContextWithClear{ContextStore: deps.Context, clear: func() error { return nil }}
@@ -685,7 +679,16 @@ func TestRunForIdle_SuppressedWhenHeld(t *testing.T) {
 		jc := &journalCapture{}
 		const cycleID = "cyc-idle-hold"
 		nonce := "<!-- KEEPER:" + cycleID + " -->"
-
+		cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+			return filepath.Join(dir, "HANDOFF-"+a+".md")
+		}, HandoffRead: func(_ string) (string, error) {
+			return "# Handoff\n\n" + nonce + "\n", nil
+		}, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge:
+		// WindowSize=400k: actThreshold = min(300k, 0.85×400k=340k) = 300k,
+		// so tokens=200k is below the act threshold and Gate 3 passes.
+		func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+			return &keeper.CtxFile{Pct: 10.0, Tokens: 5_000, WindowSize: 400_000, SessionID: "sess-new"}, time.Now(), nil
+		}, JournalWrite: jc.write}
 		cfg := keeper.CyclerConfig{
 			AgentName:      agent,
 			ProjectDir:     dir,
@@ -696,25 +699,11 @@ func TestRunForIdle_SuppressedWhenHeld(t *testing.T) {
 			HandoffTimeout: 200 * time.Millisecond,
 			ClearSettle:    20 * time.Millisecond,
 			PollInterval:   10 * time.Millisecond,
-			CycleIDGen:     func() string { return cycleID },
-			HandoffFilePath: func(_, a string) string {
-				return filepath.Join(dir, "HANDOFF-"+a+".md")
-			},
-			ReadHandoff: func(_ string) (string, error) {
-				return "# Handoff\n\n" + nonce + "\n", nil
-			},
-			TruncateHandoffFn: func(_ string) error { return nil },
-			InjectFn:          spy.inject,
-			// WindowSize=400k: actThreshold = min(300k, 0.85×400k=340k) = 300k,
-			// so tokens=200k is below the act threshold and Gate 3 passes.
-			ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
-				return &keeper.CtxFile{Pct: 10.0, Tokens: 5_000, WindowSize: 400_000, SessionID: "sess-new"}, time.Now(), nil
-			},
-			WriteJournalFn:       jc.write,
+
 			IdleRestartAbsTokens: 150_000,
 			IdleRestartCooldown:  0,
 		}
-		cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 			deps.Hold = testHoldProbe(func() bool { return held })
 			deps.Context = testContextWithClear{ContextStore: deps.Context, clear: func() error { return nil }}
 		})

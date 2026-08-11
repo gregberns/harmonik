@@ -157,21 +157,6 @@ type CyclerConfig struct {
 	// substrate.FakeClock can drive timeouts and poll cadences in virtual time.
 	Clock substrate.ClockPort
 
-	// Injectable dependencies. Nil means use the production default. Command
-	// composition converts these functions into the narrow ports in CycleDeps.
-	CycleIDGen      func() string
-	HandoffFilePath func(projectDir, agentName string) string
-	ReadHandoff     func(path string) (string, error)
-	// TruncateHandoffFn SCRUBS the keeper's own `<!-- KEEPER:... -->` nonce
-	// marker(s) out of the handoff file, preserving every other byte. The name is
-	// historical: it once truncated the whole file, which silently destroyed the
-	// crew's handoff on every cycle after the first (hk-4tjyj). Nil →
-	// defaultScrubHandoffNonces.
-	TruncateHandoffFn func(path string) error
-	InjectFn          func(ctx context.Context, target, text string) error
-	ReadGaugeFn       func(projectDir, agentName string) (*CtxFile, time.Time, error)
-	WriteJournalFn    func(path string, j *CycleJournal) error
-
 	// ForceRetryInterval is the minimum duration after a forced-clear attempt
 	// (above ForceActPct) before the keeper retries on the same session_id.
 	// After an abort (handoff_timeout) or a completed forced cycle, the
@@ -312,32 +297,6 @@ func (c *CyclerConfig) applyDefaults() {
 	}
 	if c.Clock == nil {
 		c.Clock = substrate.SystemClock{}
-	}
-	if c.CycleIDGen == nil {
-		c.CycleIDGen = newCycleIDGen(c.Clock)
-	}
-	if c.HandoffFilePath == nil {
-		c.HandoffFilePath = defaultHandoffFilePath
-	}
-	if c.ReadHandoff == nil {
-		c.ReadHandoff = defaultReadHandoff
-	}
-	if c.TruncateHandoffFn == nil {
-		c.TruncateHandoffFn = defaultScrubHandoffNonces
-	}
-	if c.InjectFn == nil {
-		// Bind the production injector to the cycle Clock so the settle/retry
-		// sleeps honor the determinism port (the T5 injectorClock fold).
-		clock := c.Clock
-		c.InjectFn = func(ctx context.Context, target, text string) error {
-			return injectTextClocked(ctx, clock, target, text)
-		}
-	}
-	if c.ReadGaugeFn == nil {
-		c.ReadGaugeFn = ReadCtxFile
-	}
-	if c.WriteJournalFn == nil {
-		c.WriteJournalFn = writeJournalFile
 	}
 	if c.HoldTTL <= 0 {
 		c.HoldTTL = DefaultHoldTTL

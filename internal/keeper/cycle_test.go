@@ -234,6 +234,10 @@ func newTestCyclerManaged(
 	clearSettle time.Duration,
 	isManaged bool,
 ) *keeper.Cycler {
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, agent string) string {
+		return "/tmp/HANDOFF-" + agent + ".md"
+	}, HandoffRead:    readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: // no-op in most tests
+	spy.inject, Gauge: readGaugeFn, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agentName,
 		ProjectDir:     projectDir,
@@ -243,21 +247,13 @@ func newTestCyclerManaged(
 		HandoffTimeout: handoffTimeout,
 		ClearSettle:    clearSettle,
 		PollInterval:   10 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		HandoffFilePath: func(_, agent string) string {
-			return "/tmp/HANDOFF-" + agent + ".md"
-		},
-		ReadHandoff:       readHandoff,
-		TruncateHandoffFn: func(_ string) error { return nil }, // no-op in most tests
-		InjectFn:          spy.inject,
-		ReadGaugeFn:       readGaugeFn,
-		WriteJournalFn:    jc.write,
+
 		// Stop hook wired and freshly fired (T8, SK-014): the .idle marker
 		// reads as "await-input boundary now", so ModelDone{idle_marker} lands
 		// on the first AwaitModelDone detection tick — the real primary path,
 		// with no added wait (the pre-T8 clear-right-after-confirm cadence).
 	}
-	return mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+	return mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Managed = testManagedProbe(isManaged)
 		deps.Dispatch = testDispatchProbe(holdingDispatch)
 		deps.Idle = testIdleProbe(crispIdle)
@@ -751,25 +747,18 @@ func TestCycler_SuppressionRequiresBothConditions(t *testing.T) {
 	stableGauge := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 		return &keeper.CtxFile{Pct: 95.0, SessionID: newSID}, time.Now(), nil
 	}
-
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" }, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: stableGauge, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
-		AgentName:         agent,
-		ProjectDir:        t.TempDir(),
-		TmuxTarget:        "fake-pane",
-		ActPct:            actPct,
-		WarnPct:           warnPct,
-		HandoffTimeout:    500 * time.Millisecond,
-		ClearSettle:       50 * time.Millisecond,
-		PollInterval:      10 * time.Millisecond,
-		CycleIDGen:        func() string { return cycleID },
-		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
-		ReadHandoff:       readHandoff,
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		ReadGaugeFn:       stableGauge,
-		WriteJournalFn:    jc.write,
+		AgentName:      agent,
+		ProjectDir:     t.TempDir(),
+		TmuxTarget:     "fake-pane",
+		ActPct:         actPct,
+		WarnPct:        warnPct,
+		HandoffTimeout: 500 * time.Millisecond,
+		ClearSettle:    50 * time.Millisecond,
+		PollInterval:   10 * time.Millisecond,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 
 	// Step 1: fire the cycle on prevSID at high pct.
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
@@ -828,19 +817,15 @@ func TestCycler_BootRecovery_PhaseCleared(t *testing.T) {
 		OpenedAt:  time.Now().Add(-5 * time.Minute),
 		UpdatedAt: time.Now().Add(-5 * time.Minute),
 	}}
-
+	cfgOverrides := testCycleOverrides{HandoffPath: func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" }, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, JournalWrite: js.write}
 	cfg := keeper.CyclerConfig{
-		AgentName:         agent,
-		ProjectDir:        t.TempDir(),
-		TmuxTarget:        "fake-pane",
-		ActPct:            90.0,
-		WarnPct:           80.0,
-		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		WriteJournalFn:    js.write,
+		AgentName:  agent,
+		ProjectDir: t.TempDir(),
+		TmuxTarget: "fake-pane",
+		ActPct:     90.0,
+		WarnPct:    80.0,
 	}
-	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+	cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Journal = js
 	})
 
@@ -902,19 +887,15 @@ func TestCycler_BootRecovery_PhaseHandoff(t *testing.T) {
 		OpenedAt:  time.Now().Add(-5 * time.Minute),
 		UpdatedAt: time.Now().Add(-5 * time.Minute),
 	}}
-
+	cfgOverrides := testCycleOverrides{HandoffPath: func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" }, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, JournalWrite: js.write}
 	cfg := keeper.CyclerConfig{
-		AgentName:         agent,
-		ProjectDir:        t.TempDir(),
-		TmuxTarget:        "fake-pane",
-		ActPct:            90.0,
-		WarnPct:           80.0,
-		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		WriteJournalFn:    js.write,
+		AgentName:  agent,
+		ProjectDir: t.TempDir(),
+		TmuxTarget: "fake-pane",
+		ActPct:     90.0,
+		WarnPct:    80.0,
 	}
-	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+	cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Journal = js
 	})
 
@@ -967,21 +948,18 @@ func TestCycler_BootRecovery_PhaseComplete(t *testing.T) {
 				UpdatedAt: time.Now().Add(-5 * time.Minute),
 			}}
 			var writeCount int
+			cfgOverrides := testCycleOverrides{HandoffPath: func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" }, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, JournalWrite: func(_ string, _ *keeper.CycleJournal) error {
+				writeCount++
+				return js.write("", &keeper.CycleJournal{})
+			}}
 			cfg := keeper.CyclerConfig{
-				AgentName:         agent,
-				ProjectDir:        t.TempDir(),
-				TmuxTarget:        "fake-pane",
-				ActPct:            90.0,
-				WarnPct:           80.0,
-				HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
-				TruncateHandoffFn: func(_ string) error { return nil },
-				InjectFn:          spy.inject,
-				WriteJournalFn: func(_ string, _ *keeper.CycleJournal) error {
-					writeCount++
-					return js.write("", &keeper.CycleJournal{})
-				},
+				AgentName:  agent,
+				ProjectDir: t.TempDir(),
+				TmuxTarget: "fake-pane",
+				ActPct:     90.0,
+				WarnPct:    80.0,
 			}
-			cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+			cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 				deps.Journal = testJournalStore{
 					write: func(*keeper.CycleJournal) error { writeCount++; return nil },
 					read:  js.Read,
@@ -1009,20 +987,17 @@ func TestCycler_BootRecovery_NoJournal(t *testing.T) {
 
 	em := &keeper.RecordingEmitter{}
 	spy := &cycleSpyInjector{}
-	js := &journalStore{} // j == nil → read returns journalNotFoundError
-
+	js := &journalStore{}
+	cfgOverrides := // j == nil → read returns journalNotFoundError
+		testCycleOverrides{HandoffPath: func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" }, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, JournalWrite: js.write}
 	cfg := keeper.CyclerConfig{
-		AgentName:         "no-journal-agent",
-		ProjectDir:        t.TempDir(),
-		TmuxTarget:        "fake-pane",
-		ActPct:            90.0,
-		WarnPct:           80.0,
-		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		WriteJournalFn:    js.write,
+		AgentName:  "no-journal-agent",
+		ProjectDir: t.TempDir(),
+		TmuxTarget: "fake-pane",
+		ActPct:     90.0,
+		WarnPct:    80.0,
 	}
-	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) { deps.Journal = js })
+	cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) { deps.Journal = js })
 
 	if err := cycler.RecoverFromCrash(context.Background()); err != nil {
 		t.Fatalf("RecoverFromCrash with no journal: %v", err)
@@ -1046,17 +1021,13 @@ func TestCycler_BootRecovery_UnmanagedNoOp(t *testing.T) {
 		OpenedAt:  time.Now().Add(-5 * time.Minute),
 		UpdatedAt: time.Now().Add(-5 * time.Minute),
 	}}
-
+	cfgOverrides := testCycleOverrides{HandoffPath: func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" }, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, JournalWrite: js.write}
 	cfg := keeper.CyclerConfig{
-		AgentName:         "unmanaged-recover-agent",
-		ProjectDir:        t.TempDir(),
-		TmuxTarget:        "fake-pane",
-		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		WriteJournalFn:    js.write,
+		AgentName:  "unmanaged-recover-agent",
+		ProjectDir: t.TempDir(),
+		TmuxTarget: "fake-pane",
 	}
-	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+	cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Journal = js
 		deps.Managed = testManagedProbe(false)
 	})
@@ -1119,25 +1090,18 @@ func TestCycler_TruncateCalledBeforePoll(t *testing.T) {
 	noopGauge := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 		return &keeper.CtxFile{Pct: 95.0, SessionID: sid}, time.Now(), nil
 	}
-
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return newCycleID }, HandoffPath: func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" }, HandoffRead: readHandoff, HandoffScrub: truncateFn, Inject: spy.inject, Gauge: noopGauge, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
-		AgentName:         agent,
-		ProjectDir:        t.TempDir(),
-		TmuxTarget:        "fake-pane",
-		ActPct:            90.0,
-		WarnPct:           80.0,
-		HandoffTimeout:    500 * time.Millisecond,
-		ClearSettle:       100 * time.Millisecond,
-		PollInterval:      10 * time.Millisecond,
-		CycleIDGen:        func() string { return newCycleID },
-		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
-		ReadHandoff:       readHandoff,
-		TruncateHandoffFn: truncateFn,
-		InjectFn:          spy.inject,
-		ReadGaugeFn:       noopGauge,
-		WriteJournalFn:    jc.write,
+		AgentName:      agent,
+		ProjectDir:     t.TempDir(),
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		HandoffTimeout: 500 * time.Millisecond,
+		ClearSettle:    100 * time.Millisecond,
+		PollInterval:   10 * time.Millisecond,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: sid}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
@@ -1206,7 +1170,9 @@ func TestCycler_BriefRestartAfterNonceConfirm(t *testing.T) {
 		envOrder = injectCount
 		return nil
 	}
-
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spyInject, Gauge: readGaugeFn, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agent,
 		ProjectDir:     t.TempDir(),
@@ -1216,17 +1182,8 @@ func TestCycler_BriefRestartAfterNonceConfirm(t *testing.T) {
 		HandoffTimeout: 500 * time.Millisecond,
 		ClearSettle:    100 * time.Millisecond,
 		PollInterval:   10 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:       readHandoff,
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spyInject,
-		ReadGaugeFn:       readGaugeFn,
-		WriteJournalFn:    jc.write,
 	}
-	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+	cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Pane = testPaneWithEnv{PaneWriter: deps.Pane, setEnv: setEnvFn}
 	})
 
@@ -1300,31 +1257,30 @@ func TestCycler_AbsoluteTokenGate(t *testing.T) {
 	noopGauge := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 		return &keeper.CtxFile{Pct: 28.0, Tokens: 280_000, WindowSize: 1_000_000, SessionID: sid}, time.Now(), nil
 	}
+	cfgOverrides := testCycleOverrides{CycleIDs:
 
+	// pct gate would NOT fire at 28%
+
+	// absolute gate fires at exactly 280k
+
+	func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: noopGauge, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agent,
 		ProjectDir:     t.TempDir(),
 		TmuxTarget:     "fake-pane",
-		ActPct:         90.0, // pct gate would NOT fire at 28%
+		ActPct:         90.0,
 		WarnPct:        80.0,
-		ActAbsTokens:   280_000, // absolute gate fires at exactly 280k
+		ActAbsTokens:   280_000,
 		ActPctCeil:     0.85,
 		WarnAbsTokens:  220_000,
 		WarnPctCeil:    0.70,
 		HandoffTimeout: 200 * time.Millisecond,
 		ClearSettle:    50 * time.Millisecond,
 		PollInterval:   10 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:       readHandoff,
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		ReadGaugeFn:       noopGauge,
-		WriteJournalFn:    jc.write,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 
 	cf := &keeper.CtxFile{Pct: 28.0, Tokens: 280_000, WindowSize: 1_000_000, SessionID: sid}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
@@ -1354,7 +1310,11 @@ func TestCycler_AbsoluteTokenGate_BelowThreshold(t *testing.T) {
 	em := &keeper.RecordingEmitter{}
 	spy := &cycleSpyInjector{}
 	jc := &journalCapture{}
-
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: func(_ string) (string, error) { return "", nil }, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+		return &keeper.CtxFile{Pct: 20.0, Tokens: 200_000, WindowSize: 1_000_000, SessionID: sid}, time.Now(), nil
+	}, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agent,
 		ProjectDir:     t.TempDir(),
@@ -1368,19 +1328,8 @@ func TestCycler_AbsoluteTokenGate_BelowThreshold(t *testing.T) {
 		HandoffTimeout: 100 * time.Millisecond,
 		ClearSettle:    30 * time.Millisecond,
 		PollInterval:   10 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:       func(_ string) (string, error) { return "", nil },
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
-			return &keeper.CtxFile{Pct: 20.0, Tokens: 200_000, WindowSize: 1_000_000, SessionID: sid}, time.Now(), nil
-		},
-		WriteJournalFn: jc.write,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 
 	cf := &keeper.CtxFile{Pct: 20.0, Tokens: 200_000, WindowSize: 1_000_000, SessionID: sid}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
@@ -1416,31 +1365,30 @@ func TestCycler_AbsoluteTokenGate_200kWindow(t *testing.T) {
 	noopGauge := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 		return &keeper.CtxFile{Pct: 85.0, Tokens: 170_000, WindowSize: 200_000, SessionID: sid}, time.Now(), nil
 	}
+	cfgOverrides := testCycleOverrides{CycleIDs:
 
+	// pct gate would NOT fire at 85%
+
+	// effective threshold = min(280k, 0.85*200k=170k) = 170k
+
+	func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: noopGauge, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agent,
 		ProjectDir:     t.TempDir(),
 		TmuxTarget:     "fake-pane",
-		ActPct:         90.0, // pct gate would NOT fire at 85%
+		ActPct:         90.0,
 		WarnPct:        80.0,
-		ActAbsTokens:   280_000, // effective threshold = min(280k, 0.85*200k=170k) = 170k
+		ActAbsTokens:   280_000,
 		ActPctCeil:     0.85,
 		WarnAbsTokens:  220_000,
 		WarnPctCeil:    0.70,
 		HandoffTimeout: 200 * time.Millisecond,
 		ClearSettle:    50 * time.Millisecond,
 		PollInterval:   10 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:       readHandoff,
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		ReadGaugeFn:       noopGauge,
-		WriteJournalFn:    jc.write,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 
 	cf := &keeper.CtxFile{Pct: 85.0, Tokens: 170_000, WindowSize: 200_000, SessionID: sid}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
@@ -1475,7 +1423,9 @@ func TestCycler_UpdatesManagedSessionAfterCycle(t *testing.T) {
 
 	var gotSessionID string
 	setManagedCalled := 0
-
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: readGaugeFn, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agent,
 		ProjectDir:     t.TempDir(),
@@ -1485,17 +1435,8 @@ func TestCycler_UpdatesManagedSessionAfterCycle(t *testing.T) {
 		HandoffTimeout: 500 * time.Millisecond,
 		ClearSettle:    200 * time.Millisecond,
 		PollInterval:   10 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:       readHandoff,
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		ReadGaugeFn:       readGaugeFn,
-		WriteJournalFn:    jc.write,
 	}
-	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+	cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sessionID string) error {
 			gotSessionID = sessionID
 			setManagedCalled++
@@ -1545,7 +1486,13 @@ func TestCycler_ClearSettleTimeout_ClearsManagedSessionID(t *testing.T) {
 
 	var gotSessionID string
 	setManagedCalled := 0
+	cfgOverrides := testCycleOverrides{CycleIDs:
 
+	// short so the test is fast
+
+	func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: readGaugeFn, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agent,
 		ProjectDir:     t.TempDir(),
@@ -1553,19 +1500,10 @@ func TestCycler_ClearSettleTimeout_ClearsManagedSessionID(t *testing.T) {
 		ActPct:         90.0,
 		WarnPct:        80.0,
 		HandoffTimeout: 500 * time.Millisecond,
-		ClearSettle:    50 * time.Millisecond, // short so the test is fast
+		ClearSettle:    50 * time.Millisecond,
 		PollInterval:   10 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:       readHandoff,
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		ReadGaugeFn:       readGaugeFn,
-		WriteJournalFn:    jc.write,
 	}
-	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+	cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sessionID string) error {
 			gotSessionID = sessionID
 			setManagedCalled++
@@ -1613,7 +1551,9 @@ func TestCycler_AntiLoopEscapeHatch_ResetOnSameSessionLowPct(t *testing.T) {
 	readGaugeFn := func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 		return &keeper.CtxFile{Pct: gaugePct, SessionID: sid}, time.Now(), nil
 	}
-
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: readGaugeFn, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agent,
 		ProjectDir:     t.TempDir(),
@@ -1623,18 +1563,9 @@ func TestCycler_AntiLoopEscapeHatch_ResetOnSameSessionLowPct(t *testing.T) {
 		HandoffTimeout: 500 * time.Millisecond,
 		ClearSettle:    20 * time.Millisecond,
 		PollInterval:   5 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:       readHandoff,
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		ReadGaugeFn:       readGaugeFn,
-		WriteJournalFn:    jc.write,
 	}
 
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 
 	// Step 1: first MaybeRun at high pct → cycle fires; lastFiredSID = sid.
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: sid}
@@ -1711,28 +1642,25 @@ func TestCycler_ForcedClear_BypassesCrispIdle(t *testing.T) {
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(1, nonce)
 	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
+	cfgOverrides := testCycleOverrides{CycleIDs:
 
+	// hard threshold
+
+	func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: readGaugeFn, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agent,
 		ProjectDir:     t.TempDir(),
 		TmuxTarget:     "fake-pane",
 		ActPct:         90.0,
 		WarnPct:        80.0,
-		ForceActPct:    95.0, // hard threshold
+		ForceActPct:    95.0,
 		HandoffTimeout: 500 * time.Millisecond,
 		ClearSettle:    200 * time.Millisecond,
 		PollInterval:   10 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:       readHandoff,
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		ReadGaugeFn:       readGaugeFn,
-		WriteJournalFn:    jc.write,
 	}
-	cycler := mustNewCyclerWithIdle(cfg, em, false)
+	cycler := mustNewCyclerWithOverridesAndIdle(cfg, em, cfgOverrides, false)
 
 	// Context at exactly the force threshold — cycle MUST fire despite CrispIdle=false.
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
@@ -1806,7 +1734,14 @@ func TestCycler_ForcedClear_RetryAfterInterval(t *testing.T) {
 	// makes the HandoffTimeout abort trip after a deterministic number of polls.
 	const forceRetryInterval = 5 * time.Second
 	clock := newSteppingAdvanceClock(time.Unix(1_700_000_000, 0), 5*time.Millisecond)
+	cfgOverrides := testCycleOverrides{CycleIDs:
 
+	// short → quick abort (deterministic poll count)
+
+	func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead:                              handoffNeverReturnsNonce, HandoffScrub: // always abort
+	func(_ string) error { return nil }, Inject: spy.inject, Gauge: noopGauge, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		Clock:              clock,
 		AgentName:          agent,
@@ -1816,20 +1751,11 @@ func TestCycler_ForcedClear_RetryAfterInterval(t *testing.T) {
 		WarnPct:            80.0,
 		ForceActPct:        95.0,
 		ForceRetryInterval: forceRetryInterval,
-		HandoffTimeout:     30 * time.Millisecond, // short → quick abort (deterministic poll count)
+		HandoffTimeout:     30 * time.Millisecond,
 		ClearSettle:        10 * time.Millisecond,
 		PollInterval:       5 * time.Millisecond,
-		CycleIDGen:         func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:       handoffNeverReturnsNonce, // always abort
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		ReadGaugeFn:       noopGauge,
-		WriteJournalFn:    jc.write,
 	}
-	cycler := mustNewCyclerWithIdle(cfg, em, false)
+	cycler := mustNewCyclerWithOverridesAndIdle(cfg, em, cfgOverrides, false)
 
 	// Call 1: fires (above force), aborts (nonce timeout).
 	cf := &keeper.CtxFile{Pct: 97.0, SessionID: sid}
@@ -1898,7 +1824,9 @@ func TestCycler_ForcedClear_EscapeInjected(t *testing.T) {
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(1, nonce)
 	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
-
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: injectFn, Gauge: readGaugeFn, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agent,
 		ProjectDir:     t.TempDir(),
@@ -1909,17 +1837,8 @@ func TestCycler_ForcedClear_EscapeInjected(t *testing.T) {
 		HandoffTimeout: 500 * time.Millisecond,
 		ClearSettle:    100 * time.Millisecond,
 		PollInterval:   10 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:       readHandoff,
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          injectFn,
-		ReadGaugeFn:       readGaugeFn,
-		WriteJournalFn:    jc.write,
 	}
-	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+	cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Pane = testPaneWithEscape{PaneWriter: deps.Pane, sendEscape: escapeFn}
 		deps.Idle = testIdleProbe(false)
 	})
@@ -1991,7 +1910,15 @@ func TestCycler_ForcedClear_EscalatesAfterNTimeouts(t *testing.T) {
 	const maxTimeouts = 3
 	// ForceRetryInterval very short so each retry fires immediately in test.
 	const forceRetryInterval = 20 * time.Millisecond
+	cfgOverrides := testCycleOverrides{CycleIDs:
 
+	// short for test speed
+
+	func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: handoffNeverReturnsNonce, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+		return &keeper.CtxFile{Pct: 97.0, SessionID: sid}, time.Now(), nil
+	}, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:          agent,
 		ProjectDir:         t.TempDir(),
@@ -2001,22 +1928,11 @@ func TestCycler_ForcedClear_EscalatesAfterNTimeouts(t *testing.T) {
 		ForceActPct:        95.0,
 		MaxHandoffTimeouts: maxTimeouts,
 		ForceRetryInterval: forceRetryInterval,
-		HandoffTimeout:     10 * time.Millisecond, // short for test speed
+		HandoffTimeout:     10 * time.Millisecond,
 		ClearSettle:        5 * time.Millisecond,
 		PollInterval:       2 * time.Millisecond,
-		CycleIDGen:         func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:       handoffNeverReturnsNonce,
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
-			return &keeper.CtxFile{Pct: 97.0, SessionID: sid}, time.Now(), nil
-		},
-		WriteJournalFn: jc.write,
 	}
-	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+	cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Respawn = testRespawnFunc(forceRestartFn)
 		deps.Idle = testIdleProbe(false)
 	})
@@ -2081,27 +1997,20 @@ func TestCycler_BootGrace_SuppressesAndThenAllows(t *testing.T) {
 	}
 
 	const bootGrace = 120 * time.Millisecond
-
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" }, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: noopGauge, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
-		AgentName:         agent,
-		ProjectDir:        t.TempDir(),
-		TmuxTarget:        "fake-pane",
-		ActPct:            90.0,
-		WarnPct:           80.0,
-		ForceActPct:       95.0,
-		HandoffTimeout:    200 * time.Millisecond,
-		ClearSettle:       50 * time.Millisecond,
-		PollInterval:      10 * time.Millisecond,
-		BootGracePeriod:   bootGrace,
-		CycleIDGen:        func() string { return cycleID },
-		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
-		ReadHandoff:       readHandoff,
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		ReadGaugeFn:       noopGauge,
-		WriteJournalFn:    jc.write,
+		AgentName:       agent,
+		ProjectDir:      t.TempDir(),
+		TmuxTarget:      "fake-pane",
+		ActPct:          90.0,
+		WarnPct:         80.0,
+		ForceActPct:     95.0,
+		HandoffTimeout:  200 * time.Millisecond,
+		ClearSettle:     50 * time.Millisecond,
+		PollInterval:    10 * time.Millisecond,
+		BootGracePeriod: bootGrace,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 
 	// ── Part 1: first-boot does NOT trigger grace (no prior session evicted) ──
 
@@ -2172,24 +2081,19 @@ func TestCycler_YoungSessionGuard_NewBand_AbsTokens(t *testing.T) {
 
 	// Long grace so the young session stays within it for the whole test (no sleep).
 	const bootGrace = 30 * time.Second
-
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" }, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, JournalWrite:
+	// Use the default abs-token band (act=215K / force=240K); do not override.
+	jc.write}
 	cfg := keeper.CyclerConfig{
-		AgentName:         agent,
-		ProjectDir:        t.TempDir(),
-		TmuxTarget:        "fake-pane",
-		HandoffTimeout:    200 * time.Millisecond,
-		ClearSettle:       50 * time.Millisecond,
-		PollInterval:      10 * time.Millisecond,
-		BootGracePeriod:   bootGrace,
-		CycleIDGen:        func() string { return cycleID },
-		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
-		ReadHandoff:       readHandoff,
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		// Use the default abs-token band (act=215K / force=240K); do not override.
-		WriteJournalFn: jc.write,
+		AgentName:       agent,
+		ProjectDir:      t.TempDir(),
+		TmuxTarget:      "fake-pane",
+		HandoffTimeout:  200 * time.Millisecond,
+		ClearSettle:     50 * time.Millisecond,
+		PollInterval:    10 * time.Millisecond,
+		BootGracePeriod: bootGrace,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 
 	// Establish prevSID below the act threshold (50K < 215K) — no grace armed yet.
 	cfPrev := &keeper.CtxFile{Pct: 5.0, Tokens: 50_000, WindowSize: window, SessionID: prevSID}
@@ -2244,25 +2148,20 @@ func TestCycler_CleanHandoffGuard_DispatchingSuppressesAboveForce(t *testing.T) 
 
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(0, nonce)
-
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" }, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, JournalWrite:
+	// CrispIdle false (busy) — above force the cycle would normally bypass it;
+	// the clean-handoff guard must still hold.
+	// The dispatch probe below reads the real on-disk marker.
+	jc.write}
 	cfg := keeper.CyclerConfig{
-		AgentName:         agent,
-		ProjectDir:        projectDir,
-		TmuxTarget:        "fake-pane",
-		HandoffTimeout:    200 * time.Millisecond,
-		ClearSettle:       50 * time.Millisecond,
-		PollInterval:      10 * time.Millisecond,
-		CycleIDGen:        func() string { return cycleID },
-		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
-		ReadHandoff:       readHandoff,
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		// CrispIdle false (busy) — above force the cycle would normally bypass it;
-		// the clean-handoff guard must still hold.
-		// The dispatch probe below reads the real on-disk marker.
-		WriteJournalFn: jc.write,
+		AgentName:      agent,
+		ProjectDir:     projectDir,
+		TmuxTarget:     "fake-pane",
+		HandoffTimeout: 200 * time.Millisecond,
+		ClearSettle:    50 * time.Millisecond,
+		PollInterval:   10 * time.Millisecond,
 	}
-	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+	cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Dispatch = testDispatchProbeFunc(func() bool { return keeper.HoldingDispatch(projectDir, agent) })
 		deps.Idle = testIdleProbe(false)
 	})
@@ -2325,28 +2224,25 @@ func TestCycler_AbortClearsManaged(t *testing.T) {
 		managedLastValue = sessionID
 		return nil
 	}
+	cfgOverrides := testCycleOverrides{CycleIDs:
 
+	// short → quick abort
+
+	func() string { return cycleID }, HandoffPath: func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" }, HandoffRead: handoffNeverReturnsNonce, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+		return &keeper.CtxFile{Pct: 95.0, SessionID: abortSID}, time.Now(), nil
+	}, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
-		AgentName:         agent,
-		ProjectDir:        t.TempDir(),
-		TmuxTarget:        "fake-pane",
-		ActPct:            90.0,
-		WarnPct:           80.0,
-		ForceActPct:       95.0,
-		HandoffTimeout:    40 * time.Millisecond, // short → quick abort
-		ClearSettle:       10 * time.Millisecond,
-		PollInterval:      5 * time.Millisecond,
-		CycleIDGen:        func() string { return cycleID },
-		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
-		ReadHandoff:       handoffNeverReturnsNonce,
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
-			return &keeper.CtxFile{Pct: 95.0, SessionID: abortSID}, time.Now(), nil
-		},
-		WriteJournalFn: jc.write,
+		AgentName:      agent,
+		ProjectDir:     t.TempDir(),
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		ForceActPct:    95.0,
+		HandoffTimeout: 40 * time.Millisecond,
+		ClearSettle:    10 * time.Millisecond,
+		PollInterval:   5 * time.Millisecond,
 	}
-	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+	cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error { return setManagedFn("", "", sid) }}
 	})
 
@@ -2412,7 +2308,11 @@ func TestCycler_ForcedClear_BelowThreshold_StillBlocked(t *testing.T) {
 	em := &keeper.RecordingEmitter{}
 	spy := &cycleSpyInjector{}
 	jc := &journalCapture{}
-
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: func(_ string) (string, error) { return "", nil }, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+		return &keeper.CtxFile{Pct: 92.0, SessionID: prevSID}, time.Now(), nil
+	}, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agent,
 		ProjectDir:     t.TempDir(),
@@ -2423,19 +2323,8 @@ func TestCycler_ForcedClear_BelowThreshold_StillBlocked(t *testing.T) {
 		HandoffTimeout: 100 * time.Millisecond,
 		ClearSettle:    50 * time.Millisecond,
 		PollInterval:   10 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:       func(_ string) (string, error) { return "", nil },
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
-			return &keeper.CtxFile{Pct: 92.0, SessionID: prevSID}, time.Now(), nil
-		},
-		WriteJournalFn: jc.write,
 	}
-	cycler := mustNewCyclerWithIdle(cfg, em, false)
+	cycler := mustNewCyclerWithOverridesAndIdle(cfg, em, cfgOverrides, false)
 
 	// Context above ActPct (90) but below ForceActPct (95) with CrispIdle=false.
 	// Cycle must NOT fire.
@@ -2474,30 +2363,29 @@ func TestCycler_ForceThresholdTracksActPct(t *testing.T) {
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(1, nonce)
 	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
+	cfgOverrides :=
 
-	// ActPct=35, ForceActPct left at zero → must default to 35+5=40.
-	// Session at pct=41 (above force threshold) with CrispIdle=false must fire.
+		// ActPct=35, ForceActPct left at zero → must default to 35+5=40.
+		// Session at pct=41 (above force threshold) with CrispIdle=false must fire.
+		testCycleOverrides{CycleIDs:
+
+		// ForceActPct intentionally omitted → must default to ActPct+5 = 40.0
+
+		func() string { return cycleID }, HandoffPath: func(_, a string) string {
+			return "/tmp/HANDOFF-" + a + ".md"
+		}, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: readGaugeFn, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:  agent,
 		ProjectDir: t.TempDir(),
 		TmuxTarget: "fake-pane",
 		ActPct:     35.0,
 		WarnPct:    25.0,
-		// ForceActPct intentionally omitted → must default to ActPct+5 = 40.0
+
 		HandoffTimeout: 500 * time.Millisecond,
 		ClearSettle:    200 * time.Millisecond,
 		PollInterval:   10 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:       readHandoff,
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		ReadGaugeFn:       readGaugeFn,
-		WriteJournalFn:    jc.write,
 	}
-	cycler := mustNewCyclerWithIdle(cfg, em, false)
+	cycler := mustNewCyclerWithOverridesAndIdle(cfg, em, cfgOverrides, false)
 
 	// pct=41: above ActPct (35) and above derived ForceActPct (40). CrispIdle=false
 	// must be bypassed so the cycle fires — verifies dead zone is eliminated.
@@ -2523,14 +2411,19 @@ func TestCycler_ForceThresholdTracksActPct(t *testing.T) {
 	spy2 := &cycleSpyInjector{}
 	jc2 := &journalCapture{}
 	cfg2 := cfg
+	cfg2Overrides := cfgOverrides
 	cfg2.ProjectDir = t.TempDir()
-	cfg2.InjectFn = spy2.inject
-	cfg2.WriteJournalFn = jc2.write
-	cfg2.ReadHandoff = func(_ string) (string, error) { return "", nil }
-	cfg2.ReadGaugeFn = func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+	cfg2Overrides.
+		Inject = spy2.inject
+	cfg2Overrides.
+		JournalWrite = jc2.write
+	cfg2Overrides.
+		HandoffRead = func(_ string) (string, error) { return "", nil }
+	cfg2Overrides.
+		Gauge = func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 		return &keeper.CtxFile{Pct: 37.0, SessionID: prevSID}, time.Now(), nil
 	}
-	cycler2 := mustNewCyclerWithIdle(cfg2, em2, false)
+	cycler2 := mustNewCyclerWithOverridesAndIdle(cfg2, em2, cfg2Overrides, false)
 
 	cf2 := &keeper.CtxFile{Pct: 37.0, SessionID: prevSID}
 	if err := cycler2.MaybeRun(context.Background(), cf2); err != nil {
@@ -2565,27 +2458,20 @@ func TestCycler_BootGrace_ForcePathBypasses(t *testing.T) {
 	const bootGrace = 500 * time.Millisecond // long grace — force-path should bypass it
 
 	readGaugeFn := gaugeReturnsNewSIDAfter(1, bootSID, bootSID+"_new")
-
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" }, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: readGaugeFn, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
-		AgentName:         agent,
-		ProjectDir:        t.TempDir(),
-		TmuxTarget:        "fake-pane",
-		ActPct:            90.0,
-		WarnPct:           80.0,
-		ForceActPct:       95.0,
-		HandoffTimeout:    200 * time.Millisecond,
-		ClearSettle:       50 * time.Millisecond,
-		PollInterval:      10 * time.Millisecond,
-		BootGracePeriod:   bootGrace,
-		CycleIDGen:        func() string { return cycleID },
-		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
-		ReadHandoff:       readHandoff,
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		ReadGaugeFn:       readGaugeFn,
-		WriteJournalFn:    jc.write,
+		AgentName:       agent,
+		ProjectDir:      t.TempDir(),
+		TmuxTarget:      "fake-pane",
+		ActPct:          90.0,
+		WarnPct:         80.0,
+		ForceActPct:     95.0,
+		HandoffTimeout:  200 * time.Millisecond,
+		ClearSettle:     50 * time.Millisecond,
+		PollInterval:    10 * time.Millisecond,
+		BootGracePeriod: bootGrace,
 	}
-	cycler := mustNewCyclerWithIdle(cfg, em, false)
+	cycler := mustNewCyclerWithOverridesAndIdle(cfg, em, cfgOverrides, false)
 
 	// Establish prevSID (first session, no grace armed).
 	cfPrev := &keeper.CtxFile{Pct: 70.0, SessionID: prevSID}
@@ -2644,28 +2530,21 @@ func TestCycler_AbortDoesNotClearManaged_FirstSession(t *testing.T) {
 		managedCallCount++
 		return nil
 	}
-
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" }, HandoffRead: handoffNeverReturnsNonce, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+		return &keeper.CtxFile{Pct: 95.0, SessionID: sid}, time.Now(), nil
+	}, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
-		AgentName:         agent,
-		ProjectDir:        t.TempDir(),
-		TmuxTarget:        "fake-pane",
-		ActPct:            90.0,
-		WarnPct:           80.0,
-		ForceActPct:       95.0,
-		HandoffTimeout:    40 * time.Millisecond,
-		ClearSettle:       10 * time.Millisecond,
-		PollInterval:      5 * time.Millisecond,
-		CycleIDGen:        func() string { return cycleID },
-		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
-		ReadHandoff:       handoffNeverReturnsNonce,
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
-			return &keeper.CtxFile{Pct: 95.0, SessionID: sid}, time.Now(), nil
-		},
-		WriteJournalFn: jc.write,
+		AgentName:      agent,
+		ProjectDir:     t.TempDir(),
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		ForceActPct:    95.0,
+		HandoffTimeout: 40 * time.Millisecond,
+		ClearSettle:    10 * time.Millisecond,
+		PollInterval:   5 * time.Millisecond,
 	}
-	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+	cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error { return setManagedFn("", "", sid) }}
 	})
 
@@ -2719,27 +2598,20 @@ func TestCycler_BootGrace_FlappingSID(t *testing.T) {
 	const bootGrace = 150 * time.Millisecond
 
 	readGaugeFn := gaugeReturnsNewSIDAfter(1, novelSID, novelSID+"_resumed")
-
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" }, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: readGaugeFn, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
-		AgentName:         agent,
-		ProjectDir:        t.TempDir(),
-		TmuxTarget:        "fake-pane",
-		ActPct:            90.0,
-		WarnPct:           80.0,
-		ForceActPct:       95.0,
-		HandoffTimeout:    200 * time.Millisecond,
-		ClearSettle:       50 * time.Millisecond,
-		PollInterval:      10 * time.Millisecond,
-		BootGracePeriod:   bootGrace,
-		CycleIDGen:        func() string { return cycleID },
-		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
-		ReadHandoff:       readHandoff,
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		ReadGaugeFn:       readGaugeFn,
-		WriteJournalFn:    jc.write,
+		AgentName:       agent,
+		ProjectDir:      t.TempDir(),
+		TmuxTarget:      "fake-pane",
+		ActPct:          90.0,
+		WarnPct:         80.0,
+		ForceActPct:     95.0,
+		HandoffTimeout:  200 * time.Millisecond,
+		ClearSettle:     50 * time.Millisecond,
+		PollInterval:    10 * time.Millisecond,
+		BootGracePeriod: bootGrace,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 
 	// ── Step 1: establish prevSID at low pct (no grace armed) ──
 	cfPrev := &keeper.CtxFile{Pct: 70.0, SessionID: prevSID}
@@ -2846,27 +2718,24 @@ func TestCycler_AbortToResumeGraceToRefire(t *testing.T) {
 
 	// ReadGaugeFn returns a new SID after 1 call (for the resume cycle settle).
 	readGaugeFn := gaugeReturnsNewSIDAfter(1, resumeSID, resumeSID+"_post")
+	cfgOverrides := testCycleOverrides{CycleIDs:
 
+	// short for the abort cycle
+
+	cycleIDGen, HandoffPath: func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" }, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: readGaugeFn, JournalWrite: writeJournalFn}
 	cfg := keeper.CyclerConfig{
-		AgentName:         agent,
-		ProjectDir:        t.TempDir(),
-		TmuxTarget:        "fake-pane",
-		ActPct:            90.0,
-		WarnPct:           80.0,
-		ForceActPct:       95.0,
-		HandoffTimeout:    40 * time.Millisecond, // short for the abort cycle
-		ClearSettle:       50 * time.Millisecond,
-		PollInterval:      5 * time.Millisecond,
-		BootGracePeriod:   bootGrace,
-		CycleIDGen:        cycleIDGen,
-		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
-		ReadHandoff:       readHandoff,
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		ReadGaugeFn:       readGaugeFn,
-		WriteJournalFn:    writeJournalFn,
+		AgentName:       agent,
+		ProjectDir:      t.TempDir(),
+		TmuxTarget:      "fake-pane",
+		ActPct:          90.0,
+		WarnPct:         80.0,
+		ForceActPct:     95.0,
+		HandoffTimeout:  40 * time.Millisecond,
+		ClearSettle:     50 * time.Millisecond,
+		PollInterval:    5 * time.Millisecond,
+		BootGracePeriod: bootGrace,
 	}
-	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+	cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error { return setManagedFn("", "", sid) }}
 	})
 
@@ -3017,7 +2886,10 @@ func TestCycler_CrossSID_ForceRetry_AfterAbort(t *testing.T) {
 			readGaugeFn := gaugeReturnsNewSIDAfter(1, tc.novelSID, tc.novelSID+"_post")
 
 			clock := newSteppingAdvanceClock(time.Unix(1_700_000_000, 0), 5*time.Millisecond)
+			cfgOverrides := testCycleOverrides{CycleIDs:
 
+			// BootGracePeriod disabled: this test focuses on Gate-6, not boot-grace.
+			cycleIDGen, HandoffPath: func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" }, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: readGaugeFn, JournalWrite: writeJournalFn}
 			cfg := keeper.CyclerConfig{
 				Clock:              clock,
 				AgentName:          "agent-cross",
@@ -3030,16 +2902,8 @@ func TestCycler_CrossSID_ForceRetry_AfterAbort(t *testing.T) {
 				HandoffTimeout:     abortHandoffTimeout,
 				ClearSettle:        20 * time.Millisecond,
 				PollInterval:       5 * time.Millisecond,
-				// BootGracePeriod disabled: this test focuses on Gate-6, not boot-grace.
-				CycleIDGen:        cycleIDGen,
-				HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
-				ReadHandoff:       readHandoff,
-				TruncateHandoffFn: func(_ string) error { return nil },
-				InjectFn:          spy.inject,
-				ReadGaugeFn:       readGaugeFn,
-				WriteJournalFn:    writeJournalFn,
 			}
-			cycler := mustNewCycler(cfg, em)
+			cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 			ctx := context.Background()
 
 			// ── Phase A: establish prevSID (if any) then abort on abortSID ──
@@ -3122,8 +2986,12 @@ func TestCycler_BootGrace_BurstRelativeCap(t *testing.T) {
 
 	// Set MaxBootGraceTotal very short so we can observe it elapsing.
 	const bootGrace = 80 * time.Millisecond
-	const maxBootGraceTotal = 60 * time.Millisecond // shorter than bootGrace
-
+	const maxBootGraceTotal = 60 * time.Millisecond
+	cfgOverrides := // shorter than bootGrace
+		testCycleOverrides{CycleIDs: func() string { return "cyc-burst-cap" }, HandoffPath: func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" }, HandoffRead: func(_ string) (string, error) { return "", nil }, HandoffScrub: // abort
+		func(_ string) error { return nil }, Inject:                                                                                                                                                                                       spy.inject, Gauge: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+			return &keeper.CtxFile{Pct: 85.0, SessionID: nextSID}, time.Now(), nil
+		}, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:         agent,
 		ProjectDir:        t.TempDir(),
@@ -3136,17 +3004,8 @@ func TestCycler_BootGrace_BurstRelativeCap(t *testing.T) {
 		PollInterval:      5 * time.Millisecond,
 		BootGracePeriod:   bootGrace,
 		MaxBootGraceTotal: maxBootGraceTotal,
-		CycleIDGen:        func() string { return "cyc-burst-cap" },
-		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
-		ReadHandoff:       func(_ string) (string, error) { return "", nil }, // abort
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
-			return &keeper.CtxFile{Pct: 85.0, SessionID: nextSID}, time.Now(), nil
-		},
-		WriteJournalFn: jc.write,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 	ctx := context.Background()
 
 	// 1. Observe prevSID at low pct — no grace armed (first SID seen, currentSessionID "").

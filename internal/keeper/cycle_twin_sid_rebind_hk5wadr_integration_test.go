@@ -112,6 +112,11 @@ func TestIntegration_TwinSidRebind_AntiLoopGateHolds(t *testing.T) {
 	}
 
 	em := &keeper.RecordingEmitter{}
+	cfgOverrides := testCycleOverrides{Inject:
+
+	// REAL InjectText — production path; twin parses the multi-line
+	// /session-handoff directive natively (hk-fan).
+	keeper.InjectText}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agent,
 		ProjectDir:     project,
@@ -119,11 +124,8 @@ func TestIntegration_TwinSidRebind_AntiLoopGateHolds(t *testing.T) {
 		HandoffTimeout: 10 * time.Second,
 		ClearSettle:    5 * time.Second,
 		PollInterval:   150 * time.Millisecond,
-		// REAL InjectText — production path; twin parses the multi-line
-		// /session-handoff directive natively (hk-fan).
-		InjectFn: keeper.InjectText,
 	}
-	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+	cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error {
 			return keeper.WriteManagedSessionID(project, agent, sid)
 		}}

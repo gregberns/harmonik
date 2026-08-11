@@ -2,6 +2,8 @@ package keeper_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/keeper"
@@ -16,6 +18,117 @@ func mustNewCyclerWithIdle(cfg keeper.CyclerConfig, emitter keeper.Emitter, idle
 		deps.Idle = testIdleProbe(idle)
 	})
 }
+
+type testCycleOverrides struct {
+	CycleIDs     func() string
+	HandoffPath  func(string, string) string
+	Inject       func(context.Context, string, string) error
+	Gauge        func(string, string) (*keeper.CtxFile, time.Time, error)
+	HandoffRead  func(string) (string, error)
+	HandoffScrub func(string) error
+	JournalWrite func(string, *keeper.CycleJournal) error
+}
+
+func mustNewCyclerWithOverrides(cfg keeper.CyclerConfig, emitter keeper.Emitter, o testCycleOverrides) *keeper.Cycler {
+	return mustNewCyclerWithOverridesAndDeps(cfg, emitter, o, nil)
+}
+
+func mustNewCyclerWithOverridesAndIdle(cfg keeper.CyclerConfig, emitter keeper.Emitter, o testCycleOverrides, idle bool) *keeper.Cycler {
+	return mustNewCyclerWithOverridesAndDeps(cfg, emitter, o, func(deps *keeper.CycleDeps) {
+		deps.Idle = testIdleProbe(idle)
+	})
+}
+
+func mustNewCyclerWithOverridesAndDeps(cfg keeper.CyclerConfig, emitter keeper.Emitter, o testCycleOverrides, modify func(*keeper.CycleDeps)) *keeper.Cycler {
+	return mustNewCyclerWithDeps(cfg, emitter, func(deps *keeper.CycleDeps) {
+		applyTestCycleOverrides(deps, cfg, o)
+		if modify != nil {
+			modify(deps)
+		}
+	})
+}
+
+func applyTestCycleOverrides(deps *keeper.CycleDeps, cfg keeper.CyclerConfig, o testCycleOverrides) {
+	if o.CycleIDs != nil {
+		deps.CycleIDs = testCycleIDFunc(o.CycleIDs)
+	}
+	if o.Inject != nil {
+		deps.Pane = testPaneWithInject{PaneWriter: deps.Pane, inject: o.Inject}
+	}
+	if o.Gauge != nil {
+		deps.Context = testContextWithGauge{ContextStore: deps.Context, read: func() (*keeper.CtxFile, time.Time, error) {
+			return o.Gauge(cfg.ProjectDir, cfg.AgentName)
+		}}
+	}
+	if o.HandoffPath != nil || o.HandoffRead != nil || o.HandoffScrub != nil {
+		deps.Handoff = testHandoffOverrides{HandoffDocument: deps.Handoff, cfg: cfg, overrides: o}
+	}
+	if o.JournalWrite != nil {
+		deps.Journal = testJournalWithWrite{CycleJournalStore: deps.Journal, write: func(j *keeper.CycleJournal) error {
+			path := filepath.Join(cfg.ProjectDir, ".harmonik", "keeper", cfg.AgentName+".cycle.json")
+			return o.JournalWrite(path, j)
+		}}
+	}
+}
+
+type testCycleIDFunc func() string
+
+func (f testCycleIDFunc) Next() string { return f() }
+
+type testPaneWithInject struct {
+	keeper.PaneWriter
+	inject func(context.Context, string, string) error
+}
+
+func (p testPaneWithInject) Inject(ctx context.Context, target, text string) error {
+	return p.inject(ctx, target, text)
+}
+
+type testContextWithGauge struct {
+	keeper.ContextStore
+	read func() (*keeper.CtxFile, time.Time, error)
+}
+
+func (c testContextWithGauge) ReadGauge() (*keeper.CtxFile, time.Time, error) { return c.read() }
+
+type testHandoffOverrides struct {
+	keeper.HandoffDocument
+	cfg       keeper.CyclerConfig
+	overrides testCycleOverrides
+}
+
+func (h testHandoffOverrides) Path() string {
+	if h.overrides.HandoffPath != nil {
+		return h.overrides.HandoffPath(h.cfg.ProjectDir, h.cfg.AgentName)
+	}
+	return h.HandoffDocument.Path()
+}
+func (h testHandoffOverrides) Read() (string, error) {
+	if h.overrides.HandoffRead != nil {
+		return h.overrides.HandoffRead(h.Path())
+	}
+	return h.HandoffDocument.Read()
+}
+func (h testHandoffOverrides) ModTime() (time.Time, bool) {
+	info, err := os.Stat(h.Path())
+	if err != nil {
+		return time.Time{}, false
+	}
+	return info.ModTime(), true
+}
+func (h testHandoffOverrides) ScrubNonce() error {
+	if h.overrides.HandoffScrub != nil {
+		return h.overrides.HandoffScrub(h.Path())
+	}
+	return h.HandoffDocument.ScrubNonce()
+}
+
+type testJournalWithWrite struct {
+	keeper.CycleJournalStore
+	write func(*keeper.CycleJournal) error
+}
+
+func (j testJournalWithWrite) Write(v *keeper.CycleJournal) error { return j.write(v) }
 
 func mustNewCyclerWithDeps(
 	cfg keeper.CyclerConfig,

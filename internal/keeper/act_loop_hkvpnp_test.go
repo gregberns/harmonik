@@ -33,28 +33,29 @@ import (
 func realHandoffCycler(t *testing.T, agent, projectDir, cycleID string, spy *cycleSpyInjector, jc *journalCapture) *keeper.Cycler {
 	t.Helper()
 	handoffPath := filepath.Join(projectDir, "HANDOFF-"+agent+".md")
+	cfgOverrides := testCycleOverrides{CycleIDs:
+
+	// disable the force-clear path for this test
+
+	func() string { return cycleID }, HandoffPath: func(_, _ string) string {
+		return handoffPath
+	}, Inject:
+	// Use the package defaults for ReadHandoff / TruncateHandoffFn /
+	spy.inject, Gauge: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+		return &keeper.CtxFile{Pct: 95.0, SessionID: "sess-act"}, time.Now(), nil
+	}, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agent,
 		ProjectDir:     projectDir,
 		TmuxTarget:     "fake-pane",
 		ActPct:         90.0,
 		WarnPct:        80.0,
-		ForceActPct:    200.0, // disable the force-clear path for this test
+		ForceActPct:    200.0,
 		HandoffTimeout: 60 * time.Millisecond,
 		ClearSettle:    30 * time.Millisecond,
 		PollInterval:   10 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		HandoffFilePath: func(_, _ string) string {
-			return handoffPath
-		},
-		// Use the package defaults for ReadHandoff / TruncateHandoffFn /
-		InjectFn: spy.inject,
-		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
-			return &keeper.CtxFile{Pct: 95.0, SessionID: "sess-act"}, time.Now(), nil
-		},
-		WriteJournalFn: jc.write,
 	}
-	return mustNewCycler(cfg, &keeper.RecordingEmitter{})
+	return mustNewCyclerWithOverrides(cfg, &keeper.RecordingEmitter{}, cfgOverrides)
 }
 
 // TestActLoop_HKVPNP_DoesNotTruncateNonEmptyHandoffOnTimeout reproduces Bug 3b:
@@ -132,7 +133,11 @@ func TestActLoop_HKVPNP_DoesNotRefireSecondNonceAfterTimeout(t *testing.T) {
 		idSeq++
 		return "cyc-refire-00000" + string(rune('0'+idSeq))
 	}
-
+	cfgOverrides := testCycleOverrides{CycleIDs: idGen, HandoffPath: func(_, _ string) string {
+		return handoffPath
+	}, Inject: spy.inject, Gauge: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+		return &keeper.CtxFile{Pct: 95.0, SessionID: "sess-refire"}, time.Now(), nil
+	}, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agent,
 		ProjectDir:     dir,
@@ -143,17 +148,8 @@ func TestActLoop_HKVPNP_DoesNotRefireSecondNonceAfterTimeout(t *testing.T) {
 		HandoffTimeout: 40 * time.Millisecond,
 		ClearSettle:    20 * time.Millisecond,
 		PollInterval:   10 * time.Millisecond,
-		CycleIDGen:     idGen,
-		HandoffFilePath: func(_, _ string) string {
-			return handoffPath
-		},
-		InjectFn: spy.inject,
-		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
-			return &keeper.CtxFile{Pct: 95.0, SessionID: "sess-refire"}, time.Now(), nil
-		},
-		WriteJournalFn: jc.write,
 	}
-	cycler := mustNewCycler(cfg, &keeper.RecordingEmitter{})
+	cycler := mustNewCyclerWithOverrides(cfg, &keeper.RecordingEmitter{}, cfgOverrides)
 
 	// Simulate the live loop signature. The SID never changes (no /clear ever
 	// completed), but the gauge pct oscillates: after each aborted cycle the

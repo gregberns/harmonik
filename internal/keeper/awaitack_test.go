@@ -375,7 +375,7 @@ func TestAwaitAck_FakeClockTimeout(t *testing.T) {
 func TestCycler_UsesInjectedClock(t *testing.T) {
 	fixed := time.Date(2031, 3, 4, 5, 6, 7, 0, time.UTC)
 	c := mustNewCycler(CyclerConfig{AgentName: "x", Clock: substrate.NewFakeClock(fixed)}, nil)
-	got := c.cfg.CycleIDGen()
+	got := c.cycleIDs.Next()
 	want := "cyc-20310304T050607-000001"
 	if got != want {
 		t.Fatalf("cycle id: want %q, got %q", want, got)

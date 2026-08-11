@@ -58,26 +58,24 @@ func TestConfigAdaptersKeepEntryTranscriptReadsLazy(t *testing.T) {
 
 func TestConfigAdaptersSeparateHandoffAndJournalPaths(t *testing.T) {
 	project := t.TempDir()
-	handoffPath := filepath.Join(project, "HANDOFF-custom.md")
-	var readHandoffPath string
+	handoffPath := filepath.Join(project, "HANDOFF-adapter.md")
+	if err := os.WriteFile(handoffPath, []byte("handoff"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	cfg := CyclerConfig{
 		AgentName: "adapter", ProjectDir: project,
-		HandoffFilePath: func(string, string) string { return handoffPath },
-		ReadHandoff: func(path string) (string, error) {
-			readHandoffPath = path
-			return "handoff", nil
-		},
 	}
 	deps := CycleDepsFromConfig(cfg, nil)
-	if _, err := deps.Handoff.Read(); err != nil {
+	got, err := deps.Handoff.Read()
+	if err != nil {
 		t.Fatal(err)
+	}
+	if got != "handoff" || deps.Handoff.Path() != handoffPath {
+		t.Fatalf("handoff read = %q at %q", got, deps.Handoff.Path())
 	}
 	journal := &CycleJournal{CycleID: "path-test", Phase: "opened"}
 	if err := deps.Journal.Write(journal); err != nil {
 		t.Fatal(err)
-	}
-	if readHandoffPath != handoffPath {
-		t.Fatalf("handoff path = %q, want %q", readHandoffPath, handoffPath)
 	}
 	wantJournal := journalFilePath(project, "adapter")
 	if _, err := os.Stat(wantJournal); err != nil {

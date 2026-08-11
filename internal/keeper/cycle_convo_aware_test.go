@@ -86,6 +86,9 @@ func newConvoAwareCycler(
 ) *keeper.Cycler {
 	t.Helper()
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return filepath.Join(projectDir, "HANDOFF-"+a+".md")
+	}, HandoffRead: func(_ string) (string, error) { return "# Handoff\n\n" + nonce + "\n", nil }, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: func(_, _ string) (*keeper.CtxFile, time.Time, error) { return nil, time.Time{}, os.ErrNotExist }, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agent,
 		ProjectDir:     projectDir,
@@ -95,21 +98,13 @@ func newConvoAwareCycler(
 		HandoffTimeout: 200 * time.Millisecond,
 		ClearSettle:    50 * time.Millisecond,
 		PollInterval:   5 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return filepath.Join(projectDir, "HANDOFF-"+a+".md")
-		},
-		ReadHandoff:       func(_ string) (string, error) { return "# Handoff\n\n" + nonce + "\n", nil },
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		ReadGaugeFn:       func(_, _ string) (*keeper.CtxFile, time.Time, error) { return nil, time.Time{}, os.ErrNotExist },
-		WriteJournalFn:    jc.write,
+
 		// Conversation-aware fields under test:
 		TranscriptDir:        transcriptDir,
 		OperatorTurnLookback: operatorTurnLookback,
 		PostAnswerGrace:      postAnswerGrace,
 	}
-	return mustNewCycler(cfg, em)
+	return mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 }
 
 // ── Gate 5d: auto-hold on recent operator turn ────────────────────────────────
@@ -177,7 +172,9 @@ func TestCycler_StaleOperatorTurn_DoesNotSuppress(t *testing.T) {
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(1, nonce)
 	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
-
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return filepath.Join(projectDir, "HANDOFF-"+a+".md")
+	}, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: readGaugeFn, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agent,
 		ProjectDir:     projectDir,
@@ -187,20 +184,12 @@ func TestCycler_StaleOperatorTurn_DoesNotSuppress(t *testing.T) {
 		HandoffTimeout: 200 * time.Millisecond,
 		ClearSettle:    50 * time.Millisecond,
 		PollInterval:   5 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return filepath.Join(projectDir, "HANDOFF-"+a+".md")
-		},
-		ReadHandoff:          readHandoff,
-		TruncateHandoffFn:    func(_ string) error { return nil },
-		InjectFn:             spy.inject,
-		ReadGaugeFn:          readGaugeFn,
-		WriteJournalFn:       jc.write,
+
 		TranscriptDir:        transcriptDir,
 		OperatorTurnLookback: 5 * time.Minute, // lookback shorter than 10m stale turn
 		PostAnswerGrace:      0,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
@@ -239,7 +228,9 @@ func TestCycler_ToolResultUserTurn_DoesNotSuppress(t *testing.T) {
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(1, nonce)
 	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
-
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return filepath.Join(projectDir, "HANDOFF-"+a+".md")
+	}, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: readGaugeFn, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agent,
 		ProjectDir:     projectDir,
@@ -249,20 +240,12 @@ func TestCycler_ToolResultUserTurn_DoesNotSuppress(t *testing.T) {
 		HandoffTimeout: 200 * time.Millisecond,
 		ClearSettle:    50 * time.Millisecond,
 		PollInterval:   5 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return filepath.Join(projectDir, "HANDOFF-"+a+".md")
-		},
-		ReadHandoff:          readHandoff,
-		TruncateHandoffFn:    func(_ string) error { return nil },
-		InjectFn:             spy.inject,
-		ReadGaugeFn:          readGaugeFn,
-		WriteJournalFn:       jc.write,
+
 		TranscriptDir:        transcriptDir,
 		OperatorTurnLookback: 5 * time.Minute,
 		PostAnswerGrace:      0,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
@@ -301,7 +284,9 @@ func TestCycler_OperatorTurnLookbackZero_DisablesGate5d(t *testing.T) {
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(1, nonce)
 	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
-
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return filepath.Join(projectDir, "HANDOFF-"+a+".md")
+	}, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: readGaugeFn, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agent,
 		ProjectDir:     projectDir,
@@ -311,20 +296,12 @@ func TestCycler_OperatorTurnLookbackZero_DisablesGate5d(t *testing.T) {
 		HandoffTimeout: 200 * time.Millisecond,
 		ClearSettle:    50 * time.Millisecond,
 		PollInterval:   5 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return filepath.Join(projectDir, "HANDOFF-"+a+".md")
-		},
-		ReadHandoff:          readHandoff,
-		TruncateHandoffFn:    func(_ string) error { return nil },
-		InjectFn:             spy.inject,
-		ReadGaugeFn:          readGaugeFn,
-		WriteJournalFn:       jc.write,
+
 		TranscriptDir:        transcriptDir,
 		OperatorTurnLookback: 0, // DISABLED — gate must not fire
 		PostAnswerGrace:      0,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
@@ -452,7 +429,9 @@ func TestCycler_PostAnswerGrace_Expired_DoesNotSuppress(t *testing.T) {
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(1, nonce)
 	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
-
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return filepath.Join(projectDir, "HANDOFF-"+a+".md")
+	}, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: readGaugeFn, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agent,
 		ProjectDir:     projectDir,
@@ -462,20 +441,12 @@ func TestCycler_PostAnswerGrace_Expired_DoesNotSuppress(t *testing.T) {
 		HandoffTimeout: 200 * time.Millisecond,
 		ClearSettle:    50 * time.Millisecond,
 		PollInterval:   5 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return filepath.Join(projectDir, "HANDOFF-"+a+".md")
-		},
-		ReadHandoff:          readHandoff,
-		TruncateHandoffFn:    func(_ string) error { return nil },
-		InjectFn:             spy.inject,
-		ReadGaugeFn:          readGaugeFn,
-		WriteJournalFn:       jc.write,
+
 		TranscriptDir:        transcriptDir,
 		OperatorTurnLookback: 0,
 		PostAnswerGrace:      30 * time.Second,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
@@ -513,7 +484,9 @@ func TestCycler_AssistantToolUseTurn_DoesNotTriggerGrace(t *testing.T) {
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(1, nonce)
 	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
-
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return filepath.Join(projectDir, "HANDOFF-"+a+".md")
+	}, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: readGaugeFn, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agent,
 		ProjectDir:     projectDir,
@@ -523,20 +496,12 @@ func TestCycler_AssistantToolUseTurn_DoesNotTriggerGrace(t *testing.T) {
 		HandoffTimeout: 200 * time.Millisecond,
 		ClearSettle:    50 * time.Millisecond,
 		PollInterval:   5 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		HandoffFilePath: func(_, a string) string {
-			return filepath.Join(projectDir, "HANDOFF-"+a+".md")
-		},
-		ReadHandoff:          readHandoff,
-		TruncateHandoffFn:    func(_ string) error { return nil },
-		InjectFn:             spy.inject,
-		ReadGaugeFn:          readGaugeFn,
-		WriteJournalFn:       jc.write,
+
 		TranscriptDir:        transcriptDir,
 		OperatorTurnLookback: 0,
 		PostAnswerGrace:      30 * time.Second,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {

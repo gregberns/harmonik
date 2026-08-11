@@ -151,7 +151,6 @@ func NewCyclerWithDeps(policy CyclePolicy, env CycleEnv, deps CycleDeps) (*Cycle
 	}
 	cfg := configFromPolicyAndEnv(policy, env)
 	cfg.Clock = deps.Clock
-	cfg.CycleIDGen = deps.CycleIDs.Next
 	cfg.hasRespawn = deps.Respawn != nil
 	sampler := narrowGaugeAdapter{deps: deps, policy: policy, target: env.TmuxTarget}
 	c := &Cycler{
@@ -169,7 +168,7 @@ func NewCyclerWithDeps(policy CyclePolicy, env CycleEnv, deps CycleDeps) (*Cycle
 func CycleDepsFromConfig(cfg CyclerConfig, emitter Emitter) CycleDeps {
 	cfg.applyDefaults()
 	deps := CycleDeps{
-		Clock: cfg.Clock, CycleIDs: cycleIDFunc(cfg.CycleIDGen),
+		Clock: cfg.Clock, CycleIDs: cycleIDFunc(newCycleIDGen(cfg.Clock)),
 		Pane: configPaneWriter{cfg: &cfg}, Context: configContextStore{cfg: &cfg},
 		Activity: configActivityProbe{cfg: &cfg},
 		Managed:  boolProbe(func() bool { return IsManaged(cfg.ProjectDir, cfg.AgentName) }),

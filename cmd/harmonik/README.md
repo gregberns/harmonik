@@ -8,7 +8,7 @@ The canonical dispatch path is **one persistent daemon per project plus a
 shared queue**. Start the daemon once (queue-only) in a detached tmux session:
 
 ```
-harmonik --project /path/to/project --no-auto-pull --max-concurrent N
+harmonik start daemon --project /path/to/project --no-auto-pull --max-concurrent N
 ```
 
 then dispatch work by submitting beads to its queue with `harmonik queue submit

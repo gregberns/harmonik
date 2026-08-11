@@ -729,6 +729,35 @@ EXAMPLES
 		return runCaptainSubcommand(os.Args[2:])
 	}
 
+	// harmonik start daemon [flags] — THE ONLY spelling that starts a daemon
+	// (hk-cli-flag-first-starts-daemon-gjhiy).
+	//
+	// Before this, the daemon started by FALLING THROUGH the verb chain: any argv
+	// that matched no verb reached flag.Parse and booted one. That made three
+	// spellings start a daemon by accident — `harmonik` bare, `harmonik --project
+	// DIR`, and `harmonik --project DIR status` — because unknownSubcommand
+	// declines anything beginning with "-" and anything with no argument at all.
+	// The last one is the one that hurt: there is no `status` subcommand, so an
+	// operator poll-checking a redeploy started a second daemon that contended
+	// with the one being revived.
+	//
+	// The daemon now starts the same way every other thing in this CLI starts: by
+	// being named. Reaching the end of the chain is no longer a request to boot.
+	//
+	// This is a rewrite, not a new parser: the flags after `start daemon` are the
+	// daemon's own, so the argv is shortened back to the flag-only form the setup
+	// below already parses, and startDaemonRequested records that a verb asked.
+	startDaemonRequested := false
+	if len(os.Args) >= 3 && os.Args[1] == "start" && os.Args[2] == "daemon" {
+		daemonArgs := os.Args[3:]
+		if len(daemonArgs) >= 1 && (daemonArgs[0] == "--help" || daemonArgs[0] == "-h") {
+			harmonikUsage()
+			return 0
+		}
+		startDaemonRequested = true
+		os.Args = append([]string{os.Args[0]}, daemonArgs...)
+	}
+
 	// harmonik start <role> … — the umbrella easy-start verb (codename:easy-start,
 	// ES1/hk-kbjl). Owns ALL start-routing: enforces the positional-XOR-flags rule
 	// (operator decision D2) then delegates to the captain launcher (above) or the
@@ -971,6 +1000,19 @@ EXAMPLES
 	// Bead ref: hk-j7yo0.
 	if verb, ok := unknownSubcommand(os.Args); ok {
 		fmt.Fprintf(os.Stderr, "harmonik: unknown subcommand %q\n", verb)
+		harmonikUsage()
+		return exitUnknownSubcommand
+	}
+
+	// Nothing above claimed this argv and no verb asked for a daemon, so this is
+	// either bare `harmonik` or a flag-first spelling. Both used to start one by
+	// falling through. Refuse instead, and name the one verb that starts a daemon
+	// (hk-cli-flag-first-starts-daemon-gjhiy).
+	//
+	// This must stay ABOVE the daemon setup below for the same reason the
+	// unknown-verb refusal does: everything after it touches the disk.
+	if !startDaemonRequested {
+		fmt.Fprint(os.Stderr, daemonStartRefusal(os.Args))
 		harmonikUsage()
 		return exitUnknownSubcommand
 	}

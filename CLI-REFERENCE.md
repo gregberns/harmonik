@@ -6,7 +6,7 @@ harmonik is an agent-driven bead-execution daemon. The canonical pattern is: sta
 
 ```bash
 # Start the daemon (queue-only, 4 wide), then submit work and watch:
-harmonik --project /path/to/project --no-auto-pull --max-concurrent 4
+harmonik start daemon --project /path/to/project --no-auto-pull --max-concurrent 4
 harmonik queue submit --beads hk-abc123,hk-def456
 harmonik subscribe --types run_completed,run_failed --json
 ```
@@ -59,7 +59,7 @@ Branch targeting: `--target-branch` / `--protect-branch` / `--forbid-default-mai
 
 **Example**
 ```bash
-harmonik --project /path/to/project --no-auto-pull --max-concurrent 4
+harmonik start daemon --project /path/to/project --no-auto-pull --max-concurrent 4
 ```
 
 ---

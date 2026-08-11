@@ -210,7 +210,7 @@ real run — but you can confirm it launches in a detached tmux session:
 
 ```bash
 tmux new-session -d -s harmonik-daemon \
-  'harmonik --project /path/to/your/repo --no-auto-pull --max-concurrent 4'
+  'harmonik start daemon --project /path/to/your/repo --no-auto-pull --max-concurrent 4'
 harmonik queue status     # should report the live queue (not "daemon not running")
 ```
 

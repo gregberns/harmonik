@@ -70,7 +70,7 @@ func runStartWith(args []string, dispatch startDispatch, stdout, stderr io.Write
 		}
 		// A bare `start` with no role is a usage error; an explicit --help is not.
 		if len(args) == 0 {
-			if _, err := fmt.Fprintln(stderr, "harmonik start: a role is required — `start captain`, `start crew <name>`, `start commodore`, `start admiral`, or `start assessor`"); err != nil {
+			if _, err := fmt.Fprintln(stderr, "harmonik start: a role is required — `start daemon`, `start captain`, `start crew <name>`, `start commodore`, `start admiral`, or `start assessor`"); err != nil {
 				return 1
 			}
 			return 2
@@ -82,6 +82,16 @@ func runStartWith(args []string, dispatch startDispatch, stdout, stderr io.Write
 	roleArgs := args[1:]
 
 	switch role {
+	case "daemon":
+		// Unreachable in production: run() intercepts `start daemon` before the
+		// start dispatch, because the daemon's flags are its own and the setup
+		// that parses them is at the end of run, not behind a launcher. This arm
+		// exists so a direct runStart call cannot silently report `daemon` as an
+		// unknown role, which would read as "there is no such thing".
+		if _, err := fmt.Fprintln(stderr, "harmonik start daemon: handled by the top-level dispatch, not the role launcher — reaching here means run() no longer intercepts it"); err != nil {
+			return 1
+		}
+		return 2
 	case "captain":
 		// Emit the stale-assets hint before launching so the operator sees it
 		// in the launch log. Fires only for valid roles. Best-effort: nil skips.
@@ -150,7 +160,7 @@ func runStartWith(args []string, dispatch startDispatch, stdout, stderr io.Write
 			},
 		}, stderr)
 	default:
-		if _, err := fmt.Fprintf(stderr, "harmonik start: unknown role %q — roles are: captain, crew, commodore, admiral, assessor\n", role); err != nil {
+		if _, err := fmt.Fprintf(stderr, "harmonik start: unknown role %q — roles are: daemon, captain, crew, commodore, admiral, assessor\n", role); err != nil {
 			return 1
 		}
 		return 2
@@ -248,9 +258,10 @@ func runStartRole(args []string, spec startRoleSpec, stderr io.Writer) int {
 // lives on the downstream launchers (captain.go / crew.go).
 func startUsage(w io.Writer) error {
 	_, err := fmt.Fprint(w,
-		`harmonik start — launch a captain, crew, commodore, admiral, or assessor (keeper auto-armed)
+		`harmonik start — launch a daemon, or a captain/crew/commodore/admiral/assessor session
 
 USAGE
+  harmonik start daemon [--project DIR] …      # the ONLY way to start a daemon
   harmonik start captain                       # all defaults
   harmonik start crew <name>                   # one bare positional = the crew name
   harmonik start commodore                     # oversight planner, protected launch

@@ -302,7 +302,10 @@ func buildDaemonCmd(projectDir string, maxConcurrent int) []string {
 	if err != nil {
 		return nil
 	}
-	cmd := []string{exe, "--project", projectDir, "--no-auto-pull"}
+	// `start daemon` is the only spelling that starts a daemon
+	// (hk-cli-flag-first-starts-daemon-gjhiy). The old flag-first form now prints
+	// help and exits 2, so a revival argv without this verb never revives.
+	cmd := []string{exe, "start", "daemon", "--project", projectDir, "--no-auto-pull"}
 	if maxConcurrent > 0 {
 		cmd = append(cmd, "--max-concurrent", fmt.Sprintf("%d", maxConcurrent))
 	}

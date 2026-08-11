@@ -20,7 +20,7 @@
 # SAFETY: this script NEVER targets the fleet daemon. `down` kills ONLY the PID
 # named in <scratch>/.harmonik/daemon.pid, and only after confirming that live
 # process's command line actually contains the scratch path. A blanket
-# `pkill harmonik` (or even `pkill -f "harmonik --project"`) would kill the fleet
+# `pkill harmonik` (or even `pkill -f "harmonik start daemon --project"`) would kill the fleet
 # daemon — this script deliberately does neither.
 #
 # THE REVISION UNDER AUDIT IS A REQUIRED INPUT.
@@ -1002,7 +1002,7 @@ cmd_up() {
 
     # Report the BINARY's label, not the tree's pin: the binary is what runs.
     echo "[scratch-daemon] starting standalone daemon (session=$sess, project=$scratch, revision=$binrev)"
-    # Standalone start = the bare `harmonik --project <path>` binary run INSIDE a
+    # Standalone start = `harmonik start daemon --project <path>` run INSIDE a
     # tmux session. This script starts no `harmonik supervise` process. That alone
     # does NOT give you a supervisor-free daemon: the daemon carries its own
     # supervisor watchdog. The watchdog probes .harmonik/cognition/supervisor.pid
@@ -1043,7 +1043,7 @@ cmd_up() {
         "env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
           HARMONIK_DISABLE_EAGER_REFILL='$disable_eager' \
           HARMONIK_DEBUG_WIRING='$debug_wiring' \
-          '$bin' --project '$scratch' \
+          '$bin' start daemon --project '$scratch' \
           --max-concurrent $max_concurrent \
           --workflow-mode $workflow_mode \
           $extra_flags \

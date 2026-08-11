@@ -55,7 +55,8 @@ func (in GroupCompletionInput) Validate() error {
 	if err := validateUUIDv7(in.ExpectedQueueID); err != nil {
 		return fail(GroupCompletionErrorInvalidQueueID, in.ExpectedQueueID)
 	}
-	if in.CompletedAt.IsZero() {
+	stamp := in.CompletedAt.UTC().Truncate(time.Millisecond)
+	if in.CompletedAt.IsZero() || stamp.Year() < 1 || stamp.Year() > 9999 {
 		return fail(GroupCompletionErrorInvalidCompletionTime, in.CompletedAt.String())
 	}
 	if in.Location.GroupIndex < 0 {
@@ -155,9 +156,11 @@ const (
 	GroupCompletionErrorNegativeItemIndex     GroupCompletionErrorReason = "negative-item-index"
 	GroupCompletionErrorMissingGroup          GroupCompletionErrorReason = "missing-group"
 	GroupCompletionErrorDuplicateGroup        GroupCompletionErrorReason = "duplicate-group"
+	GroupCompletionErrorInvalidGroupIndex     GroupCompletionErrorReason = "invalid-group-index"
 	GroupCompletionErrorItemIndexOutOfRange   GroupCompletionErrorReason = "item-index-out-of-range"
 	GroupCompletionErrorInvalidQueueStatus    GroupCompletionErrorReason = "invalid-queue-status"
 	GroupCompletionErrorInvalidGroupStatus    GroupCompletionErrorReason = "invalid-group-status"
+	GroupCompletionErrorInvalidGroupKind      GroupCompletionErrorReason = "invalid-group-kind"
 	GroupCompletionErrorInvalidItemStatus     GroupCompletionErrorReason = "invalid-item-status"
 )
 
@@ -180,11 +183,12 @@ type GroupCompletionStateError struct {
 	Location    GroupCompletionLocation
 	QueueStatus QueueStatus
 	GroupStatus GroupStatus
+	GroupKind   GroupKind
 	ItemStatus  ItemStatus
 }
 
 func (e *GroupCompletionStateError) Error() string {
-	return fmt.Sprintf("queue: group completion state %s at group %d item %d (queue=%q group=%q item=%q)", e.Reason, e.Location.GroupIndex, e.Location.ItemIndex, e.QueueStatus, e.GroupStatus, e.ItemStatus)
+	return fmt.Sprintf("queue: group completion state %s at group %d item %d (queue=%q group=%q kind=%q item=%q)", e.Reason, e.Location.GroupIndex, e.Location.ItemIndex, e.QueueStatus, e.GroupStatus, e.GroupKind, e.ItemStatus)
 }
 
 // GroupCompletionConflictError reports a second terminal outcome that differs

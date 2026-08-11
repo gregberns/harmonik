@@ -64,7 +64,9 @@ echo "agent=$HARMONIK_AGENT  cwd=$(pwd)"
   do not run this skill's captain ops.
 - CWD MUST stay `$HARMONIK_PROJECT` all session. Never `cd` into a
   worktree (the daemon may `git worktree remove` it). Use `git -C <repo>` /
-  `harmonik --project <repo>` for everything.
+  `harmonik <verb> --project <repo>` for everything. Put the verb first, then
+  the flags. An argv that starts with a flag matches no verb, so harmonik
+  prints help and exits 2.
 
 ---
 

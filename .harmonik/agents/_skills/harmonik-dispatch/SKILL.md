@@ -11,7 +11,7 @@ description: >
 
 # Harmonik dispatch — the daily loop
 
-The dispatch model is **one persistent daemon per project + a shared queue**. The daemon (`harmonik --project . --no-auto-pull --max-concurrent N`, running in a detached tmux session) is the dispatcher; agents dispatch by **submitting beads to its queue**. Multiple agents/orchestrators share that single daemon — the shared queue IS the multi-agent coordination mechanism.
+The dispatch model is **one persistent daemon per project + a shared queue**. The daemon (`harmonik start daemon --project . --no-auto-pull --max-concurrent N`, running in a detached tmux session) is the dispatcher; agents dispatch by **submitting beads to its queue**. Multiple agents/orchestrators share that single daemon — the shared queue IS the multi-agent coordination mechanism.
 
 When working in this project (`$HARMONIK_PROJECT`), the FIRST tool call of the working phase should be `kerf next` (ranked bead feed with work-context), then a proposed `harmonik queue submit` dispatch batch — BEFORE any Agent-tool sub-agent invocation.
 
@@ -21,8 +21,10 @@ When working in this project (`$HARMONIK_PROJECT`), the FIRST tool call of the w
 
 ```bash
 tmux new-session -d -s harmonik-daemon \
-  'harmonik --project $HARMONIK_PROJECT --no-auto-pull --max-concurrent N'
+  'harmonik start daemon --project $HARMONIK_PROJECT --no-auto-pull --max-concurrent N'
 ```
+
+- `start daemon` is the only spelling that starts a daemon. A bare `harmonik`, a flag-first argv such as `harmonik --project .`, and an unknown verb all print help and exit 2. They start nothing and they write no files.
 
 - `--no-auto-pull` = **queue-only**: the daemon dispatches only work that arrives via the queue; it will NOT auto-drain `br ready` (safe default after the 2026-05-30 credit-burn incident).
 - `--max-concurrent N` is the concurrent-dispatch ceiling for the whole daemon (~4–5 wide on a 10-core box — wider oversubscribes cores and exhausts disk).

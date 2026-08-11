@@ -893,6 +893,7 @@ script-tests:  ## Self-tests for the shell the gate depends on
 	scripts/scenario-pkgs-test.sh
 	scripts/lint-changed-test.sh
 	scripts/changed-func-coverage-test.sh
+	scripts/queue-daemon-count-test.sh
 	scripts/with-lane-gocache.sh scripts/reachability-gate-test.sh
 
 # freeze-gates — the per-subsystem "do not move this back" greps. Cheap
@@ -1448,14 +1449,18 @@ queue-dogfood-readiness: build-harmonik  ## Capture and judge the evidence that 
 	@test -n "$(EVIDENCE)" || { echo "queue-dogfood-readiness: EVIDENCE is required — where to retain the record and the verdict"; exit 2; }
 	@test -n "$(BEADS)" || { echo "queue-dogfood-readiness: BEADS is required — ';'-separated 'bead=why re-running it is safe'"; exit 2; }
 	@test -n "$(CONCURRENCY)" || { echo "queue-dogfood-readiness: CONCURRENCY is required — how many items run at the same time"; exit 2; }
-	@# The daemon count below greps for 'harmonik --project', not 'harmonik daemon'.
-	@# There is no `daemon` subcommand: a harmonik daemon IS `<bin> --project <dir>`,
-	@# which is why scripts/scratch-daemon.sh warns that `pkill -f "harmonik --project"`
-	@# would take the fleet daemon down. The old 'harmonik daemon' pattern matched no
-	@# process on any host, so the count was always zero and the ceiling never fired —
-	@# the fail-open direction internal/queue/readiness checkHost exists to refuse.
-	@# The two words must stay adjacent. 'harmonik queue submit --project X' is a CLI
-	@# call and not a daemon, and the adjacency is what excludes it.
+	@# The daemon count lives in scripts/queue-daemon-count.sh, and that file
+	@# carries the reasoning. The short form: the count feeds
+	@# `queue readiness validate --daemons-alive`, and a count that is wrongly zero
+	@# can never reach the --max-daemons ceiling, so a wrong zero turns the ceiling
+	@# off. This target used to hold one unconditional line that piped a hand-written
+	@# pgrep pattern into `wc -l`, and that line could not refuse at all. Every step
+	@# of the derivation now refuses with exit 2 instead of guessing, and the line
+	@# below carries that refusal into this target.
+	@#
+	@# It is a script and not a recipe line because a recipe line cannot be tested.
+	@# scripts/queue-daemon-count-test.sh drives every refusal the script has and
+	@# both directions of the happy path, and it runs inside script-tests.
 	@set -eu; \
 	scratch='$(SCRATCH)'; evidence='$(EVIDENCE)'; beads='$(BEADS)'; \
 	mkdir -p "$$evidence"; \
@@ -1483,7 +1488,7 @@ queue-dogfood-readiness: build-harmonik  ## Capture and judge the evidence that 
 	cpus="$$(getconf _NPROCESSORS_ONLN)"; \
 	free_gb="$$(df -k "$$scratch" 2>/dev/null | awk 'NR==2 {printf "%.1f", $$4/1024/1024}')"; \
 	test -n "$$free_gb" || { echo "queue-dogfood-readiness: cannot measure free disk on '$$scratch'"; exit 2; }; \
-	daemons="$$(pgrep -f 'harmonik --project' 2>/dev/null | wc -l | tr -d ' ')"; \
+	daemons="$$(scripts/queue-daemon-count.sh /tmp/harmonik "$(QDR_PROJECT)")" || exit 2; \
 	echo "  load=$$load cpus=$$cpus free_disk_gb=$$free_gb daemons_alive=$$daemons"; \
 	echo "capturing the readiness record"; \
 	/tmp/harmonik queue readiness capture \

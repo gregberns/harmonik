@@ -134,12 +134,13 @@ current directory, and from a worktree it finds an empty event file and reports
 negative as the empty bead ledger above. `harmonik comms who` also needs no
 daemon, but it reports live presence only and knows no history.
 
-Take care with the CLI itself. **Put the verb first.** A bare `harmonik` with no
-arguments starts a daemon in the current directory, and so does any invocation
-whose first token is a flag — `harmonik --project DIR queue list` drops the verb
-and starts a daemon in `DIR`. A mistyped verb is now refused, so the hazard that
-survives is the flag-first spelling. `--help` and `--version` are safe. Refs
-`hk-cli-flag-first-starts-daemon-gjhiy`, which is the operator's bead.
+Take care with the CLI itself. **Put the verb first.** `harmonik start daemon` is
+the only spelling that starts a daemon. A bare `harmonik`, an argv whose first
+token is a flag — `harmonik --project DIR queue list` — and a mistyped verb all
+print help and exit 2. They start nothing and they write no files. So a wrong
+spelling costs you a refused command, not a daemon you did not ask for. Read the
+exit code: a command that refuses looks a lot like a command that did nothing.
+`--help` and `--version` are safe.
 
 There is no captain. Escalate to the operator, in this session, in plain words.
 

@@ -66,6 +66,64 @@ func TestBuildPsResult_PrintsCanonicalSignaturesAndSessions(t *testing.T) {
 	}
 }
 
+// daemonPattern returns the `daemon` process signature that `supervise ps`
+// prints for dir, and the resolved project directory it printed alongside it.
+// It fails the test when the signature is absent.
+func daemonPattern(t *testing.T, dir string) (pattern, realDir string) {
+	t.Helper()
+	result, err := buildPsResult(dir)
+	if err != nil {
+		t.Fatalf("buildPsResult: %v", err)
+	}
+	for _, sig := range result.ProcessSignatures {
+		if sig.Name == "daemon" {
+			return sig.Pattern, result.ProjectDir
+		}
+	}
+	t.Fatalf("no daemon process signature in %#v", result.ProcessSignatures)
+	return "", ""
+}
+
+// TestPsDaemonPatternMatchesTheRevivalArgv holds the printed daemon signature
+// against the argv the supervisor really spawns.
+//
+// The verb exists to hand an operator a signature that finds a running daemon.
+// A pattern that matches nothing is worse than no pattern at all, because the
+// operator reads an empty pgrep result as "no daemon" and starts a second one.
+// The old test only asked that the pattern contain the project directory, so it
+// stayed green when `harmonik --project DIR` stopped starting anything
+// (hk-8fdbe).
+//
+// buildDaemonCmd is the one function that builds a daemon argv, so this test
+// compares the signature against that argv and not against a copy of it. Change
+// the spawn verb and this test goes red.
+func TestPsDaemonPatternMatchesTheRevivalArgv(t *testing.T) {
+	dir := t.TempDir()
+	pattern, realDir := daemonPattern(t, dir)
+
+	argv := buildDaemonCmd(realDir, 4)
+	if argv == nil {
+		t.Fatal("buildDaemonCmd returned nil; cannot resolve the executable")
+	}
+	// The test binary is not named harmonik. In the field the deployed binary
+	// is, and the printed signature names it, so put the deployed name in
+	// argv[0] and keep every later word that buildDaemonCmd produced.
+	argv[0] = "/usr/local/bin/harmonik"
+	cmdline := strings.Join(argv, " ")
+
+	if !strings.Contains(cmdline, pattern) {
+		t.Fatalf("`pgrep -f %q` would not find a live daemon.\n  pattern: %s\n  argv:    %s", pattern, pattern, cmdline)
+	}
+
+	// Positive evidence that the match is not free: the same pattern must
+	// refuse an ordinary CLI call against the same project. Adjacency of the
+	// verb and --project is what excludes it.
+	cliCall := "/usr/local/bin/harmonik queue submit --project " + realDir + " --bead hk-1"
+	if strings.Contains(cliCall, pattern) {
+		t.Errorf("pattern %q also matches a plain CLI call %q; it would over-count daemons", pattern, cliCall)
+	}
+}
+
 func TestRunPs_JSON(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer

@@ -414,7 +414,7 @@ These are the codes harmonik commands return. The two that matter most day-to-da
 
 > Codes 0/1/2/17/25 are confirmed from the command help. Code **5** ("pidfile locked — a daemon
 > is already running") is confirmed in the source (the pidfile-lock path) and fires when you try
-> to launch a second `harmonik --project ...` daemon. One nuance: `harmonik run` no longer collides
+> to launch a second `harmonik start daemon --project ...` daemon. One nuance: `harmonik run` no longer collides
 > — if a daemon is already up it submits your beads to it instead of exiting 5. Code **25**
 > ("supervisor already running") is confirmed in the source and appears only on `harmonik supervise
 > start`. See [CLI-REFERENCE.md](CLI-REFERENCE.md) for any per-command specifics.

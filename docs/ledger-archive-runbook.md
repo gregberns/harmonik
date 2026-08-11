@@ -26,7 +26,7 @@ the base cost, so close-failures still recur ~50% under concurrency. This runboo
 > itself import-only-authoritative — do NOT also run `--import-only`.
 
 0. **Quiesce:** confirm 0 runs in flight (`harmonik queue status` → no `dispatched` items; pause the
-   queue first to stop new dispatch), then `pkill -f "harmonik --project"` and stop gurney's session
+   queue first to stop new dispatch), then `pkill -f "harmonik start daemon --project"` and stop gurney's session
    (`tmux kill-session -t hk-crew-gurney`). Confirm no worktree is mid-run under `.harmonik/worktrees/`.
 1. **Backup (rollback anchor):** `cp -r .beads .beads.bak.$(date +%s)`.
 2. **Strand-sweep** (now contention-free): `br list --status=in_progress --json` → for each whose

@@ -935,7 +935,7 @@ When `--no-auto-pull` is set, the daemon MUST NOT fall back to `br ready` for di
 
 When `--no-auto-pull` is NOT set, the daemon retains the historical single-daemon `br ready` fallback (§7.4 fallback branch) as an explicit opt-in for non-queue-driven deployments.
 
-**Default (amended — hk-8vy18).** Queue-only is now the default for **all** daemon topologies: a bare `harmonik --project` boot with no submitted queue dispatches zero runs without requiring any explicit flag. The `br ready` fallback is opt-in via `--auto-pull`; `--no-auto-pull` is accepted as a no-op back-compat alias (it was the opt-in flag before this amendment; passing it is now redundant but harmless). This supersedes the earlier topology-scoped default (supervised ON, historical OFF).
+**Default (amended — hk-8vy18).** Queue-only is now the default for **all** daemon topologies: a plain `harmonik start daemon --project` boot with no submitted queue dispatches zero runs without requiring any explicit flag. The `br ready` fallback is opt-in via `--auto-pull`; `--no-auto-pull` is accepted as a no-op back-compat alias (it was the opt-in flag before this amendment; passing it is now redundant but harmless). This supersedes the earlier topology-scoped default (supervised ON, historical OFF).
 
 Tags: mechanism
 

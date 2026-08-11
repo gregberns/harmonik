@@ -55,9 +55,9 @@ The pasteinject quit-on-commit hang (hk-trjef, `internal/daemon/pasteinject.go:1
 1. Identify the stuck `run_id` from `.harmonik/queue.json` or the worktree listing.
 2. `git -C .harmonik/worktrees/<run_id> log --oneline -3` — if a `Refs:` commit exists, work was done; the daemon is stuck on a later step (merge, reviewer, push).
 3. Tail `.harmonik/events/events.jsonl` filtered by `run_id` — which event types fired, which expected ones did not?
-4. If the implementer claude already exited but the daemon is hung: kill the daemon PID (`pkill -f "harmonik --project"`), ff-merge the worktree branch by hand, push, close the bead, then re-start the daemon. File a friction bead with the missing-event signature.
+4. If the implementer claude already exited but the daemon is hung: kill the daemon PID (`pkill -f "harmonik start daemon --project"`), ff-merge the worktree branch by hand, push, close the bead, then re-start the daemon. File a friction bead with the missing-event signature.
 
-> SAFETY: `pkill -f "harmonik --project"` matches **every** harmonik daemon, including a scratch test-daemon (below). When more than one daemon is running, kill by the exact PID from `<project>/.harmonik/daemon.pid` instead — never a blanket pkill.
+> SAFETY: match on the full `harmonik start daemon --project`. A daemon command line always begins with `harmonik start daemon`, so the shorter `pkill -f "harmonik --project"` pattern matches no live daemon. It kills nothing and it reports nothing — you read that as a dead daemon while the daemon is still up. The full pattern matches **every** harmonik daemon, including a scratch test-daemon (below). When more than one daemon is running, kill by the exact PID from `<project>/.harmonik/daemon.pid` instead — never a blanket pkill.
 
 ---
 
@@ -219,10 +219,10 @@ Five hard-won operational failures, relocated here from the retired AGENT_OPERAT
 
 **Symptom:** API credit consumed in ~2 hours with no obvious cause (2026-05-30 incident — all credit gone in ~2h).
 
-**Cause:** `ANTHROPIC_API_KEY` was present in a repo `.env` file that `harmonik --project` auto-sourced. Daemon-spawned claude sessions inherit the parent environment. An inherited API key makes claude bill pay-per-token API instead of the Max subscription.
+**Cause:** `ANTHROPIC_API_KEY` was present in a repo `.env` file that the daemon auto-sourced at start. Daemon-spawned claude sessions inherit the parent environment. An inherited API key makes claude bill pay-per-token API instead of the Max subscription.
 
 **Fix:**
-- Never put `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `CLAUDE_CODE_OAUTH*` in a repo `.env` that a bare `harmonik --project` daemon can inherit.
+- Never put `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `CLAUDE_CODE_OAUTH*` in a repo `.env` that a daemon can inherit.
 - The credential deny-list in the daemon scrubs these keys from every daemon-spawned claude. Only `harmonik supervise start` reads `.env` and injects the key into Pi (the flywheel cognition process).
 - Always start the daemon with `--no-auto-pull`.
 
@@ -268,7 +268,7 @@ Five hard-won operational failures, relocated here from the retired AGENT_OPERAT
 
 **Fix:**
 1. After any harmonik code change: `go install ./cmd/harmonik`
-2. **Then restart the daemon** — kill its tmux session (`tmux kill-session -t harmonik-daemon`) or `pkill -f "harmonik --project"`, then wait for the supervisor to revive it (or relaunch manually).
+2. **Then restart the daemon** — kill its tmux session (`tmux kill-session -t harmonik-daemon`) or `pkill -f "harmonik start daemon --project"`, then wait for the supervisor to revive it (or relaunch manually).
 3. Pair with Gotcha #2's reset-before-install: `git fetch && git reset --hard origin/main` first so you build from the latest merged code.
 
 ### Gotcha 6 — PI BILLING GUARD: OPENROUTER_API_KEY absent
@@ -285,7 +285,7 @@ The bead is reopened automatically (PI-043). No agent spawns.
 1. **Env var (simplest):** Export the key in your shell before starting the daemon:
    ```sh
    export OPENROUTER_API_KEY=sk-or-...
-   harmonik --project .   # or restart the daemon
+   harmonik start daemon --project .   # or restart the daemon
    ```
 2. **File-based key (more stable):** Write the key to a file and reference it in `.harmonik/config.yaml` under `harnesses.pi.api_key_file`. The daemon reads the file at each launch, so no shell export is needed. See `harmonik pi config --example`.
 

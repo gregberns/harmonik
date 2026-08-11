@@ -34,7 +34,7 @@ func TestPrintPsResult_RendersAllSections(t *testing.T) {
 		ProjectDir:    "/some/proj",
 		ProjectHash:   "deadbeef",
 		ProcessSignatures: []ProcessSignature{
-			{Name: "daemon", Pattern: "harmonik --project /some/proj", Command: "pgrep -af 'x'"},
+			{Name: "daemon", Pattern: "harmonik start daemon --project /some/proj", Command: "pgrep -af 'x'"},
 		},
 		TmuxSessions: []TmuxSessionTarget{
 			{Name: "flywheel", Session: "harmonik-deadbeef-flywheel", Command: "tmux has-session -t 'y'"},
@@ -49,7 +49,7 @@ func TestPrintPsResult_RendersAllSections(t *testing.T) {
 		"project:      /some/proj",
 		"project_hash: deadbeef",
 		"process_signatures:",
-		"harmonik --project /some/proj",
+		"harmonik start daemon --project /some/proj",
 		"pgrep -af 'x'",
 		"tmux_sessions:",
 		"harmonik-deadbeef-flywheel",

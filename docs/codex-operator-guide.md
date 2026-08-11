@@ -170,7 +170,7 @@ digraph standard_bead {
 ### 4.3 Global default
 
 ```bash
-harmonik --project /path/to/repo --default-harness codex --max-concurrent 3
+harmonik start daemon --project /path/to/repo --default-harness codex --max-concurrent 3
 ```
 
 **Warning:** the global default applies to ALL beads that lack an explicit selection.

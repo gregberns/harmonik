@@ -19,6 +19,7 @@ func mustNewCyclerWithDeps(
 	deps := keeper.CycleDepsFromConfig(cfg, emitter)
 	deps.Operator = testOperatorProbe(func(string) bool { return false })
 	deps.Pane = testPaneWithEnv{PaneWriter: deps.Pane}
+	deps.Context = testContextWithManaged{ContextStore: deps.Context}
 	if modify != nil {
 		modify(&deps)
 	}
@@ -88,6 +89,18 @@ func (s testJournalStore) Read() (*keeper.CycleJournal, error) { return s.read()
 type testContextWithClear struct {
 	keeper.ContextStore
 	clear func() error
+}
+
+type testContextWithManaged struct {
+	keeper.ContextStore
+	setManaged func(string) error
+}
+
+func (s testContextWithManaged) SetManagedSession(sid string) error {
+	if s.setManaged == nil {
+		return nil
+	}
+	return s.setManaged(sid)
 }
 
 func (s testContextWithClear) ClearPrecompactTrigger() error { return s.clear() }

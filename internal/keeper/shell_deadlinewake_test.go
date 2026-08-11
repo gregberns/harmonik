@@ -115,18 +115,17 @@ func TestCycler_DelayedPollTick_HandoffTimeoutStaysPunctual(t *testing.T) {
 		// First detection tick withheld until AFTER ForceRetryInterval: on the
 		// pre-fix drive loop the handoff timeout is then detected only at
 		// ~200ms, call-1's wall time crosses 150ms, and call-2 wrongly fires.
-		Clock:               &delayedTickClock{delayInterval: pollInterval, firstDelay: tickWithheldFor},
-		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
-		HandoffFilePath:     func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
-		ReadHandoff:         handoffNeverReturnsNonce, // always abort
-		TruncateHandoffFn:   func(_ string) error { return nil },
-		InjectFn:            spy.inject,
-		ReadGaugeFn:         noopGauge,
-		CrispIdleFn:         func(_, _ string) bool { return false },
-		HoldingDispatchFn:   func(_, _ string) bool { return false },
-		WriteJournalFn:      jc.write,
-		SetManagedSessionFn: func(_, _, _ string) error { return nil },
+		Clock:             &delayedTickClock{delayInterval: pollInterval, firstDelay: tickWithheldFor},
+		CycleIDGen:        func() string { return cycleID },
+		IsManagedFn:       func(_, _ string) bool { return true },
+		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
+		ReadHandoff:       handoffNeverReturnsNonce, // always abort
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          spy.inject,
+		ReadGaugeFn:       noopGauge,
+		CrispIdleFn:       func(_, _ string) bool { return false },
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCycler(cfg, em)
 
@@ -234,7 +233,6 @@ func TestCycler_ClearingElapsedBackstop_NoHotSpin(t *testing.T) {
 		CrispIdleFn:          func(_, _ string) bool { return true },
 		HoldingDispatchFn:    func(_, _ string) bool { return false },
 		WriteJournalFn:       jc.write,
-		SetManagedSessionFn:  func(_, _, _ string) error { return nil },
 	}
 	cycler := mustNewCycler(cfg, em)
 

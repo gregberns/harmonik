@@ -1490,7 +1490,7 @@ func TestCycler_AbsoluteTokenGate_200kWindow(t *testing.T) {
 	}
 }
 
-// TestCycler_UpdatesManagedSessionAfterCycle verifies that SetManagedSessionFn is
+// TestCycler_UpdatesManagedSessionAfterCycle verifies that managed-session port is
 // called with the new session_id after a successful cycle so the watcher's session
 // binding advances to the resumed session. (Refs: hk-igt — session_id clobber fix)
 func TestCycler_UpdatesManagedSessionAfterCycle(t *testing.T) {
@@ -1511,7 +1511,7 @@ func TestCycler_UpdatesManagedSessionAfterCycle(t *testing.T) {
 	readHandoff := handoffReturnsNonceAfter(1, nonce)
 	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
 
-	var gotProjectDir, gotAgent, gotSessionID string
+	var gotSessionID string
 	setManagedCalled := 0
 
 	cfg := keeper.CyclerConfig{
@@ -1536,37 +1536,32 @@ func TestCycler_UpdatesManagedSessionAfterCycle(t *testing.T) {
 		CrispIdleFn:       func(_, _ string) bool { return true },
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
-		SetManagedSessionFn: func(projectDir, agent, sessionID string) error {
-			gotProjectDir = projectDir
-			gotAgent = agent
+	}
+	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sessionID string) error {
 			gotSessionID = sessionID
 			setManagedCalled++
 			return nil
-		},
-	}
-	cycler := mustNewCycler(cfg, em)
+		}}
+	})
 
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// SetManagedSessionFn must be called once with the new session_id.
+	// managed-session port must be called once with the new session_id.
 	if setManagedCalled != 1 {
-		t.Errorf("SetManagedSessionFn called %d times; want 1", setManagedCalled)
+		t.Errorf("managed-session port called %d times; want 1", setManagedCalled)
 	}
 	if gotSessionID != newSID {
-		t.Errorf("SetManagedSessionFn session_id = %q; want %q", gotSessionID, newSID)
+		t.Errorf("managed-session port session_id = %q; want %q", gotSessionID, newSID)
 	}
-	if gotAgent != agent {
-		t.Errorf("SetManagedSessionFn agent = %q; want %q", gotAgent, agent)
-	}
-	_ = gotProjectDir // verified it was called; project dir value varies per test run
 }
 
 // TestCycler_ClearSettleTimeout_ClearsManagedSessionID verifies that when
 // waitForNewSessionID times out (ClearSettle deadline expires without a new
-// session_id), SetManagedSessionFn is still called — with an empty string —
+// session_id), managed-session port is still called — with an empty string —
 // so the stale binding is cleared and the .sid channel can rebind the next
 // session. (Refs: hk-uxu)
 func TestCycler_ClearSettleTimeout_ClearsManagedSessionID(t *testing.T) {
@@ -1615,25 +1610,26 @@ func TestCycler_ClearSettleTimeout_ClearsManagedSessionID(t *testing.T) {
 		CrispIdleFn:       func(_, _ string) bool { return true },
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
-		SetManagedSessionFn: func(_, _, sessionID string) error {
+	}
+	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sessionID string) error {
 			gotSessionID = sessionID
 			setManagedCalled++
 			return nil
-		},
-	}
-	cycler := mustNewCycler(cfg, em)
+		}}
+	})
 
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 		t.Fatalf("MaybeRun: %v", err)
 	}
 
-	// SetManagedSessionFn must be called once, with empty string (timeout case).
+	// managed-session port must be called once, with empty string (timeout case).
 	if setManagedCalled != 1 {
-		t.Errorf("SetManagedSessionFn called %d times; want 1", setManagedCalled)
+		t.Errorf("managed-session port called %d times; want 1", setManagedCalled)
 	}
 	if gotSessionID != "" {
-		t.Errorf("SetManagedSessionFn session_id = %q; want empty string (timeout path)", gotSessionID)
+		t.Errorf("managed-session port session_id = %q; want empty string (timeout path)", gotSessionID)
 	}
 }
 
@@ -1679,14 +1675,13 @@ func TestCycler_AntiLoopEscapeHatch_ResetOnSameSessionLowPct(t *testing.T) {
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
-		ReadHandoff:         readHandoff,
-		TruncateHandoffFn:   func(_ string) error { return nil },
-		InjectFn:            spy.inject,
-		ReadGaugeFn:         readGaugeFn,
-		CrispIdleFn:         func(_, _ string) bool { return true },
-		HoldingDispatchFn:   func(_, _ string) bool { return false },
-		WriteJournalFn:      jc.write,
-		SetManagedSessionFn: func(_, _, _ string) error { return nil },
+		ReadHandoff:       readHandoff,
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          spy.inject,
+		ReadGaugeFn:       readGaugeFn,
+		CrispIdleFn:       func(_, _ string) bool { return true },
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    jc.write,
 	}
 
 	cycler := mustNewCycler(cfg, em)
@@ -1783,14 +1778,13 @@ func TestCycler_ForcedClear_BypassesCrispIdle(t *testing.T) {
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
-		ReadHandoff:         readHandoff,
-		TruncateHandoffFn:   func(_ string) error { return nil },
-		InjectFn:            spy.inject,
-		ReadGaugeFn:         readGaugeFn,
-		CrispIdleFn:         func(_, _ string) bool { return false }, // perpetually busy
-		HoldingDispatchFn:   func(_, _ string) bool { return false },
-		WriteJournalFn:      jc.write,
-		SetManagedSessionFn: func(_, _, _ string) error { return nil },
+		ReadHandoff:       readHandoff,
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          spy.inject,
+		ReadGaugeFn:       readGaugeFn,
+		CrispIdleFn:       func(_, _ string) bool { return false }, // perpetually busy
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCycler(cfg, em)
 
@@ -1885,14 +1879,13 @@ func TestCycler_ForcedClear_RetryAfterInterval(t *testing.T) {
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
-		ReadHandoff:         handoffNeverReturnsNonce, // always abort
-		TruncateHandoffFn:   func(_ string) error { return nil },
-		InjectFn:            spy.inject,
-		ReadGaugeFn:         noopGauge,
-		CrispIdleFn:         func(_, _ string) bool { return false }, // perpetually busy
-		HoldingDispatchFn:   func(_, _ string) bool { return false },
-		WriteJournalFn:      jc.write,
-		SetManagedSessionFn: func(_, _, _ string) error { return nil },
+		ReadHandoff:       handoffNeverReturnsNonce, // always abort
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          spy.inject,
+		ReadGaugeFn:       noopGauge,
+		CrispIdleFn:       func(_, _ string) bool { return false }, // perpetually busy
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCycler(cfg, em)
 
@@ -1980,14 +1973,13 @@ func TestCycler_ForcedClear_EscapeInjected(t *testing.T) {
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
-		ReadHandoff:         readHandoff,
-		TruncateHandoffFn:   func(_ string) error { return nil },
-		InjectFn:            injectFn,
-		ReadGaugeFn:         readGaugeFn,
-		CrispIdleFn:         func(_, _ string) bool { return false }, // busy pane
-		HoldingDispatchFn:   func(_, _ string) bool { return false },
-		WriteJournalFn:      jc.write,
-		SetManagedSessionFn: func(_, _, _ string) error { return nil },
+		ReadHandoff:       readHandoff,
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          injectFn,
+		ReadGaugeFn:       readGaugeFn,
+		CrispIdleFn:       func(_, _ string) bool { return false }, // busy pane
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
 		deps.Pane = testPaneWithEscape{PaneWriter: deps.Pane, sendEscape: escapeFn}
@@ -2085,10 +2077,9 @@ func TestCycler_ForcedClear_EscalatesAfterNTimeouts(t *testing.T) {
 		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 			return &keeper.CtxFile{Pct: 97.0, SessionID: sid}, time.Now(), nil
 		},
-		CrispIdleFn:         func(_, _ string) bool { return false },
-		HoldingDispatchFn:   func(_, _ string) bool { return false },
-		WriteJournalFn:      jc.write,
-		SetManagedSessionFn: func(_, _, _ string) error { return nil },
+		CrispIdleFn:       func(_, _ string) bool { return false },
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
 		deps.Respawn = testRespawnFunc(forceRestartFn)
@@ -2177,7 +2168,6 @@ func TestCycler_BootGrace_SuppressesAndThenAllows(t *testing.T) {
 		CrispIdleFn:         func(_, _ string) bool { return true }, // idle — fires without force path
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
-		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
 	cycler := mustNewCycler(cfg, em)
 
@@ -2267,10 +2257,9 @@ func TestCycler_YoungSessionGuard_NewBand_AbsTokens(t *testing.T) {
 		TruncateHandoffFn:   func(_ string) error { return nil },
 		InjectFn:            spy.inject,
 		// Use the default abs-token band (act=215K / force=240K); do not override.
-		CrispIdleFn:         func(_, _ string) bool { return true },
-		HoldingDispatchFn:   func(_, _ string) bool { return false },
-		WriteJournalFn:      jc.write,
-		SetManagedSessionFn: func(_, _, _ string) error { return nil },
+		CrispIdleFn:       func(_, _ string) bool { return true },
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCycler(cfg, em)
 
@@ -2347,8 +2336,7 @@ func TestCycler_CleanHandoffGuard_DispatchingSuppressesAboveForce(t *testing.T) 
 		CrispIdleFn: func(_, _ string) bool { return false },
 		// HoldingDispatchFn intentionally LEFT NIL so applyDefaults wires the real
 		// HoldingDispatch (reads the on-disk .dispatching marker).
-		WriteJournalFn:      jc.write,
-		SetManagedSessionFn: func(_, _, _ string) error { return nil },
+		WriteJournalFn: jc.write,
 	}
 	cycler := mustNewCycler(cfg, em)
 
@@ -2378,7 +2366,7 @@ func TestCycler_CleanHandoffGuard_DispatchingSuppressesAboveForce(t *testing.T) 
 
 // TestCycler_AbortClearsManaged verifies the hk-4f8 no-re-arm fix (Defect B)
 // as refined by hk-ibb fix 3: after a handoff_timeout abort that follows a REAL
-// session_id change, SetManagedSessionFn must be called with an empty string.
+// session_id change, managed-session port must be called with an empty string.
 // This clears the .managed binding so the .sid channel can rebind a new
 // session_id (post-/session-resume). The clear is gated on currentSessionIDSince
 // being non-zero — i.e., a session change was previously observed. The test
@@ -2431,12 +2419,13 @@ func TestCycler_AbortClearsManaged(t *testing.T) {
 		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 			return &keeper.CtxFile{Pct: 95.0, SessionID: abortSID}, time.Now(), nil
 		},
-		CrispIdleFn:         func(_, _ string) bool { return true },
-		HoldingDispatchFn:   func(_, _ string) bool { return false },
-		WriteJournalFn:      jc.write,
-		SetManagedSessionFn: setManagedFn,
+		CrispIdleFn:       func(_, _ string) bool { return true },
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    jc.write,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error { return setManagedFn("", "", sid) }}
+	})
 
 	// Step 1: observe prevSID at low pct — establishes currentSessionID=prevSID
 	// without starting the grace timer (first SID, currentSessionIDSince stays Zero).
@@ -2469,7 +2458,7 @@ func TestCycler_AbortClearsManaged(t *testing.T) {
 		t.Errorf("cycle_aborted.reason = %q; want \"handoff_timeout\"", abortPayload.Reason)
 	}
 
-	// SetManagedSessionFn must have been called once with empty string: a real
+	// managed-session port must have been called once with empty string: a real
 	// session change was observed (currentSessionIDSince != zero) so managed is
 	// cleared to allow the .sid channel to rebind the post-resume session.
 	managedMu.Lock()
@@ -2478,10 +2467,10 @@ func TestCycler_AbortClearsManaged(t *testing.T) {
 	managedMu.Unlock()
 
 	if count != 1 {
-		t.Errorf("SetManagedSessionFn called %d times; want 1 (abort with prior session change must clear managed)", count)
+		t.Errorf("managed-session port called %d times; want 1 (abort with prior session change must clear managed)", count)
 	}
 	if last != "" {
-		t.Errorf("SetManagedSessionFn last value = %q; want \"\" (abort must clear binding)", last)
+		t.Errorf("managed-session port last value = %q; want \"\" (abort must clear binding)", last)
 	}
 }
 
@@ -2523,10 +2512,9 @@ func TestCycler_ForcedClear_BelowThreshold_StillBlocked(t *testing.T) {
 		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 			return &keeper.CtxFile{Pct: 92.0, SessionID: prevSID}, time.Now(), nil
 		},
-		CrispIdleFn:         func(_, _ string) bool { return false }, // perpetually busy
-		HoldingDispatchFn:   func(_, _ string) bool { return false },
-		WriteJournalFn:      jc.write,
-		SetManagedSessionFn: func(_, _, _ string) error { return nil },
+		CrispIdleFn:       func(_, _ string) bool { return false }, // perpetually busy
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCycler(cfg, em)
 
@@ -2586,14 +2574,13 @@ func TestCycler_ForceThresholdTracksActPct(t *testing.T) {
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
-		ReadHandoff:         readHandoff,
-		TruncateHandoffFn:   func(_ string) error { return nil },
-		InjectFn:            spy.inject,
-		ReadGaugeFn:         readGaugeFn,
-		CrispIdleFn:         func(_, _ string) bool { return false }, // perpetually busy
-		HoldingDispatchFn:   func(_, _ string) bool { return false },
-		WriteJournalFn:      jc.write,
-		SetManagedSessionFn: func(_, _, _ string) error { return nil },
+		ReadHandoff:       readHandoff,
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          spy.inject,
+		ReadGaugeFn:       readGaugeFn,
+		CrispIdleFn:       func(_, _ string) bool { return false }, // perpetually busy
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCycler(cfg, em)
 
@@ -2686,7 +2673,6 @@ func TestCycler_BootGrace_ForcePathBypasses(t *testing.T) {
 		CrispIdleFn:         func(_, _ string) bool { return false }, // busy — force-path needed
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
-		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
 	cycler := mustNewCycler(cfg, em)
 
@@ -2720,7 +2706,7 @@ func TestCycler_BootGrace_ForcePathBypasses(t *testing.T) {
 
 // TestCycler_AbortDoesNotClearManaged_FirstSession verifies hk-ibb fix 3: when
 // the abort happens on the first (and only) session ever observed — so no prior
-// session change was seen and currentSessionIDSince is zero — SetManagedSessionFn
+// session change was seen and currentSessionIDSince is zero — managed-session port
 // must NOT be called. The watcher should keep monitoring the existing session so
 // Gate-6 same-SID force-retry can handle retries rather than creating a new-SID
 // latch that triggers boot-grace and the Gate-6 suppression stall.
@@ -2768,12 +2754,13 @@ func TestCycler_AbortDoesNotClearManaged_FirstSession(t *testing.T) {
 		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 			return &keeper.CtxFile{Pct: 95.0, SessionID: sid}, time.Now(), nil
 		},
-		CrispIdleFn:         func(_, _ string) bool { return true },
-		HoldingDispatchFn:   func(_, _ string) bool { return false },
-		WriteJournalFn:      jc.write,
-		SetManagedSessionFn: setManagedFn,
+		CrispIdleFn:       func(_, _ string) bool { return true },
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    jc.write,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error { return setManagedFn("", "", sid) }}
+	})
 
 	// Directly observe sid as the first (and only) session — no prior session change,
 	// so currentSessionIDSince stays Zero.
@@ -2788,7 +2775,7 @@ func TestCycler_AbortDoesNotClearManaged_FirstSession(t *testing.T) {
 		t.Fatalf("want 1 cycle_aborted; got %d", len(abortedEvts))
 	}
 
-	// SetManagedSessionFn must NOT have been called: no real session change was
+	// managed-session port must NOT have been called: no real session change was
 	// observed before this abort (currentSessionIDSince.IsZero()), so clearing
 	// .managed would prematurely allow a new SID to latch (hk-ibb fix 3).
 	managedMu.Lock()
@@ -2796,7 +2783,7 @@ func TestCycler_AbortDoesNotClearManaged_FirstSession(t *testing.T) {
 	managedMu.Unlock()
 
 	if count != 0 {
-		t.Errorf("SetManagedSessionFn called %d times; want 0 (first-session abort must NOT clear managed)", count)
+		t.Errorf("managed-session port called %d times; want 0 (first-session abort must NOT clear managed)", count)
 	}
 }
 
@@ -2848,7 +2835,6 @@ func TestCycler_BootGrace_FlappingSID(t *testing.T) {
 		CrispIdleFn:         func(_, _ string) bool { return true }, // idle — fires without force path
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
-		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
 	cycler := mustNewCycler(cfg, em)
 
@@ -2980,9 +2966,10 @@ func TestCycler_AbortToResumeGraceToRefire(t *testing.T) {
 		CrispIdleFn:         func(_, _ string) bool { return true },
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      writeJournalFn,
-		SetManagedSessionFn: setManagedFn,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error { return setManagedFn("", "", sid) }}
+	})
 
 	// ── Phase A: establish prevSID → change to abortSID → abort ──
 
@@ -3015,7 +3002,7 @@ func TestCycler_AbortToResumeGraceToRefire(t *testing.T) {
 	abortManagedLast := managedLastValue
 	managedMu.Unlock()
 	if abortManagedCalls != 1 || abortManagedLast != "" {
-		t.Errorf("Phase A: SetManagedSessionFn calls=%d last=%q; want 1 call with \"\"",
+		t.Errorf("Phase A: managed-session port calls=%d last=%q; want 1 call with \"\"",
 			abortManagedCalls, abortManagedLast)
 	}
 
@@ -3146,17 +3133,16 @@ func TestCycler_CrossSID_ForceRetry_AfterAbort(t *testing.T) {
 				ClearSettle:         20 * time.Millisecond,
 				PollInterval:        5 * time.Millisecond,
 				// BootGracePeriod disabled: this test focuses on Gate-6, not boot-grace.
-				CycleIDGen:          cycleIDGen,
-				IsManagedFn:         func(_, _ string) bool { return true },
-				HandoffFilePath:     func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
-				ReadHandoff:         readHandoff,
-				TruncateHandoffFn:   func(_ string) error { return nil },
-				InjectFn:            spy.inject,
-				ReadGaugeFn:         readGaugeFn,
-				CrispIdleFn:         func(_, _ string) bool { return true },
-				HoldingDispatchFn:   func(_, _ string) bool { return false },
-				WriteJournalFn:      writeJournalFn,
-				SetManagedSessionFn: func(_, _, _ string) error { return nil },
+				CycleIDGen:        cycleIDGen,
+				IsManagedFn:       func(_, _ string) bool { return true },
+				HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
+				ReadHandoff:       readHandoff,
+				TruncateHandoffFn: func(_ string) error { return nil },
+				InjectFn:          spy.inject,
+				ReadGaugeFn:       readGaugeFn,
+				CrispIdleFn:       func(_, _ string) bool { return true },
+				HoldingDispatchFn: func(_, _ string) bool { return false },
+				WriteJournalFn:    writeJournalFn,
 			}
 			cycler := mustNewCycler(cfg, em)
 			ctx := context.Background()
@@ -3265,10 +3251,9 @@ func TestCycler_BootGrace_BurstRelativeCap(t *testing.T) {
 		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 			return &keeper.CtxFile{Pct: 85.0, SessionID: nextSID}, time.Now(), nil
 		},
-		CrispIdleFn:         func(_, _ string) bool { return true },
-		HoldingDispatchFn:   func(_, _ string) bool { return false },
-		WriteJournalFn:      jc.write,
-		SetManagedSessionFn: func(_, _, _ string) error { return nil },
+		CrispIdleFn:       func(_, _ string) bool { return true },
+		HoldingDispatchFn: func(_, _ string) bool { return false },
+		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCycler(cfg, em)
 	ctx := context.Background()

@@ -106,7 +106,7 @@ func TestKeeperCycle_FullReactiveCycle(t *testing.T) {
 
 	// (d) .managed binding updated to S2.
 	if managedBinding != s2 {
-		t.Errorf("SetManagedSessionFn binding = %q; want %q (S2)", managedBinding, s2)
+		t.Errorf("managed-session port binding = %q; want %q (S2)", managedBinding, s2)
 	}
 
 	// (e) NO cycle_aborted on the happy path.
@@ -359,6 +359,6 @@ func TestKeeperCycle_NonceTimeoutButFreshHandoff_Recovers(t *testing.T) {
 		t.Errorf("live gauge SID = %q after recovery; want %q (S2)", rs.liveSID(), s2)
 	}
 	if managedBinding != s2 {
-		t.Errorf("SetManagedSessionFn binding = %q; want %q (S2)", managedBinding, s2)
+		t.Errorf("managed-session port binding = %q; want %q (S2)", managedBinding, s2)
 	}
 }

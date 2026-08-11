@@ -211,13 +211,13 @@ func TestKeeperCycle_ForcedClearAboveHardThreshold(t *testing.T) {
 		CrispIdleFn:       func(_, _ string) bool { return false }, // perpetually busy → force path
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
-		SetManagedSessionFn: func(_, _, sid string) error {
-			managedBinding = sid
-			return nil
-		},
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
 		deps.Pane = testPaneWithEscape{PaneWriter: deps.Pane, sendEscape: escapeFn}
+		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error {
+			managedBinding = sid
+			return nil
+		}}
 	})
 
 	// Tokens at/above the default ForceActAbsTokens (240_000) with CrispIdle=false.
@@ -418,14 +418,14 @@ func TestKeeperCycle_PreCompactBackstop(t *testing.T) {
 		CrispIdleFn:       func(_, _ string) bool { return false }, // NOT idle — precompact must skip this gate
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
-		SetManagedSessionFn: func(_, _, sid string) error {
-			managedBinding = sid
-			return nil
-		},
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
 		deps.Context = testContextWithClear{ContextStore: deps.Context, clear: func() error {
 			markerCleared = true
+			return nil
+		}}
+		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error {
+			managedBinding = sid
 			return nil
 		}}
 	})
@@ -573,15 +573,15 @@ func TestKeeperCycle_ClearBriefHardGate_SlowClear(t *testing.T) {
 		CrispIdleFn:       func(_, _ string) bool { return true },
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
-		SetManagedSessionFn: func(_, _, sid string) error {
+	}
+	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Handoff = testHandoffWithModTime{HandoffDocument: deps.Handoff, modTime: rs.handoffModTime}
+		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error {
 			mu.Lock()
 			defer mu.Unlock()
 			managedBinding = sid
 			return nil
-		},
-	}
-	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
-		deps.Handoff = testHandoffWithModTime{HandoffDocument: deps.Handoff, modTime: rs.handoffModTime}
+		}}
 	})
 
 	cf := &keeper.CtxFile{Pct: 95.0, Tokens: 320_000, WindowSize: 1_000_000, SessionID: s1}

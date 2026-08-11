@@ -21,7 +21,7 @@ func (s configContextStore) ReadGauge() (*CtxFile, time.Time, error) {
 	return s.cfg.ReadGaugeFn(s.cfg.ProjectDir, s.cfg.AgentName)
 }
 func (s configContextStore) SetManagedSession(sid string) error {
-	return s.cfg.SetManagedSessionFn(s.cfg.ProjectDir, s.cfg.AgentName, sid)
+	return WriteManagedSessionID(s.cfg.ProjectDir, s.cfg.AgentName, sid)
 }
 func (s configContextStore) ClearPrecompactTrigger() error {
 	return ClearPrecompactTrigger(s.cfg.ProjectDir, s.cfg.AgentName)

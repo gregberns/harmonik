@@ -7,6 +7,5 @@ InjectFn
 IsManagedFn
 ReadGaugeFn
 ReadHandoff
-SetManagedSessionFn
 TruncateHandoffFn
 WriteJournalFn

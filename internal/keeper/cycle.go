@@ -182,14 +182,6 @@ type CyclerConfig struct {
 	HoldingDispatchFn   func(projectDir, agentName string) bool
 	WriteJournalFn      func(path string, j *CycleJournal) error
 
-	// SetManagedSessionFn writes the new session_id into .managed after a cycle
-	// completes post-/clear. This unblocks the watcher's session_id binding so it
-	// resumes monitoring the resumed session. Called unconditionally: an empty
-	// sessionID clears the binding so the .sid channel can rebind the next
-	// session (IsManaged stays true; only the binding is cleared). Nil →
-	// WriteManagedSessionID. (Refs: hk-igt, hk-uxu)
-	SetManagedSessionFn func(projectDir, agent, sessionID string) error
-
 	// ForceRetryInterval is the minimum duration after a forced-clear attempt
 	// (above ForceActPct) before the keeper retries on the same session_id.
 	// After an abort (handoff_timeout) or a completed forced cycle, the
@@ -368,9 +360,6 @@ func (c *CyclerConfig) applyDefaults() {
 	}
 	if c.WriteJournalFn == nil {
 		c.WriteJournalFn = writeJournalFile
-	}
-	if c.SetManagedSessionFn == nil {
-		c.SetManagedSessionFn = WriteManagedSessionID
 	}
 	if c.HoldTTL <= 0 {
 		c.HoldTTL = DefaultHoldTTL

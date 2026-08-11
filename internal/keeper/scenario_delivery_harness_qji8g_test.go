@@ -293,15 +293,15 @@ func TestScenario_ForceAct_NeverIdleStillCut_qji8g(t *testing.T) {
 		CrispIdleFn:       func(_, _ string) bool { return false }, // NEVER idle → force path
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
-		SetManagedSessionFn: func(_, _, sid string) error {
+	}
+	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Handoff = testHandoffWithModTime{HandoffDocument: deps.Handoff, modTime: rs.handoffModTime}
+		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error {
 			mu.Lock()
 			defer mu.Unlock()
 			managedBinding = sid
 			return nil
-		},
-	}
-	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
-		deps.Handoff = testHandoffWithModTime{HandoffDocument: deps.Handoff, modTime: rs.handoffModTime}
+		}}
 	})
 
 	// Tokens well above the default ForceActAbsTokens (240K) with CrispIdle=false.

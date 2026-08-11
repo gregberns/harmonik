@@ -284,7 +284,7 @@ func (rs *reactiveSession) withClearDelay(d time.Duration) *reactiveSession {
 // never confirm — see newReactiveCyclerWithBackstop for scenarios that need an
 // explicit, larger backstop (e.g. a delayed-flip race).
 //
-// managedSet is set to true by SetManagedSessionFn so the test can assert the
+// managedSet is set to true by managed-session port so the test can assert the
 // final binding == S2 without touching disk (mirrors the IdentityPinned test's
 // capture-the-arg idiom).
 func newReactiveCycler(
@@ -338,12 +338,6 @@ func newReactiveCyclerWithBackstop(
 		CrispIdleFn:       func(_, _ string) bool { return true },
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
-		SetManagedSessionFn: func(_, _, sid string) error {
-			mu.Lock()
-			defer mu.Unlock()
-			*managedSet = sid
-			return nil
-		},
 		// Stop hook wired and freshly fired (T8, SK-014): ModelDone{idle_marker}
 		// lands on the first AwaitModelDone detection tick, preserving the
 		// pre-T8 clear-right-after-confirm scenario cadence.
@@ -351,5 +345,11 @@ func newReactiveCyclerWithBackstop(
 	}
 	return mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
 		deps.Handoff = testHandoffWithModTime{HandoffDocument: deps.Handoff, modTime: rs.handoffModTime}
+		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error {
+			mu.Lock()
+			defer mu.Unlock()
+			*managedSet = sid
+			return nil
+		}}
 	})
 }

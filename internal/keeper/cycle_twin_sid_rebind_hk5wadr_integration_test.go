@@ -73,7 +73,7 @@ func TestIntegration_TwinSidRebind_AntiLoopGateHolds(t *testing.T) {
 	statusline, idleHook := twScripts(t)
 
 	// Opt the agent in (.managed) so the REAL IsManaged gate passes. Starts
-	// empty; SetManagedSessionFn fills it after the cycle's /clear confirms a
+	// empty; managed-session port fills it after the cycle's /clear confirms a
 	// new session_id.
 	if err := keeper.WriteManagedSessionID(project, agent, ""); err != nil {
 		t.Fatalf("tw-sid: WriteManagedSessionID: %v", err)
@@ -123,7 +123,11 @@ func TestIntegration_TwinSidRebind_AntiLoopGateHolds(t *testing.T) {
 		// /session-handoff directive natively (hk-fan).
 		InjectFn: keeper.InjectText,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error {
+			return keeper.WriteManagedSessionID(project, agent, sid)
+		}}
+	})
 
 	// Watch the gauge concurrently with the cycle so Phase 2 can observe the
 	// genuine post-/clear token RESET rather than racing the twin's aggressive

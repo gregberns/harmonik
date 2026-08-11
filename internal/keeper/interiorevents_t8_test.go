@@ -58,12 +58,6 @@ func newModelDoneCycler(
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
 		IdleMarkerModTimeFn: idleMarker,
-		SetManagedSessionFn: func(_, _, sid string) error {
-			mu.Lock()
-			defer mu.Unlock()
-			*managedSet = sid
-			return nil
-		},
 	}
 	return mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
 		deps.Handoff = testHandoffWithModTime{HandoffDocument: deps.Handoff, modTime: rs.handoffModTime}
@@ -72,6 +66,12 @@ func newModelDoneCycler(
 			dir:           projectDir,
 			turn:          transcriptTurn,
 		}
+		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error {
+			mu.Lock()
+			defer mu.Unlock()
+			*managedSet = sid
+			return nil
+		}}
 	})
 }
 

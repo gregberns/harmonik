@@ -21,12 +21,14 @@ type Scenario struct {
 }
 
 // NewScenario returns a Scenario for the given policy with a fake clock and
-// recording ports that start managed, idle, and 95 percent full.
+// recording ports that start managed, idle, and 90 percent full. This is above
+// the ACT threshold and below the force threshold, so each normal gate remains
+// observable.
 func NewScenario(policy keeper.CyclePolicy) *Scenario {
 	clock := substrate.NewFakeClock(time.Unix(1_700_000_000, 0))
 	r := &RecordingPorts{
 		Managed: true, Idle: true,
-		Gauge: &keeper.CtxFile{Pct: 95, SessionID: "11111111-1111-4111-8111-111111111111"},
+		Gauge: &keeper.CtxFile{Pct: 90, SessionID: "11111111-1111-4111-8111-111111111111"},
 	}
 	return &Scenario{
 		policy: policy, env: keeper.CycleEnv{AgentName: "scenario", TmuxTarget: "scenario:0"},
@@ -87,6 +89,30 @@ func (s *Scenario) DisableOperatorTurnGate(reason string) error {
 func (s *Scenario) DisablePostAnswerGrace(reason string) error {
 	return s.disable("post_answer_grace", reason, func() { s.policy.PostAnswerGrace = 0 })
 }
+
+// SetManaged controls the managed-state gate.
+func (s *Scenario) SetManaged(managed bool) { s.record.Managed = managed }
+
+// SetIdle controls the crisp-idle gate.
+func (s *Scenario) SetIdle(idle bool) { s.record.Idle = idle }
+
+// SetDispatchHeld controls the in-flight dispatch gate.
+func (s *Scenario) SetDispatchHeld(held bool) { s.record.Dispatch = held }
+
+// SetSleeping controls the sleeping-session gate.
+func (s *Scenario) SetSleeping(sleeping bool) { s.record.SleepingState = sleeping }
+
+// SetHeld controls the manual keeper-hold gate.
+func (s *Scenario) SetHeld(held bool) { s.record.HeldState = held }
+
+// SetOperatorAttached controls the live operator-presence gate.
+func (s *Scenario) SetOperatorAttached(attached bool) { s.record.AttachedState = attached }
+
+// OperatorSays records a real operator turn at the given time.
+func (s *Scenario) OperatorSays(at time.Time) { s.record.UserTurn = at }
+
+// AgentAnswers records a real assistant turn at the given time.
+func (s *Scenario) AgentAnswers(at time.Time) { s.record.AssistantTurn = at }
 
 // RecordingPorts is the controlled external world for a Scenario.
 type RecordingPorts struct {

@@ -9,6 +9,7 @@ import (
 // GroupCompletionOutcome is the terminal result reported for one queue item.
 type GroupCompletionOutcome string
 
+// The complete set of terminal outcomes a caller can report for one item.
 const (
 	GroupCompletionOutcomeCompleted GroupCompletionOutcome = "completed"
 	GroupCompletionOutcomeFailed    GroupCompletionOutcome = "failed"
@@ -78,6 +79,7 @@ func (in GroupCompletionInput) Validate() error {
 // GroupCompletionDisposition names the complete set of decision outcomes.
 type GroupCompletionDisposition string
 
+// The complete set of decisions the pure completion step can reach.
 const (
 	GroupCompletionDispositionNoChange           GroupCompletionDisposition = "no-change"
 	GroupCompletionDispositionReceiptRequired    GroupCompletionDisposition = "receipt-required"
@@ -92,6 +94,8 @@ func (v GroupCompletionDisposition) String() string { return string(v) }
 // GroupCompletionNoChangeReason explains an expected race or idempotent call.
 type GroupCompletionNoChangeReason string
 
+// The complete set of reasons a no-change decision gives. A receipt-required
+// decision also leaves the stored queue alone, and it names no reason.
 const (
 	GroupCompletionNoChangeStaleQueue              GroupCompletionNoChangeReason = "stale-queue"
 	GroupCompletionNoChangeMatchingTerminalOutcome GroupCompletionNoChangeReason = "matching-terminal-outcome"
@@ -122,18 +126,18 @@ type GroupCompletionResult struct {
 func (r GroupCompletionResult) Validate() error {
 	switch r.Disposition {
 	case GroupCompletionDispositionNoChange:
-		if r.Changed || r.NextQueue != nil || len(r.Intents) != 0 || !r.NoChangeReason.valid() {
+		if !r.validAsNoChange() {
 			return errors.New("queue: invalid no-change completion result")
 		}
 	case GroupCompletionDispositionReceiptRequired:
-		if r.Changed || r.NextQueue != nil || len(r.Intents) != 0 || r.NoChangeReason != "" {
+		if !r.validAsReceiptRequired() {
 			return errors.New("queue: invalid receipt-required completion result")
 		}
 	case GroupCompletionDispositionIntermediate,
 		GroupCompletionDispositionPausedByFailure,
 		GroupCompletionDispositionSuccessorActivated,
 		GroupCompletionDispositionQueueCompleted:
-		if !r.Changed || r.NextQueue == nil || r.NoChangeReason != "" {
+		if !r.validAsChanged() {
 			return errors.New("queue: invalid changed completion result")
 		}
 	default:
@@ -142,9 +146,34 @@ func (r GroupCompletionResult) Validate() error {
 	return nil
 }
 
+// leavesQueueAlone is true when the result asks the caller to write nothing.
+func (r GroupCompletionResult) leavesQueueAlone() bool {
+	return !r.Changed && r.NextQueue == nil && len(r.Intents) == 0
+}
+
+// validAsNoChange is true for a result that reports an expected race or a
+// repeated call. Such a result writes nothing and it names the reason.
+func (r GroupCompletionResult) validAsNoChange() bool {
+	return r.leavesQueueAlone() && r.NoChangeReason.valid()
+}
+
+// validAsReceiptRequired is true for a result that asks the caller for an ID
+// and then a retry. Such a result writes nothing. It is a request and not a
+// race, so it names no reason.
+func (r GroupCompletionResult) validAsReceiptRequired() bool {
+	return r.leavesQueueAlone() && r.NoChangeReason == ""
+}
+
+// validAsChanged is true for a result that carries the one detached next
+// queue. Such a result is not a race, so it names no reason.
+func (r GroupCompletionResult) validAsChanged() bool {
+	return r.Changed && r.NextQueue != nil && r.NoChangeReason == ""
+}
+
 // GroupCompletionErrorReason classifies invalid input and corrupt stored state.
 type GroupCompletionErrorReason string
 
+// The complete set of reasons a decision refuses the request or the state.
 const (
 	GroupCompletionErrorInvalidOutcome        GroupCompletionErrorReason = "invalid-outcome"
 	GroupCompletionErrorInvalidQueueID        GroupCompletionErrorReason = "invalid-expected-queue-id"

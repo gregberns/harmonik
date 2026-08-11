@@ -417,6 +417,7 @@ func (lq *LockedQueueStore) LockedAllQueueNames() []string {
 }
 
 // ---------------------------------------------------------------------------
+
 // Snapshot is kept as an alias for existing QueueStore callers. The queue
 // package owns the transaction port so queue operations do not import this
 // registry package.

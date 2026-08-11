@@ -577,6 +577,23 @@ linters:
             - { pkg: "github.com/gregberns/harmonik/internal/brcli", desc: "dispatch values do not call the Beads adapter (LB-007)" }
             - { pkg: "github.com/gregberns/harmonik/internal/run", desc: "dispatch values bind run identity but do not own run storage (LB-007)" }
 
+        # dispatchstore is the filesystem adapter for dispatch intents. It can
+        # import the value contract, but not queue, Beads, run, or daemon policy.
+        # Rationale: specs/live-bead-state.md LB-005, LB-007, and LB-009.
+        dispatchstore:
+          files: ["**/internal/dispatchstore/**"]
+          allow:
+            - "$gostd"
+            - "github.com/google/uuid"
+            - "github.com/gregberns/harmonik/internal/core"
+            - "github.com/gregberns/harmonik/internal/dispatch"
+            - "github.com/gregberns/harmonik/internal/dispatchstore"
+          deny:
+            - { pkg: "github.com/gregberns/harmonik/internal/daemon", desc: "dispatchstore owns namespace I/O, not scheduler or replay policy" }
+            - { pkg: "github.com/gregberns/harmonik/internal/queue", desc: "dispatchstore persists dispatch values and does not mutate queues" }
+            - { pkg: "github.com/gregberns/harmonik/internal/brcli", desc: "dispatchstore does not call Beads" }
+            - { pkg: "github.com/gregberns/harmonik/internal/run", desc: "dispatchstore does not own universal run records" }
+
         # Queue production code imports core plus UUID for queue/event identity.
         # External tests also need the self-import used by package queue_test.
         # eventbus import added by T12 (hk-hn363) when queue-lifecycle events are

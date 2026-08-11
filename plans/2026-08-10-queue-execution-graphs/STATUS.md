@@ -27,14 +27,17 @@ Research and runtime proof. Serial and fan-out or fan-in graphs passed through t
 - Confirmed that a clean daemon stop archives an active queue as cancelled. This conflicts with the specified resumable `paused-by-drain` restart path.
 - Confirmed that abrupt-crash recovery has tested run-session adoption and durable reservation release parts. A full killed-process graph run is still missing.
 - Proved the clean-stop gap through two real daemon starts. The first stop archived the active queue. The second start had no graph to continue.
+- Wired parent-child edges into the run plan. A child now uses one parent-derived integration branch when no higher branch field sets another value.
+- Added an atomic branch creation helper. Concurrent children now converge on one integration branch.
+- Added focused tests for branch creation and field-by-field branch precedence.
 
 ## Next
 
 - Run an abrupt-crash graph recovery scenario. Keep it separate from the confirmed clean-stop cancellation gap.
 - Design and implement the clean-stop transition fix. Preserve a resumable queue instead of archiving it as cancelled.
 - Coordinate the abrupt-crash scenario with C21. Do not pin the old session-only recovery path as the final dispatch contract.
+- Re-run the live fan graph with parent edges when free disk is above the daemon watermark.
 - Run the focused package and scenario gates.
-- Decide whether to fix the confirmed parent-derived branch wiring and generated skill drift in this work or split them into tracked follow-up work.
 
 ## Constraints
 
@@ -42,4 +45,5 @@ Research and runtime proof. Serial and fan-out or fan-in graphs passed through t
 - Kerf cannot create a work from this worktree because its global project link points to the shared checkout.
 - The default macOS Bash 3 cannot run one script test because it lacks `mapfile`. Bash 5 is installed at `/opt/homebrew/bin/bash`. `PATH=/opt/homebrew/bin:$PATH make fast` is green: 8,342 tests passed and 45 existing tests were skipped.
 - `PATH=/opt/homebrew/bin:$PATH make full` ran 75,687 tests across 108 packages. All tests passed and 54 tests were skipped. The final repository-wide lint allow-list step failed on ten file and linter pairs outside delta's diff. The files belong to other active lanes and were present in delta's base. Delta did not change them or weaken the allow list.
-- The work is not committed because the project requires a green full gate before a non-trivial commit.
+- Delta has two saved commits for the graph tests and clean-stop proof. The parent branch change is the next commit.
+- The live parent branch scenario reached the daemon. The daemon then paused dispatch because free disk was 9.6 GiB. Its watermark is 10 GiB. This is an environment limit, not a queue result.

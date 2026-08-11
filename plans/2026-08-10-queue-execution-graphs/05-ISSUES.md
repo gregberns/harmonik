@@ -6,12 +6,12 @@ Do not turn open research questions into implementation issues.
 
 ## Confirmed research gaps
 
-### Parent-derived integration branches are not wired
+### Parent-derived integration branches were not wired
 
 - Failed claim: child beads under one epic automatically land on one parent-derived integration branch.
 - Evidence: `WM-006` requires the derivation. `workspace.IntegrationBranchName` has no production caller. `daemon.resolveBranchingFrom` has no parent-edge input.
 - Lowest failing layer: daemon run-plan composition.
-- State: confirmed by code trace. Runtime reproduction is still required before a fix.
+- State: fixed in delta. The run plan reads the parent edge, applies parent-derived defaults by field, and creates the branch with an atomic Git ref update. Focused tests pass. The real fan graph is updated but its proof run is blocked by the daemon disk watermark.
 
 ### Dispatch skill text disagrees with current stream behavior
 

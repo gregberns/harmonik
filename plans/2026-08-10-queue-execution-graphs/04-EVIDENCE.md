@@ -41,6 +41,22 @@ The durable event log proved:
 
 No supervisor changed queue state or ledger state during the run.
 
+### Parent-derived integration branch extension
+
+Focused command:
+
+```text
+go test ./internal/workspace ./internal/daemon -run 'TestEnsureIntegrationBranchCreatesOnceAndConverges|TestRunPlan_BranchingPrecedence' -count=1
+```
+
+Result: PASS on 2026-08-11.
+
+The run plan now reads an outgoing parent-child edge. It derives `harmonik/integration/<parent-id>` when a higher branch setting does not set that field. The precedence remains field by field. An explicit `start_from` can coexist with a derived `lands_on`. An explicit `lands_on` can coexist with a derived `start_from`.
+
+The workspace test starts eight branch creation calls at the same time. All calls converge on one branch at the base commit.
+
+The live fan graph fixture now creates an epic and parent-child edges for A through E. It expects all five commits on the derived branch while the configured base stays unchanged. The run reached the real daemon. The daemon paused dispatch because free disk was 9.6 GiB and its watermark is 10 GiB. This run is not a pass or a failure for the branch behavior. It must run again when the disk guard permits dispatch.
+
 ## Existing conflict and merge-serialization evidence
 
 Command:

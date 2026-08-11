@@ -52,6 +52,7 @@ import (
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/queue"
 	queuecli "github.com/gregberns/harmonik/internal/queue/cli"
+	"github.com/gregberns/harmonik/internal/workspace"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -292,13 +293,20 @@ func queueSubmitDispatchInitBrWithDep(t *testing.T, brPath, projectDir, brWrappe
 	return aID, bID
 }
 
-// queueSubmitDispatchInitBrFanGraph creates A -> [B,C,D] -> E.
-func queueSubmitDispatchInitBrFanGraph(t *testing.T, brPath, projectDir, brWrapper string) []core.BeadID {
+// queueSubmitDispatchInitBrFanGraph creates one epic over A -> [B,C,D] -> E.
+func queueSubmitDispatchInitBrFanGraph(t *testing.T, brPath, projectDir, brWrapper string) (core.BeadID, []core.BeadID) {
 	t.Helper()
 	initCmd := exec.CommandContext(t.Context(), brPath, "init", "--prefix", "qsdg")
 	initCmd.Dir = projectDir
 	out, err := initCmd.CombinedOutput()
 	require.NoError(t, err, "queueSubmitDispatchInitBrFanGraph: br init\n%s", out)
+
+	epicCmd := exec.CommandContext(t.Context(), brWrapper, "create",
+		"fan graph epic", "--type", "epic", "--status", "open", "--silent")
+	epicOut, epicErr := epicCmd.CombinedOutput()
+	require.NoError(t, epicErr, "queueSubmitDispatchInitBrFanGraph: br create epic\n%s", epicOut)
+	epicID := core.BeadID(strings.TrimSpace(string(epicOut)))
+	require.NotEmpty(t, epicID, "queueSubmitDispatchInitBrFanGraph: empty epic ID")
 
 	ids := make([]core.BeadID, 5)
 	for i, name := range []string{"A root", "B branch", "C branch", "D branch", "E join"} {
@@ -320,7 +328,13 @@ func queueSubmitDispatchInitBrFanGraph(t *testing.T, brPath, projectDir, brWrapp
 		addDep(branch, ids[0])
 		addDep(ids[4], branch)
 	}
-	return ids
+	for _, child := range ids {
+		cmd := exec.CommandContext(t.Context(), brWrapper, "dep", "add",
+			string(child), string(epicID), "--type", "parent-child")
+		depOut, depErr := cmd.CombinedOutput()
+		require.NoError(t, depErr, "queueSubmitDispatchInitBrFanGraph: parent %s %s\n%s", child, epicID, depOut)
+	}
+	return epicID, ids
 }
 
 // queueSubmitDispatchPollBeadClosed polls br show <id> until status=="closed"
@@ -774,7 +788,7 @@ func TestScenario_QueueSubmit_FanOutFanIn(t *testing.T) {
 	queueSubmitDispatchGitRepo(t, projectDir)
 	dbPath := filepath.Join(projectDir, ".beads", "beads.db")
 	brWrapper := queueSubmitDispatchBrWrapper(t, realBrPath, dbPath)
-	ids := queueSubmitDispatchInitBrFanGraph(t, realBrPath, projectDir, brWrapper)
+	epicID, ids := queueSubmitDispatchInitBrFanGraph(t, realBrPath, projectDir, brWrapper)
 	twinWrapper := queueSubmitDispatchTwinWrapper(t, twinPath)
 	scenariotest.WriteReviewLoopWorkflowDot(t, projectDir)
 
@@ -832,7 +846,15 @@ func TestScenario_QueueSubmit_FanOutFanIn(t *testing.T) {
 	for _, id := range ids {
 		scenariotest.AssertBeadStatus(t, brWrapper, string(id), "closed")
 	}
-	queueSubmitDispatchAssertLanded(t, projectDir, "integration", ids)
+	derivedBranch, deriveErr := workspace.IntegrationBranchName(t.Context(), string(epicID))
+	require.NoError(t, deriveErr, "derive epic integration branch")
+	queueSubmitDispatchAssertLanded(t, projectDir, derivedBranch, ids)
+	cmd := exec.CommandContext(t.Context(), "git", "rev-list", "--count", "main..integration")
+	cmd.Dir = projectDir
+	baseOut, baseErr := cmd.CombinedOutput()
+	require.NoError(t, baseErr, "git rev-list main..integration\n%s", baseOut)
+	require.Equal(t, "0", strings.TrimSpace(string(baseOut)),
+		"configured integration base must stay unchanged when the epic has a derived branch")
 
 	graphEvents := queueSubmitDispatchGraphEvents(t, jsonlPath, ids)
 	require.Equal(t, ids[0], graphEvents.started[0], "A must start first")

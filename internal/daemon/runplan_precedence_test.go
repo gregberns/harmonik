@@ -795,6 +795,85 @@ func TestRunPlan_ActiveRepoAndProtectBranches(t *testing.T) {
 func TestRunPlan_BranchingPrecedence(t *testing.T) {
 	t.Parallel()
 
+	t.Run("parent edge creates and selects one derived integration branch", func(t *testing.T) {
+		t.Parallel()
+		repo, head := runplanRepo(t)
+		bead := runplanBead(nil, "")
+		bead.Edges = []core.DependencyEdge{{
+			FromBeadID: bead.BeadID,
+			ToBeadID:   "hk-parent",
+			EdgeKind:   core.EdgeKindParentChild,
+		}}
+
+		plan, _, _ := runplanResolve(t, runplanEnv(repo, bead))
+
+		if plan.Verdict != runPlanReady {
+			t.Fatalf("Verdict = %q; want ready (%+v)", plan.Verdict, plan.Refusal)
+		}
+		const want = "harmonik/integration/hk-parent"
+		if plan.BaseBranch != want || plan.MergeTarget != want {
+			t.Errorf("BaseBranch/MergeTarget = %q/%q; want %q", plan.BaseBranch, plan.MergeTarget, want)
+		}
+		if plan.ParentSHA != head {
+			t.Errorf("ParentSHA = %q; want derived branch created at target tip %q", plan.ParentSHA, head)
+		}
+		cmd := exec.CommandContext(t.Context(), "git", "rev-parse", "refs/heads/"+want)
+		cmd.Dir = repo
+		out, err := cmd.Output()
+		if err != nil || strings.TrimSpace(string(out)) != head {
+			t.Fatalf("derived integration branch = (%q, %v); want %q", strings.TrimSpace(string(out)), err, head)
+		}
+	})
+
+	t.Run("parent default fills lands_on when start_from is explicit", func(t *testing.T) {
+		t.Parallel()
+		repo, _ := runplanRepo(t)
+		sideSHA := runplanSideBranch(t, repo)
+		bead := runplanBead(nil, runplanBeadBody("start_from: side"))
+		bead.Edges = []core.DependencyEdge{{
+			FromBeadID: bead.BeadID,
+			ToBeadID:   "hk-parent",
+			EdgeKind:   core.EdgeKindParentChild,
+		}}
+
+		plan, _, _ := runplanResolve(t, runplanEnv(repo, bead))
+
+		if plan.Verdict != runPlanReady {
+			t.Fatalf("Verdict = %q; want ready (%+v)", plan.Verdict, plan.Refusal)
+		}
+		if plan.ParentSHA != sideSHA {
+			t.Errorf("ParentSHA = %q; want explicit side tip %q", plan.ParentSHA, sideSHA)
+		}
+		const want = "harmonik/integration/hk-parent"
+		if plan.BaseBranch != want || plan.MergeTarget != want {
+			t.Errorf("BaseBranch/MergeTarget = %q/%q; want %q", plan.BaseBranch, plan.MergeTarget, want)
+		}
+	})
+
+	t.Run("parent default fills start_from when lands_on is explicit", func(t *testing.T) {
+		t.Parallel()
+		repo, head := runplanRepo(t)
+		runplanSideBranch(t, repo)
+		bead := runplanBead(nil, runplanBeadBody("target_branch: side"))
+		bead.Edges = []core.DependencyEdge{{
+			FromBeadID: bead.BeadID,
+			ToBeadID:   "hk-parent",
+			EdgeKind:   core.EdgeKindParentChild,
+		}}
+
+		plan, _, _ := runplanResolve(t, runplanEnv(repo, bead))
+
+		if plan.Verdict != runPlanReady {
+			t.Fatalf("Verdict = %q; want ready (%+v)", plan.Verdict, plan.Refusal)
+		}
+		if plan.ParentSHA != head {
+			t.Errorf("ParentSHA = %q; want derived branch at main tip %q", plan.ParentSHA, head)
+		}
+		if plan.BaseBranch != "side" || plan.MergeTarget != "side" {
+			t.Errorf("BaseBranch/MergeTarget = %q/%q; want side/side", plan.BaseBranch, plan.MergeTarget)
+		}
+	})
+
 	t.Run("no ## Branching section: spec defaults off the daemon target", func(t *testing.T) {
 		t.Parallel()
 		repo, head := runplanRepo(t)

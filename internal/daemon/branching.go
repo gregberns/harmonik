@@ -46,6 +46,7 @@ import (
 
 	"github.com/gregberns/harmonik/internal/branching"
 	"github.com/gregberns/harmonik/internal/gitprobe"
+	"github.com/gregberns/harmonik/internal/workspace"
 )
 
 // BranchingConfig holds the per-bead branching fields extracted from the
@@ -170,6 +171,10 @@ func resolveBranchingFrom(_ context.Context, beadCfg BranchingConfig, projectRoo
 		return BranchingConfig{}, &ErrProjectBranchingConfig{Cause: loadErr}
 	}
 
+	return resolveBranchingWithDefaults(beadCfg, projDefaults, targetBranch), nil
+}
+
+func resolveBranchingWithDefaults(beadCfg BranchingConfig, projDefaults branching.Defaults, targetBranch string) BranchingConfig {
 	// Derive effective spec-level defaults for start_from and lands_on.
 	// When targetBranch is configured (non-empty), it replaces the literal
 	// "main" constant so worktrees are cut from — and land on — the integration
@@ -188,13 +193,12 @@ func resolveBranchingFrom(_ context.Context, beadCfg BranchingConfig, projectRoo
 	// defaults fill anything still unset.
 	// TargetRepo has no project-level or spec-level default — it is bead-body
 	// only (hk-3r3). An empty TargetRepo means the bead targets this repo.
-	merged := BranchingConfig{
+	return BranchingConfig{
 		StartFrom:       firstNonEmpty(beadCfg.StartFrom, projDefaults.StartFrom, specStartFrom),
 		LandsOn:         firstNonEmpty(beadCfg.LandsOn, projDefaults.LandsOn, specLandsOn),
 		LandingStrategy: firstNonEmpty(beadCfg.LandingStrategy, string(projDefaults.LandingStrategy), specDefaultLandingStrategy),
 		TargetRepo:      beadCfg.TargetRepo,
 	}
-	return merged, nil
 }
 
 // firstNonEmpty returns the first non-empty string from vals.
@@ -410,7 +414,7 @@ func resolveParentCommit(ctx context.Context, repoRoot, beadID, beadBody, target
 	if parseErr != nil {
 		warnBeadBodyParseError(ctx, parseErr)
 	}
-	plan, err := resolveBranchPlan(ctx, repoRoot, beadID, beadCfg, targetBranch)
+	plan, err := resolveBranchPlan(ctx, repoRoot, beadID, beadCfg, targetBranch, "")
 	if err != nil {
 		return "", err
 	}
@@ -451,10 +455,33 @@ type branchPlan struct {
 // report which ref it was that did not resolve.
 //
 // Spec ref: specs/workspace-model.md §4.2 WM-005b.
-func resolveBranchPlan(ctx context.Context, repoRoot, beadID string, beadCfg BranchingConfig, targetBranch string) (branchPlan, error) {
-	cfg, resolveErr := resolveBranchingFrom(ctx, beadCfg, repoRoot, targetBranch)
-	if resolveErr != nil {
-		return branchPlan{}, fmt.Errorf("daemon: resolveParentCommit for bead %s: %w", beadID, resolveErr)
+func resolveBranchPlan(ctx context.Context, repoRoot, beadID string, beadCfg BranchingConfig, targetBranch, parentBeadID string) (branchPlan, error) {
+	projDefaults, loadErr := branching.LoadCached(repoRoot)
+	if loadErr != nil {
+		return branchPlan{}, fmt.Errorf("daemon: resolveParentCommit for bead %s: %w", beadID, &ErrProjectBranchingConfig{Cause: loadErr})
+	}
+
+	defaultBranch := targetBranch
+	if defaultBranch == "" {
+		defaultBranch = specDefaultStartFrom
+	}
+	if parentBeadID != "" {
+		var deriveErr error
+		defaultBranch, deriveErr = workspace.IntegrationBranchName(ctx, parentBeadID)
+		if deriveErr != nil {
+			return branchPlan{}, fmt.Errorf("daemon: resolveParentCommit for bead %s: derive parent integration branch: %w", beadID, deriveErr)
+		}
+	}
+
+	cfg := resolveBranchingWithDefaults(beadCfg, projDefaults, defaultBranch)
+	if parentBeadID != "" && (cfg.StartFrom == defaultBranch || cfg.LandsOn == defaultBranch) {
+		base := targetBranch
+		if base == "" {
+			base = specDefaultStartFrom
+		}
+		if ensureErr := workspace.EnsureIntegrationBranch(ctx, repoRoot, defaultBranch, base); ensureErr != nil {
+			return branchPlan{}, fmt.Errorf("daemon: resolveParentCommit for bead %s: %w", beadID, ensureErr)
+		}
 	}
 
 	// cfg.StartFrom is always non-empty after the merge (the spec default fills

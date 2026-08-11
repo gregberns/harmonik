@@ -48,11 +48,11 @@ A daemon restart should also be a core recovery action when the stored facts giv
 - Approve the integration branch into `main` or the release branch.
 - Decide policy changes and unresolved semantic conflicts.
 
-## Current gap
+## Current gaps
 
-The desired per-epic integration branch is not automatic. The spec and pure workspace helper define it, but daemon composition does not query the parent edge. Until fixed, all children land on the project target branch unless planning writes the same branch override into every child bead.
+The per-epic integration branch is now wired in delta. The daemon reads the child record's parent edge. It derives and creates one integration branch for the parent when no higher branch setting overrides that field. The focused proof passes. The live graph proof still needs a run above the disk watermark.
 
-Clean stop and start is also not an automatic continuation. Production archives the active queue as cancelled. The current queue and operator specs instead require a resumable `paused-by-drain` queue. This gap must be fixed before a long graph can tolerate normal daemon restarts without supervisor work.
+Clean stop and start is also not an automatic continuation. Production archives the active queue as cancelled. The specs require a durable `paused-by-drain` state, but they do not yet require automatic continuation. `QM-055` leaves the queue paused. `QM-002b Class D` marks its pending items failed on startup. Supervisor-free restart is the desired direction in this investigation. It needs a queue contract change before code can implement it safely.
 
 Use this test for each action:
 

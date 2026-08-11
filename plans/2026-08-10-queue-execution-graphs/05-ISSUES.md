@@ -20,13 +20,20 @@ Do not turn open research questions into implementation issues.
 - Lowest failing layer: generated skill documentation.
 - State: fixed in delta after confirmation by contract, code trace, and a real socket-driven fan-out run. The embedded source and generated mirror now match.
 
-### Clean daemon stop cancels the active queue instead of preserving a resumable drain
+### Clean daemon stop cancels the active queue instead of preserving a drain pause
 
 - Failed claim: a daemon restart can return a dependency graph to its pre-restart queue state without a supervisor rebuilding the queue.
 - Evidence: `ON-027` and `QM-054` say a graceful stop moves an active queue to `paused-by-drain`. `QM-055` says that state survives restart. Production `daemon.drainCancelledQueue` instead calls `queue.CancelQueueOnShutdown`, archives the canonical queue as `*.cancelled-*`, and clears it from memory. The focused production tests `TestQueueCancel_TransitionsToCancelled` and `TestQueueCancel_NamedQueue_ArchivedOnShutdown` pass and pin this behavior.
-- Consequence: `harmonik queue resume` cannot recover the work after restart because it needs a live canonical queue in `paused-by-drain`. Open beads remain in Beads, but queue order, group shape, and the submitted set are no longer active. An agent or operator must submit them again.
+- Consequence: the durable queue state and its stop reason are lost. Open beads remain in Beads, but queue order, group shape, and the submitted set are no longer active. An agent or operator must submit them again.
 - Lowest failing layer: daemon clean-exit queue transition. The implementation and its tests disagree with the current queue and operator contracts.
 - State: confirmed by spec trace, production code trace, focused tests, and a real daemon stop and start scenario. The scenario proves the second daemon has no canonical queue to resume and performs no dispatch.
+
+### Restart rules disagree about drain-pause recovery
+
+- Failed claim: preserving `paused-by-drain` at shutdown is enough to let the same graph continue after restart.
+- Evidence: `QM-055` says the state survives restart but remains paused. It names fresh submit after operator action as the v0.1 recovery path. `QM-002b Class D` marks pending and deferred items in that queue failed during startup because it treats the queue as abandoned. The live operator-resume consumer changes the queue back to active, but it does not re-arm those failed items.
+- Lowest failing layer: queue restart contract. The shutdown transition and startup reconciliation cannot be fixed as one mechanical code change until the desired recovery rule is selected.
+- State: confirmed by spec and code trace. Add a restart test for the selected rule after the contract decision.
 
 ## Open research gaps
 

@@ -93,7 +93,7 @@ go test ./internal/daemon -run '^TestQueueCancel_(TransitionsToCancelled|NamedQu
 
 Result: both tests passed on 2026-08-10.
 
-The queue and operator specs describe a graceful stop as a durable `paused-by-drain` transition that can be resumed. The live clean-exit path does something else. `daemon.drainCancelledQueue` waits for current runs, calls `queue.CancelQueueOnShutdown` for every still-active queue, archives the canonical queue, and removes it from the live store. The passing tests defend that cancellation and archive behavior.
+The queue and operator specs describe a graceful stop as a durable `paused-by-drain` transition. The live clean-exit path does something else. `daemon.drainCancelledQueue` waits for current runs, calls `queue.CancelQueueOnShutdown` for every still-active queue, archives the canonical queue, and removes it from the live store. The passing tests defend that cancellation and archive behavior.
 
 This is not crash-recovery evidence. It proves that a normal stop and start cannot continue the submitted graph from its queue record. The next restart has no active canonical queue to load or resume.
 
@@ -110,6 +110,14 @@ Result: PASS in 12.53 seconds on 2026-08-11.
 The scenario used the full daemon composition root, real Beads, real Git, and the canonical queue store. A handler pause held one open bead at a stable between-run point in an active stream queue. The first clean daemon stop archived `main.json` as `main.json.cancelled-*`. The bead stayed open. A second daemon started against the same project. It loaded no canonical queue, emitted no `run_started`, and left the bead open.
 
 This proves the consequence through the real start and stop boundary. The graph does not continue. An agent or operator must reconstruct and resubmit it.
+
+### Restart pause contract conflict
+
+`QM-055` says a persisted drain pause survives restart and remains paused. It names fresh submit after operator action as the v0.1 recovery path. `QM-002b Class D` goes further. Startup marks every pending or deferred item in that paused queue as failed because it treats the queue as abandoned.
+
+The current daemon also has an operator-resume consumer that changes `paused-by-drain` back to `active`. That is useful before restart. After restart, Class D has already made the pending graph items terminal. A resume can change the queue status, but it cannot continue those items.
+
+The desired automatic continuation is therefore not the current normative contract. It needs an explicit decision about startup behavior. Changing shutdown alone would preserve the queue file but would not preserve executable graph work.
 
 ## Abrupt-crash recovery components
 

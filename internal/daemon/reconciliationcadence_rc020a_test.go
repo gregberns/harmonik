@@ -213,8 +213,8 @@ func TestRC020a_DaemonStartEmitsStartupReconciliationStarted(t *testing.T) {
 
 	select {
 	case <-errCh:
-	case <-time.After(5 * time.Second):
-		t.Fatal("daemon.Start did not return within 5s after cancel")
+	case <-time.After(daemon.ExportedDaemonExitHangBudget):
+		t.Fatalf("daemon.Start did not return within %s after cancel", daemon.ExportedDaemonExitHangBudget)
 	}
 
 	// Read the JSONL log and look for reconciliation_started{trigger:"startup"}.

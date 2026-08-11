@@ -126,7 +126,7 @@ func TestOperatorPause_BrReadyPath_HoldOnPaused(t *testing.T) {
 	cancel()
 	select {
 	case <-loopDone:
-	case <-time.After(3 * time.Second):
-		t.Fatal("workloop did not exit after context cancellation")
+	case <-time.After(daemon.ExportedDaemonExitHangBudget):
+		t.Fatalf("workloop did not exit within %s after context cancellation", daemon.ExportedDaemonExitHangBudget)
 	}
 }

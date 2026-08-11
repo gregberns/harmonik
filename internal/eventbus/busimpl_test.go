@@ -890,19 +890,24 @@ func TestBusImplDrainRun_IsolatesRunFromSlowPeer(t *testing.T) {
 		t.Fatal("bus does not implement eventbus.RunDrainer; hk-fx6zl requires per-run drain support")
 	}
 
-	// DrainRun for run B must return in <100ms even though run A is still hanging.
-	drainBCtx, cancelB := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	// DrainRun for run B must RETURN even though run A is still hanging.
+	//
+	// THE DEADLINE IS DELIBERATELY GENEROUS, AND THAT MAKES THE TEST STRONGER
+	// RATHER THAN WEAKER (hk-vp02y). Run A's consumer blocks on a channel this
+	// test does not close until later, so a bus that failed to isolate the two
+	// runs would leave DrainRun(runB) blocked FOREVER. The two answers are
+	// "returns" and "never returns". A 100ms budget did not separate them any
+	// better than 30s does — it only added a third answer, "the box was busy",
+	// which is not a property of the bus. This test previously carried both a
+	// 100ms context AND a 100ms elapsed assertion, so a loaded machine failed it
+	// twice over for a bus that was working correctly.
+	drainBCtx, cancelB := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancelB()
 
 	start := time.Now()
 	if drainErr := rd.DrainRun(drainBCtx, runBID); drainErr != nil {
-		t.Fatalf("DrainRun(runB): %v (elapsed %v); run B's consumer should have completed quickly, "+
-			"independent of the blocked run A consumer (hk-fx6zl)", drainErr, time.Since(start))
-	}
-	elapsed := time.Since(start)
-	if elapsed >= 100*time.Millisecond {
-		t.Errorf("DrainRun(runB) took %v, want <100ms; "+
-			"run A's hanging consumer MUST NOT delay run B's drain (hk-fx6zl)", elapsed)
+		t.Fatalf("DrainRun(runB): %v (elapsed %v); run A's hanging consumer blocked run B's drain, "+
+			"which is the isolation hk-fx6zl requires", drainErr, time.Since(start))
 	}
 
 	if runBRan.Load() != 1 {

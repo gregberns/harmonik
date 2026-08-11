@@ -127,8 +127,8 @@ func TestDaemonStart_BrSchemaMismatch_EmitsDivergenceInconclusive(t *testing.T) 
 	case <-done:
 		// Returned — OK; no assertion on the error because a cancelled context
 		// may produce context.Canceled, which is a normal shutdown.
-	case <-time.After(5 * time.Second):
-		t.Fatal("daemon.Start did not return within 5 s after context cancellation")
+	case <-time.After(daemon.ExportedDaemonExitHangBudget):
+		t.Fatalf("daemon.Start did not return within %s after context cancellation", daemon.ExportedDaemonExitHangBudget)
 	}
 
 	lines := recwireupFixture378ReadJSONLLines(t, jsonlPath)
@@ -200,7 +200,7 @@ func TestDaemonStart_BrSchemaMismatch_DaemonProceedsQueueless(t *testing.T) {
 			t.Errorf("daemon.Start returned unexpected fatal error on BrSchemaMismatch: %v; "+
 				"want nil or context-cancel (RecCat0 → proceed queue-less per BI-031b)", err)
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("daemon.Start did not return within 5 s after context cancellation")
+	case <-time.After(daemon.ExportedDaemonExitHangBudget):
+		t.Fatalf("daemon.Start did not return within %s after context cancellation", daemon.ExportedDaemonExitHangBudget)
 	}
 }

@@ -15,10 +15,12 @@ work to you and nothing closes your beads. You and bravo are the parallelism.
 
 ## Read in this order
 
-1. **`HANDOFF-alpha.md`** (repo root) — your state: what happened last session and
+1. **`HANDOFF-alpha.md`** (root of the checkout you work in) — your state: what happened last session and
    what to do next. It is rewritten every restart, so it is the only description of
-   where you are that can be trusted. If it is absent or empty, stop and ask the
-   operator. Do not guess the work from a bead, a branch name, or this file.
+   where you are that can be trusted. If it is absent or empty, say so plainly.
+   That is a real signal and not routine — the keeper does not empty this file.
+   Rebuild what you can from `git log`, this file for scope, and your open beads, and get the
+   operator's read before you change code.
 2. **`plans/2026-07-27-delete-and-rewrite/CHARTER.md`** — what the program is and
    what "done" means. It outranks any handoff on intent.
 3. **`plans/2026-07-27-delete-and-rewrite/LANES.md`** — who owns what (§2), the
@@ -57,8 +59,11 @@ stale; the handoff and LANES.md are maintained.
 
 Non-trivial commits need an independent review and the `Reviewed-By:` /
 `Review-Verdict:` trailers. Commit with `git commit -F <file>` and explicit paths —
-never `git add -A`, never `--amend`, never `git reset`. Two lanes share this repo,
-and an amend in a shared checkout is how work disappears.
+never `git add -A`. Never run a command that can discard work you did not write:
+no `--amend` on a commit another lane can already see, no `git reset --hard`, no
+`git checkout -- .`. Several lanes work this repo at the same time, and an amend
+on a shared branch is how work disappears. Unstaging a file you staged by mistake
+is safe and is often the repair.
 
 ## Keeper restart
 

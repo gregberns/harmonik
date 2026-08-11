@@ -103,12 +103,14 @@ func (h testHandoffOverrides) Path() string {
 	}
 	return h.HandoffDocument.Path()
 }
+
 func (h testHandoffOverrides) Read() (string, error) {
 	if h.overrides.HandoffRead != nil {
 		return h.overrides.HandoffRead(h.Path())
 	}
 	return h.HandoffDocument.Read()
 }
+
 func (h testHandoffOverrides) ModTime() (time.Time, bool) {
 	info, err := os.Stat(h.Path())
 	if err != nil {
@@ -116,6 +118,7 @@ func (h testHandoffOverrides) ModTime() (time.Time, bool) {
 	}
 	return info.ModTime(), true
 }
+
 func (h testHandoffOverrides) ScrubNonce() error {
 	if h.overrides.HandoffScrub != nil {
 		return h.overrides.HandoffScrub(h.Path())

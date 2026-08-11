@@ -271,7 +271,6 @@ func TestScenario_ForceAct_NeverIdleStillCut_qji8g(t *testing.T) {
 		return "/tmp/HANDOFF-" + a + ".md"
 	}, HandoffRead: rs.readHandoff, HandoffScrub: rs.truncate, Inject: rs.inject, Gauge: rs.readGauge, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
-
 		AgentName:      agent,
 		ProjectDir:     t.TempDir(),
 		TmuxTarget:     "fake-pane",

@@ -20,9 +20,11 @@ type configContextStore struct{ cfg *CyclerConfig }
 func (s configContextStore) ReadGauge() (*CtxFile, time.Time, error) {
 	return ReadCtxFile(s.cfg.ProjectDir, s.cfg.AgentName)
 }
+
 func (s configContextStore) SetManagedSession(sid string) error {
 	return WriteManagedSessionID(s.cfg.ProjectDir, s.cfg.AgentName, sid)
 }
+
 func (s configContextStore) ClearPrecompactTrigger() error {
 	return ClearPrecompactTrigger(s.cfg.ProjectDir, s.cfg.AgentName)
 }
@@ -32,12 +34,15 @@ type configActivityProbe struct{ cfg *CyclerConfig }
 func (p configActivityProbe) IdleMarkerModTime() (time.Time, bool) {
 	return defaultIdleMarkerModTime(p.cfg.ProjectDir, p.cfg.AgentName)
 }
+
 func (p configActivityProbe) LastUserTurn(sid string) (time.Time, bool) {
 	return p.lastTurn(sid, "user")
 }
+
 func (p configActivityProbe) LastAssistantTurn(sid string) (time.Time, bool) {
 	return p.lastTurn(sid, "assistant")
 }
+
 func (p configActivityProbe) lastTurn(sid, role string) (time.Time, bool) {
 	if sid == "" {
 		return time.Time{}, false

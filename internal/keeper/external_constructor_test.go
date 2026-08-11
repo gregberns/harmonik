@@ -50,6 +50,10 @@ type testSleepProbe func(string) bool
 
 func (f testSleepProbe) Sleeping(sid string) bool { return f(sid) }
 
+type testHoldProbe func() bool
+
+func (f testHoldProbe) Held() bool { return f() }
+
 type testHandoffWithModTime struct {
 	keeper.HandoffDocument
 	modTime func(string) (time.Time, bool)

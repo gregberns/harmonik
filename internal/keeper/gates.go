@@ -244,7 +244,7 @@ func IsHeld(projectDir, agent string, ttl time.Duration) bool {
 }
 
 // isHeldAt is IsHeld with the TTL-expiry math read through the given ClockPort
-// (SK-008/SK-R3): the cycle path's HeldCheckFn default routes through the
+// (SK-008/SK-R3): the cycle hold probe routes through the
 // injected Clock so a FakeClock can drive hold expiry deterministically. Nil
 // clock falls back to the system clock.
 func isHeldAt(projectDir, agent string, ttl time.Duration, clock substrate.ClockPort) bool {

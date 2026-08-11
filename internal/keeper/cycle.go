@@ -258,13 +258,6 @@ type CyclerConfig struct {
 	// HoldTTL is the keeper HOLD timer backstop; zero → DefaultHoldTTL.
 	HoldTTL time.Duration
 
-	// HeldCheckFn reports whether a fresh, session-scoped operator HOLD is active
-	// (D5). MaybeRun returns nil (cycle deferred) when true — the destructive
-	// clear/restart is suspended while WARN still fires. Auto-reverts structurally
-	// (keyed by the re-minted session-id) plus a timer backstop. When nil, a
-	// closure over IsHeld(.,.,HoldTTL) is used. Refs: hk-9waz.
-	HeldCheckFn func(projectDir, agent string) bool
-
 	// TranscriptDir is the Claude Code transcript projects directory (~/.claude/projects/<munged>).
 	// When empty the cycler derives it from ProjectDir via transcriptDirFor.
 	// Set explicitly in tests to avoid touching the real transcript directory.
@@ -408,11 +401,6 @@ func (c *CyclerConfig) applyDefaults() {
 	}
 	if c.HoldTTL <= 0 {
 		c.HoldTTL = DefaultHoldTTL
-	}
-	if c.HeldCheckFn == nil {
-		ttl := c.HoldTTL
-		clock := c.Clock
-		c.HeldCheckFn = func(projectDir, agent string) bool { return isHeldAt(projectDir, agent, ttl, clock) }
 	}
 	if c.IdleRestartAbsTokens <= 0 {
 		c.IdleRestartAbsTokens = DefaultIdleRestartAbsTokens

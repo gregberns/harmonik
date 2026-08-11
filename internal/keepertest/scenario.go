@@ -114,6 +114,13 @@ func (s *Scenario) OperatorSays(at time.Time) { s.record.UserTurn = at }
 // AgentAnswers records a real assistant turn at the given time.
 func (s *Scenario) AgentAnswers(at time.Time) { s.record.AssistantTurn = at }
 
+// Effects returns a stable copy of the recorded effect order.
+func (r *RecordingPorts) EffectsSnapshot() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.Effects...)
+}
+
 // RecordingPorts is the controlled external world for a Scenario.
 type RecordingPorts struct {
 	mu                                      sync.Mutex

@@ -332,7 +332,7 @@ func (c *Cycler) recentOperatorTurn(st CycleState, at time.Time) bool {
 	if c.cfg.OperatorTurnLookback <= 0 || st.PrevSID == "" {
 		return false
 	}
-	turnAt, ok := c.cfg.recentTurnFn()(c.cfg.resolvedTranscriptDir(), st.PrevSID, "user")
+	turnAt, ok := c.activity.LastUserTurn(st.PrevSID)
 	if !ok || turnAt.After(at) || at.Sub(turnAt) > c.cfg.OperatorTurnLookback {
 		return false
 	}

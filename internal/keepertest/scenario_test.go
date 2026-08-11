@@ -2,6 +2,7 @@ package keepertest
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,20 @@ func productionLikePolicy() keeper.CyclePolicy {
 	p.OperatorTurnLookback = 5 * time.Minute
 	p.PostAnswerGrace = 30 * time.Second
 	return p
+}
+
+func waitForScenarioEffect(t *testing.T, ports *RecordingPorts, count int) []string {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		effects := ports.EffectsSnapshot()
+		if len(effects) >= count {
+			return effects
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d effects; got %v", count, ports.EffectsSnapshot())
+	return nil
 }
 
 func TestScenarioRequiresReasonsForGateOptOuts(t *testing.T) {
@@ -96,5 +111,71 @@ func TestScenarioConversationGatesDeferAlone(t *testing.T) {
 				t.Fatalf("gate allowed effects: %v", effects)
 			}
 		})
+	}
+}
+
+func TestScenarioOperatorTurnDuringHandoffParksAndCanRetry(t *testing.T) {
+	policy := keeper.CyclePolicyFromConfig(keeper.CyclerConfig{})
+	policy.BootGracePeriod = 0
+	policy.MaxBootGraceTotal = 0
+	policy.OperatorTurnLookback = 5 * time.Minute
+	policy.PostAnswerGrace = 0
+	policy.PollInterval = 3 * time.Second
+	policy.HandoffTimeout = 30 * time.Second
+
+	s := NewScenario(policy)
+	s.Ports().NextCycleID = "cyc-collision"
+	cycler, err := s.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- cycler.MaybeRun(context.Background(), s.Ports().Gauge) }()
+	waitForScenarioEffect(t, s.Ports(), 4)
+
+	// The slash-command transcript artifact is not a real user turn. The real
+	// operator turn arrives outside its two-second exclusion window while the
+	// handoff file already carries this cycle's nonce.
+	s.Ports().HandoffText = "# current handoff\n<!-- KEEPER:cyc-collision -->\n"
+	s.OperatorSays(s.Clock().Now().Add(3 * time.Second))
+	s.Clock().Advance(3 * time.Second)
+	if err := <-firstDone; err != nil {
+		t.Fatal(err)
+	}
+	if s.Ports().Journal == nil || s.Ports().Journal.Phase != "parked" {
+		t.Fatalf("journal = %+v, want parked", s.Ports().Journal)
+	}
+	for _, effect := range s.Ports().EffectsSnapshot() {
+		if strings.Contains(effect, "inject:/clear") {
+			t.Fatalf("operator collision cleared the pane: %v", s.Ports().EffectsSnapshot())
+		}
+	}
+
+	// A parked cycle does not arm anti-loop suppression. Once the real turn is
+	// outside the lookback, the same session can enter a fresh cycle.
+	s.Clock().Advance(6 * time.Minute)
+	s.Ports().NextCycleID = "cyc-retry"
+	beforeRetry := len(s.Ports().EffectsSnapshot())
+	retryCtx, cancelRetry := context.WithCancel(context.Background())
+	retryDone := make(chan error, 1)
+	go func() { retryDone <- cycler.MaybeRun(retryCtx, s.Ports().Gauge) }()
+	waitForScenarioEffect(t, s.Ports(), beforeRetry+4)
+	cancelRetry()
+	s.Clock().Advance(policy.PollInterval)
+	if err := <-retryDone; err != nil {
+		t.Fatal(err)
+	}
+	foundRetry := false
+	for _, effect := range s.Ports().EffectsSnapshot()[beforeRetry:] {
+		if strings.Contains(effect, "KEEPER:cyc-retry") {
+			foundRetry = true
+		}
+		if strings.Contains(effect, "inject:/clear") {
+			t.Fatalf("cancelled retry cleared the pane: %v", s.Ports().EffectsSnapshot())
+		}
+	}
+	if !foundRetry {
+		t.Fatalf("parked cycle did not retry: %v", s.Ports().EffectsSnapshot())
 	}
 }

@@ -2310,11 +2310,25 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, port reapSeamPort, que
 		Outcome:         outcome,
 		CompletedAt:     completedAt,
 	}
-	decision, err := queue.DecideGroupCompletion(*snapshot.Queue, input) //nolint:contextcheck // The value-only decision checks cancellation inside queue.AdvanceGroup.
+	completionQueue := queue.CloneQueue(snapshot.Queue)
+	if !success && port.queueLedger != nil {
+		for i := range completionQueue.Groups {
+			if completionQueue.Groups[i].GroupIndex != groupIndex || itemIdx >= len(completionQueue.Groups[i].Items) {
+				continue
+			}
+			failedBead := completionQueue.Groups[i].Items[itemIdx].BeadID
+			if _, propagateErr := queue.FailDeferredDependents(ctx, &completionQueue.Groups[i], failedBead, port.queueLedger); propagateErr != nil {
+				fmt.Fprintf(os.Stderr, "daemon: workloop: propagate failed dependency queueID=%s groupIndex=%d: %v\n", queueID, groupIndex, propagateErr)
+				eagerRefillEval(ctx, port)
+				return
+			}
+		}
+	}
+	decision, err := queue.DecideGroupCompletion(*completionQueue, input) //nolint:contextcheck // The value-only decision checks cancellation inside queue.AdvanceGroup.
 	if err == nil && decision.Disposition == queue.GroupCompletionDispositionReceiptRequired {
 		input.CompletionReceiptID, err = newGroupCompletionID()
 		if err == nil {
-			decision, err = queue.DecideGroupCompletion(*snapshot.Queue, input) //nolint:contextcheck // The value-only decision checks cancellation inside queue.AdvanceGroup.
+			decision, err = queue.DecideGroupCompletion(*completionQueue, input) //nolint:contextcheck // The value-only decision checks cancellation inside queue.AdvanceGroup.
 		}
 	}
 	if err == nil && decision.Disposition == queue.GroupCompletionDispositionReceiptRequired {

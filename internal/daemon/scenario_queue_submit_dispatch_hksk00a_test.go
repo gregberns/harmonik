@@ -1042,6 +1042,11 @@ func TestScenario_QueueSubmit_FailedBlockerPauses(t *testing.T) {
 	landed, landedErr := cmd.CombinedOutput()
 	require.NoError(t, landedErr, "count failed-gate landings: %s", landed)
 	require.Equal(t, "0", strings.TrimSpace(string(landed)), "failed validation must not merge the root")
+	pausedQueue, pausedErr := queue.Load(t.Context(), projectDir, queue.QueueNameMain)
+	require.NoError(t, pausedErr, "load failed queue")
+	require.Equal(t, queue.ItemStatusFailed, pausedQueue.Groups[0].Items[1].Status,
+		"the core must fail the dependent without offering it for dispatch")
+	require.Equal(t, "dependency_failed:"+string(aID), pausedQueue.Groups[0].Items[1].LastFailureReason)
 	scenariotest.AssertEventSequence(t, jsonlPath, []scenariotest.ExpectedEvent{
 		{Type: string(core.EventTypeRunStarted)},
 		{Type: string(core.EventTypeRunFailed)},

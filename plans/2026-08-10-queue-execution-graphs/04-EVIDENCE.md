@@ -101,9 +101,13 @@ Result: PASS in 5.80 seconds on 2026-08-10.
 
 The scenario created `A -> B` and submitted both once through the Unix-socket CLI. It now lets A implement and commit, then fails A's canonical `make full` node four times until the DOT traversal cap routes the run to failure. The daemon emitted `run_started(A)`, `run_failed(A)`, `queue_group_completed`, then `queue_paused`. B never emitted `run_started`. Both beads were open after the failure.
 
-The integration branch stayed unchanged and no validation-pass record was written. After A reopened, the scheduler briefly offered B, but the ledger's blocked-claim guard refused it before launch. The core did not choose a repair. It recorded typed failure state and stopped. This is the correct supervisor boundary.
+The integration branch stayed unchanged and no validation-pass record was written. The first strengthened run exposed that the queue briefly offered B after A reopened. The ledger's blocked-claim guard refused it before launch, but the queue had already crossed a safety boundary it could enforce itself.
 
-The strengthened validation-failure scenario passed in 16.01 seconds on 2026-08-11.
+Delta now propagates a failed item through its in-group dependency descendants during the same durable group-completion decision. Each descendant moves directly from dependency-deferred to failed with `dependency_failed:<blocker>`. Independent chains in the same group are unchanged. The scheduler does not reserve or claim the dependent.
+
+The fixed live scenario passed in 15.79 seconds. B never launched, the queue record names A as its failed dependency, and the queue paused. The core did not choose a repair. It recorded typed failure state and stopped. This is the correct supervisor boundary.
+
+The pre-fix characterization passed in 16.01 seconds on 2026-08-11 because the ledger caught the unsafe offer. The post-fix result above is the current evidence.
 
 ## Restart contract trace
 

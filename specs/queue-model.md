@@ -8,7 +8,7 @@ requirement-prefix: QM
 status: draft
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.1.8
+version: 0.1.10
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-08-05
@@ -879,6 +879,8 @@ queue_item_deferred_for_ledger_dep{
 
 The submission proceeds and the affected item starts in `ItemStatus: deferred-for-ledger-dep`; it transitions to `pending` when its blocker closes (§2.8). The cross-reference for the `blocks` edge semantics is [/Users/gb/github/harmonik/specs/beads-integration.md §4.3 BI-006].
 
+If an in-group blocker reaches `failed`, each item deferred on that blocker MUST transition directly to `failed` with `last_failure_reason: dependency_failed:<blocker_bead_id>`. The dispatcher MUST NOT move that dependent through `pending`, reserve it, or attempt a Beads claim. This is a structural consequence of the failed dependency. It needs no agent decision. The queue then reaches `complete-with-failures` and pauses under QM-052.
+
 ### 6.7 QM-026 — Persisted-size bound
 
 After applying the proposed mutation to the detached candidate (without
@@ -1359,6 +1361,13 @@ The following operations are explicitly out of scope for v0.1 and reserved for v
 - Write coalescing across QM-001 mutations.
 
 ### A.4 Changelog
+
+v0.1.10 — 2026-08-11 — Failed dependency propagation. QM-025 now moves a
+dependent directly from dependency-deferred to failed when its in-group blocker
+fails. It forbids a pending transition, reservation, or claim for that
+dependent. This removes a dispatch attempt that previously relied on the Beads
+claim guard as the last safety layer. No requirement IDs were added or
+renumbered. The header now also includes the prior v0.1.9 version bump.
 
 v0.1.9 — 2026-08-11 — Clean restart continuation. Added the optional
 `resume_on_start` queue field. A clean shutdown drain sets it. Startup clears

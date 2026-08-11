@@ -28,6 +28,13 @@ Do not turn open research questions into implementation issues.
 - Lowest failing layer: daemon clean-exit queue transition. The implementation and its tests disagree with the current queue and operator contracts.
 - State: fixed and proven in delta. Shutdown persists the canonical queue as a restart drain. A second real daemon continued it without resubmission.
 
+### Failed dependencies were released toward dispatch
+
+- Failed claim: a dependent of a failed item never crosses into the dispatch path.
+- Evidence: after A failed validation and reopened, deferred B moved to pending and reached `ClaimBead`. The Beads blocked-claim guard refused it, so B did not launch, but the queue relied on its last safety layer.
+- Lowest failing layer: queue deferred-item re-evaluation and group completion.
+- State: fixed and proven in delta. Failed group completion now propagates through only that item's dependency descendants. They become failed with a typed reason before reservation. Independent chains remain deferred or runnable. The live failed-gate graph pauses without a dependent claim.
+
 ### Restart rules disagreed about drain-pause recovery
 
 - Failed claim: preserving `paused-by-drain` at shutdown is enough to let the same graph continue after restart.

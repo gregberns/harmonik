@@ -2293,7 +2293,7 @@ func markQueueItemFailureReason(_ context.Context, queueStore *queuewiring.Queue
 // Spec ref: specs/execution-model.md §4.3.EM-015f.
 // Bead ref: hk-45ude, hk-tigaf.4.
 //
-//nolint:gocognit,cyclop,funlen,gocritic // pre-existing: Seam A moved this code out of workloop.go unchanged
+//nolint:gocritic // pre-existing: Seam A moved this code out of workloop.go unchanged
 func evaluateGroupAdvanceWithOutcome(ctx context.Context, port reapSeamPort, queueName string, queueID string, groupIndex int, itemIdx int, success bool, completedAt time.Time) {
 	if port.queueStore == nil {
 		return

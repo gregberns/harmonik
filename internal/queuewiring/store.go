@@ -697,6 +697,62 @@ func (s *QueueStore) Complete(ctx context.Context, req queue.CompletionRequest) 
 	)
 }
 
+// completionRejected builds the one result shape every pre-commit guard on the
+// completion path returns. A rejection is always Outcome=rejected in the
+// namespace result AND Phase=rejected; writing the pair out at each guard let
+// the two disagree, and only one of them is what callers switch on.
+func completionRejected(err error) queue.CompletionResult {
+	return queue.CompletionResult{
+		NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeRejected, Err: err},
+		Phase:           queue.CompletionPhaseRejected,
+	}
+}
+
+// validateCompletionSnapshotLocked checks the caller's snapshot against live
+// store state: the queue is not quarantined, and the snapshot still describes
+// what the store holds. The caller MUST hold queueMu — every field this reads
+// is guarded by it.
+//
+// The nil check on Snapshot.Queue is last in its condition on purpose:
+// sameQueue answers for a nil argument, and a caller that reordered these
+// would turn a stale snapshot into a nil dereference in the identity check
+// that runs next.
+func (s *QueueStore) validateCompletionSnapshotLocked(req queue.CompletionRequest, name string) error {
+	if quarantineErr := s.quarantined[name]; quarantineErr != nil {
+		return quarantineErr
+	}
+	if req.Snapshot.Generation != s.generations[name] ||
+		!sameQueue(s.queues[name], req.Snapshot.Queue) ||
+		req.Snapshot.Queue == nil {
+		return errors.New("stale completion snapshot")
+	}
+	if req.Observe == nil || req.ReleaseTime == nil {
+		return errors.New("completion observation and release time source are required")
+	}
+	return nil
+}
+
+// validateCompletionCandidate checks the caller's candidate queue against the
+// snapshot's identity, then replays the value-only completion decision the
+// candidate claims to be the result of. It reads no store state and holds no
+// lock: the snapshot it dereferences has already been validated by
+// validateCompletionSnapshotLocked, which is why that call comes first.
+func validateCompletionCandidate(req queue.CompletionRequest, name string) error {
+	if req.Candidate == nil || req.Candidate.QueueID != req.Snapshot.Queue.QueueID ||
+		req.Candidate.Name != name {
+		return errors.New("completion candidate does not match snapshot identity")
+	}
+	if req.ReceiptID != req.DecisionInput.CompletionReceiptID {
+		return errors.New("completion receipt does not match decision")
+	}
+	expected, err := queue.DecideGroupCompletion(*req.Snapshot.Queue, req.DecisionInput)
+	if err != nil || expected.Disposition != queue.GroupCompletionDispositionQueueCompleted ||
+		!sameQueue(expected.NextQueue, req.Candidate) {
+		return errors.Join(errors.New("completion candidate does not match decision"), err)
+	}
+	return nil
+}
+
 func (s *QueueStore) complete(
 	ctx context.Context,
 	req queue.CompletionRequest,
@@ -707,52 +763,13 @@ func (s *QueueStore) complete(
 	name := queue.NormaliseQueueName(req.Snapshot.Name)
 	s.queueMu.Lock()
 
-	if quarantineErr := s.quarantined[name]; quarantineErr != nil {
+	if err := s.validateCompletionSnapshotLocked(req, name); err != nil {
 		s.queueMu.Unlock()
-		return queue.CompletionResult{
-			NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeRejected, Err: quarantineErr},
-			Phase:           queue.CompletionPhaseRejected,
-		}
+		return completionRejected(err)
 	}
-	if req.Snapshot.Generation != s.generations[name] ||
-		!sameQueue(s.queues[name], req.Snapshot.Queue) ||
-		req.Snapshot.Queue == nil {
+	if err := validateCompletionCandidate(req, name); err != nil { //nolint:contextcheck // Candidate validation must replay the same value-only decision.
 		s.queueMu.Unlock()
-		return queue.CompletionResult{
-			NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeRejected, Err: errors.New("stale completion snapshot")},
-			Phase:           queue.CompletionPhaseRejected,
-		}
-	}
-	if req.Observe == nil || req.ReleaseTime == nil {
-		s.queueMu.Unlock()
-		return queue.CompletionResult{
-			NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeRejected, Err: errors.New("completion observation and release time source are required")},
-			Phase:           queue.CompletionPhaseRejected,
-		}
-	}
-	if req.Candidate == nil || req.Candidate.QueueID != req.Snapshot.Queue.QueueID ||
-		req.Candidate.Name != name {
-		s.queueMu.Unlock()
-		return queue.CompletionResult{
-			NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeRejected, Err: errors.New("completion candidate does not match snapshot identity")},
-			Phase:           queue.CompletionPhaseRejected,
-		}
-	}
-	if req.ReceiptID != req.DecisionInput.CompletionReceiptID {
-		s.queueMu.Unlock()
-		return queue.CompletionResult{
-			NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeRejected, Err: errors.New("completion receipt does not match decision")},
-			Phase:           queue.CompletionPhaseRejected,
-		}
-	}
-	expected, err := queue.DecideGroupCompletion(*req.Snapshot.Queue, req.DecisionInput) //nolint:contextcheck // Candidate validation must replay the same value-only decision.
-	if err != nil || expected.Disposition != queue.GroupCompletionDispositionQueueCompleted ||
-		!sameQueue(expected.NextQueue, req.Candidate) {
-		s.queueMu.Unlock()
-		return queue.CompletionResult{
-			NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeRejected, Err: errors.Join(errors.New("completion candidate does not match decision"), err)},
-			Phase:           queue.CompletionPhaseRejected,
-		}
+		return completionRejected(err)
 	}
 	prepared, err := queue.PrepareCompletion(
 		*req.Candidate,
@@ -762,18 +779,12 @@ func (s *QueueStore) complete(
 	)
 	if err != nil {
 		s.queueMu.Unlock()
-		return queue.CompletionResult{
-			NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeRejected, Err: err},
-			Phase:           queue.CompletionPhaseRejected,
-		}
+		return completionRejected(err)
 	}
 	priorBytes, err := json.Marshal(req.Snapshot.Queue)
 	if err != nil {
 		s.queueMu.Unlock()
-		return queue.CompletionResult{
-			NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeRejected, Err: err},
-			Phase:           queue.CompletionPhaseRejected,
-		}
+		return completionRejected(err)
 	}
 	commit := queue.WriteReplacement(ctx, queue.ReplacementPlan{
 		ProjectDir:               req.ProjectDir,

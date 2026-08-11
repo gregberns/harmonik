@@ -988,8 +988,13 @@ func TestCycler_BootRecovery_NoJournal(t *testing.T) {
 	em := &keeper.RecordingEmitter{}
 	spy := &cycleSpyInjector{}
 	js := &journalStore{}
-	cfgOverrides := // j == nil → read returns journalNotFoundError
-	testCycleOverrides{HandoffPath: func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" }, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, JournalWrite: js.write}
+	// j == nil makes the journal port report not found.
+	cfgOverrides := testCycleOverrides{
+		HandoffPath:  func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
+		HandoffScrub: func(_ string) error { return nil },
+		Inject:       spy.inject,
+		JournalWrite: js.write,
+	}
 	cfg := keeper.CyclerConfig{
 		AgentName:  "no-journal-agent",
 		ProjectDir: t.TempDir(),
@@ -2363,15 +2368,17 @@ func TestCycler_ForceThresholdTracksActPct(t *testing.T) {
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 	readHandoff := handoffReturnsNonceAfter(1, nonce)
 	readGaugeFn := gaugeReturnsNewSIDAfter(1, prevSID, newSID)
-	cfgOverrides := // ActPct=35, ForceActPct left at zero → must default to 35+5=40.
-	// Session at pct=41 (above force threshold) with CrispIdle=false must fire.
-	testCycleOverrides{CycleIDs:
-
-	// ForceActPct intentionally omitted → must default to ActPct+5 = 40.0
-
-	func() string { return cycleID }, HandoffPath: func(_, a string) string {
-		return "/tmp/HANDOFF-" + a + ".md"
-	}, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: readGaugeFn, JournalWrite: jc.write}
+	// ForceActPct stays unset and resolves to ActPct+5. The busy session at 41%
+	// must therefore pass the 40% force threshold.
+	cfgOverrides := testCycleOverrides{
+		CycleIDs:     func() string { return cycleID },
+		HandoffPath:  func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
+		HandoffRead:  readHandoff,
+		HandoffScrub: func(_ string) error { return nil },
+		Inject:       spy.inject,
+		Gauge:        readGaugeFn,
+		JournalWrite: jc.write,
+	}
 	cfg := keeper.CyclerConfig{
 		AgentName:  agent,
 		ProjectDir: t.TempDir(),
@@ -2985,11 +2992,17 @@ func TestCycler_BootGrace_BurstRelativeCap(t *testing.T) {
 	// Set MaxBootGraceTotal very short so we can observe it elapsing.
 	const bootGrace = 80 * time.Millisecond
 	const maxBootGraceTotal = 60 * time.Millisecond
-	cfgOverrides := // shorter than bootGrace
-	testCycleOverrides{CycleIDs: func() string { return "cyc-burst-cap" }, HandoffPath: func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" }, HandoffRead: func(_ string) (string, error) { return "", nil }, HandoffScrub: // abort
-	func(_ string) error { return nil }, Inject:                                                                                                                                                                                       spy.inject, Gauge: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
-		return &keeper.CtxFile{Pct: 85.0, SessionID: nextSID}, time.Now(), nil
-	}, JournalWrite: jc.write}
+	cfgOverrides := testCycleOverrides{
+		CycleIDs:     func() string { return "cyc-burst-cap" },
+		HandoffPath:  func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
+		HandoffRead:  func(_ string) (string, error) { return "", nil }, // abort
+		HandoffScrub: func(_ string) error { return nil },
+		Inject:       spy.inject,
+		Gauge: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+			return &keeper.CtxFile{Pct: 85.0, SessionID: nextSID}, time.Now(), nil
+		},
+		JournalWrite: jc.write,
+	}
 	cfg := keeper.CyclerConfig{
 		AgentName:         agent,
 		ProjectDir:        t.TempDir(),

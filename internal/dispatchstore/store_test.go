@@ -35,7 +35,7 @@ func testIntent(phase dispatch.Phase) dispatch.Intent {
 		},
 	}
 	if phase == dispatch.PhaseRunDurable || phase == dispatch.PhaseHandoffDurable {
-		intent.Run = &dispatch.RunBinding{RecordRunID: runID, SessionName: "harmonik-run-0197d100"}
+		intent.Run = &dispatch.RunBinding{RecordRunID: runID}
 	}
 	if phase == dispatch.PhaseHandoffDurable {
 		intent.Handoff = &dispatch.HandoffBinding{
@@ -127,8 +127,7 @@ func TestStoreAdvanceKeepsEveryDurableBinding(t *testing.T) {
 	}
 	prior := testIntent(dispatch.PhaseRunDurable)
 	next := testIntent(dispatch.PhaseHandoffDurable)
-	next.Run.SessionName = "other-session"
-	next.Handoff.SessionName = "other-session"
+	next.Run.RecordRunID = core.RunID(uuid.MustParse("0197d100-0000-7000-8000-000000000099"))
 	if _, err := prepareAdvance(prior, next); err == nil {
 		t.Fatal("prepareAdvance() changed durable run binding")
 	}

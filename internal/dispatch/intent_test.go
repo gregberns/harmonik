@@ -32,7 +32,7 @@ func testIntent(phase Phase) Intent {
 		},
 	}
 	if phase == PhaseRunDurable || phase == PhaseHandoffDurable {
-		i.Run = &RunBinding{RecordRunID: runID, SessionName: "harmonik-run-0197d100"}
+		i.Run = &RunBinding{RecordRunID: runID}
 	}
 	if phase == PhaseHandoffDurable {
 		i.Handoff = &HandoffBinding{
@@ -61,19 +61,17 @@ func TestIntentRejectsIncompleteAndEarlyPhaseData(t *testing.T) {
 	}{
 		{name: "unknown phase", mutate: func(i *Intent) { i.Phase = "unknown" }},
 		{name: "run missing", mutate: func(i *Intent) { i.Phase = PhaseRunDurable }},
-		{name: "run early", mutate: func(i *Intent) { i.Run = &RunBinding{RecordRunID: i.Binding.RunID, SessionName: "s"} }},
+		{name: "run early", mutate: func(i *Intent) { i.Run = &RunBinding{RecordRunID: i.Binding.RunID} }},
 		{name: "run mismatch", mutate: func(i *Intent) {
 			i.Phase = PhaseRunDurable
-			i.Run = &RunBinding{RecordRunID: otherRunID, SessionName: "s"}
+			i.Run = &RunBinding{RecordRunID: otherRunID}
 		}},
-		{name: "run session missing", mutate: func(i *Intent) { i.Phase = PhaseRunDurable; i.Run = &RunBinding{RecordRunID: i.Binding.RunID} }},
 		{name: "handoff missing", mutate: func(i *Intent) {
 			i.Phase = PhaseHandoffDurable
-			i.Run = &RunBinding{RecordRunID: i.Binding.RunID, SessionName: "s"}
+			i.Run = &RunBinding{RecordRunID: i.Binding.RunID}
 		}},
 		{name: "handoff early", mutate: func(i *Intent) { i.Handoff = &HandoffBinding{SessionName: "s", WorktreeLeaseRunID: i.Binding.RunID} }},
 		{name: "session missing", mutate: func(i *Intent) { *i = testIntent(PhaseHandoffDurable); i.Handoff.SessionName = "" }},
-		{name: "session mismatch", mutate: func(i *Intent) { *i = testIntent(PhaseHandoffDurable); i.Handoff.SessionName = "other" }},
 		{name: "lease mismatch", mutate: func(i *Intent) { *i = testIntent(PhaseHandoffDurable); i.Handoff.WorktreeLeaseRunID = otherRunID }},
 	}
 	for _, tc := range tests {
@@ -149,5 +147,29 @@ func TestIntentMarshalRejectsInvalidValue(t *testing.T) {
 	i.Run = nil
 	if _, err := json.Marshal(i); err == nil {
 		t.Fatal("Marshal() = nil")
+	}
+}
+
+func TestIntentWireMovesSessionIdentityToHandoff(t *testing.T) {
+	runData, err := json.Marshal(testIntent(PhaseRunDurable))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRun := `"run":{"record_run_id":"` + testRunID + `"}`
+	if !strings.Contains(string(runData), wantRun) || strings.Contains(string(runData), "session_name") {
+		t.Fatalf("run-durable bytes = %s", runData)
+	}
+	handoffData, err := json.Marshal(testIntent(PhaseHandoffDurable))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(handoffData), `"handoff":{"session_name":"harmonik-run-0197d100"`) {
+		t.Fatalf("handoff-durable bytes = %s", handoffData)
+	}
+	legacy := strings.Replace(string(runData), wantRun,
+		`"run":{"record_run_id":"`+testRunID+`","session_name":"legacy"}`, 1)
+	var decoded Intent
+	if err := json.Unmarshal([]byte(legacy), &decoded); err == nil {
+		t.Fatal("legacy run.session_name decode = nil")
 	}
 }

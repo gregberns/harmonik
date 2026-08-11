@@ -63,7 +63,6 @@ type Binding struct {
 // RunBinding proves that the durable run record names this dispatch.
 type RunBinding struct {
 	RecordRunID core.RunID `json:"record_run_id"`
-	SessionName string     `json:"session_name"`
 }
 
 // HandoffBinding proves that the session and worktree lease name this run.
@@ -106,9 +105,6 @@ func (i Intent) validateRunBinding() error {
 		if i.Run.RecordRunID != i.Binding.RunID {
 			return errors.New("dispatch: run record identity does not match run_id")
 		}
-		if i.Run.SessionName == "" {
-			return errors.New("dispatch: run record session_name is required at run_durable")
-		}
 	} else if i.Run != nil {
 		return errors.New("dispatch: run binding is not allowed before run_durable")
 	}
@@ -122,9 +118,6 @@ func (i Intent) validateHandoffBinding() error {
 		}
 		if i.Handoff.SessionName == "" {
 			return errors.New("dispatch: session_name is required at handoff_durable")
-		}
-		if i.Handoff.SessionName != i.Run.SessionName {
-			return errors.New("dispatch: handoff session identity does not match run record")
 		}
 		if i.Handoff.WorktreeLeaseRunID != i.Binding.RunID {
 			return errors.New("dispatch: worktree lease identity does not match run_id")
@@ -186,7 +179,7 @@ func (i Intent) MarshalJSON() ([]byte, error) {
 		},
 	}
 	if i.Run != nil {
-		w.Run = &runBindingWire{RecordRunID: i.Run.RecordRunID.String(), SessionName: i.Run.SessionName}
+		w.Run = &runBindingWire{RecordRunID: i.Run.RecordRunID.String()}
 	}
 	if i.Handoff != nil {
 		w.Handoff = &handoffBindingWire{
@@ -242,7 +235,6 @@ type bindingWire struct {
 
 type runBindingWire struct {
 	RecordRunID string `json:"record_run_id"`
-	SessionName string `json:"session_name"`
 }
 
 type handoffBindingWire struct {
@@ -287,7 +279,6 @@ func (w intentWire) intent() (Intent, error) {
 		}
 		value.Run = &RunBinding{
 			RecordRunID: core.RunID(uuid.MustParse(w.Run.RecordRunID)),
-			SessionName: w.Run.SessionName,
 		}
 	}
 	if w.Handoff != nil {

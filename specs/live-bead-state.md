@@ -60,7 +60,7 @@ The model uses these facts.
 | Bead | `open`, `in_progress`, `closed`, or `other(status)` |
 | Dispatch intent | `absent`, `prepared`, `claim_durable`, `run_durable`, `handoff_durable` |
 | Run registry | `absent` or `live(run_id)` |
-| Durable run record | `absent` or `present(run_id, session_id)` |
+| Durable run record | `absent`, `present(run_id, execution_location)`, or `present(run_id, execution_location, session_id)` |
 | Worktree | `absent`, `leased(run_id)`, or `retained_for_repair(run_id)` |
 | Session | `absent`, `live(session_id)`, or `dead(session_id)` |
 | Release claim | `absent` or `present(run_id, dispatch_head, target)` |
@@ -129,8 +129,9 @@ scheduler offers new work.
 | D6 after run record, before intent phase update | Exact run record, claim_durable intent | `advance-run-phase` | Write a second run record |
 | D6a after run phase update, before worktree | S3 with no worktree | `resume-provision` | Create another run ID |
 | D7 after worktree, before session handoff | S3 with leased worktree | `resume-handoff` with the same worktree | Delete the worktree before classification |
-| D8 after session spawn, before handoff durability | Run record, leased worktree, exact session facts, intent below handoff | Use table 4.4 | Infer ownership from process name |
-| D9 during agent work | Handoff intent and exact session facts | Use table 4.5 | Double-launch |
+| D8 after handoff identity is durable, before intent phase update | Run record with exact session identity, leased worktree, run_durable intent | `advance-handoff-phase` | Spawn the session before handoff identity is durable |
+| D8a after handoff phase is durable, before session spawn | Handoff intent, run record, leased worktree, absent exact session | `replay-session-start` with the same identity | Mint a session identity or reset the bead |
+| D9 during agent work | Handoff intent and exact live session facts | Use table 4.5 | Double-launch |
 | D10 after work commit, before release claim | Run branch ahead, no release claim | `retain-and-repair` | Merge from branch shape alone |
 | D10f after a failed run, before Beads routing | No durable failure-class authority, bead in_progress | `repair-required` | Infer the failure class from an event or memory |
 | D11 after release claim, before merge | S6 facts | `replay-release` from the immutable claim | Recompute target or dispatch head |
@@ -180,9 +181,11 @@ Beads status is the claim result. The C20 intent supplies dispatch ownership.
 
 | Exact fact | Recovery result |
 | --- | --- |
-| Exact session is live and accepts adoption | `adopt-and-advance` |
-| Exact session is dead or absent and no work result is durable | `resume-handoff` with the same run and worktree |
-| Session identity differs or cannot be read | `repair-required` |
+| Run-durable intent and exact run record has no session identity | `prepare-handoff` with the same run and worktree |
+| Run-durable intent and exact run record has the selected session identity | `advance-handoff-phase` |
+| Handoff-durable intent and exact session is absent | `replay-session-start` with the same identity |
+| Handoff-durable intent and exact session is live | `adopt-live` |
+| Session, run record, worktree, or intent identity differs or cannot be read | `repair-required` |
 
 ### 4.5 Active run classification
 
@@ -271,12 +274,30 @@ The dispatch transaction must define an intent with these immutable bindings:
 - queue ID, queue name, group index, and item index
 - bead ID and run ID
 - claim transition ID
-- durable run-record identity and exact session identity
+- exact durable run-record identity
+- exact session identity at handoff
 - worktree lease identity
 
 The type must not admit a claimed phase without all queue, bead, and run
 bindings. A later phase can add a binding that the prior phase could not know.
 It cannot change a binding that is already durable.
+
+The run record alone owns the execution location. The intent binds that record
+by exact run ID. Replay must decode and validate the record before it uses the
+location.
+
+The run record exists for every claimed dispatch. `run_durable` does not
+require a session identity. A remote run and a shared-session run are valid at
+this phase. Before session start, the run record adds the selected handoff
+identity with exact compare-and-swap. The intent then advances to
+`handoff_durable` with that same identity. Only `handoff_durable` authorizes
+session start.
+
+The C20 value contract was not wired to a production writer before this
+amendment. Its schema-v1 `run.session_name` field therefore has no durable
+production compatibility obligation. Strict decoding rejects that old draft
+shape. The handoff binding remains the only intent field that carries
+`session_name`.
 
 The dispatch intent adds no new fields after handoff. Its durable record stays
 until queue terminal application. Git owns the later release claim. The Beads

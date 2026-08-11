@@ -823,6 +823,8 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 			// generates its own further down.
 			reservedRunID               core.RunID
 			runIDReserved               bool
+			claimTID                    core.TransitionID
+			claimTIDReserved            bool
 			queueItemIndex              int    // item index within the group (-1 = no queue)
 			capturedQueueName           string // NQ-B1: name of the dispatching queue ("" = br-ready)
 			queueIDField                *string
@@ -1377,13 +1379,21 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 					}
 					reservedRunID = core.RunID(runUUID)
 					runIDReserved = true
+					generatedClaimTID, claimTIDErr := handles.TIDGen.Next()
+					if claimTIDErr != nil {
+						return exitFatal(fmt.Errorf("daemon: workloop: generate claim TransitionID before reservation: %w", claimTIDErr))
+					}
+					claimTID = generatedClaimTID
+					claimTIDReserved = true
 
 					reservation := reserveQueueItem(ctx, queueStore, baseEnv.ProjectDir, queueReservation{
-						QueueName:  snapQueueName,
-						GroupIndex: snapGroupIndex,
-						ItemIndex:  snapItemIdx,
-						BeadID:     snapItemBeadID,
-						RunID:      reservedRunID,
+						QueueName:         snapQueueName,
+						QueueID:           snapQueueID,
+						GroupIndex:        snapGroupIndex,
+						ItemIndex:         snapItemIdx,
+						BeadID:            snapItemBeadID,
+						RunID:             reservedRunID,
+						ClaimTransitionID: claimTID,
 					})
 
 					switch reservation.Verdict {
@@ -1572,13 +1582,12 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 			runID = core.RunID(runUUID)
 		}
 
-		claimTID, tidErr := handles.TIDGen.Next()
-		if tidErr != nil {
-			// exitFatal, not a bare return: on the queue path the item above is
-			// already durably stamped dispatched, so leaving without the drain
-			// strands it forever. exitFatal waits for in-flight goroutines the
-			// same way the bare wg.Wait() here used to.
-			return exitFatal(fmt.Errorf("daemon: workloop: generate claim TransitionID: %w", tidErr))
+		if !claimTIDReserved {
+			generatedClaimTID, tidErr := handles.TIDGen.Next()
+			if tidErr != nil {
+				return exitFatal(fmt.Errorf("daemon: workloop: generate claim TransitionID: %w", tidErr))
+			}
+			claimTID = generatedClaimTID
 		}
 
 		if queueItemIndex < 0 {
@@ -1676,7 +1685,20 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 				)
 				if disposition == orchestrator.ClaimFailureFailQueueItem {
 					fmt.Fprintf(os.Stderr, "daemon: workloop: ClaimBead %s bead is blocked (deps or status) — failing queue item (hk-n91y0)\n", beadID)
-					evaluateGroupAdvanceWithOutcome(ctx, reapPort, capturedQueueName, *queueIDField, *queueGroupIdxFd, queueItemIndex, false, time.Now())
+					failed := failQueueItem(ctx, queueStore, baseEnv.ProjectDir, queueReservation{
+						QueueName:         capturedQueueName,
+						QueueID:           *queueIDField,
+						GroupIndex:        *queueGroupIdxFd,
+						ItemIndex:         queueItemIndex,
+						BeadID:            beadID,
+						RunID:             runID,
+						ClaimTransitionID: claimTID,
+					}, "claim_dependency_refusal", queue.PreclaimTerminalDependencyRefusal)
+					if finishErr := finishDependencyRefusal(failed, func() {
+						evaluateGroupAdvanceWithOutcome(ctx, reapPort, capturedQueueName, *queueIDField, *queueGroupIdxFd, queueItemIndex, false, time.Now())
+					}); finishErr != nil {
+						return exitFatal(fmt.Errorf("daemon: workloop: %w", finishErr))
+					}
 					continue
 				}
 			}

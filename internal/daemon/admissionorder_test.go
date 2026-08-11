@@ -192,10 +192,12 @@ type admissionLedger struct {
 	// the exact tick the attempt budget runs out.
 	onShowBead func(total int)
 
-	showTotal  int
-	showCalls  map[core.BeadID]int
-	claimCalls map[core.BeadID]int
-	claimErr   error
+	showTotal      int
+	showCalls      map[core.BeadID]int
+	claimCalls     map[core.BeadID]int
+	claimErr       error
+	lastClaimRunID core.RunID
+	lastClaimTID   core.TransitionID
 
 	// unexpected records calls no test in this file should ever cause.
 	unexpected []string
@@ -240,14 +242,22 @@ func (l *admissionLedger) ShowBead(_ context.Context, id core.BeadID) (core.Bead
 	return core.BeadRecord{BeadID: id, Status: status, Labels: labels}, nil
 }
 
-func (l *admissionLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, id core.BeadID) error {
+func (l *admissionLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutConfig, runID core.RunID, transitionID core.TransitionID, id core.BeadID) error {
 	l.mu.Lock()
 	l.claimCalls[id]++
+	l.lastClaimRunID = runID
+	l.lastClaimTID = transitionID
 	l.mu.Unlock()
 	if l.claimErr != nil {
 		return l.claimErr
 	}
 	return errAdmissionClaimRefused
+}
+
+func (l *admissionLedger) lastClaimIdentity() (core.RunID, core.TransitionID) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.lastClaimRunID, l.lastClaimTID
 }
 
 func (l *admissionLedger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, id core.BeadID, _ bool) error {
@@ -1010,7 +1020,7 @@ func TestClaimFailureRoutingUsesTypedRefusal(t *testing.T) {
 	const beadID core.BeadID = "claim-routing-bead"
 	const parkedID core.BeadID = "claim-routing-parked"
 
-	observe := func(t *testing.T, claimErr error) (queue.Item, int) {
+	observe := func(t *testing.T, claimErr error) (queue.Item, int, core.RunID, core.TransitionID) {
 		t.Helper()
 		ledger := newAdmissionLedger()
 		ledger.claimErr = claimErr
@@ -1027,21 +1037,31 @@ func TestClaimFailureRoutingUsesTypedRefusal(t *testing.T) {
 			func() { snapshot = qs.Queue() },
 		)
 		ledger.assertNoRunPathCalls(t)
-		return admissionFirstItem(t, snapshot), ledger.claimCount(beadID)
+		runID, transitionID := ledger.lastClaimIdentity()
+		return admissionFirstItem(t, snapshot), ledger.claimCount(beadID), runID, transitionID
 	}
 
 	t.Run("typed dependency refusal makes the queue item terminal", func(t *testing.T) {
-		item, claims := observe(t, fmt.Errorf("wording may change: %w", brcli.ErrClaimDependencyBlocked))
+		item, claims, claimedRunID, claimedTransitionID := observe(t, fmt.Errorf("wording may change: %w", brcli.ErrClaimDependencyBlocked))
 		if item.Status != queue.ItemStatusFailed {
 			t.Fatalf("item status = %q, want failed", item.Status)
 		}
 		if claims != 1 {
 			t.Fatalf("ClaimBead calls = %d, want 1 after terminal disposition", claims)
 		}
+		if item.PreclaimTerminal == nil || item.PreclaimTerminal.Cause != queue.PreclaimTerminalDependencyRefusal {
+			t.Fatalf("preclaim terminal binding = %+v", item.PreclaimTerminal)
+		}
+		if item.RunID == nil || *item.RunID != item.PreclaimTerminal.RunID || item.PreclaimTerminal.ClaimTransitionID == "" {
+			t.Fatalf("dependency refusal identity = item run %v binding %+v", item.RunID, item.PreclaimTerminal)
+		}
+		if item.PreclaimTerminal.RunID != claimedRunID.String() || item.PreclaimTerminal.ClaimTransitionID != claimedTransitionID.String() {
+			t.Fatalf("binding %+v does not match ClaimBead run=%s transition=%s", item.PreclaimTerminal, claimedRunID, claimedTransitionID)
+		}
 	})
 
 	t.Run("unrelated blocked text releases and retries", func(t *testing.T) {
-		item, claims := observe(t, errors.New("database operation blocked by lock timeout"))
+		item, claims, _, _ := observe(t, errors.New("database operation blocked by lock timeout"))
 		if claims < 2 {
 			t.Fatalf("ClaimBead calls = %d, want at least 2 to prove release and retry", claims)
 		}

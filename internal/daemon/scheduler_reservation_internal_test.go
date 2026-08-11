@@ -56,6 +56,11 @@ func reservationDeps(projectDir string, store *queuewiring.QueueStore) testRunti
 }
 
 func reserveQueueItemForTest(ctx context.Context, runtime testRuntime, reservation queueReservation) reservationResult {
+	if reservation.QueueID == "" {
+		if snapshot := runtime.queueStore.Snapshot(reservation.QueueName); snapshot.Queue != nil {
+			reservation.QueueID = snapshot.Queue.QueueID
+		}
+	}
 	return reserveQueueItem(ctx, runtime.queueStore, runtime.env.ProjectDir, reservation)
 }
 
@@ -66,6 +71,15 @@ func newReservationRunID(t *testing.T) core.RunID {
 		t.Fatalf("uuid.NewV7: %v", err)
 	}
 	return core.RunID(id)
+}
+
+func newReservationTransitionID(t *testing.T) core.TransitionID {
+	t.Helper()
+	id, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("uuid.NewV7: %v", err)
+	}
+	return core.TransitionID(id)
 }
 
 // loadPersistedItem reads the queue back off disk. Reading the file rather than
@@ -97,7 +111,7 @@ func TestReserveQueueItem_StampsStatusAndRunIDInOneWrite(t *testing.T) {
 	runID := newReservationRunID(t)
 
 	got := reserveQueueItemForTest(context.Background(), reservationDeps(projectDir, store), queueReservation{
-		QueueName: queueName, GroupIndex: 0, ItemIndex: 0, BeadID: beadID, RunID: runID,
+		QueueName: queueName, GroupIndex: 0, ItemIndex: 0, BeadID: beadID, RunID: runID, ClaimTransitionID: newReservationTransitionID(t),
 	})
 
 	if got.Verdict != reservationReserved {
@@ -137,9 +151,10 @@ func TestReserveQueueItem_WriteFailureAbandonsDispatch(t *testing.T) {
 		}
 	})
 
-	got := reserveQueueItemForTest(context.Background(), reservationDeps(projectDir, store), queueReservation{
-		QueueName: queueName, GroupIndex: 0, ItemIndex: 0, BeadID: beadID, RunID: newReservationRunID(t),
-	})
+	reservation := queueReservation{
+		QueueName: queueName, GroupIndex: 0, ItemIndex: 0, BeadID: beadID, RunID: newReservationRunID(t), ClaimTransitionID: newReservationTransitionID(t),
+	}
+	got := reserveQueueItemForTest(context.Background(), reservationDeps(projectDir, store), reservation)
 
 	if got.Verdict != reservationWriteFailed {
 		t.Fatalf("verdict = %q (outcome=%s err=%v); want %q", got.Verdict, got.Outcome, got.Err, reservationWriteFailed)
@@ -184,9 +199,10 @@ func TestReserveQueueItem_RefusesBeadInFlightFromAnotherQueue(t *testing.T) {
 		}},
 	})
 
-	got := reserveQueueItemForTest(context.Background(), reservationDeps(projectDir, store), queueReservation{
-		QueueName: queueName, GroupIndex: 0, ItemIndex: 0, BeadID: beadID, RunID: newReservationRunID(t),
-	})
+	reservation := queueReservation{
+		QueueName: queueName, GroupIndex: 0, ItemIndex: 0, BeadID: beadID, RunID: newReservationRunID(t), ClaimTransitionID: newReservationTransitionID(t),
+	}
+	got := reserveQueueItemForTest(context.Background(), reservationDeps(projectDir, store), reservation)
 
 	if got.Verdict != reservationItemFailed {
 		t.Fatalf("verdict = %q (outcome=%s err=%v); want %q", got.Verdict, got.Outcome, got.Err, reservationItemFailed)
@@ -205,6 +221,7 @@ func TestReserveQueueItem_RefusesBeadInFlightFromAnotherQueue(t *testing.T) {
 	if item.RunID != nil {
 		t.Error("a refused duplicate carries a RunID; nothing was launched for it")
 	}
+	assertPreclaimTerminalBinding(t, item, reservation, queue.PreclaimTerminalCrossQueue)
 }
 
 // An item that reaches the attempt bound is failed in the reservation write
@@ -217,9 +234,10 @@ func TestReserveQueueItem_AttemptBoundFailsItemDurably(t *testing.T) {
 	q.Groups[0].Items[0].Attempts = maxItemAttempts - 1
 	store.SetQueueByName(queueName, q)
 
-	got := reserveQueueItemForTest(context.Background(), reservationDeps(projectDir, store), queueReservation{
-		QueueName: queueName, GroupIndex: 0, ItemIndex: 0, BeadID: beadID, RunID: newReservationRunID(t),
-	})
+	reservation := queueReservation{
+		QueueName: queueName, GroupIndex: 0, ItemIndex: 0, BeadID: beadID, RunID: newReservationRunID(t), ClaimTransitionID: newReservationTransitionID(t),
+	}
+	got := reserveQueueItemForTest(context.Background(), reservationDeps(projectDir, store), reservation)
 
 	if got.Verdict != reservationItemFailed {
 		t.Fatalf("verdict = %q (outcome=%s err=%v); want %q", got.Verdict, got.Outcome, got.Err, reservationItemFailed)
@@ -237,6 +255,145 @@ func TestReserveQueueItem_AttemptBoundFailsItemDurably(t *testing.T) {
 	if item.RunID != nil {
 		t.Error("an item failed at the attempt bound carries a RunID; nothing was launched for it")
 	}
+	assertPreclaimTerminalBinding(t, item, reservation, queue.PreclaimTerminalMaxAttempts)
+}
+
+func assertPreclaimTerminalBinding(t *testing.T, item queue.Item, reservation queueReservation, cause queue.PreclaimTerminalCause) {
+	t.Helper()
+	if item.PreclaimTerminal == nil {
+		t.Fatal("persisted preclaim terminal binding is nil")
+	}
+	if item.PreclaimTerminal.RunID != reservation.RunID.String() ||
+		item.PreclaimTerminal.ClaimTransitionID != reservation.ClaimTransitionID.String() ||
+		item.PreclaimTerminal.Cause != cause {
+		t.Fatalf("persisted preclaim terminal binding = %+v", item.PreclaimTerminal)
+	}
+}
+
+func TestFailQueueItemDependencyRefusalRequiresExactOwner(t *testing.T) {
+	const queueName = "main"
+	const beadID = core.BeadID("hk-refusal-owner")
+	projectDir, store, q := reservationFixture(t, queueName, beadID)
+	ownerRunID := newReservationRunID(t)
+	ownerRunText := ownerRunID.String()
+	q.Groups[0].Items[0].Status = queue.ItemStatusDispatched
+	q.Groups[0].Items[0].RunID = &ownerRunText
+	store.SetQueueByName(queueName, q)
+
+	base := queueReservation{
+		QueueName: queueName, QueueID: q.QueueID, GroupIndex: 0, ItemIndex: 0,
+		BeadID: beadID, RunID: ownerRunID, ClaimTransitionID: newReservationTransitionID(t),
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*queueReservation)
+	}{
+		{name: "different run", mutate: func(res *queueReservation) { res.RunID = newReservationRunID(t) }},
+		{name: "replacement queue", mutate: func(res *queueReservation) { res.QueueID = newTestQueueID() }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := base
+			tc.mutate(&res)
+			got := failQueueItem(context.Background(), store, projectDir, res, "claim_dependency_refusal", queue.PreclaimTerminalDependencyRefusal)
+			if got.Verdict != reservationRetryLater {
+				t.Fatalf("verdict = %q outcome=%s err=%v", got.Verdict, got.Outcome, got.Err)
+			}
+			item := store.QueueByName(queueName).Groups[0].Items[0]
+			if item.Status != queue.ItemStatusDispatched || item.RunID == nil || *item.RunID != ownerRunText || item.PreclaimTerminal != nil {
+				t.Fatalf("owner changed: %+v", item)
+			}
+		})
+	}
+}
+
+func TestFailQueueItemDependencyRefusalRefusesSameNameReplacement(t *testing.T) {
+	const queueName = "main"
+	const beadID = core.BeadID("hk-refusal-replacement")
+	projectDir, store, original := reservationFixture(t, queueName, beadID)
+	runID := newReservationRunID(t)
+	runText := runID.String()
+	res := queueReservation{
+		QueueName: queueName, QueueID: original.QueueID, GroupIndex: 0, ItemIndex: 0,
+		BeadID: beadID, RunID: runID, ClaimTransitionID: newReservationTransitionID(t),
+	}
+	replacement := queue.CloneQueue(original)
+	replacement.QueueID = newTestQueueID()
+	replacement.Groups[0].Items[0].Status = queue.ItemStatusDispatched
+	replacement.Groups[0].Items[0].RunID = &runText
+	store.SetQueueByName(queueName, replacement)
+
+	got := failQueueItem(context.Background(), store, projectDir, res, "claim_dependency_refusal", queue.PreclaimTerminalDependencyRefusal)
+	if got.Verdict != reservationRetryLater {
+		t.Fatalf("verdict = %q outcome=%s err=%v", got.Verdict, got.Outcome, got.Err)
+	}
+	item := store.QueueByName(queueName).Groups[0].Items[0]
+	if item.Status != queue.ItemStatusDispatched || item.PreclaimTerminal != nil {
+		t.Fatalf("replacement changed: %+v", item)
+	}
+}
+
+func TestReserveQueueItemRefusesSameNameReplacement(t *testing.T) {
+	const queueName = "main"
+	const beadID = core.BeadID("hk-reserve-replacement")
+	projectDir, store, original := reservationFixture(t, queueName, beadID)
+	res := queueReservation{
+		QueueName: queueName, QueueID: original.QueueID, GroupIndex: 0, ItemIndex: 0,
+		BeadID: beadID, RunID: newReservationRunID(t), ClaimTransitionID: newReservationTransitionID(t),
+	}
+	replacement := queue.CloneQueue(original)
+	replacement.QueueID = newTestQueueID()
+	store.SetQueueByName(queueName, replacement)
+
+	got := reserveQueueItemForTest(context.Background(), reservationDeps(projectDir, store), res)
+	if got.Verdict != reservationRetryLater {
+		t.Fatalf("verdict = %q outcome=%s err=%v", got.Verdict, got.Outcome, got.Err)
+	}
+	item := store.QueueByName(queueName).Groups[0].Items[0]
+	if item.Status != queue.ItemStatusPending || item.Attempts != 0 || item.RunID != nil || item.PreclaimTerminal != nil {
+		t.Fatalf("replacement changed: %+v", item)
+	}
+}
+
+func TestFailQueueItemDependencyRefusalPersistsExactClaimIdentity(t *testing.T) {
+	const queueName = "main"
+	const beadID = core.BeadID("hk-refusal-binding")
+	projectDir, store, q := reservationFixture(t, queueName, beadID)
+	runID := newReservationRunID(t)
+	runText := runID.String()
+	q.Groups[0].Items[0].Status = queue.ItemStatusDispatched
+	q.Groups[0].Items[0].RunID = &runText
+	store.SetQueueByName(queueName, q)
+	res := queueReservation{
+		QueueName: queueName, QueueID: q.QueueID, GroupIndex: 0, ItemIndex: 0,
+		BeadID: beadID, RunID: runID, ClaimTransitionID: newReservationTransitionID(t),
+	}
+	got := failQueueItem(context.Background(), store, projectDir, res, "claim_dependency_refusal", queue.PreclaimTerminalDependencyRefusal)
+	if got.Verdict != reservationItemFailed {
+		t.Fatalf("verdict = %q outcome=%s err=%v", got.Verdict, got.Outcome, got.Err)
+	}
+	assertPreclaimTerminalBinding(t, loadPersistedItem(t, projectDir, queueName), res, queue.PreclaimTerminalDependencyRefusal)
+}
+
+func TestFinishDependencyRefusalDoesNotCompleteGroupAfterBindingFault(t *testing.T) {
+	completed := 0
+	err := finishDependencyRefusal(reservationResult{
+		Verdict: reservationWriteFailed,
+		Outcome: queue.OutcomeCommitIndeterminate,
+		Err:     errors.New("binding write fault"),
+	}, func() { completed++ })
+	if err == nil {
+		t.Fatal("finishDependencyRefusal returned nil")
+	}
+	if completed != 0 {
+		t.Fatalf("group completion calls = %d", completed)
+	}
+
+	if err := finishDependencyRefusal(reservationResult{Verdict: reservationItemFailed, Outcome: queue.OutcomeCommittedDurable}, func() { completed++ }); err != nil {
+		t.Fatal(err)
+	}
+	if completed != 1 {
+		t.Fatalf("positive group completion calls = %d", completed)
+	}
 }
 
 // An item that moved since the snapshot writes nothing and asks the caller to
@@ -249,7 +406,7 @@ func TestReserveQueueItem_ItemNoLongerPendingRetriesLater(t *testing.T) {
 	store.SetQueueByName(queueName, q)
 
 	got := reserveQueueItemForTest(context.Background(), reservationDeps(projectDir, store), queueReservation{
-		QueueName: queueName, GroupIndex: 0, ItemIndex: 0, BeadID: beadID, RunID: newReservationRunID(t),
+		QueueName: queueName, GroupIndex: 0, ItemIndex: 0, BeadID: beadID, RunID: newReservationRunID(t), ClaimTransitionID: newReservationTransitionID(t),
 	})
 
 	if got.Verdict != reservationRetryLater {
@@ -404,7 +561,7 @@ func TestReserveQueueItem_QuarantinedQueueStaysLoud(t *testing.T) {
 	})
 
 	first := reserveQueueItemForTest(context.Background(), deps, queueReservation{
-		QueueName: queueName, GroupIndex: 0, ItemIndex: 0, BeadID: beadID, RunID: newReservationRunID(t),
+		QueueName: queueName, GroupIndex: 0, ItemIndex: 0, BeadID: beadID, RunID: newReservationRunID(t), ClaimTransitionID: newReservationTransitionID(t),
 	})
 	if first.Verdict != reservationWriteFailed {
 		t.Fatalf("first verdict = %q; want %q", first.Verdict, reservationWriteFailed)
@@ -416,7 +573,7 @@ func TestReserveQueueItem_QuarantinedQueueStaysLoud(t *testing.T) {
 		t.Fatalf("chmod queues dir: %v", err)
 	}
 	second := reserveQueueItemForTest(context.Background(), deps, queueReservation{
-		QueueName: queueName, GroupIndex: 0, ItemIndex: 0, BeadID: beadID, RunID: newReservationRunID(t),
+		QueueName: queueName, GroupIndex: 0, ItemIndex: 0, BeadID: beadID, RunID: newReservationRunID(t), ClaimTransitionID: newReservationTransitionID(t),
 	})
 	if second.Verdict != reservationWriteFailed {
 		t.Errorf("verdict after quarantine = %q; want %q — a refused queue must not read as retry_later",

@@ -178,7 +178,6 @@ type CyclerConfig struct {
 	InjectFn            func(ctx context.Context, target, text string) error
 	ReadGaugeFn         func(projectDir, agentName string) (*CtxFile, time.Time, error)
 	CrispIdleFn         func(projectDir, agentName string) bool
-	HoldingDispatchFn   func(projectDir, agentName string) bool
 	WriteJournalFn      func(path string, j *CycleJournal) error
 
 	// ForceRetryInterval is the minimum duration after a forced-clear attempt
@@ -350,9 +349,6 @@ func (c *CyclerConfig) applyDefaults() {
 	}
 	if c.CrispIdleFn == nil {
 		c.CrispIdleFn = CrispIdle
-	}
-	if c.HoldingDispatchFn == nil {
-		c.HoldingDispatchFn = HoldingDispatch
 	}
 	if c.WriteJournalFn == nil {
 		c.WriteJournalFn = writeJournalFile

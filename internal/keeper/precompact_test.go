@@ -73,12 +73,12 @@ func newPrecompactCycler(
 		InjectFn:          spy.inject,
 		ReadGaugeFn:       readGaugeFn,
 		CrispIdleFn:       func(_, _ string) bool { return false }, // not used by RunForPrecompact
-		HoldingDispatchFn: func(_, _ string) bool { return holdingDispatch },
 		WriteJournalFn:    jc.write,
 	}
 	return mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
 		deps.Context = testContextWithClear{ContextStore: deps.Context, clear: func() error { return nil }}
 		deps.Managed = testManagedProbe(isManaged)
+		deps.Dispatch = testDispatchProbe(holdingDispatch)
 	})
 }
 

@@ -335,7 +335,6 @@ func newReactiveCyclerWithBackstop(
 		InjectFn:          rs.inject,
 		ReadGaugeFn:       rs.readGauge,
 		CrispIdleFn:       func(_, _ string) bool { return true },
-		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
 		// Stop hook wired and freshly fired (T8, SK-014): ModelDone{idle_marker}
 		// lands on the first AwaitModelDone detection tick, preserving the

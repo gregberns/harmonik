@@ -208,7 +208,6 @@ func TestKeeperCycle_ForcedClearAboveHardThreshold(t *testing.T) {
 		InjectFn:          injectFn,
 		ReadGaugeFn:       rs.readGauge,
 		CrispIdleFn:       func(_, _ string) bool { return false }, // perpetually busy → force path
-		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
@@ -414,7 +413,6 @@ func TestKeeperCycle_PreCompactBackstop(t *testing.T) {
 		InjectFn:          rs.inject,
 		ReadGaugeFn:       rs.readGauge,
 		CrispIdleFn:       func(_, _ string) bool { return false }, // NOT idle — precompact must skip this gate
-		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
@@ -568,7 +566,6 @@ func TestKeeperCycle_ClearBriefHardGate_SlowClear(t *testing.T) {
 		InjectFn:          witnessInject,
 		ReadGaugeFn:       rs.readGauge,
 		CrispIdleFn:       func(_, _ string) bool { return true },
-		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {

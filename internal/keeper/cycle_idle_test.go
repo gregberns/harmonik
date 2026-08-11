@@ -63,13 +63,13 @@ func newIdleCycler(
 		InjectFn:             spy.inject,
 		ReadGaugeFn:          readGaugeFn,
 		CrispIdleFn:          func(_, _ string) bool { return crispIdle },
-		HoldingDispatchFn:    func(_, _ string) bool { return holdingDispatch },
 		WriteJournalFn:       jc.write,
 		IdleRestartAbsTokens: defaultIdleTokenThreshold,
 		IdleRestartCooldown:  idleRestartCooldown,
 	}
 	return mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
 		deps.Context = testContextWithClear{ContextStore: deps.Context, clear: func() error { return nil }}
+		deps.Dispatch = testDispatchProbe(holdingDispatch)
 	})
 }
 

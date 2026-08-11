@@ -252,7 +252,6 @@ func newTestCyclerManaged(
 		InjectFn:          spy.inject,
 		ReadGaugeFn:       readGaugeFn,
 		CrispIdleFn:       func(_, _ string) bool { return crispIdle },
-		HoldingDispatchFn: func(_, _ string) bool { return holdingDispatch },
 		WriteJournalFn:    jc.write,
 		// Stop hook wired and freshly fired (T8, SK-014): the .idle marker
 		// reads as "await-input boundary now", so ModelDone{idle_marker} lands
@@ -262,6 +261,7 @@ func newTestCyclerManaged(
 	}
 	return mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
 		deps.Managed = testManagedProbe(isManaged)
+		deps.Dispatch = testDispatchProbe(holdingDispatch)
 	})
 }
 
@@ -771,7 +771,6 @@ func TestCycler_SuppressionRequiresBothConditions(t *testing.T) {
 		InjectFn:            spy.inject,
 		ReadGaugeFn:         stableGauge,
 		CrispIdleFn:         func(_, _ string) bool { return true },
-		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
 	}
 	cycler := mustNewCycler(cfg, em)
@@ -845,7 +844,6 @@ func TestCycler_BootRecovery_PhaseCleared(t *testing.T) {
 		TruncateHandoffFn:   func(_ string) error { return nil },
 		InjectFn:            spy.inject,
 		CrispIdleFn:         func(_, _ string) bool { return true },
-		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      js.write,
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
@@ -922,7 +920,6 @@ func TestCycler_BootRecovery_PhaseHandoff(t *testing.T) {
 		TruncateHandoffFn:   func(_ string) error { return nil },
 		InjectFn:            spy.inject,
 		CrispIdleFn:         func(_, _ string) bool { return true },
-		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      js.write,
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
@@ -989,7 +986,6 @@ func TestCycler_BootRecovery_PhaseComplete(t *testing.T) {
 				TruncateHandoffFn:   func(_ string) error { return nil },
 				InjectFn:            spy.inject,
 				CrispIdleFn:         func(_, _ string) bool { return true },
-				HoldingDispatchFn:   func(_, _ string) bool { return false },
 				WriteJournalFn: func(_ string, _ *keeper.CycleJournal) error {
 					writeCount++
 					return js.write("", &keeper.CycleJournal{})
@@ -1036,7 +1032,6 @@ func TestCycler_BootRecovery_NoJournal(t *testing.T) {
 		TruncateHandoffFn:   func(_ string) error { return nil },
 		InjectFn:            spy.inject,
 		CrispIdleFn:         func(_, _ string) bool { return true },
-		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      js.write,
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) { deps.Journal = js })
@@ -1073,7 +1068,6 @@ func TestCycler_BootRecovery_UnmanagedNoOp(t *testing.T) {
 		TruncateHandoffFn:   func(_ string) error { return nil },
 		InjectFn:            spy.inject,
 		CrispIdleFn:         func(_, _ string) bool { return true },
-		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      js.write,
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
@@ -1157,7 +1151,6 @@ func TestCycler_TruncateCalledBeforePoll(t *testing.T) {
 		InjectFn:            spy.inject,
 		ReadGaugeFn:         noopGauge,
 		CrispIdleFn:         func(_, _ string) bool { return true },
-		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
 	}
 	cycler := mustNewCycler(cfg, em)
@@ -1249,7 +1242,6 @@ func TestCycler_BriefRestartAfterNonceConfirm(t *testing.T) {
 		InjectFn:          spyInject,
 		ReadGaugeFn:       readGaugeFn,
 		CrispIdleFn:       func(_, _ string) bool { return true },
-		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
@@ -1350,7 +1342,6 @@ func TestCycler_AbsoluteTokenGate(t *testing.T) {
 		InjectFn:          spy.inject,
 		ReadGaugeFn:       noopGauge,
 		CrispIdleFn:       func(_, _ string) bool { return true },
-		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCycler(cfg, em)
@@ -1408,9 +1399,8 @@ func TestCycler_AbsoluteTokenGate_BelowThreshold(t *testing.T) {
 		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 			return &keeper.CtxFile{Pct: 20.0, Tokens: 200_000, WindowSize: 1_000_000, SessionID: sid}, time.Now(), nil
 		},
-		CrispIdleFn:       func(_, _ string) bool { return true },
-		HoldingDispatchFn: func(_, _ string) bool { return false },
-		WriteJournalFn:    jc.write,
+		CrispIdleFn:    func(_, _ string) bool { return true },
+		WriteJournalFn: jc.write,
 	}
 	cycler := mustNewCycler(cfg, em)
 
@@ -1472,7 +1462,6 @@ func TestCycler_AbsoluteTokenGate_200kWindow(t *testing.T) {
 		InjectFn:          spy.inject,
 		ReadGaugeFn:       noopGauge,
 		CrispIdleFn:       func(_, _ string) bool { return true },
-		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCycler(cfg, em)
@@ -1530,7 +1519,6 @@ func TestCycler_UpdatesManagedSessionAfterCycle(t *testing.T) {
 		InjectFn:          spy.inject,
 		ReadGaugeFn:       readGaugeFn,
 		CrispIdleFn:       func(_, _ string) bool { return true },
-		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
@@ -1603,7 +1591,6 @@ func TestCycler_ClearSettleTimeout_ClearsManagedSessionID(t *testing.T) {
 		InjectFn:          spy.inject,
 		ReadGaugeFn:       readGaugeFn,
 		CrispIdleFn:       func(_, _ string) bool { return true },
-		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
@@ -1674,7 +1661,6 @@ func TestCycler_AntiLoopEscapeHatch_ResetOnSameSessionLowPct(t *testing.T) {
 		InjectFn:          spy.inject,
 		ReadGaugeFn:       readGaugeFn,
 		CrispIdleFn:       func(_, _ string) bool { return true },
-		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
 	}
 
@@ -1776,7 +1762,6 @@ func TestCycler_ForcedClear_BypassesCrispIdle(t *testing.T) {
 		InjectFn:          spy.inject,
 		ReadGaugeFn:       readGaugeFn,
 		CrispIdleFn:       func(_, _ string) bool { return false }, // perpetually busy
-		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCycler(cfg, em)
@@ -1876,7 +1861,6 @@ func TestCycler_ForcedClear_RetryAfterInterval(t *testing.T) {
 		InjectFn:          spy.inject,
 		ReadGaugeFn:       noopGauge,
 		CrispIdleFn:       func(_, _ string) bool { return false }, // perpetually busy
-		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCycler(cfg, em)
@@ -1969,7 +1953,6 @@ func TestCycler_ForcedClear_EscapeInjected(t *testing.T) {
 		InjectFn:          injectFn,
 		ReadGaugeFn:       readGaugeFn,
 		CrispIdleFn:       func(_, _ string) bool { return false }, // busy pane
-		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
@@ -2067,9 +2050,8 @@ func TestCycler_ForcedClear_EscalatesAfterNTimeouts(t *testing.T) {
 		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 			return &keeper.CtxFile{Pct: 97.0, SessionID: sid}, time.Now(), nil
 		},
-		CrispIdleFn:       func(_, _ string) bool { return false },
-		HoldingDispatchFn: func(_, _ string) bool { return false },
-		WriteJournalFn:    jc.write,
+		CrispIdleFn:    func(_, _ string) bool { return false },
+		WriteJournalFn: jc.write,
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
 		deps.Respawn = testRespawnFunc(forceRestartFn)
@@ -2155,7 +2137,6 @@ func TestCycler_BootGrace_SuppressesAndThenAllows(t *testing.T) {
 		InjectFn:            spy.inject,
 		ReadGaugeFn:         noopGauge,
 		CrispIdleFn:         func(_, _ string) bool { return true }, // idle — fires without force path
-		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
 	}
 	cycler := mustNewCycler(cfg, em)
@@ -2245,9 +2226,8 @@ func TestCycler_YoungSessionGuard_NewBand_AbsTokens(t *testing.T) {
 		TruncateHandoffFn:   func(_ string) error { return nil },
 		InjectFn:            spy.inject,
 		// Use the default abs-token band (act=215K / force=240K); do not override.
-		CrispIdleFn:       func(_, _ string) bool { return true },
-		HoldingDispatchFn: func(_, _ string) bool { return false },
-		WriteJournalFn:    jc.write,
+		CrispIdleFn:    func(_, _ string) bool { return true },
+		WriteJournalFn: jc.write,
 	}
 	cycler := mustNewCycler(cfg, em)
 
@@ -2321,11 +2301,12 @@ func TestCycler_CleanHandoffGuard_DispatchingSuppressesAboveForce(t *testing.T) 
 		// CrispIdle false (busy) — above force the cycle would normally bypass it;
 		// the clean-handoff guard must still hold.
 		CrispIdleFn: func(_, _ string) bool { return false },
-		// HoldingDispatchFn intentionally LEFT NIL so applyDefaults wires the real
-		// HoldingDispatch (reads the on-disk .dispatching marker).
+		// The dispatch probe below reads the real on-disk marker.
 		WriteJournalFn: jc.write,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Dispatch = testDispatchProbeFunc(func() bool { return keeper.HoldingDispatch(projectDir, agent) })
+	})
 
 	// Mark in-flight dispatch, then drive context ABOVE the force ceiling (245K).
 	if err := keeper.SetDispatching(projectDir, agent); err != nil {
@@ -2405,9 +2386,8 @@ func TestCycler_AbortClearsManaged(t *testing.T) {
 		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 			return &keeper.CtxFile{Pct: 95.0, SessionID: abortSID}, time.Now(), nil
 		},
-		CrispIdleFn:       func(_, _ string) bool { return true },
-		HoldingDispatchFn: func(_, _ string) bool { return false },
-		WriteJournalFn:    jc.write,
+		CrispIdleFn:    func(_, _ string) bool { return true },
+		WriteJournalFn: jc.write,
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
 		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error { return setManagedFn("", "", sid) }}
@@ -2497,9 +2477,8 @@ func TestCycler_ForcedClear_BelowThreshold_StillBlocked(t *testing.T) {
 		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 			return &keeper.CtxFile{Pct: 92.0, SessionID: prevSID}, time.Now(), nil
 		},
-		CrispIdleFn:       func(_, _ string) bool { return false }, // perpetually busy
-		HoldingDispatchFn: func(_, _ string) bool { return false },
-		WriteJournalFn:    jc.write,
+		CrispIdleFn:    func(_, _ string) bool { return false }, // perpetually busy
+		WriteJournalFn: jc.write,
 	}
 	cycler := mustNewCycler(cfg, em)
 
@@ -2563,7 +2542,6 @@ func TestCycler_ForceThresholdTracksActPct(t *testing.T) {
 		InjectFn:          spy.inject,
 		ReadGaugeFn:       readGaugeFn,
 		CrispIdleFn:       func(_, _ string) bool { return false }, // perpetually busy
-		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCycler(cfg, em)
@@ -2654,7 +2632,6 @@ func TestCycler_BootGrace_ForcePathBypasses(t *testing.T) {
 		InjectFn:            spy.inject,
 		ReadGaugeFn:         readGaugeFn,
 		CrispIdleFn:         func(_, _ string) bool { return false }, // busy — force-path needed
-		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
 	}
 	cycler := mustNewCycler(cfg, em)
@@ -2736,9 +2713,8 @@ func TestCycler_AbortDoesNotClearManaged_FirstSession(t *testing.T) {
 		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 			return &keeper.CtxFile{Pct: 95.0, SessionID: sid}, time.Now(), nil
 		},
-		CrispIdleFn:       func(_, _ string) bool { return true },
-		HoldingDispatchFn: func(_, _ string) bool { return false },
-		WriteJournalFn:    jc.write,
+		CrispIdleFn:    func(_, _ string) bool { return true },
+		WriteJournalFn: jc.write,
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
 		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error { return setManagedFn("", "", sid) }}
@@ -2814,7 +2790,6 @@ func TestCycler_BootGrace_FlappingSID(t *testing.T) {
 		InjectFn:            spy.inject,
 		ReadGaugeFn:         readGaugeFn,
 		CrispIdleFn:         func(_, _ string) bool { return true }, // idle — fires without force path
-		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
 	}
 	cycler := mustNewCycler(cfg, em)
@@ -2944,7 +2919,6 @@ func TestCycler_AbortToResumeGraceToRefire(t *testing.T) {
 		InjectFn:            spy.inject,
 		ReadGaugeFn:         readGaugeFn,
 		CrispIdleFn:         func(_, _ string) bool { return true },
-		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      writeJournalFn,
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
@@ -3120,7 +3094,6 @@ func TestCycler_CrossSID_ForceRetry_AfterAbort(t *testing.T) {
 				InjectFn:          spy.inject,
 				ReadGaugeFn:       readGaugeFn,
 				CrispIdleFn:       func(_, _ string) bool { return true },
-				HoldingDispatchFn: func(_, _ string) bool { return false },
 				WriteJournalFn:    writeJournalFn,
 			}
 			cycler := mustNewCycler(cfg, em)
@@ -3229,9 +3202,8 @@ func TestCycler_BootGrace_BurstRelativeCap(t *testing.T) {
 		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 			return &keeper.CtxFile{Pct: 85.0, SessionID: nextSID}, time.Now(), nil
 		},
-		CrispIdleFn:       func(_, _ string) bool { return true },
-		HoldingDispatchFn: func(_, _ string) bool { return false },
-		WriteJournalFn:    jc.write,
+		CrispIdleFn:    func(_, _ string) bool { return true },
+		WriteJournalFn: jc.write,
 	}
 	cycler := mustNewCycler(cfg, em)
 	ctx := context.Background()

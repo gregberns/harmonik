@@ -78,7 +78,6 @@ func newAttachTestCycler(
 		InjectFn:          spy.inject,
 		ReadGaugeFn:       readGaugeFn,
 		CrispIdleFn:       func(_, _ string) bool { return true },
-		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
 	}
 	return mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
@@ -282,7 +281,6 @@ func TestCycler_Precompact_OperatorAttached_Suppresses(t *testing.T) {
 		InjectFn:          spy.inject,
 		ReadGaugeFn:       noopGauge,
 		CrispIdleFn:       func(_, _ string) bool { return true },
-		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {

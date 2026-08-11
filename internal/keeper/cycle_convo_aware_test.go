@@ -105,7 +105,6 @@ func newConvoAwareCycler(
 		InjectFn:          spy.inject,
 		ReadGaugeFn:       func(_, _ string) (*keeper.CtxFile, time.Time, error) { return nil, time.Time{}, os.ErrNotExist },
 		CrispIdleFn:       func(_, _ string) bool { return true },
-		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
 		// Conversation-aware fields under test:
 		TranscriptDir:        transcriptDir,
@@ -200,7 +199,6 @@ func TestCycler_StaleOperatorTurn_DoesNotSuppress(t *testing.T) {
 		InjectFn:             spy.inject,
 		ReadGaugeFn:          readGaugeFn,
 		CrispIdleFn:          func(_, _ string) bool { return true },
-		HoldingDispatchFn:    func(_, _ string) bool { return false },
 		WriteJournalFn:       jc.write,
 		TranscriptDir:        transcriptDir,
 		OperatorTurnLookback: 5 * time.Minute, // lookback shorter than 10m stale turn
@@ -265,7 +263,6 @@ func TestCycler_ToolResultUserTurn_DoesNotSuppress(t *testing.T) {
 		InjectFn:             spy.inject,
 		ReadGaugeFn:          readGaugeFn,
 		CrispIdleFn:          func(_, _ string) bool { return true },
-		HoldingDispatchFn:    func(_, _ string) bool { return false },
 		WriteJournalFn:       jc.write,
 		TranscriptDir:        transcriptDir,
 		OperatorTurnLookback: 5 * time.Minute,
@@ -330,7 +327,6 @@ func TestCycler_OperatorTurnLookbackZero_DisablesGate5d(t *testing.T) {
 		InjectFn:             spy.inject,
 		ReadGaugeFn:          readGaugeFn,
 		CrispIdleFn:          func(_, _ string) bool { return true },
-		HoldingDispatchFn:    func(_, _ string) bool { return false },
 		WriteJournalFn:       jc.write,
 		TranscriptDir:        transcriptDir,
 		OperatorTurnLookback: 0, // DISABLED — gate must not fire
@@ -484,7 +480,6 @@ func TestCycler_PostAnswerGrace_Expired_DoesNotSuppress(t *testing.T) {
 		InjectFn:             spy.inject,
 		ReadGaugeFn:          readGaugeFn,
 		CrispIdleFn:          func(_, _ string) bool { return true },
-		HoldingDispatchFn:    func(_, _ string) bool { return false },
 		WriteJournalFn:       jc.write,
 		TranscriptDir:        transcriptDir,
 		OperatorTurnLookback: 0,
@@ -548,7 +543,6 @@ func TestCycler_AssistantToolUseTurn_DoesNotTriggerGrace(t *testing.T) {
 		InjectFn:             spy.inject,
 		ReadGaugeFn:          readGaugeFn,
 		CrispIdleFn:          func(_, _ string) bool { return true },
-		HoldingDispatchFn:    func(_, _ string) bool { return false },
 		WriteJournalFn:       jc.write,
 		TranscriptDir:        transcriptDir,
 		OperatorTurnLookback: 0,

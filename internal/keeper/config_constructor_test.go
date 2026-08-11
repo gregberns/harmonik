@@ -6,6 +6,7 @@ func mustNewCycler(cfg CyclerConfig, emitter Emitter) *Cycler {
 	deps := CycleDepsFromConfig(cfg, emitter)
 	deps.Operator = operatorProbeFunc(func(string) bool { return false })
 	deps.Managed = boolProbe(func() bool { return true })
+	deps.Dispatch = boolProbe(func() bool { return false })
 	deps.Pane = configTestPane{PaneWriter: deps.Pane}
 	deps.Context = configTestContext{ContextStore: deps.Context}
 	cycler, err := NewCyclerWithDeps(

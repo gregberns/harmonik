@@ -54,7 +54,6 @@ func newModelDoneCycler(
 		InjectFn:            rs.inject,
 		ReadGaugeFn:         rs.readGauge,
 		CrispIdleFn:         func(_, _ string) bool { return true },
-		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
 		IdleMarkerModTimeFn: idleMarker,
 	}

@@ -123,7 +123,6 @@ func TestCycler_DelayedPollTick_HandoffTimeoutStaysPunctual(t *testing.T) {
 		InjectFn:          spy.inject,
 		ReadGaugeFn:       noopGauge,
 		CrispIdleFn:       func(_, _ string) bool { return false },
-		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCycler(cfg, em)
@@ -229,7 +228,6 @@ func TestCycler_ClearingElapsedBackstop_NoHotSpin(t *testing.T) {
 		InjectFn:             spy.inject,
 		ReadGaugeFn:          readGaugeFn,
 		CrispIdleFn:          func(_, _ string) bool { return true },
-		HoldingDispatchFn:    func(_, _ string) bool { return false },
 		WriteJournalFn:       jc.write,
 	}
 	cycler := mustNewCycler(cfg, em)

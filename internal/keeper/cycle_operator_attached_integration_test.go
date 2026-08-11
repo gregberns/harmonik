@@ -280,7 +280,6 @@ func TestIntegration_OperatorAttached_SuppressesAndResumes(t *testing.T) {
 		InjectFn:          injectSpy,
 		ReadGaugeFn:       readGauge,
 		CrispIdleFn:       func(_, _ string) bool { return true },
-		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    func(_ string, _ *CycleJournal) error { return nil },
 		// OperatorAttachedFn left nil → real OperatorAttached (tmux list-clients).
 	}

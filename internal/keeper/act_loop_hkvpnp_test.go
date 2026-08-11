@@ -53,9 +53,8 @@ func realHandoffCycler(t *testing.T, agent, projectDir, cycleID string, spy *cyc
 		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 			return &keeper.CtxFile{Pct: 95.0, SessionID: "sess-act"}, time.Now(), nil
 		},
-		CrispIdleFn:       func(_, _ string) bool { return true },
-		HoldingDispatchFn: func(_, _ string) bool { return false },
-		WriteJournalFn:    jc.write,
+		CrispIdleFn:    func(_, _ string) bool { return true },
+		WriteJournalFn: jc.write,
 	}
 	return mustNewCycler(cfg, &keeper.RecordingEmitter{})
 }
@@ -155,9 +154,8 @@ func TestActLoop_HKVPNP_DoesNotRefireSecondNonceAfterTimeout(t *testing.T) {
 		ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 			return &keeper.CtxFile{Pct: 95.0, SessionID: "sess-refire"}, time.Now(), nil
 		},
-		CrispIdleFn:       func(_, _ string) bool { return true },
-		HoldingDispatchFn: func(_, _ string) bool { return false },
-		WriteJournalFn:    jc.write,
+		CrispIdleFn:    func(_, _ string) bool { return true },
+		WriteJournalFn: jc.write,
 	}
 	cycler := mustNewCycler(cfg, &keeper.RecordingEmitter{})
 

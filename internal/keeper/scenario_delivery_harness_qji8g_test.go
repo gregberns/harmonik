@@ -138,7 +138,6 @@ func TestScenario_LateHandoff300sFakeClock_Aborts_qji8g(t *testing.T) {
 		InjectFn:            rs.inject,
 		ReadGaugeFn:         rs.readGauge,
 		CrispIdleFn:         func(_, _ string) bool { return true },
-		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
 		IdleMarkerModTimeFn: func(_, _ string) (time.Time, bool) { return clock.Now(), true },
 	}
@@ -289,7 +288,6 @@ func TestScenario_ForceAct_NeverIdleStillCut_qji8g(t *testing.T) {
 		InjectFn:          rs.inject,
 		ReadGaugeFn:       rs.readGauge,
 		CrispIdleFn:       func(_, _ string) bool { return false }, // NEVER idle → force path
-		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {

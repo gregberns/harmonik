@@ -78,9 +78,7 @@ func buildKeeperConfigs(resolved ResolvedKeeperConfig, p keeperBuildParams) (kee
 		IdleRestartCooldown:  resolved.IdleRestartCooldown,
 		MaxHandoffTimeouts:   resolved.MaxHandoffTimeouts,
 		HoldTTL:              resolved.HoldTTL,
-		SendEscapeFn:         keeper.SendEscapeKey,
 		BootGracePeriod:      resolvedBootGrace,
-		ForceRestartFn:       keeperForceRestartFn(p.ForceRestart, p.ProjectDir, p.RespawnCmd),
 		OperatorTurnLookback: resolved.OperatorTurnLookback,
 		PostAnswerGrace:      resolved.PostAnswerGrace,
 	}
@@ -147,6 +145,31 @@ func constructKeeperCycler(
 	deps keeper.CycleDeps,
 ) (*keeper.Cycler, error) {
 	return keeper.NewCyclerWithDeps(policy, env, deps)
+}
+
+type keeperPaneWithEscape struct{ keeper.PaneWriter }
+
+func (p keeperPaneWithEscape) SendEscape(ctx context.Context, target string) error {
+	return keeper.SendEscapeKey(ctx, target)
+}
+
+type keeperRespawnFunc func(context.Context, string) error
+
+func (f keeperRespawnFunc) ForceRestart(ctx context.Context, agent string) error {
+	return f(ctx, agent)
+}
+
+func buildKeeperCycleDeps(
+	cfg keeper.CyclerConfig,
+	emitter keeper.Emitter,
+	forceRestart func(context.Context, string) error,
+) keeper.CycleDeps {
+	deps := keeper.CycleDepsFromConfig(cfg, emitter)
+	deps.Pane = keeperPaneWithEscape{PaneWriter: deps.Pane}
+	if forceRestart != nil {
+		deps.Respawn = keeperRespawnFunc(forceRestart)
+	}
+	return deps
 }
 
 // runKeeperSubcommand implements `harmonik keeper`.
@@ -495,10 +518,15 @@ func runKeeperSubcommand(args []string) int {
 	var cycler *keeper.Cycler
 	if !warnOnlyFlag {
 		var constructErr error
+		deps := buildKeeperCycleDeps(
+			cyclerCfg,
+			emitter,
+			keeperForceRestartFn(forceRestartFlag, projectDir, respawnCmdFlag),
+		)
 		cycler, constructErr = constructKeeperCycler(
 			keeper.CyclePolicyFromConfig(cyclerCfg),
 			keeper.CycleEnvFromConfig(cyclerCfg),
-			keeper.CycleDepsFromConfig(cyclerCfg, emitter),
+			deps,
 		)
 		if constructErr != nil {
 			fmt.Fprintf(os.Stderr, "harmonik keeper: construct cycle: %v\n", constructErr)

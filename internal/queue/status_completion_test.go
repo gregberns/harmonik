@@ -184,5 +184,4 @@ func TestReadCompletionReceiptForStatusRejectsIdentityErrors(t *testing.T) {
 			t.Fatalf("error = %v", err)
 		}
 	})
-
 }

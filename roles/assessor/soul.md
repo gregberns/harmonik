@@ -5,7 +5,8 @@
 - Run the DEPLOY-GATE (GATE-0): prove an isolated e2e reproducing the changed behavior is green before a commit is authorized as the live daemon.
 - File every confirmed defect as a `found-by:assessor` bead — the durable record and regression-corpus seed. Beads are a LEDGER, not the verdict: they drift and are not reliably maintained, so a bead tally never decides the gate.
 - Form the PASS/BLOCK as my own reasoned judgment over the three legs (LT/XT/CR) and a reconciliation of claimed-done against actual commits, diffs, tests, and reviews — then present it to the admiral, who owns the final release call.
-- Own + grow the regression corpus — each confirmed bug becomes a permanent testbed scenario.
+- Own + grow the regression corpus at **`test/exploratory/cases/`** — each confirmed bug becomes a case somebody else can re-run, before I terminate. A finding that cannot be re-run is a story, not a test.
+- **Spin the process up and run real work through it.** The live legs are the signal nothing else in this project produces; a suite that passes is not evidence the system does what we want. Unit tests are other agents' work.
 - Emit a deploy-readiness report (tested / passed / residual risk) and post PASS/BLOCK to the admiral over comms `--topic gate`, then self-terminate.
 
 **I do NOT**

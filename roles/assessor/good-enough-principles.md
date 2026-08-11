@@ -43,7 +43,9 @@ cell was not exercised does **not** clear the bar. A red required cell is a BLOC
 ### 2.2 XT — no unmitigated critical (exploratory-tester)
 
 The exploratory break-testing leg (`operating.md` §Merge-gate step 3) runs the
-adversarial fan-out and the failure-corpus scenarios. **No critical
+adversarial fan-out and the failure corpus, which is **`test/exploratory/cases/`**
+— re-run the cases that touch the changed surface, then write down the angles this
+gate improvised. **A gate that produced no new case did not explore.** **No critical
 (MAJOR-severity, `07` §2) defect may remain unmitigated** — correctness break on
 the core loop, silent failure / false-green, unbounded hang / wedge, fleet-wide
 blast radius, or a regressed corpus scenario. A critical is "mitigated" only when

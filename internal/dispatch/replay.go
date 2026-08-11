@@ -363,15 +363,19 @@ func validQueueFact(v QueueFact) bool {
 	return v == QueueOfferable || v == QueueReserved || v == QueueTerminalSuccess ||
 		v == QueueTerminalRetryable || v == QueueTerminalUnreopened || v == QueueConflict
 }
+
 func validBeadFact(v BeadFact) bool {
 	return v == BeadOpen || v == BeadInProgress || v == BeadClosed || v == BeadOther || v == BeadConflict
 }
+
 func validRunRecordFact(v RunRecordFact) bool {
 	return v == RunRecordAbsent || v == RunRecordBase || v == RunRecordLocated || v == RunRecordSession || v == RunRecordConflict
 }
+
 func validWorktreeFact(v WorktreeFact) bool {
 	return v == WorktreeAbsent || v == WorktreeLeased || v == WorktreeConflict
 }
+
 func validSessionFact(v SessionFact) bool {
 	return v == SessionAbsent || v == SessionLive || v == SessionDead || v == SessionConflict
 }

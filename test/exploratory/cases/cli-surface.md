@@ -40,27 +40,48 @@ tell that this was an omission and not a design limit.
 Class: probe
 Exercises: top-level argument parsing, `unknownSubcommand`
 Bead: `hk-cli-flag-first-starts-daemon-gjhiy` (operator-owned; carries an operator direction)
-Status: OPEN at `daf396b41` — deliberately, see the bead
+Status: **FIXED at `5dd157cb9` (verified 2026-08-11)** — was OPEN at `daf396b41`
 
 Preconditions: a directory that has NEVER been through `harmonik init`.
 
-Steps:
+Steps — **four spellings, not one.** The original case recorded only the first. Alpha's fix
+(`2b17e7111`) named two more, and a fourth falls out of the same defect:
 
     mkdir -p /tmp/h/never-inited
-    out=$(harmonik --project /tmp/h/never-inited queue list 2>&1); rc=$?
-    echo "rc=$rc"; echo "$out"
+    out=$(harmonik --project /tmp/h/never-inited queue list 2>&1); rc=$?   # flag-first + real verb
+    out=$(harmonik --project /tmp/h/never-inited 2>&1); rc=$?              # flags, no verb
+    out=$(harmonik --project /tmp/h/never-inited status 2>&1); rc=$?       # no such subcommand
+    (cd /tmp/h/never-inited && harmonik); rc=$?                            # no arguments at all
     ls -a /tmp/h/never-inited
 
-Expect: refusal. Exactly one command starts a daemon, and this is not it.
+Expect: refusal on all four. Exactly one command starts a daemon and none of these is it.
 
 Failure signature: a daemon starts and a full `.harmonik/` tree appears in a directory that
 was never initialised.
 
-Why it matters: the guard exists and works — `harmonik status` (bare) is refused with exit 2.
-The flag-first spelling bypasses it because the guard returns early on any argument beginning
-with `-`. **A reader who trusts `docs/daemon-redeploy.md` gets this exactly backwards**: that
-doc warns against the bare spelling, which is now safe, and says nothing about the flag-first
-spelling, which is not.
+**Verified fixed 2026-08-11 at `5dd157cb9`**, on a binary built from a clean tree. All four
+now exit 2 with an explicit refusal and leave the directory empty:
+
+    harmonik: no subcommand given, only flags — this does not start a daemon
+      "status" was ignored: a subcommand must come first, before any flags
+      To start a daemon, name it: `harmonik start daemon [--project DIR] [flags]`
+
+The message names the ignored word and points at the one spelling that does start a daemon,
+which is what makes the refusal useful rather than merely correct.
+
+Why it mattered: the guard existed and worked for `harmonik status` (bare, exit 2), but the
+flag-first spelling bypassed it because the guard returned early on any argument beginning
+with `-`. The root cause was more general than the guard — starting a daemon was simply what
+`run()` did when nothing else claimed the arguments, so every argv that ran out of verbs fell
+through to it. **The third spelling cost real time**: an operator poll-checking
+`harmonik --project X status` during a redeploy started a SECOND daemon that contended with
+the one being revived, and probably killed an early revive attempt on 2026-06-30.
+
+**Timing trap when re-running this.** If the defect ever returns, three of these four spellings
+BLOCK — a daemon starts and does not exit — so a bare `out=$(...)` hangs the session rather than
+failing. Guard each one, and note that macOS has no `timeout` (`rc=127`, and a 127 read as a
+refusal is a false PASS — this happened while verifying the fix). Background the command, poll
+`kill -0`, and kill it after ~15s.
 
 ---
 

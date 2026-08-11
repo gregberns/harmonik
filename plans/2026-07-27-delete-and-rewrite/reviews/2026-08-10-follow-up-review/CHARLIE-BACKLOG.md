@@ -10,14 +10,14 @@ Charlie must deliberately break each new claim test before accepting it.
 Updated: 2026-08-11
 
 - Owner: Charlie.
-- Active slice: C18 is complete. C19 is next.
+- Active slice: C20 is in review. C21 is next after the dispatch contract closes.
 - Start revision: `b49210d67` on `work/alpha-integration-merge`.
 - State: C01 through C04 are complete and independently approved.
 - Implementation commit: `de0a6ca3`.
 - Integration reconciliation commit: `b0cac51a`.
 - Stop gate: C05 through C07 received independent approval before C08.
 - Coordination note: the queue RPC overlap retained both the active-run status work and the event-intent path.
-- Later tasks: C19 through C31 remain unstarted.
+- Later tasks: C20 through C31 remain unstarted.
 
 ### C18 evidence
 
@@ -391,6 +391,14 @@ The completion transaction must accept the exact detached candidate returned by 
 
 **Limits:** Do not change code until the model closes.
 
+**Status:** Review-ready on 2026-08-11.
+
+**Evidence:** `specs/live-bead-state.md` defines the authority order, state
+vocabulary, valid steady combinations, invalid combinations, transition
+owners, and one recovery result for each process-death cut from reservation
+through queue terminal application. It also gives C20 and C21 their required
+bindings and result classes. This slice changes no runtime code.
+
 ### C20. Define a dispatch intent and transaction result
 
 **Problem:** Reservation and bead claim are two durable writes with compensation between them.
@@ -400,6 +408,14 @@ The completion transaction must accept the exact detached candidate returned by 
 **Acceptance:** The type cannot represent a claimed bead with no queue or run identity. JSON decoding rejects partial records.
 
 **Limits:** Do not add another best-effort repair record.
+
+**Status:** Review-ready on 2026-08-11.
+
+**Evidence:** `internal/dispatch` defines a value-only intent for prepared,
+claim-durable, run-durable, and handoff-durable phases. Strict JSON decoding
+rejects unknown, partial, early, and conflicting fields. The transaction result
+admits only committed, replayable, refused, or repair-required shapes. C20 adds
+no persistence or daemon wiring.
 
 ### C21. Make startup replay dispatch intents
 

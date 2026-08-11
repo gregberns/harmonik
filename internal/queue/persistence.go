@@ -274,14 +274,14 @@ func completeAndUnlinkResult(
 	if q == nil {
 		return TerminalResult{CommitErr: errors.New("queue: CompleteAndUnlink: nil queue")}
 	}
-	candidate := *q
-	if err := CompleteQueue(&candidate); err != nil {
+	candidate := CloneQueue(q)
+	if err := CompleteQueue(candidate); err != nil {
 		return TerminalResult{CommitErr: fmt.Errorf("queue: CompleteAndUnlink: transition completed status: %w", err)}
 	}
-	if err := Persist(ctx, projectDir, &candidate); err != nil {
+	if err := Persist(ctx, projectDir, candidate); err != nil {
 		return TerminalResult{CommitErr: fmt.Errorf("queue: CompleteAndUnlink: persist completed status: %w", err)}
 	}
-	if err := InstallCommittedQueueStatus(q, &candidate); err != nil {
+	if err := InstallCommittedQueueStatus(q, candidate); err != nil {
 		return TerminalResult{CommitErr: err}
 	}
 
@@ -320,14 +320,14 @@ func CancelQueueOnShutdownResult(ctx context.Context, projectDir string, q *Queu
 	if q == nil {
 		return TerminalResult{}
 	}
-	candidate := *q
-	if err := CancelQueue(&candidate); err != nil {
+	candidate := CloneQueue(q)
+	if err := CancelQueue(candidate); err != nil {
 		return TerminalResult{CommitErr: fmt.Errorf("queue: CancelQueueOnShutdown: transition cancelled status: %w", err)}
 	}
-	if err := Persist(ctx, projectDir, &candidate); err != nil {
+	if err := Persist(ctx, projectDir, candidate); err != nil {
 		return TerminalResult{CommitErr: fmt.Errorf("queue: CancelQueueOnShutdown: persist: %w", err)}
 	}
-	if err := InstallCommittedQueueStatus(q, &candidate); err != nil {
+	if err := InstallCommittedQueueStatus(q, candidate); err != nil {
 		return TerminalResult{CommitErr: err}
 	}
 	// Rename per-queue file → <name>.json.cancelled-<ts> so Load() returns nil

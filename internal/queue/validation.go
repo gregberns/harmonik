@@ -750,29 +750,24 @@ func Validate(ctx context.Context, req ValidationRequest, ledger BeadLedger) ([]
 func buildProposedQueue(req ValidationRequest) Queue {
 	if !req.IsAppend {
 		// Submit: the proposed queue is entirely from the request.
-		return NewActiveQueue(Queue{
+		proposed := NewActiveQueue(Queue{
 			SchemaVersion: 1,
 			QueueID:       "00000000-0000-0000-0000-000000000000",
 			Groups:        req.Groups,
 		})
+		return *CloneQueue(&proposed)
 	}
 	// Append: clone the active queue and append to the target group.
 	if req.ActiveQueue == nil {
 		return Queue{}
 	}
-	proposed := *req.ActiveQueue
-	groups := make([]Group, len(proposed.Groups))
-	copy(groups, proposed.Groups)
-	if req.AppendGroupIndex >= 0 && req.AppendGroupIndex < len(groups) {
-		g := groups[req.AppendGroupIndex]
-		existingItems := make([]Item, len(g.Items))
-		copy(existingItems, g.Items)
+	proposed := CloneQueue(req.ActiveQueue)
+	if req.AppendGroupIndex >= 0 && req.AppendGroupIndex < len(proposed.Groups) {
+		g := proposed.Groups[req.AppendGroupIndex]
 		for _, ng := range req.Groups {
-			existingItems = append(existingItems, ng.Items...)
+			g.Items = append(g.Items, cloneQueueGroup(ng).Items...)
 		}
-		g.Items = existingItems
-		groups[req.AppendGroupIndex] = g
+		proposed.Groups[req.AppendGroupIndex] = g
 	}
-	proposed.Groups = groups
-	return proposed
+	return *proposed
 }

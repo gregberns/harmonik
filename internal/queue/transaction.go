@@ -835,14 +835,7 @@ func PrepareCompletion(
 	if len(prior.Groups) == 0 {
 		return CompletionPlan{}, errors.New("completion requires at least one group")
 	}
-	priorBytes, err := json.Marshal(prior)
-	if err != nil {
-		return CompletionPlan{}, fmt.Errorf("marshal completion prior: %w", err)
-	}
-	var candidate Queue
-	if err := strictJSON(priorBytes, &candidate); err != nil {
-		return CompletionPlan{}, fmt.Errorf("clone completion queue: %w", err)
-	}
+	candidate := *CloneQueue(&prior)
 	candidate.Name = NormaliseQueueName(candidate.Name)
 	if err := CompleteQueue(&candidate); err != nil {
 		return CompletionPlan{}, fmt.Errorf("complete queue: %w", err)
@@ -998,10 +991,7 @@ func PrepareFailedRecovery(prior Queue, recoveredAt time.Time) (FailedRecoveryPl
 	if err != nil {
 		return FailedRecoveryPlan{}, fmt.Errorf("marshal failed recovery prior: %w", err)
 	}
-	var candidate Queue
-	if err := strictJSON(priorBytes, &candidate); err != nil {
-		return FailedRecoveryPlan{}, fmt.Errorf("clone failed recovery queue: %w", err)
-	}
+	candidate := *CloneQueue(&prior)
 	recoveredItems := failedRecoveryItems(candidate)
 	if _, ok := ResumeFromFailure(&candidate); !ok {
 		return FailedRecoveryPlan{}, errors.New("resume paused-by-failure queue")

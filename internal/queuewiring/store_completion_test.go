@@ -63,7 +63,7 @@ func TestQueueStoreCompleteOrdersReceiptObservationCleanupAndRelease(t *testing.
 			if before.Queue == nil || before.Queue.Status != queue.QueueStatusCompleted {
 				t.Fatalf("observer could not read completed snapshot: %+v", before.Queue)
 			}
-			replacement := cloneQueue(before.Queue)
+			replacement := queue.CloneQueue(before.Queue)
 			replacement.Workers++
 			store.SetQueueByName(queue.QueueNameMain, replacement)
 			store.ClearQueueByName(queue.QueueNameMain)
@@ -204,7 +204,7 @@ func TestQueueStoreCompleteMarkerFailureKeepsReleasedNameAndRetriesSameReceipt(t
 		t.Fatalf("marker failure reacquired ownership: %+v", snapshot.Queue)
 	}
 
-	newQueue := cloneQueue(q)
+	newQueue := queue.CloneQueue(q)
 	newQueue.QueueID = "0197c452-0000-7000-8000-000000000099"
 	store.SetQueueByName(queue.QueueNameMain, newQueue)
 	if snapshot := store.Snapshot(queue.QueueNameMain); snapshot.Queue == nil || snapshot.Queue.QueueID != newQueue.QueueID {

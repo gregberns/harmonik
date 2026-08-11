@@ -3,6 +3,7 @@ package queue_test
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
@@ -139,5 +140,51 @@ func TestHandleQueueAppendPersistFailureEmitsNoIntent(t *testing.T) {
 	}
 	if len(store.q.Groups[0].Items) != 0 {
 		t.Fatalf("live queue changed after persist failure: %+v", store.q.Groups[0].Items)
+	}
+}
+
+func TestHandleQueueAppendRejectsUnsupportedStoredSchemaBeforeEffects(t *testing.T) {
+	const beadID = core.BeadID("hk-append-invalid-schema")
+	projectDir := rpcFixtureTempProjectDir(t)
+	stored := appendIntentQueue()
+	stored.SchemaVersion = 2
+	store := &appendIntentStore{q: stored}
+	bus := &appendIntentBus{t: t, projectDir: projectDir, beadID: beadID}
+	adapter := queue.NewHandlerAdapter(rpcFixtureOpenLedger(beadID), projectDir, store, bus)
+
+	_, rpcErr := adapter.HandleQueueAppend(t.Context(), appendIntentRequest(t, beadID))
+	if rpcErr == nil {
+		t.Fatal("HandleQueueAppend accepted an unsupported stored schema")
+	}
+	wantDetail := "snapshot queue before append: clone queue: unmarshal: unsupported queue schema_version: got 2, want 1"
+	if got := rpcErr.Detail["error"]; got != wantDetail {
+		t.Fatalf("error detail = %q, want %q", got, wantDetail)
+	}
+	if bus.calls != 0 || store.wakes != 0 || len(store.q.Groups[0].Items) != 0 {
+		t.Fatalf("invalid schema caused effects: emits=%d wakes=%d items=%d", bus.calls, store.wakes, len(store.q.Groups[0].Items))
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, ".harmonik", "queues", "main.json")); !os.IsNotExist(err) {
+		t.Fatalf("invalid schema wrote queue file: %v", err)
+	}
+}
+
+func TestHandleQueueAppendRejectsUnmarshalableStoredQueueBeforeEffects(t *testing.T) {
+	const beadID = core.BeadID("hk-append-invalid-number")
+	projectDir := rpcFixtureTempProjectDir(t)
+	stored := appendIntentQueue()
+	stored.SpendCapUSD = math.NaN()
+	store := &appendIntentStore{q: stored}
+	bus := &appendIntentBus{t: t, projectDir: projectDir, beadID: beadID}
+	adapter := queue.NewHandlerAdapter(rpcFixtureOpenLedger(beadID), projectDir, store, bus)
+
+	_, rpcErr := adapter.HandleQueueAppend(t.Context(), appendIntentRequest(t, beadID))
+	if rpcErr == nil {
+		t.Fatal("HandleQueueAppend accepted an unmarshalable stored queue")
+	}
+	if bus.calls != 0 || store.wakes != 0 || len(store.q.Groups[0].Items) != 0 {
+		t.Fatalf("invalid number caused effects: emits=%d wakes=%d items=%d", bus.calls, store.wakes, len(store.q.Groups[0].Items))
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, ".harmonik", "queues", "main.json")); !os.IsNotExist(err) {
+		t.Fatalf("invalid number wrote queue file: %v", err)
 	}
 }

@@ -162,7 +162,7 @@ func (s *QueueStore) SetQueue(q *queue.Queue) {
 func (s *QueueStore) Queue() *queue.Queue {
 	s.queueMu.RLock()
 	defer s.queueMu.RUnlock()
-	return cloneQueue(s.queues[queue.QueueNameMain])
+	return queue.CloneQueue(s.queues[queue.QueueNameMain])
 }
 
 // ClearQueue removes the QueueNameMain ("main") slot under the write lock.
@@ -200,7 +200,7 @@ func (s *QueueStore) ClearQueue() {
 func (s *QueueStore) QueueByName(name string) *queue.Queue {
 	s.queueMu.RLock()
 	defer s.queueMu.RUnlock()
-	return cloneQueue(s.queues[name])
+	return queue.CloneQueue(s.queues[name])
 }
 
 // SetQueueByName installs q under the write lock at the given name slot,
@@ -249,7 +249,7 @@ func (s *QueueStore) AllQueues() map[string]*queue.Queue {
 	s.queueMu.RLock()
 	out := make(map[string]*queue.Queue, len(s.queues))
 	for k, v := range s.queues {
-		out[k] = cloneQueue(v)
+		out[k] = queue.CloneQueue(v)
 	}
 	s.queueMu.RUnlock()
 	return out
@@ -417,57 +417,6 @@ func (lq *LockedQueueStore) LockedAllQueueNames() []string {
 }
 
 // ---------------------------------------------------------------------------
-// cloneQueue — deep copy for the plain (non-locked) read accessors.
-// ---------------------------------------------------------------------------
-
-// cloneQueue returns a deep copy of q, or nil if q is nil.
-//
-// The write path (runWorkLoop, via LockForMutation/LockedQueueByName) mutates
-// fields on the stored *queue.Queue in place under the write lock rather than
-// always installing a fresh object on every change. Plain read accessors
-// (Queue, QueueByName, AllQueues) return their result without holding the
-// lock for the caller's subsequent field reads, so handing out the live
-// pointer would let a reader observe a torn/mutating object concurrently with
-// the writer — a real, reproducible data race (hk-ri2in.4). Cloning here
-// gives every read-accessor caller an independent snapshot.
-func cloneQueue(q *queue.Queue) *queue.Queue {
-	if q == nil {
-		return nil
-	}
-	out := *q
-	if q.Groups != nil {
-		out.Groups = make([]queue.Group, len(q.Groups))
-		for i, g := range q.Groups {
-			out.Groups[i] = cloneGroup(g)
-		}
-	}
-	return &out
-}
-
-// cloneGroup returns a deep copy of g.
-func cloneGroup(g queue.Group) queue.Group {
-	out := g
-	if g.Items != nil {
-		out.Items = make([]queue.Item, len(g.Items))
-		for i, item := range g.Items {
-			out.Items[i] = cloneItem(item)
-		}
-	}
-	return out
-}
-
-// cloneItem returns a deep copy of item.
-func cloneItem(item queue.Item) queue.Item {
-	out := item
-	if item.TemplateParams != nil {
-		out.TemplateParams = make(map[string]string, len(item.TemplateParams))
-		for k, v := range item.TemplateParams {
-			out.TemplateParams[k] = v
-		}
-	}
-	return out
-}
-
 // Snapshot is kept as an alias for existing QueueStore callers. The queue
 // package owns the transaction port so queue operations do not import this
 // registry package.
@@ -591,7 +540,7 @@ func (s *QueueStore) Snapshot(name string) Snapshot {
 	defer s.queueMu.RUnlock()
 	return Snapshot{
 		Name:       name,
-		Queue:      cloneQueue(s.queues[name]),
+		Queue:      queue.CloneQueue(s.queues[name]),
 		Generation: s.generations[name],
 	}
 }
@@ -609,7 +558,7 @@ func (s *QueueStore) Transact(ctx context.Context, req TransactionRequest) Trans
 		s.queueMu.Unlock()
 		return rejectedTransaction(errors.New("stale queue snapshot generation"))
 	}
-	current := cloneQueue(s.queues[name])
+	current := queue.CloneQueue(s.queues[name])
 	if !sameQueue(current, req.Snapshot.Queue) {
 		s.queueMu.Unlock()
 		return rejectedTransaction(errors.New("snapshot bytes differ at same generation"))
@@ -624,7 +573,7 @@ func (s *QueueStore) Transact(ctx context.Context, req TransactionRequest) Trans
 			return rejectedTransaction(err)
 		}
 	}
-	candidate := cloneQueue(current)
+	candidate := queue.CloneQueue(current)
 	if candidate == nil {
 		candidate = &queue.Queue{Name: name}
 	}
@@ -656,7 +605,7 @@ func (s *QueueStore) Transact(ctx context.Context, req TransactionRequest) Trans
 		}
 		resultSnapshot := Snapshot{
 			Name:       name,
-			Queue:      cloneQueue(current),
+			Queue:      queue.CloneQueue(current),
 			Generation: s.generations[name],
 		}
 		s.queueMu.Unlock()
@@ -710,14 +659,14 @@ func (s *QueueStore) Transact(ctx context.Context, req TransactionRequest) Trans
 			}
 		}
 	}
-	s.queues[name] = cloneQueue(candidate)
+	s.queues[name] = queue.CloneQueue(candidate)
 	s.generations[name]++
 	if req.OperationKind == queue.OperationFailedRecovery {
 		delete(s.quarantined, name)
 	}
 	resultSnapshot := Snapshot{
 		Name:       name,
-		Queue:      cloneQueue(candidate),
+		Queue:      queue.CloneQueue(candidate),
 		Generation: s.generations[name],
 	}
 
@@ -840,7 +789,7 @@ func (s *QueueStore) finishCompletion(
 ) queue.CompletionResult {
 	// The completed canonical and receipt are durable. Retain the completed
 	// queue in memory until canonical and intent absence are also durable.
-	s.queues[name] = cloneQueue(&prepared.Candidate)
+	s.queues[name] = queue.CloneQueue(&prepared.Candidate)
 	s.generations[name]++
 	installedGeneration := s.generations[name]
 	s.quarantined[name] = errCompletionObservationInProgress
@@ -920,7 +869,7 @@ func (s *QueueStore) otherQueuesLocked(exclude string) map[string]*queue.Queue {
 		if otherName == exclude {
 			continue
 		}
-		others[otherName] = cloneQueue(otherQueue)
+		others[otherName] = queue.CloneQueue(otherQueue)
 	}
 	return others
 }

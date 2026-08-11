@@ -10,7 +10,7 @@ Charlie must deliberately break each new claim test before accepting it.
 Updated: 2026-08-11
 
 - Owner: Charlie.
-- Active slice: C19 is in review. C20 is next after the state model closes.
+- Active slice: C20 is in review. C21 is next after the dispatch contract closes.
 - Start revision: `b49210d67` on `work/alpha-integration-merge`.
 - State: C01 through C04 are complete and independently approved.
 - Implementation commit: `de0a6ca3`.
@@ -408,6 +408,14 @@ bindings and result classes. This slice changes no runtime code.
 **Acceptance:** The type cannot represent a claimed bead with no queue or run identity. JSON decoding rejects partial records.
 
 **Limits:** Do not add another best-effort repair record.
+
+**Status:** Review-ready on 2026-08-11.
+
+**Evidence:** `internal/dispatch` defines a value-only intent for prepared,
+claim-durable, run-durable, and handoff-durable phases. Strict JSON decoding
+rejects unknown, partial, early, and conflicting fields. The transaction result
+admits only committed, replayable, refused, or repair-required shapes. C20 adds
+no persistence or daemon wiring.
 
 ### C21. Make startup replay dispatch intents
 

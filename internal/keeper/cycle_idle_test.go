@@ -59,19 +59,20 @@ func newIdleCycler(
 		HandoffFilePath: func(_, agent string) string {
 			return filepath.Join(projectDir, "HANDOFF-"+agent+".md")
 		},
-		ReadHandoff:              readHandoff,
-		TruncateHandoffFn:        func(_ string) error { return nil },
-		InjectFn:                 spy.inject,
-		ReadGaugeFn:              readGaugeFn,
-		CrispIdleFn:              func(_, _ string) bool { return crispIdle },
-		HoldingDispatchFn:        func(_, _ string) bool { return holdingDispatch },
-		WriteJournalFn:           jc.write,
-		SetTmuxEnvFn:             func(_ context.Context, _, _, _ string) error { return nil },
-		ClearPrecompactTriggerFn: func(_, _ string) error { return nil },
-		IdleRestartAbsTokens:     defaultIdleTokenThreshold,
-		IdleRestartCooldown:      idleRestartCooldown,
+		ReadHandoff:          readHandoff,
+		TruncateHandoffFn:    func(_ string) error { return nil },
+		InjectFn:             spy.inject,
+		ReadGaugeFn:          readGaugeFn,
+		CrispIdleFn:          func(_, _ string) bool { return crispIdle },
+		HoldingDispatchFn:    func(_, _ string) bool { return holdingDispatch },
+		WriteJournalFn:       jc.write,
+		SetTmuxEnvFn:         func(_ context.Context, _, _, _ string) error { return nil },
+		IdleRestartAbsTokens: defaultIdleTokenThreshold,
+		IdleRestartCooldown:  idleRestartCooldown,
 	}
-	return mustNewCycler(cfg, em)
+	return mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Context = testContextWithClear{ContextStore: deps.Context, clear: func() error { return nil }}
+	})
 }
 
 // defaultIdleTokenThreshold is the default IdleRestartAbsTokens (150_000).

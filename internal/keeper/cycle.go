@@ -175,13 +175,12 @@ type CyclerConfig struct {
 	// nonce-confirmation instant, strict compare, NO crispIdleTolerance) yields
 	// ModelDone{source:"idle_marker"}. Nil → defaultIdleMarkerModTime (os.Stat
 	// on .harmonik/keeper/<agent>.idle).
-	IdleMarkerModTimeFn      func(projectDir, agentName string) (time.Time, bool)
-	InjectFn                 func(ctx context.Context, target, text string) error
-	ReadGaugeFn              func(projectDir, agentName string) (*CtxFile, time.Time, error)
-	CrispIdleFn              func(projectDir, agentName string) bool
-	HoldingDispatchFn        func(projectDir, agentName string) bool
-	WriteJournalFn           func(path string, j *CycleJournal) error
-	ClearPrecompactTriggerFn func(projectDir, agentName string) error
+	IdleMarkerModTimeFn func(projectDir, agentName string) (time.Time, bool)
+	InjectFn            func(ctx context.Context, target, text string) error
+	ReadGaugeFn         func(projectDir, agentName string) (*CtxFile, time.Time, error)
+	CrispIdleFn         func(projectDir, agentName string) bool
+	HoldingDispatchFn   func(projectDir, agentName string) bool
+	WriteJournalFn      func(path string, j *CycleJournal) error
 
 	// SetManagedSessionFn writes the new session_id into .managed after a cycle
 	// completes post-/clear. This unblocks the watcher's session_id binding so it
@@ -386,9 +385,6 @@ func (c *CyclerConfig) applyDefaults() {
 	}
 	if c.WriteJournalFn == nil {
 		c.WriteJournalFn = writeJournalFile
-	}
-	if c.ClearPrecompactTriggerFn == nil {
-		c.ClearPrecompactTriggerFn = ClearPrecompactTrigger
 	}
 	if c.SetManagedSessionFn == nil {
 		c.SetManagedSessionFn = WriteManagedSessionID

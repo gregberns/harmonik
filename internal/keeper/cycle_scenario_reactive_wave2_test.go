@@ -424,12 +424,13 @@ func TestKeeperCycle_PreCompactBackstop(t *testing.T) {
 			managedBinding = sid
 			return nil
 		},
-		ClearPrecompactTriggerFn: func(_, _ string) error {
+	}
+	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Context = testContextWithClear{ContextStore: deps.Context, clear: func() error {
 			markerCleared = true
 			return nil
-		},
-	}
-	cycler := mustNewCycler(cfg, em)
+		}}
+	})
 
 	// Context BELOW the act threshold (pct 50, well under ActPct=90) AND
 	// CrispIdle=false. MaybeRun would NOT fire on this; RunForPrecompact must.
@@ -480,7 +481,7 @@ func TestKeeperCycle_PreCompactBackstop(t *testing.T) {
 
 	// (d) the .precompact marker was cleared afterward.
 	if !markerCleared {
-		t.Error("ClearPrecompactTriggerFn was never called; the .precompact marker must be cleared after the cycle")
+		t.Error("context store did not clear the .precompact marker after the cycle")
 	}
 }
 

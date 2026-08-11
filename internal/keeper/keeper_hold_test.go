@@ -630,13 +630,13 @@ func TestRunForPrecompact_SuppressedWhenHeld(t *testing.T) {
 			ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 				return &keeper.CtxFile{Pct: 95.0, SessionID: "sess-new"}, time.Now(), nil
 			},
-			CrispIdleFn:              func(_, _ string) bool { return false },
-			HoldingDispatchFn:        func(_, _ string) bool { return false },
-			WriteJournalFn:           jc.write,
-			ClearPrecompactTriggerFn: func(_, _ string) error { return nil },
+			CrispIdleFn:       func(_, _ string) bool { return false },
+			HoldingDispatchFn: func(_, _ string) bool { return false },
+			WriteJournalFn:    jc.write,
 		}
 		cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
 			deps.Hold = testHoldProbe(func() bool { return held })
+			deps.Context = testContextWithClear{ContextStore: deps.Context, clear: func() error { return nil }}
 		})
 		cf := &keeper.CtxFile{Pct: 95.0, SessionID: "sess-abc"}
 		if err := cycler.RunForPrecompact(context.Background(), cf); err != nil {
@@ -718,16 +718,16 @@ func TestRunForIdle_SuppressedWhenHeld(t *testing.T) {
 			ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 				return &keeper.CtxFile{Pct: 10.0, Tokens: 5_000, WindowSize: 400_000, SessionID: "sess-new"}, time.Now(), nil
 			},
-			CrispIdleFn:              func(_, _ string) bool { return true },
-			HoldingDispatchFn:        func(_, _ string) bool { return false },
-			WriteJournalFn:           jc.write,
-			SetTmuxEnvFn:             func(_ context.Context, _, _, _ string) error { return nil },
-			ClearPrecompactTriggerFn: func(_, _ string) error { return nil },
-			IdleRestartAbsTokens:     150_000,
-			IdleRestartCooldown:      0,
+			CrispIdleFn:          func(_, _ string) bool { return true },
+			HoldingDispatchFn:    func(_, _ string) bool { return false },
+			WriteJournalFn:       jc.write,
+			SetTmuxEnvFn:         func(_ context.Context, _, _, _ string) error { return nil },
+			IdleRestartAbsTokens: 150_000,
+			IdleRestartCooldown:  0,
 		}
 		cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
 			deps.Hold = testHoldProbe(func() bool { return held })
+			deps.Context = testContextWithClear{ContextStore: deps.Context, clear: func() error { return nil }}
 		})
 		// Tokens above IdleRestartAbsTokens (150k) but below actThreshold (300k).
 		cf := &keeper.CtxFile{Pct: 80.0, Tokens: 200_000, WindowSize: 400_000, SessionID: "sess-idle"}

@@ -24,7 +24,7 @@ func precompactAction(t *testing.T, ev keeper.EmittedEvent) string {
 }
 
 // newPrecompactCycler builds a Cycler for precompact tests. It wires the same
-// fakes as cycle_test.go but adds a no-op ClearPrecompactTriggerFn so tests
+// fakes as cycle_test.go but adds a no-op context-store clear so tests
 // can control the marker file directly.
 func newPrecompactCycler(
 	t *testing.T,
@@ -69,16 +69,17 @@ func newPrecompactCycler(
 		HandoffFilePath: func(_, agent string) string {
 			return filepath.Join(projectDir, "HANDOFF-"+agent+".md")
 		},
-		ReadHandoff:              readHandoff,
-		TruncateHandoffFn:        func(_ string) error { return nil },
-		InjectFn:                 spy.inject,
-		ReadGaugeFn:              readGaugeFn,
-		CrispIdleFn:              func(_, _ string) bool { return false }, // not used by RunForPrecompact
-		HoldingDispatchFn:        func(_, _ string) bool { return holdingDispatch },
-		WriteJournalFn:           jc.write,
-		ClearPrecompactTriggerFn: func(_, _ string) error { return nil }, // no-op; test controls marker
+		ReadHandoff:       readHandoff,
+		TruncateHandoffFn: func(_ string) error { return nil },
+		InjectFn:          spy.inject,
+		ReadGaugeFn:       readGaugeFn,
+		CrispIdleFn:       func(_, _ string) bool { return false }, // not used by RunForPrecompact
+		HoldingDispatchFn: func(_, _ string) bool { return holdingDispatch },
+		WriteJournalFn:    jc.write,
 	}
-	return mustNewCycler(cfg, em)
+	return mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Context = testContextWithClear{ContextStore: deps.Context, clear: func() error { return nil }}
+	})
 }
 
 // TestRunForPrecompact_NotManaged verifies that an unmanaged agent emits

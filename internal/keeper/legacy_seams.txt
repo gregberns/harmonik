@@ -1,4 +1,3 @@
-ClearPrecompactTriggerFn
 CrispIdleFn
 CycleIDGen
 HandoffFilePath

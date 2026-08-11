@@ -279,18 +279,19 @@ func TestCycler_Precompact_OperatorAttached_Suppresses(t *testing.T) {
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
-		ReadHandoff:              alwaysNonce,
-		TruncateHandoffFn:        func(_ string) error { return nil },
-		InjectFn:                 spy.inject,
-		ReadGaugeFn:              noopGauge,
-		CrispIdleFn:              func(_, _ string) bool { return true },
-		HoldingDispatchFn:        func(_, _ string) bool { return false },
-		WriteJournalFn:           jc.write,
-		SetTmuxEnvFn:             func(_ context.Context, _, _, _ string) error { return nil },
-		ClearPrecompactTriggerFn: func(_, _ string) error { cleared++; return nil },
-		OperatorAttachedFn:       attach.fn,
+		ReadHandoff:        alwaysNonce,
+		TruncateHandoffFn:  func(_ string) error { return nil },
+		InjectFn:           spy.inject,
+		ReadGaugeFn:        noopGauge,
+		CrispIdleFn:        func(_, _ string) bool { return true },
+		HoldingDispatchFn:  func(_, _ string) bool { return false },
+		WriteJournalFn:     jc.write,
+		SetTmuxEnvFn:       func(_ context.Context, _, _, _ string) error { return nil },
+		OperatorAttachedFn: attach.fn,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Context = testContextWithClear{ContextStore: deps.Context, clear: func() error { cleared++; return nil }}
+	})
 
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: sid}
 	if err := cycler.RunForPrecompact(context.Background(), cf); err != nil {

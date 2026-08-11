@@ -67,6 +67,13 @@ type testJournalStore struct {
 func (s testJournalStore) Write(j *keeper.CycleJournal) error  { return s.write(j) }
 func (s testJournalStore) Read() (*keeper.CycleJournal, error) { return s.read() }
 
+type testContextWithClear struct {
+	keeper.ContextStore
+	clear func() error
+}
+
+func (s testContextWithClear) ClearPrecompactTrigger() error { return s.clear() }
+
 func (h testHandoffWithModTime) ModTime() (time.Time, bool) {
 	return h.modTime(h.Path())
 }

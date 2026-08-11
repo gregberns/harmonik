@@ -24,7 +24,7 @@ func (s configContextStore) SetManagedSession(sid string) error {
 	return s.cfg.SetManagedSessionFn(s.cfg.ProjectDir, s.cfg.AgentName, sid)
 }
 func (s configContextStore) ClearPrecompactTrigger() error {
-	return s.cfg.ClearPrecompactTriggerFn(s.cfg.ProjectDir, s.cfg.AgentName)
+	return ClearPrecompactTrigger(s.cfg.ProjectDir, s.cfg.AgentName)
 }
 
 type configActivityProbe struct{ cfg *CyclerConfig }

@@ -10,14 +10,14 @@ Charlie must deliberately break each new claim test before accepting it.
 Updated: 2026-08-11
 
 - Owner: Charlie.
-- Active slice: C18 is complete. C19 is next.
+- Active slice: C19 is in review. C20 is next after the state model closes.
 - Start revision: `b49210d67` on `work/alpha-integration-merge`.
 - State: C01 through C04 are complete and independently approved.
 - Implementation commit: `de0a6ca3`.
 - Integration reconciliation commit: `b0cac51a`.
 - Stop gate: C05 through C07 received independent approval before C08.
 - Coordination note: the queue RPC overlap retained both the active-run status work and the event-intent path.
-- Later tasks: C19 through C31 remain unstarted.
+- Later tasks: C20 through C31 remain unstarted.
 
 ### C18 evidence
 
@@ -390,6 +390,14 @@ The completion transaction must accept the exact detached candidate returned by 
 **Acceptance:** Every process-death point from reservation through bead close has one recovery result.
 
 **Limits:** Do not change code until the model closes.
+
+**Status:** Review-ready on 2026-08-11.
+
+**Evidence:** `specs/live-bead-state.md` defines the authority order, state
+vocabulary, valid steady combinations, invalid combinations, transition
+owners, and one recovery result for each process-death cut from reservation
+through queue terminal application. It also gives C20 and C21 their required
+bindings and result classes. This slice changes no runtime code.
 
 ### C20. Define a dispatch intent and transaction result
 

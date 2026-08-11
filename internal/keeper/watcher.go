@@ -1324,10 +1324,15 @@ func (w *Watcher) Run(ctx context.Context) error {
 			// contradicts the invariant stated above ("so a live agent's gauge
 			// NEVER goes stale"). Refs hk-oduuc.
 			//
-			// modTime itself is deliberately NOT re-read: it also feeds the
-			// idle-quiesce gate below, and refreshing it mid-pass would shift that
-			// observation a poll earlier — a behaviour change in a gated area, for
-			// no benefit here.
+			// modTime itself is deliberately NOT re-read, and the reason is about
+			// MEANING rather than timing. The only other consumer of modTime in
+			// this loop is the idle-quiesce gate below, whose subject is whether
+			// the AGENT has touched the gauge — the statusline repainting is agent
+			// activity. The keeper's own heartbeat write is not, so the pre-write
+			// value is the input that gate actually wants. Re-reading here would
+			// also make the ordinary 60s heartbeat pass and the crossing pass
+			// disagree, when the whole point of this guard is to make them behave
+			// alike.
 			if !refreshed && w.cfg.Clock.Since(modTime) >= w.cfg.Staleness {
 				w.maybeEmitNoGauge(ctx, "stale")
 				warnArmed = true

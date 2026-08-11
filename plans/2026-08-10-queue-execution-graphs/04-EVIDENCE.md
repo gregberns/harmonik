@@ -55,7 +55,11 @@ The run plan now reads an outgoing parent-child edge. It derives `harmonik/integ
 
 The workspace test starts eight branch creation calls at the same time. All calls converge on one branch at the base commit.
 
-The live fan graph fixture now creates an epic and parent-child edges for A through E. It expects all five commits on the derived branch while the configured base stays unchanged. The run reached the real daemon. The daemon paused dispatch because free disk was 9.6 GiB and its watermark is 10 GiB. This run is not a pass or a failure for the branch behavior. It must run again when the disk guard permits dispatch.
+The live fan graph fixture now creates an epic and parent-child edges for A through E. It expects all five commits on the derived branch while the configured base stays unchanged.
+
+The first live run found that queue-path hydration copied labels, title, and description from `ShowBead`, but dropped dependency edges. The focused run-plan test had supplied edges directly and did not expose that adapter-to-plan gap. The queue path now carries the complete Bead record.
+
+The second live run passed in 27.79 seconds on 2026-08-11. All five children landed on the parent-derived branch. The configured integration base and `main` stayed unchanged.
 
 ## Existing conflict and merge-serialization evidence
 
@@ -109,15 +113,27 @@ Result: PASS in 12.53 seconds on 2026-08-11.
 
 The scenario used the full daemon composition root, real Beads, real Git, and the canonical queue store. A handler pause held one open bead at a stable between-run point in an active stream queue. The first clean daemon stop archived `main.json` as `main.json.cancelled-*`. The bead stayed open. A second daemon started against the same project. It loaded no canonical queue, emitted no `run_started`, and left the bead open.
 
-This proves the consequence through the real start and stop boundary. The graph does not continue. An agent or operator must reconstruct and resubmit it.
+This characterized the old behavior through the real start and stop boundary. The graph did not continue. An agent or operator had to reconstruct and resubmit it.
 
-### Restart pause contract conflict
+### Clean restart continuation
+
+Command:
+
+```text
+go test -tags=scenario ./internal/daemon -run '^TestScenario_QueueSubmit_CleanStopResumesPendingGraph$' -count=1 -v
+```
+
+Result: PASS in 39.24 seconds on 2026-08-11.
+
+The first daemon loaded one active pending queue. A handler pause held execution while clean shutdown persisted `paused-by-drain` with a one-shot restart intent. The second daemon loaded the same canonical queue, restored it to active after dispatched-item recovery and before three-way reconciliation, dispatched the bead once, closed it, and landed its commit. No submit or queue resume occurred between daemon runs.
+
+### Resolved restart pause contract
 
 `QM-055` says a persisted drain pause survives restart and remains paused. It names fresh submit after operator action as the v0.1 recovery path. `QM-002b Class D` goes further. Startup marks every pending or deferred item in that paused queue as failed because it treats the queue as abandoned.
 
 The current daemon also has an operator-resume consumer that changes `paused-by-drain` back to `active`. That is useful before restart. After restart, Class D has already made the pending graph items terminal. A resume can change the queue status, but it cannot continue those items.
 
-The desired automatic continuation is therefore not the current normative contract. It needs an explicit decision about startup behavior. Changing shutdown alone would preserve the queue file but would not preserve executable graph work.
+Delta now distinguishes the two intents with the durable optional `resume_on_start` field. Clean shutdown sets it and startup consumes it before reconciliation. Explicit operator pause leaves it false and stays paused. Startup no longer destroys pending items in an operator-paused queue.
 
 ## Abrupt-crash recovery components
 

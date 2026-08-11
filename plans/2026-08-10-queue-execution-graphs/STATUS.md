@@ -30,13 +30,15 @@ Research and runtime proof. Serial and fan-out or fan-in graphs passed through t
 - Wired parent-child edges into the run plan. A child now uses one parent-derived integration branch when no higher branch field sets another value.
 - Added an atomic branch creation helper. Concurrent children now converge on one integration branch.
 - Added focused tests for branch creation and field-by-field branch precedence.
+- Proved the epic fan graph lands all five children on one parent-derived integration branch.
+- Replaced clean-shutdown cancellation with a durable one-shot restart drain.
+- Proved a second real daemon continues the pending queue without resubmit or supervisor action.
 
 ## Next
 
 - Run an abrupt-crash graph recovery scenario. Keep it separate from the confirmed clean-stop cancellation gap.
-- Decide the restart rule for a drain pause. Then implement shutdown and startup as one coherent change.
+- Run the abrupt-crash graph recovery scenario after alpha's durable dispatch replay contract lands.
 - Coordinate the abrupt-crash scenario with C21. Do not pin the old session-only recovery path as the final dispatch contract.
-- Re-run the live fan graph with parent edges when free disk is above the daemon watermark.
 - Run the focused package and scenario gates.
 
 ## Constraints
@@ -46,4 +48,4 @@ Research and runtime proof. Serial and fan-out or fan-in graphs passed through t
 - The default macOS Bash 3 cannot run one script test because it lacks `mapfile`. Bash 5 is installed at `/opt/homebrew/bin/bash`. `PATH=/opt/homebrew/bin:$PATH make fast` is green: 8,342 tests passed and 45 existing tests were skipped.
 - `PATH=/opt/homebrew/bin:$PATH make full` ran 75,687 tests across 108 packages. All tests passed and 54 tests were skipped. The final repository-wide lint allow-list step failed on ten file and linter pairs outside delta's diff. The files belong to other active lanes and were present in delta's base. Delta did not change them or weaken the allow list.
 - Delta has three saved commits for the graph tests, clean-stop proof, and parent branch wiring.
-- The live parent branch scenario reached the daemon. The daemon then paused dispatch because free disk was 9.6 GiB. Its watermark is 10 GiB. This is an environment limit, not a queue result.
+- Free disk recovered above the watermark. The parent branch and clean restart scenarios now pass.

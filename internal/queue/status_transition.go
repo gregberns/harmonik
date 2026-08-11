@@ -203,6 +203,22 @@ func PauseQueueForDrain(q *Queue) error {
 		return fmt.Errorf("queue: pause queue for drain: status %q is not active", q.Status)
 	}
 	setQueueStatus(q, QueueStatusPausedByDrain)
+	q.ResumeOnStart = false
+	return nil
+}
+
+// PauseQueueForRestart parks an active queue during a clean daemon shutdown.
+// The durable resume bit lets startup distinguish this mechanical pause from
+// an explicit operator pause.
+func PauseQueueForRestart(q *Queue) error {
+	if q == nil {
+		return fmt.Errorf("queue: pause queue for restart: nil queue")
+	}
+	if q.Status != QueueStatusActive {
+		return fmt.Errorf("queue: pause queue for restart: status %q is not active", q.Status)
+	}
+	setQueueStatus(q, QueueStatusPausedByDrain)
+	q.ResumeOnStart = true
 	return nil
 }
 
@@ -215,6 +231,7 @@ func ResumeQueueFromDrain(q *Queue) error {
 		return fmt.Errorf("queue: resume queue from drain: status %q is not paused-by-drain", q.Status)
 	}
 	setQueueStatus(q, QueueStatusActive)
+	q.ResumeOnStart = false
 	return nil
 }
 

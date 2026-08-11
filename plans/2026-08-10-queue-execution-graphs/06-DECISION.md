@@ -52,7 +52,7 @@ A daemon restart should also be a core recovery action when the stored facts giv
 
 The per-epic integration branch is now wired in delta. The daemon reads the child record's parent edge. It derives and creates one integration branch for the parent when no higher branch setting overrides that field. The focused proof passes. The live graph proof still needs a run above the disk watermark.
 
-Clean stop and start is also not an automatic continuation. Production archives the active queue as cancelled. The specs require a durable `paused-by-drain` state, but they do not yet require automatic continuation. `QM-055` leaves the queue paused. `QM-002b Class D` marks its pending items failed on startup. Supervisor-free restart is the desired direction in this investigation. It needs a queue contract change before code can implement it safely.
+Clean stop and start now continues without supervisor action in delta. A clean shutdown writes `paused-by-drain` with a one-shot restart intent. Startup consumes that intent before reconciliation and returns the queue to active. An explicit operator pause does not set the intent. It remains paused and keeps its pending work for a later operator resume.
 
 Use this test for each action:
 

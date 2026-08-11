@@ -949,19 +949,22 @@ func TestScenario_QueueSubmit_FailedBlockerPauses(t *testing.T) {
 	})
 }
 
-// TestScenario_QueueSubmit_CleanStopArchivesPendingGraph records the current
-// clean-stop behavior with the full daemon composition root. A handler pause
-// holds an active queue item so shutdown occurs at a stable between-run point.
-// The daemon then archives the queue as cancelled. A second daemon start has no
-// canonical queue to resume, so the open bead does not continue.
-func TestScenario_QueueSubmit_CleanStopArchivesPendingGraph(t *testing.T) {
+// TestScenario_QueueSubmit_CleanStopResumesPendingGraph proves a clean daemon
+// restart preserves and continues a pending queue without resubmission.
+func TestScenario_QueueSubmit_CleanStopResumesPendingGraph(t *testing.T) {
 	skipRealDaemonE2EInShort(t)
+	twinPath, ok := scenariotest.TwinBinaryPath()
+	if !ok {
+		t.Skip("harmonik-twin-claude binary not found; set HARMONIK_TWIN_CLAUDE or build the binary")
+	}
 	realBrPath := queueSubmitDispatchBrPath(t)
 	projectDir, jsonlPath := queueSubmitDispatchProjectDir(t)
 	queueSubmitDispatchGitRepo(t, projectDir)
 	dbPath := filepath.Join(projectDir, ".beads", "beads.db")
 	brWrapper := queueSubmitDispatchBrWrapper(t, realBrPath, dbPath)
 	beadID := queueSubmitDispatchInitBr(t, realBrPath, projectDir, brWrapper)
+	twinWrapper := queueSubmitDispatchTwinWrapper(t, twinPath)
+	scenariotest.WriteReviewLoopWorkflowDot(t, projectDir)
 
 	now := time.Now().UTC()
 	queueUUID, err := uuid.NewV7()
@@ -996,7 +999,7 @@ func TestScenario_QueueSubmit_CleanStopArchivesPendingGraph(t *testing.T) {
 		TrippedAt:    now.Format(time.RFC3339Nano),
 	}, nil), "pause handler before daemon start")
 
-	startAndStop := func() {
+	startAndStop := func(waitForRun bool) {
 		t.Helper()
 		loopCtx, loopCancel := context.WithCancel(context.Background())
 		qs := daemon.ExportedNewQueueStore()
@@ -1006,6 +1009,9 @@ func TestScenario_QueueSubmit_CleanStopArchivesPendingGraph(t *testing.T) {
 				ProjectDir:             projectDir,
 				JSONLLogPath:           jsonlPath,
 				BrPath:                 brWrapper,
+				HandlerBinary:          twinWrapper,
+				HandlerEnv:             os.Environ(),
+				AgentReadyTimeout:      15 * time.Second,
 				NoAutoPull:             true,
 				QueueStore:             qs,
 				HandlerPauseController: pauseCtrl,
@@ -1017,29 +1023,44 @@ func TestScenario_QueueSubmit_CleanStopArchivesPendingGraph(t *testing.T) {
 				ProtectBranches:        []string{"main"},
 			})
 		}()
-		queueSubmitDispatchWaitSocket(t, projectDir)
-		time.Sleep(200 * time.Millisecond)
-		loopCancel()
+		if waitForRun {
+			queueSubmitDispatchWaitSocket(t, projectDir)
+			scenariotest.MustCompleteWithin(t, jsonlPath, "", nil, 45*time.Second, func() {
+				for queueSubmitDispatchCountRunTerminal(t, jsonlPath) < 1 {
+					time.Sleep(50 * time.Millisecond)
+				}
+			})
+		} else {
+			// Socket readiness proves startup loaded the queue. The handler pause
+			// holds launch while cancellation drives the work-loop drain.
+			queueSubmitDispatchWaitSocket(t, projectDir)
+			loopCancel()
+		}
+		if waitForRun {
+			loopCancel()
+		}
 		scenariotest.MustCompleteWithin(t, jsonlPath, "", nil, 10*time.Second, func() {
 			require.NoError(t, <-startDone, "daemon clean stop")
 		})
 	}
 
-	startAndStop()
+	startAndStop(false)
 	require.Equal(t, 0, queueSubmitDispatchCountRunStarted(t, jsonlPath),
 		"paused handler must keep the fixture at a between-run stop point")
 	scenariotest.AssertBeadStatus(t, brWrapper, string(beadID), "open")
 	loaded, loadErr := queue.Load(t.Context(), projectDir, queue.QueueNameMain)
 	require.NoError(t, loadErr, "load queue after clean stop")
-	require.Nil(t, loaded, "clean stop currently archives the canonical queue")
-	archives, globErr := filepath.Glob(filepath.Join(projectDir, ".harmonik", "queues", "main.json.cancelled-*"))
-	require.NoError(t, globErr, "glob cancelled queue archive")
-	require.Len(t, archives, 1, "clean stop must leave one cancelled archive")
+	require.NotNil(t, loaded, "clean stop must preserve the canonical queue")
+	require.Equal(t, queue.QueueStatusPausedByDrain, loaded.Status)
+	require.True(t, loaded.ResumeOnStart, "clean stop must mark the one-shot restart intent")
 
-	startAndStop()
-	require.Equal(t, 0, queueSubmitDispatchCountRunStarted(t, jsonlPath),
-		"restart cannot continue work after the canonical queue was archived")
-	scenariotest.AssertBeadStatus(t, brWrapper, string(beadID), "open")
+	require.NoError(t, pauseCtrl.Resume(t.Context(), core.AgentTypeClaudeCode, core.HandlerResumedByOperator),
+		"release fixture handler pause before restart")
+	startAndStop(true)
+	require.Equal(t, 1, queueSubmitDispatchCountRunStarted(t, jsonlPath),
+		"restart must continue the preserved queue exactly once")
+	scenariotest.AssertBeadStatus(t, brWrapper, string(beadID), "closed")
+	queueSubmitDispatchAssertLanded(t, projectDir, "integration", []core.BeadID{beadID})
 }
 
 type queueSubmitDispatchGraphObservation struct {

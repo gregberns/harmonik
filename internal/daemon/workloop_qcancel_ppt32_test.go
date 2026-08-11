@@ -1,22 +1,13 @@
 package daemon_test
 
-// workloop_qcancel_ppt32_test.go — queue-cancel drain on SIGINT/timeout (hk-ppt32).
+// workloop_qcancel_ppt32_test.go — durable queue restart drain.
 //
-// Symptom: when harmonik run is cancelled (ctx cancelled) while the queue is still
-// active (no goroutines dispatched, or items still pending), the daemon exits leaving
-// queue.json with status=active. The next harmonik run sees the active queue and
-// refuses to start per QM-027. Operators had to manually remove .harmonik/queue.json.
-//
-// Fix: runWorkLoop calls drainCancelledQueue on every clean exit. When the queue is
-// still active at ctx-cancel time, drainCancelledQueue transitions it to
-// QueueStatusCancelled, persists it, then archives it as queue.json.cancelled-<ts>.
-// The next harmonik run's Load() returns nil → QM-027 guard is not tripped.
+// A clean work-loop exit parks each active queue at paused-by-drain. It keeps
+// the canonical file and sets the one-shot restart intent. Startup consumes
+// that intent and continues the queue.
 //
 // This test mocks SIGINT by cancelling the workloop context immediately after
-// a queue is loaded but before any items are dispatched. It asserts:
-//   (a) drainCancelledQueue archived queue.json (file absent on disk after loop exits).
-//   (b) qs.Queue() is nil after exitClean (in-memory queue cleared).
-//   (c) A second queue load after exit succeeds with no blocking active queue.
+// a queue is loaded but before any items are dispatched.
 //
 // Helper prefix: queueCancelFixture (per implementer-protocol.md §Helper-prefix
 // discipline; bead hk-ppt32).
@@ -26,9 +17,7 @@ package daemon_test
 
 import (
 	"context"
-	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -97,18 +86,15 @@ func queueCancelFixtureHasActiveQueue(t *testing.T, projectDir string) bool {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TestQueueCancel_TransitionsToCancelled
+// TestQueueShutdown_PersistsRestartDrain
 // ─────────────────────────────────────────────────────────────────────────────
 
-// TestQueueCancel_TransitionsToCancelled verifies that when the workloop context
-// is cancelled while the queue is still active (SIGINT / operator timeout), the
-// daemon drains the queue: queue.json is archived (absent from canonical path),
-// the in-memory QueueStore is cleared, and a subsequent queue.Load returns nil so
-// the next harmonik run can start cleanly without the QM-027 guard blocking it.
+// TestQueueShutdown_PersistsRestartDrain verifies that a cancelled work-loop
+// context preserves the queue and its automatic restart intent.
 //
 // Spec ref: specs/queue-model.md §8.
 // Bead ref: hk-ppt32.
-func TestQueueCancel_TransitionsToCancelled(t *testing.T) {
+func TestQueueShutdown_PersistsRestartDrain(t *testing.T) {
 	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
@@ -164,50 +150,22 @@ func TestQueueCancel_TransitionsToCancelled(t *testing.T) {
 
 	awaitLoopTeardown(t, loopDone, "work loop")
 
-	// (a) The canonical main-queue file (.harmonik/queues/main.json) must be
-	// absent — CancelQueueOnShutdown renamed it to main.json.cancelled-<ts>.
-	canonicalPath := queueCancelFixtureQueuePath(projectDir)
-	if _, statErr := os.Stat(canonicalPath); statErr == nil {
-		t.Errorf("%s still exists at canonical path after cancel; expected it to be archived", canonicalPath)
-	} else if !os.IsNotExist(statErr) {
-		t.Errorf("unexpected error checking %s: %v", canonicalPath, statErr)
-	}
-
-	// Verify at least one main.json.cancelled-* archive file was created under
-	// .harmonik/queues/ (the post-NQ-A2 canonical per-queue dir; queue-model.md §2.9).
-	queuesDir := filepath.Join(projectDir, ".harmonik", "queues")
-	entries, readDirErr := os.ReadDir(queuesDir)
-	if readDirErr != nil {
-		t.Fatalf("ReadDir %s: %v", queuesDir, readDirErr)
-	}
-	const archivePrefix = queue.QueueNameMain + ".json.cancelled-"
-	foundArchive := false
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), archivePrefix) {
-			foundArchive = true
-			break
-		}
-	}
-	if !foundArchive {
-		t.Errorf("no %s* archive file found in %s after cancel", archivePrefix, queuesDir)
-	}
-
-	// (b) In-memory QueueStore must be cleared.
-	if got := qs.Queue(); got != nil {
-		t.Errorf("QueueStore.Queue() = %+v; want nil after cancel", got)
-	}
-
-	// (c) A subsequent queue.Load returns nil so QM-027 is not tripped.
+	// The durable and in-memory records stay paused and carry the one-shot
+	// restart intent.
 	reloaded, loadErr := queue.Load(context.Background(), projectDir, queue.QueueNameMain)
 	if loadErr != nil {
-		t.Errorf("queue.Load after cancel: %v", loadErr)
+		t.Fatalf("queue.Load after shutdown: %v", loadErr)
 	}
-	if reloaded != nil {
-		t.Errorf("queue.Load after cancel: got non-nil queue (status=%s); want nil", reloaded.Status)
+	if reloaded == nil || reloaded.Status != queue.QueueStatusPausedByDrain || !reloaded.ResumeOnStart {
+		t.Fatalf("durable queue after shutdown = %+v; want paused-by-drain with resume_on_start", reloaded)
+	}
+	got := qs.Queue()
+	if got == nil || got.Status != queue.QueueStatusPausedByDrain || !got.ResumeOnStart {
+		t.Fatalf("stored queue after shutdown = %+v; want paused-by-drain with resume_on_start", got)
 	}
 }
 
-// TestQueueCancel_AlreadyTerminal_NoOp verifies that drainCancelledQueue is a
+// TestQueueCancel_AlreadyTerminal_NoOp verifies that shutdown drain is a
 // no-op when the queue has already reached a terminal state (paused-by-failure)
 // before ctx was cancelled — e.g. when evaluateGroupAdvanceWithOutcome fired
 // in-flight. The canonical queue.json (paused-by-failure) must be untouched.
@@ -271,7 +229,7 @@ func TestQueueCancel_AlreadyTerminal_NoOp(t *testing.T) {
 
 	awaitLoopTeardown(t, loopDone, "work loop")
 
-	// queue.json must still exist with paused-by-failure (not archived by drainCancelledQueue).
+	// queue.json must still exist with paused-by-failure.
 	reloaded, loadErr := queue.Load(context.Background(), projectDir, queue.QueueNameMain)
 	if loadErr != nil {
 		t.Fatalf("queue.Load: %v", loadErr)
@@ -284,20 +242,14 @@ func TestQueueCancel_AlreadyTerminal_NoOp(t *testing.T) {
 	}
 }
 
-// TestQueueCancel_NamedQueue_ArchivedOnShutdown verifies the hk-u6m4l fix:
-// drainCancelledQueue must drain ALL active queues, not just "main". Prior to
-// the fix, named queues (e.g. "cp") survived daemon shutdown with status=active
-// on disk, blocking future submits with queue_already_active (-32010).
+// TestQueueShutdown_NamedQueuePersistsRestartDrain verifies that shutdown
+// applies the same restart contract to every named queue.
 //
 // The test simulates a daemon shutdown with a named queue "cp" still active
 // (no items dispatched). After the workloop exits it asserts:
 //
-//	(a) .harmonik/queues/cp.json is absent (archived by drainCancelledQueue).
-//	(b) QueueStore.QueueByName("cp") is nil after exit.
-//	(c) queue.Load for "cp" returns nil so QM-027 is not tripped on resubmit.
-//
 // Bead ref: hk-u6m4l.
-func TestQueueCancel_NamedQueue_ArchivedOnShutdown(t *testing.T) {
+func TestQueueShutdown_NamedQueuePersistsRestartDrain(t *testing.T) {
 	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 
@@ -370,18 +322,15 @@ func TestQueueCancel_NamedQueue_ArchivedOnShutdown(t *testing.T) {
 
 	awaitLoopTeardown(t, loopDone, "work loop")
 
-	// (a) .harmonik/queues/cp.json must be absent (archived by drainCancelledQueue).
 	reloaded, loadErr := queue.Load(context.Background(), projectDir, queueName)
 	if loadErr != nil {
-		t.Errorf("queue.Load(%q) after cancel: %v", queueName, loadErr)
+		t.Fatalf("queue.Load(%q) after shutdown: %v", queueName, loadErr)
 	}
-	if reloaded != nil {
-		t.Errorf("queue.Load(%q) after cancel: got non-nil queue (status=%s); want nil — drainCancelledQueue did not archive named queue",
-			queueName, reloaded.Status)
+	if reloaded == nil || reloaded.Status != queue.QueueStatusPausedByDrain || !reloaded.ResumeOnStart {
+		t.Fatalf("durable named queue after shutdown = %+v; want paused-by-drain with resume_on_start", reloaded)
 	}
-
-	// (b) In-memory QueueStore slot for "cp" must be cleared.
-	if got := qs.QueueByName(queueName); got != nil {
-		t.Errorf("QueueStore.QueueByName(%q) = %+v; want nil after cancel", queueName, got)
+	got := qs.QueueByName(queueName)
+	if got == nil || got.Status != queue.QueueStatusPausedByDrain || !got.ResumeOnStart {
+		t.Fatalf("stored named queue after shutdown = %+v; want paused-by-drain with resume_on_start", got)
 	}
 }

@@ -106,3 +106,41 @@ func toEnvMap(env []string) map[string]string {
 	}
 	return m
 }
+
+// TestBuildDaemonCmdNamesTheStartVerb pins the revival argv to the one spelling
+// that starts a daemon.
+//
+// This is the quietest way the fleet could break. The supervisor is what brings
+// the daemon back after a crash, and it revives by exec'ing this argv. Until
+// hk-cli-flag-first-starts-daemon-gjhiy the argv was flag-first — `harmonik
+// --project DIR --no-auto-pull` — which started a daemon only because ANY argv
+// that matched no verb fell through and started one. That fall-through is gone,
+// so a revival argv without `start daemon` now prints help and exits 2: the
+// supervisor would report a successful spawn and no daemon would exist.
+func TestBuildDaemonCmdNamesTheStartVerb(t *testing.T) {
+	cmd := buildDaemonCmd("/tmp/project", 4)
+	if cmd == nil {
+		t.Fatal("buildDaemonCmd returned nil; cannot resolve the executable")
+	}
+
+	// The verb must lead, before any flag: the dispatch reads os.Args[1:3].
+	if len(cmd) < 3 || cmd[1] != "start" || cmd[2] != "daemon" {
+		t.Fatalf("revival argv = %q; want the `start daemon` verb immediately after the executable", cmd)
+	}
+
+	var sawProject, sawConcurrent bool
+	for i, arg := range cmd {
+		if arg == "--project" && i+1 < len(cmd) && cmd[i+1] == "/tmp/project" {
+			sawProject = true
+		}
+		if arg == "--max-concurrent" && i+1 < len(cmd) && cmd[i+1] == "4" {
+			sawConcurrent = true
+		}
+	}
+	if !sawProject {
+		t.Errorf("revival argv %q lost --project; the daemon would revive against the wrong directory", cmd)
+	}
+	if !sawConcurrent {
+		t.Errorf("revival argv %q lost --max-concurrent 4", cmd)
+	}
+}

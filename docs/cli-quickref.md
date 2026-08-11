@@ -7,7 +7,7 @@ Paths use `/Users/gb/github/harmonik`; substitute your project dir as needed.
 
 | Task | Command |
 |---|---|
-| Start daemon | `tmux new-session -d -s harmonik-daemon 'harmonik --project /Users/gb/github/harmonik --no-auto-pull --max-concurrent 4'` |
+| Start daemon | `tmux new-session -d -s harmonik-daemon 'harmonik start daemon --project /Users/gb/github/harmonik --no-auto-pull --max-concurrent 4'` |
 | Check daemon | `harmonik queue status` |
 | Validate batch | `harmonik queue dry-run /tmp/batch.json` |
 | Submit to named queue | `harmonik queue submit --queue main /tmp/batch.json` |

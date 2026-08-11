@@ -75,7 +75,7 @@ rm -f "$PROJ/.harmonik/daemon.sock"
 # subscription, not the API credit pool (see codename:credfence).
 tmux new-session -d -s "$SESS" \
   "env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
-    harmonik --project $PROJ --no-auto-pull --max-concurrent $CONCURRENCY $BRANCH_FLAGS \
+    harmonik start daemon --project $PROJ --no-auto-pull --max-concurrent $CONCURRENCY $BRANCH_FLAGS \
     2>&1 | tee -a $LOG"
 
 echo "hk-supervise: daemon launched in session '$SESS'"

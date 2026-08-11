@@ -182,6 +182,74 @@ func TestWriteReplacementCompletionReceiptDurable(t *testing.T) {
 	}
 }
 
+func TestCompletionReceiptNoReplaceAmbiguityReloadsExactInstalledFacts(t *testing.T) {
+	plan, prepared := completionReplacementFixture(t)
+	ops := osNamespaceOps()
+	link := ops.link
+	linkCalls := 0
+	ops.link = func(oldPath, newPath string) error {
+		if !strings.Contains(newPath, ".completion-receipts") {
+			return link(oldPath, newPath)
+		}
+		linkCalls++
+		if err := link(oldPath, newPath); err != nil {
+			return err
+		}
+		return errors.New("receipt link reported ambiguity after install")
+	}
+	result := writeReplacement(t.Context(), plan, ops)
+	if !result.Committed() || result.Phase != CompletionPhaseReceiptDurable {
+		t.Fatalf("result = %+v", result)
+	}
+	if linkCalls != 1 {
+		t.Fatalf("receipt link calls = %d, want 1", linkCalls)
+	}
+	receiptPath := filepath.Join(completionReceiptsDir(plan.ProjectDir), prepared.Binding.Basename)
+	got, err := os.ReadFile(receiptPath) //nolint:gosec // path is under t.TempDir and uses a validated basename.
+	if err != nil || !bytes.Equal(got, prepared.ReceiptBytes) {
+		t.Fatalf("receipt = %q, err=%v", got, err)
+	}
+}
+
+func TestCompletionReceiptNoReplaceAmbiguityPreservesConflictingInstalledFacts(t *testing.T) {
+	plan, _ := completionReplacementFixture(t)
+	ops := osNamespaceOps()
+	link := ops.link
+	conflict := []byte("conflicting installed receipt")
+	ops.link = func(oldPath, newPath string) error {
+		if !strings.Contains(newPath, ".completion-receipts") {
+			return link(oldPath, newPath)
+		}
+		if err := link(oldPath, newPath); err != nil {
+			return err
+		}
+		if err := os.WriteFile(newPath, conflict, 0o600); err != nil {
+			return err
+		}
+		return errors.New("receipt link reported ambiguity with conflicting target")
+	}
+	result := writeReplacement(t.Context(), plan, ops)
+	if result.Phase != CompletionPhaseCanonicalCommitted || result.Err == nil {
+		t.Fatalf("result = %+v", result)
+	}
+	entries, err := os.ReadDir(completionReceiptsDir(plan.ProjectDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var installed []byte
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".json") {
+			installed, err = os.ReadFile(filepath.Join(completionReceiptsDir(plan.ProjectDir), entry.Name()))
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if !bytes.Equal(installed, conflict) {
+		t.Fatalf("conflicting receipt changed: %q", installed)
+	}
+}
+
 func TestWriteCompletionReceiptRejectsSymlinkRoot(t *testing.T) {
 	plan, _ := completionReplacementFixture(t)
 	target := t.TempDir()

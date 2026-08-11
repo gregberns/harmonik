@@ -302,6 +302,27 @@ func TestQueueGroupCompletedPayloadRoundTrip(t *testing.T) {
 	}
 }
 
+func TestQueueGroupCompletedPayloadCompletionReceiptID(t *testing.T) {
+	base := QueueGroupCompletedPayload{QueueID: "queue", GroupIndex: 0, FinalStatus: "complete-success", SuccessCount: 1, CompletedAt: "2026-08-10T12:00:00.000Z"}
+	base.CompletionReceiptID = "0197c452-0000-7000-8000-000000000002"
+	if !base.Valid() {
+		t.Fatal("canonical final receipt ID was rejected")
+	}
+	for _, invalid := range []string{"bad", "0197C452-0000-7000-8000-000000000002", "{0197c452-0000-7000-8000-000000000002}"} {
+		candidate := base
+		candidate.CompletionReceiptID = invalid
+		if candidate.Valid() {
+			t.Fatalf("non-canonical receipt ID %q was accepted", invalid)
+		}
+	}
+	failed := base
+	failed.FinalStatus = "complete-with-failures"
+	failed.FailCount = 1
+	if failed.Valid() {
+		t.Fatal("failure payload accepted a completion receipt ID")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // QueuePausedPayload
 // ---------------------------------------------------------------------------

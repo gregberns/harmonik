@@ -8,7 +8,7 @@ The canonical dispatch path is **one persistent daemon per project plus a
 shared queue**. Start the daemon once (queue-only) in a detached tmux session:
 
 ```
-harmonik --project /path/to/project --no-auto-pull --max-concurrent N
+harmonik start daemon --project /path/to/project --no-auto-pull --max-concurrent N
 ```
 
 then dispatch work by submitting beads to its queue with `harmonik queue submit
@@ -99,7 +99,8 @@ Git merge-driver for `.beads/issues.jsonl` (union-by-bead-ID, registered via `.g
 
 ### `harmonik tmux-start`
 
-Bootstrap a tmux session and start the daemon inside it.
+Create a detached tmux session and attach to it. This verb starts no daemon. To
+start one, run `harmonik start daemon` inside the session.
 
 ### `harmonik hook-relay`
 

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -15,15 +16,18 @@ import (
 )
 
 type intentDurabilityEmitter struct {
-	mu    sync.Mutex
-	calls int
+	mu       sync.Mutex
+	types    []core.EventType
+	payloads [][]byte
+	err      error
 }
 
-func (e *intentDurabilityEmitter) Emit(context.Context, core.EventType, []byte) error {
+func (e *intentDurabilityEmitter) Emit(_ context.Context, eventType core.EventType, payload []byte) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.calls++
-	return nil
+	e.types = append(e.types, eventType)
+	e.payloads = append(e.payloads, append([]byte(nil), payload...))
+	return e.err
 }
 
 func (e *intentDurabilityEmitter) EmitWithRunID(ctx context.Context, _ core.RunID, _ core.EventType, _ []byte) error {
@@ -33,10 +37,22 @@ func (e *intentDurabilityEmitter) EmitWithRunID(ctx context.Context, _ core.RunI
 func (e *intentDurabilityEmitter) count() int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.calls
+	return len(e.types)
+}
+
+func (e *intentDurabilityEmitter) event(index int) (eventType core.EventType, payload []byte) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.types[index], append([]byte(nil), e.payloads[index]...)
 }
 
 type intentDurabilityLedger struct{}
+
+type intentCompletionStore func(context.Context, queue.CompletionRequest) queue.CompletionResult
+
+func (f intentCompletionStore) Complete(ctx context.Context, req queue.CompletionRequest) queue.CompletionResult {
+	return f(ctx, req)
+}
 
 func (intentDurabilityLedger) LookupStatus(context.Context, core.BeadID) (queue.BeadStatus, error) {
 	return queue.BeadStatusOpen, nil
@@ -84,6 +100,10 @@ func TestGroupCompletionCommitFailureEmitsNoIntent(t *testing.T) {
 	if got := emitter.count(); got != 0 {
 		t.Fatalf("emit calls = %d, want 0 after completion commit failure", got)
 	}
+	retained := store.Queue()
+	if retained == nil || retained.Status != queue.QueueStatusActive || retained.Groups[0].Items[0].Status != queue.ItemStatusPending {
+		t.Fatalf("failed commit installed decision candidate in memory: %+v", retained)
+	}
 }
 
 func TestGroupCompletionCleanupFailureEmitsCommittedIntent(t *testing.T) {
@@ -102,21 +122,147 @@ func TestGroupCompletionCleanupFailureEmitsCommittedIntent(t *testing.T) {
 		}},
 	}
 	store.SetQueue(q)
+	var completionRequest queue.CompletionRequest
 	port := reapSeamPort{
 		bus:           emitter,
 		projectDir:    t.TempDir(),
 		queueStore:    store,
 		runRegistry:   newLocalRunRegistry(),
 		maxConcurrent: 1,
-		completeQueue: func(context.Context, string, *queue.Queue) queue.TerminalResult {
-			return queue.TerminalResult{Committed: true, CleanupErr: errors.New("cleanup failed")}
-		},
+		completionStore: intentCompletionStore(func(_ context.Context, req queue.CompletionRequest) queue.CompletionResult {
+			completionRequest = req
+			observationErr := req.Observe(queue.CompletionReceipt{})
+			return queue.CompletionResult{
+				NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeCommittedDurable},
+				Phase:           queue.CompletionPhaseObservationAttempted,
+				ObservationErr:  observationErr,
+				CleanupErr:      errors.New("cleanup failed"),
+			}
+		}),
 	}
 
 	evaluateGroupAdvanceWithOutcome(t.Context(), port, queue.QueueNameMain, q.QueueID, 0, 0, true, time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC))
 
 	if got := emitter.count(); got != 1 {
 		t.Fatalf("emit calls = %d, want 1 after durable completion with cleanup failure", got)
+	}
+	if completionRequest.ReceiptID == "" || completionRequest.ReceiptID != completionRequest.DecisionInput.CompletionReceiptID {
+		t.Fatalf("completion receipt handshake = request %q decision %q", completionRequest.ReceiptID, completionRequest.DecisionInput.CompletionReceiptID)
+	}
+	eventType, payloadBytes := emitter.event(0)
+	if eventType != core.EventTypeQueueGroupCompleted {
+		t.Fatalf("event type = %q", eventType)
+	}
+	var payload core.QueueGroupCompletedPayload
+	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.CompletionReceiptID != completionRequest.ReceiptID {
+		t.Fatalf("event receipt = %q, request receipt = %q", payload.CompletionReceiptID, completionRequest.ReceiptID)
+	}
+}
+
+func TestFinalGroupCompletionMintFailureKeepsOriginalDiagnostic(t *testing.T) {
+	want := errors.New("mint failed")
+	execution := failedGroupCompletionExecution(queue.GroupCompletionDispositionQueueCompleted, want)
+	effects, err := decideGroupCompletionEffects(execution.durability)
+	if err != nil {
+		t.Fatalf("policy replaced mint diagnostic: %v", err)
+	}
+	if !errors.Is(execution.err, want) || !effects.LogFailure || !effects.Refill {
+		t.Fatalf("execution=%+v effects=%+v", execution, effects)
+	}
+}
+
+func TestFinalCompletionExecutorMapsEveryStoreFaultPhase(t *testing.T) {
+	stamp := time.Date(2026, 8, 11, 12, 0, 0, 123000000, time.UTC)
+	q := queue.Queue{
+		SchemaVersion: 1,
+		QueueID:       "0197d001-0000-7000-8000-000000000001",
+		Name:          queue.QueueNameMain,
+		Status:        queue.QueueStatusActive,
+		Groups: []queue.Group{{
+			GroupIndex: 0,
+			Kind:       queue.GroupKindStream,
+			Status:     queue.GroupStatusActive,
+			Items:      []queue.Item{{BeadID: "hk-final-phase", Status: queue.ItemStatusDispatched}},
+		}},
+	}
+	input := queue.GroupCompletionInput{
+		ExpectedQueueID:     q.QueueID,
+		Location:            queue.GroupCompletionLocation{GroupIndex: 0, ItemIndex: 0},
+		Outcome:             queue.GroupCompletionOutcomeCompleted,
+		CompletedAt:         stamp,
+		CompletionReceiptID: "0197d001-0000-7000-8000-000000000002",
+	}
+	decision, err := queue.DecideGroupCompletion(q, input)
+	if err != nil || decision.Disposition != queue.GroupCompletionDispositionQueueCompleted {
+		t.Fatalf("decision = %+v, err=%v", decision, err)
+	}
+	diagnostic := errors.New("fault diagnostic")
+	tests := []struct {
+		name       string
+		result     queue.CompletionResult
+		observe    bool
+		wantErrors bool
+	}{
+		{name: "not committed", result: queue.CompletionResult{NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeNotCommitted, Err: diagnostic}, Phase: queue.CompletionPhaseNotCommitted}, wantErrors: true},
+		{name: "commit indeterminate", result: queue.CompletionResult{NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeCommitIndeterminate, Err: diagnostic}, Phase: queue.CompletionPhaseCommitIndeterminate}, wantErrors: true},
+		{name: "canonical committed receipt fault", result: queue.CompletionResult{NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeCommitIndeterminate, Err: diagnostic}, Phase: queue.CompletionPhaseCanonicalCommitted}, wantErrors: true},
+		{name: "receipt durable", result: queue.CompletionResult{NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeCommittedDurable}, Phase: queue.CompletionPhaseReceiptDurable}},
+		{name: "observation fault", result: queue.CompletionResult{NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeCommittedDurable}, Phase: queue.CompletionPhaseObservationAttempted, ObservationErr: diagnostic}, observe: true, wantErrors: true},
+		{name: "observation cleanup fault", result: queue.CompletionResult{NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeCommittedDurable}, Phase: queue.CompletionPhaseObservationAttempted, CleanupErr: diagnostic}, observe: true, wantErrors: true},
+		{name: "marker fault", result: queue.CompletionResult{NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeCommittedDurable}, Phase: queue.CompletionPhaseMarkerFailed, MarkerErr: diagnostic}, observe: true, wantErrors: true},
+		{name: "marker durable", result: queue.CompletionResult{NamespaceResult: queue.NamespaceResult{Outcome: queue.OutcomeCommittedDurable}, Phase: queue.CompletionPhaseMarkerDurable}, observe: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			emitter := &intentDurabilityEmitter{}
+			observeCalls := 0
+			port := reapSeamPort{
+				bus:         emitter,
+				projectDir:  t.TempDir(),
+				queueStore:  queuewiring.NewQueueStore(),
+				runRegistry: newLocalRunRegistry(),
+				completionStore: intentCompletionStore(func(_ context.Context, req queue.CompletionRequest) queue.CompletionResult {
+					if req.ReceiptID != input.CompletionReceiptID || req.Candidate != decision.NextQueue {
+						t.Fatalf("completion request lost decision binding: %+v", req)
+					}
+					if tc.observe {
+						observeCalls++
+						if err := req.Observe(queue.CompletionReceipt{ReceiptID: req.ReceiptID}); err != nil {
+							t.Fatal(err)
+						}
+					}
+					return tc.result
+				}),
+			}
+			execution := executeFinalGroupCompletion(t.Context(), port, queue.QueueSnapshot{Name: q.Name, Queue: &q, Generation: 1}, decision, input)
+			want := groupCompletionDurability{
+				Disposition:      queue.GroupCompletionDispositionQueueCompleted,
+				Outcome:          tc.result.Outcome,
+				Phase:            tc.result.Phase,
+				ObservationError: tc.result.ObservationErr != nil,
+				CleanupError:     tc.result.CleanupErr != nil,
+				MarkerError:      tc.result.MarkerErr != nil,
+			}
+			if execution.durability != want {
+				t.Fatalf("durability = %+v, want %+v", execution.durability, want)
+			}
+			if (execution.err != nil) != tc.wantErrors {
+				t.Fatalf("execution error = %v, wantErrors=%v", execution.err, tc.wantErrors)
+			}
+			if got := emitter.count(); got != observeCalls || observeCalls > 1 {
+				t.Fatalf("observation emits = %d, observe calls = %d", got, observeCalls)
+			}
+			effects, err := decideGroupCompletionEffects(execution.durability)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if effects.EmitIntents || effects.Wake || effects.CancelQueueDrain != completionReleasedOwnership(tc.result.Phase) {
+				t.Fatalf("effects = %+v", effects)
+			}
+		})
 	}
 }
 

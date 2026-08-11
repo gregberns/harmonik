@@ -133,10 +133,16 @@ func TestRefusedSubcommandTouchesNothing(t *testing.T) {
 	}
 }
 
-// TestDaemonInvocationsAreNotSubcommands guards the fail-dangerous direction.
-// The daemon starts with no positional argument at all. If the refusal claimed
-// any of these, it would break the daemon instead of protecting it.
-func TestDaemonInvocationsAreNotSubcommands(t *testing.T) {
+// TestFlagFirstArgvIsNotASubcommand states the division of labour between the
+// two refusals. unknownSubcommand only judges POSITIONAL words; a flag-first
+// argv is not its business and it must decline all of these.
+//
+// Declining is no longer the same as permitting. Until
+// hk-cli-flag-first-starts-daemon-gjhiy, whatever unknownSubcommand declined
+// fell through and started a daemon, so this test read as "these spellings are
+// allowed to boot". They are now caught by daemonStartRefusal instead — see
+// TestOnlyStartDaemonStartsADaemon, which is the test that carries that claim.
+func TestFlagFirstArgvIsNotASubcommand(t *testing.T) {
 	for _, argv := range [][]string{
 		{"harmonik"},
 		{"harmonik", "--project", "/tmp/x"},
@@ -147,7 +153,7 @@ func TestDaemonInvocationsAreNotSubcommands(t *testing.T) {
 		{"harmonik", "-h"},
 	} {
 		if verb, ok := unknownSubcommand(argv); ok {
-			t.Errorf("unknownSubcommand(%q) refused %q; a daemon invocation must pass through", argv, verb)
+			t.Errorf("unknownSubcommand(%q) claimed %q; it must judge positional words only", argv, verb)
 		}
 	}
 }

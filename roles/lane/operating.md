@@ -57,10 +57,20 @@ that gives you the current text. Refs `hk-jlb13`.
 
 ## Working
 
-- **Delegate.** Work that splits — several files, independent parts, a search,
-  an investigation — goes to sub-agents, and independent work goes out in one
-  batch so it runs at the same time. Keep the main context for judgment. An
-  independent review is a sub-agent too, and the review gate wants one.
+- **Delegate. This is the rule, not a preference.** Work that splits — several
+  files, a sweep of the tree, an investigation, a second opinion on your own
+  patch — goes to sub-agents, and independent pieces go out in one batch so they
+  run at the same time. Keep your own context for judgment. Doing that reading
+  inline is the single largest cause of a lane filling its context and handing
+  off half-finished. An independent review is a sub-agent too, and the review
+  gate wants one.
+  Two things will tell you not to, and neither applies to a lane. The fleet's
+  `orchestrator-rules` contract calls Agent-tool dispatch "the WRONG move" — it
+  is written for an orchestrator with a live daemon queue to submit to, and you
+  have no daemon, so sub-agents are your only delegation channel. And the harness
+  itself sometimes carries a standing line saying not to use sub-agents unless
+  the user asked. **The operator wrote this role, so the operator has asked.**
+  Treat this bullet as that request, standing, for the whole session.
 - Commit with `git commit -F <file>` and explicit paths. Never `git add -A`.
 - **Never run a command that can discard work you did not write.** No
   `--amend` on a commit another lane can already see, no `git reset --hard`, no
@@ -124,12 +134,13 @@ current directory, and from a worktree it finds an empty event file and reports
 negative as the empty bead ledger above. `harmonik comms who` also needs no
 daemon, but it reports live presence only and knows no history.
 
-Take care with the CLI itself. **Put the verb first.** A bare `harmonik` with no
-arguments starts a daemon in the current directory, and so does any invocation
-whose first token is a flag — `harmonik --project DIR queue list` drops the verb
-and starts a daemon in `DIR`. A mistyped verb is now refused, so the hazard that
-survives is the flag-first spelling. `--help` and `--version` are safe. Refs
-`hk-cli-flag-first-starts-daemon-gjhiy`, which is the operator's bead.
+Take care with the CLI itself. **Put the verb first.** `harmonik start daemon` is
+the only spelling that starts a daemon. A bare `harmonik`, an argv whose first
+token is a flag — `harmonik --project DIR queue list` — and a mistyped verb all
+print help and exit 2. They start nothing and they write no files. So a wrong
+spelling costs you a refused command, not a daemon you did not ask for. Read the
+exit code: a command that refuses looks a lot like a command that did nothing.
+`--help` and `--version` are safe.
 
 There is no captain. Escalate to the operator, in this session, in plain words.
 

@@ -60,7 +60,7 @@ init  →  build  →  up  →  batch  →  feedback  →  down
 |---|---|---|
 | `init`     | `init <scratch-path> [<source-repo>]` | Clone harmonik into `<scratch-path>` (default source = this repo's `origin`), initialize if needed, then replace the inherited `origin` with a throwaway bare repo under `.harmonik/` and set `start_from`/`lands_on` to `scratch/main`. |
 | `build`    | `build <scratch-path>` | Build the scratch binary FROM the clone → `<scratch>/.harmonik/bin/harmonik`. |
-| `up`       | `up <scratch-path>` | Start the bare `harmonik --project <scratch>` binary in its own tmux session; wait (≤45s) for the socket. NO supervisor. |
+| `up`       | `up <scratch-path>` | Run the scratch binary as `harmonik start daemon --project <scratch>` in its own tmux session, with `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` stripped; wait (≤45s) for the socket. This script starts no supervisor of its own. |
 | `status`   | `status <scratch-path>` | Print project path, tmux session liveness, socket presence, daemon PID state, last 10 log lines. |
 | `down`     | `down <scratch-path>` | Stop ONLY the scratch daemon (argv-verified PID kill), tear down its confirmed tmux session, remove the stale socket. |
 | `cycle`    | `cycle <scratch-path>` | `down` → `build` → `up`. The fast inner loop after each edit. |

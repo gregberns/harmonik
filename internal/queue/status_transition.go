@@ -7,25 +7,25 @@ import (
 
 // NewPendingItem sets the first status for an item.
 func NewPendingItem(item Item) Item {
-	item.Status = ItemStatusPending
+	setItemStatus(&item, ItemStatusPending)
 	return item
 }
 
 // NewPendingGroup sets the first status for a group.
 func NewPendingGroup(group Group) Group {
-	group.Status = GroupStatusPending
+	setGroupStatus(&group, GroupStatusPending)
 	return group
 }
 
 // NewActiveGroup sets the first status for a group that starts work at once.
 func NewActiveGroup(group Group) Group {
-	group.Status = GroupStatusActive
+	setGroupStatus(&group, GroupStatusActive)
 	return group
 }
 
 // NewActiveQueue sets the first status for a queue.
 func NewActiveQueue(q Queue) Queue {
-	q.Status = QueueStatusActive
+	setQueueStatus(&q, QueueStatusActive)
 	return q
 }
 
@@ -38,7 +38,7 @@ func DeferItemForLedgerDependency(item *Item) error {
 	if item.Status != ItemStatusPending {
 		return fmt.Errorf("queue: defer item: status %q is not pending", item.Status)
 	}
-	item.Status = ItemStatusDeferredForLedgerDep
+	setItemStatus(item, ItemStatusDeferredForLedgerDep)
 	return nil
 }
 
@@ -50,7 +50,7 @@ func ResolveDeferredItem(item *Item) error {
 	if item.Status != ItemStatusDeferredForLedgerDep {
 		return fmt.Errorf("queue: resolve deferred item: status %q is not deferred", item.Status)
 	}
-	item.Status = ItemStatusPending
+	setItemStatus(item, ItemStatusPending)
 	return nil
 }
 
@@ -63,7 +63,7 @@ func RecoverDispatchedItemToPending(item *Item) error {
 	if item.Status != ItemStatusDispatched {
 		return fmt.Errorf("queue: recover dispatched item: status %q is not dispatched", item.Status)
 	}
-	item.Status = ItemStatusPending
+	setItemStatus(item, ItemStatusPending)
 	item.RunID = nil
 	return nil
 }
@@ -75,7 +75,7 @@ func ReconcileItemToCompleted(item *Item) error {
 	}
 	switch item.Status {
 	case ItemStatusPending, ItemStatusDispatched, ItemStatusDeferredForLedgerDep:
-		item.Status = ItemStatusCompleted
+		setItemStatus(item, ItemStatusCompleted)
 		return nil
 	default:
 		return fmt.Errorf("queue: reconcile item completed: status %q is not recoverable", item.Status)
@@ -89,11 +89,27 @@ func ReconcileItemToFailed(item *Item) error {
 	}
 	switch item.Status {
 	case ItemStatusPending, ItemStatusDeferredForLedgerDep:
-		item.Status = ItemStatusFailed
+		setItemStatus(item, ItemStatusFailed)
 		return nil
 	default:
 		return fmt.Errorf("queue: reconcile item failed: status %q is not recoverable", item.Status)
 	}
+}
+
+// CompleteItem records one terminal execution outcome.
+func CompleteItem(item *Item, outcome GroupCompletionOutcome) error {
+	if item == nil {
+		return fmt.Errorf("queue: complete item: nil item")
+	}
+	switch outcome {
+	case GroupCompletionOutcomeCompleted:
+		setItemStatus(item, ItemStatusCompleted)
+	case GroupCompletionOutcomeFailed:
+		setItemStatus(item, ItemStatusFailed)
+	default:
+		return fmt.Errorf("queue: complete item: invalid outcome %q", outcome)
+	}
+	return nil
 }
 
 // ReactivateFailedItem restores a failed item for an explicit retry.
@@ -104,7 +120,7 @@ func ReactivateFailedItem(item *Item) error {
 	if item.Status != ItemStatusFailed {
 		return fmt.Errorf("queue: reactivate item: status %q is not failed", item.Status)
 	}
-	item.Status = ItemStatusPending
+	setItemStatus(item, ItemStatusPending)
 	item.Attempts = 0
 	item.LastFailureReason = ""
 	item.RunID = nil
@@ -119,7 +135,7 @@ func ReactivateFailedGroup(group *Group) error {
 	if group.Status != GroupStatusCompleteWithFailures {
 		return fmt.Errorf("queue: reactivate group: status %q is not complete-with-failures", group.Status)
 	}
-	group.Status = GroupStatusActive
+	setGroupStatus(group, GroupStatusActive)
 	group.CompletedAt = nil
 	return nil
 }
@@ -132,7 +148,7 @@ func ResumeQueueFromFailure(q *Queue) error {
 	if q.Status != QueueStatusPausedByFailure {
 		return fmt.Errorf("queue: resume queue: status %q is not paused-by-failure", q.Status)
 	}
-	q.Status = QueueStatusActive
+	setQueueStatus(q, QueueStatusActive)
 	return nil
 }
 
@@ -159,8 +175,23 @@ func PauseQueueForFailure(q *Queue) error {
 	if !failed {
 		return fmt.Errorf("queue: pause queue for failure: no group failed")
 	}
-	q.Status = QueueStatusPausedByFailure
+	setQueueStatus(q, QueueStatusPausedByFailure)
 	return nil
+}
+
+// PauseQueueForGroupFailure parks an active queue after one named group has
+// completed with failures. Later groups remain pending.
+func PauseQueueForGroupFailure(q *Queue, groupIndex int) error {
+	if q == nil || q.Status != QueueStatusActive {
+		return fmt.Errorf("queue: pause queue for group failure: queue is not active")
+	}
+	for i := range q.Groups {
+		if q.Groups[i].GroupIndex == groupIndex && q.Groups[i].Status == GroupStatusCompleteWithFailures {
+			setQueueStatus(q, QueueStatusPausedByFailure)
+			return nil
+		}
+	}
+	return fmt.Errorf("queue: pause queue for group failure: group %d is not complete-with-failures", groupIndex)
 }
 
 // PauseQueueForDrain parks an active queue for an operator drain.
@@ -171,7 +202,7 @@ func PauseQueueForDrain(q *Queue) error {
 	if q.Status != QueueStatusActive {
 		return fmt.Errorf("queue: pause queue for drain: status %q is not active", q.Status)
 	}
-	q.Status = QueueStatusPausedByDrain
+	setQueueStatus(q, QueueStatusPausedByDrain)
 	return nil
 }
 
@@ -183,7 +214,7 @@ func ResumeQueueFromDrain(q *Queue) error {
 	if q.Status != QueueStatusPausedByDrain {
 		return fmt.Errorf("queue: resume queue from drain: status %q is not paused-by-drain", q.Status)
 	}
-	q.Status = QueueStatusActive
+	setQueueStatus(q, QueueStatusActive)
 	return nil
 }
 
@@ -204,7 +235,7 @@ func CompleteQueue(q *Queue) error {
 		}
 	}
 	if q.Status == QueueStatusActive {
-		q.Status = QueueStatusCompleted
+		setQueueStatus(q, QueueStatusCompleted)
 	}
 	return nil
 }
@@ -217,7 +248,7 @@ func CancelQueue(q *Queue) error {
 	if q.Status != QueueStatusActive {
 		return fmt.Errorf("queue: cancel queue: status %q is not active", q.Status)
 	}
-	q.Status = QueueStatusCancelled
+	setQueueStatus(q, QueueStatusCancelled)
 	return nil
 }
 
@@ -227,7 +258,7 @@ func InstallCommittedQueueStatus(destination, candidate *Queue) error {
 	if destination == nil || candidate == nil {
 		return fmt.Errorf("queue: install committed queue status: nil queue")
 	}
-	destination.Status = candidate.Status
+	setQueueStatus(destination, candidate.Status)
 	return nil
 }
 
@@ -245,11 +276,26 @@ func CompleteActiveGroup(group *Group, completedAt time.Time) error {
 	}
 	_, failures := countOutcomes(group)
 	if failures == 0 {
-		group.Status = GroupStatusCompleteSuccess
+		setGroupStatus(group, GroupStatusCompleteSuccess)
 	} else {
-		group.Status = GroupStatusCompleteWithFailures
+		setGroupStatus(group, GroupStatusCompleteWithFailures)
 	}
 	stamp := completedAt.UTC()
 	group.CompletedAt = &stamp
 	return nil
 }
+
+// ActivatePendingGroup starts one pending successor at the supplied time.
+func ActivatePendingGroup(group *Group, startedAt time.Time) error {
+	if group == nil || group.Status != GroupStatusPending {
+		return fmt.Errorf("queue: activate group: group is not pending")
+	}
+	setGroupStatus(group, GroupStatusActive)
+	stamp := startedAt.UTC()
+	group.StartedAt = &stamp
+	return nil
+}
+
+func setItemStatus(item *Item, status ItemStatus)     { item.Status = status }
+func setGroupStatus(group *Group, status GroupStatus) { group.Status = status }
+func setQueueStatus(q *Queue, status QueueStatus)     { q.Status = status }

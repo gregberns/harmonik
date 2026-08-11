@@ -92,7 +92,7 @@ echo "[smoke-scratch] starting daemon (session=$SESS)..."
 # shellcheck disable=SC2016
 tmux new-session -d -s "$SESS" \
     "env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
-      '$HARMONIK_BIN' --project '$SMOKE_DIR' \
+      '$HARMONIK_BIN' start daemon --project '$SMOKE_DIR' \
       --no-auto-pull \
       --max-concurrent 1 \
       --workflow-mode review-loop \

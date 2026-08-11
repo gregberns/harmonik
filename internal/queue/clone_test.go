@@ -79,8 +79,8 @@ func TestCloneQueuePreservesNilShape(t *testing.T) {
 		t.Fatal("empty items became nil")
 	}
 	empty := CloneQueue(&Queue{Groups: []Group{{Items: []Item{{TemplateParams: map[string]string{}}}}}})
-	if empty.Groups == nil || empty.Groups[0].Items == nil || empty.Groups[0].Items[0].TemplateParams == nil {
-		t.Fatalf("non-nil empty shape became nil: %#v", empty)
+	if len(empty.Groups) != 1 || len(empty.Groups[0].Items) != 1 || empty.Groups[0].Items[0].TemplateParams == nil {
+		t.Fatalf("non-nil empty shape changed: %#v", empty)
 	}
 }
 

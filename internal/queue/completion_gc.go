@@ -24,6 +24,14 @@ type CompletionGCResult struct {
 // CompletionGCPhase names the last durable or indeterminate deletion boundary.
 type CompletionGCPhase string
 
+// These are the phases a GC pass reports for one receipt pair. Preserved means
+// the pass deleted nothing. Ineligible means the pass must not delete yet,
+// because the retention time has not passed, or because the platform does not
+// attest a synchronized and non-regressed clock. Today the daemon supplies no
+// clock attestation, so the clock is the only reason production reports this
+// phase. A durable phase means the deletion reached the disk. An indeterminate
+// phase means the unlink ran but the directory sync did not confirm it, so a
+// later pass must reach the same boundary again.
 const (
 	CompletionGCPhasePreserved                CompletionGCPhase = "preserved"
 	CompletionGCPhaseIneligible               CompletionGCPhase = "ineligible"
@@ -117,7 +125,7 @@ func garbageCollectCompletionReceipts(
 	return results, nil
 }
 
-func completionMarkerIdentityFromName(name string) (string, string, bool) {
+func completionMarkerIdentityFromName(name string) (queueID, receiptID string, selected bool) {
 	const suffix = ".release-v1.json"
 	if !strings.HasSuffix(name, suffix) || strings.Contains(name, ".tmp-") {
 		return "", "", false
@@ -219,7 +227,7 @@ func completionGCSyncFailurePhase(
 	return presentPhase
 }
 
-func readOptionalRegular(path string, ops namespaceOps) ([]byte, bool, error) {
+func readOptionalRegular(path string, ops namespaceOps) (data []byte, present bool, err error) {
 	info, err := ops.lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil
@@ -230,7 +238,7 @@ func readOptionalRegular(path string, ops namespaceOps) ([]byte, bool, error) {
 	if !info.Mode().IsRegular() {
 		return nil, false, errors.New("completion receipt is not a regular file")
 	}
-	data, err := ops.readFile(path)
+	data, err = ops.readFile(path)
 	return data, err == nil, err
 }
 

@@ -76,7 +76,7 @@ There's no separate "running daemon version" readout, so the reliable habit is s
 
 ```bash
 tmux new-session -d -s harmonik-daemon \
-  'harmonik --project /Users/gb/github/harmonik --no-auto-pull --max-concurrent 4'
+  'harmonik start daemon --project /Users/gb/github/harmonik --no-auto-pull --max-concurrent 4'
 ```
 
 - `--no-auto-pull` — **queue-only mode: the daemon only runs work you explicitly submit.** This is
@@ -117,7 +117,7 @@ It runs *outside* tmux, launches the daemon in its own session, strips any inher
 ```bash
 tmux kill-session -t harmonik-daemon
 # or, if you're not sure which tmux session it's in:
-pkill -f "harmonik --project /Users/gb/github/harmonik"
+pkill -f "harmonik start daemon --project /Users/gb/github/harmonik"
 ```
 
 > **Don't delete the daemon's socket file by hand** (`.harmonik/daemon.sock`). The daemon (or the
@@ -131,7 +131,7 @@ pkill -f "harmonik --project /Users/gb/github/harmonik"
 # Stop, then start.
 tmux kill-session -t harmonik-daemon 2>/dev/null
 tmux new-session -d -s harmonik-daemon \
-  'harmonik --project /Users/gb/github/harmonik --no-auto-pull --max-concurrent 4'
+  'harmonik start daemon --project /Users/gb/github/harmonik --no-auto-pull --max-concurrent 4'
 ```
 
 If you use the keep-alive script, just `pkill` the daemon and the script revives it. **Give it a
@@ -414,7 +414,7 @@ These are the codes harmonik commands return. The two that matter most day-to-da
 
 > Codes 0/1/2/17/25 are confirmed from the command help. Code **5** ("pidfile locked — a daemon
 > is already running") is confirmed in the source (the pidfile-lock path) and fires when you try
-> to launch a second `harmonik --project ...` daemon. One nuance: `harmonik run` no longer collides
+> to launch a second `harmonik start daemon --project ...` daemon. One nuance: `harmonik run` no longer collides
 > — if a daemon is already up it submits your beads to it instead of exiting 5. Code **25**
 > ("supervisor already running") is confirmed in the source and appears only on `harmonik supervise
 > start`. See [CLI-REFERENCE.md](CLI-REFERENCE.md) for any per-command specifics.
@@ -447,7 +447,7 @@ harmonik queue status
 git -C /Users/gb/github/harmonik/.harmonik/worktrees/<run_id> log --oneline -3
 
 # 2. Kill the daemon:
-pkill -f "harmonik --project /Users/gb/github/harmonik"
+pkill -f "harmonik start daemon --project /Users/gb/github/harmonik"
 
 # 3. Clear any leftover queue (works with no daemon):
 harmonik queue cancel

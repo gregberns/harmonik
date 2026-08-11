@@ -149,7 +149,7 @@ type reapSeamPort struct {
 	runRegistry        *RunRegistry
 	targetBranch       string
 	eagerRefill        eagerRefillPort
-	completeQueue      func(context.Context, string, *queue.Queue) queue.TerminalResult
+	completionStore    queue.CompletionStore
 }
 
 // newReapSeamPort projects the dependencies used by the force-reap completion
@@ -167,7 +167,7 @@ func newReapSeamPort(bus handlercontract.EventEmitter, projectDir, targetBranch 
 		runRegistry:        runRegistry,
 		targetBranch:       targetBranch,
 		eagerRefill:        eagerRefill,
-		completeQueue:      queue.CompleteAndUnlinkResult,
+		completionStore:    queueStore,
 	}
 }
 
@@ -2298,176 +2298,47 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, port reapSeamPort, que
 	if port.queueStore == nil {
 		return
 	}
-
-	lq := port.queueStore.LockForMutation()
-
-	// NQ-B1: resolve the queue BY NAME (capturedQueueName), mirroring the
-	// dispatch path's LockedQueueByName usage. queueName is already normalised
-	// (the round-robin selector reads it from the QueueStore's map keys), so it
-	// is passed straight through. The QueueID equality check is retained as a
-	// staleness guard: it rejects a completion whose queue was cleared and a new
-	// queue installed at the same name slot before this goroutine ran.
-	q := lq.LockedQueueByName(queue.NormaliseQueueName(queueName))
-	if q == nil || q.QueueID != queueID {
-		lq.Done()
+	snapshot := port.queueStore.Snapshot(queue.NormaliseQueueName(queueName))
+	if snapshot.Queue == nil {
+		eagerRefillEval(ctx, port)
 		return
 	}
-
-	// Locate the target group.
-	groupPos := -1
-	for i := range q.Groups {
-		if q.Groups[i].GroupIndex == groupIndex {
-			groupPos = i
-			break
-		}
-	}
-	if groupPos < 0 || itemIdx >= len(q.Groups[groupPos].Items) {
-		lq.Done()
-		return
-	}
-
-	// Mark the item terminal.
+	outcome := queue.GroupCompletionOutcomeFailed
 	if success {
-		q.Groups[groupPos].Items[itemIdx].Status = queue.ItemStatusCompleted
-	} else {
-		q.Groups[groupPos].Items[itemIdx].Status = queue.ItemStatusFailed
+		outcome = queue.GroupCompletionOutcomeCompleted
 	}
-
-	// Evaluate group-advance gate (EM-015f all-terminal rule).
-	completedAt = completedAt.UTC()
-	newStatus, events, advErr := queue.AdvanceGroup(ctx, &q.Groups[groupPos], q.Status, queueID, completedAt)
-	if advErr != nil {
-		fmt.Fprintf(os.Stderr, "daemon: workloop: AdvanceGroup queueID=%s groupIndex=%d: %v\n",
-			queueID, groupIndex, advErr)
-		// NQ-B1: write back to the same name slot we resolved from.
-		lq.LockedSetQueueByName(queue.NormaliseQueueName(queueName), q)
-		lq.Done()
+	input := queue.GroupCompletionInput{
+		ExpectedQueueID: queueID,
+		Location:        queue.GroupCompletionLocation{GroupIndex: groupIndex, ItemIndex: itemIdx},
+		Outcome:         outcome,
+		CompletedAt:     completedAt,
+	}
+	decision, err := queue.DecideGroupCompletion(*snapshot.Queue, input) //nolint:contextcheck // The value-only decision checks cancellation inside queue.AdvanceGroup.
+	if err == nil && decision.Disposition == queue.GroupCompletionDispositionReceiptRequired {
+		input.CompletionReceiptID, err = newGroupCompletionID()
+		if err == nil {
+			decision, err = queue.DecideGroupCompletion(*snapshot.Queue, input) //nolint:contextcheck // The value-only decision checks cancellation inside queue.AdvanceGroup.
+		}
+	}
+	if err == nil && decision.Disposition == queue.GroupCompletionDispositionReceiptRequired {
+		err = errors.New("group completion still requires a receipt after retry")
+	}
+	if err == nil {
+		err = decision.Validate()
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon: workloop: decide group completion queueID=%s groupIndex=%d: %v\n", queueID, groupIndex, err)
+		eagerRefillEval(ctx, port)
 		return
 	}
-
-	// Apply new group status.
-	q.Groups[groupPos].Status = newStatus
-
-	// If group reached complete-with-failures → queue transitions to paused-by-failure.
-	// (M5 slice 3C: pure classification via orchestrator; the mutation stays here.)
-	if orchestrator.GroupFailurePausesQueue(string(newStatus)) {
-		q.Status = queue.QueueStatusPausedByFailure
+	execution := executeGroupCompletion(ctx, port, snapshot, decision, input)
+	effects, policyErr := decideGroupCompletionEffects(execution.durability)
+	if policyErr != nil {
+		fmt.Fprintf(os.Stderr, "daemon: workloop: group completion policy queueID=%s groupIndex=%d: %v\n", queueID, groupIndex, policyErr)
+		eagerRefillEval(ctx, port)
+		return
 	}
-
-	// If group reached complete-success → activate the next group. The pure
-	// predicate decides WHICH group to activate (first still-pending); the
-	// effectful queue.AdvanceGroup call — which mutates the group AND produces
-	// order-appended events — stays daemon-side (M5 slice 3C).
-	if orchestrator.GroupReachedSuccess(string(newStatus)) {
-		groupStatuses := make([]string, len(q.Groups))
-		for i := range q.Groups {
-			groupStatuses[i] = string(q.Groups[i].Status)
-		}
-		if i := orchestrator.FirstPendingGroupIndex(groupStatuses); i >= 0 {
-			nextStatus, nextEvents, nextErr := queue.AdvanceGroup(ctx, &q.Groups[i], q.Status, queueID, completedAt)
-			if nextErr != nil {
-				fmt.Fprintf(os.Stderr, "daemon: workloop: AdvanceGroup next group queueID=%s groupIndex=%d: %v\n",
-					queueID, q.Groups[i].GroupIndex, nextErr)
-			} else {
-				q.Groups[i].Status = nextStatus
-				events = append(events, nextEvents...)
-			}
-		}
-	}
-
-	// Determine whether the queue has completed: all groups reached
-	// complete-success (hk-xsutm). This is the sole condition that triggers
-	// CompleteAndUnlink (QM-003). A paused-by-failure queue retains queue.json
-	// for operator-driven resume or reset; only the happy-path full-success case
-	// removes it. (M5 slice 3C: pure scan via orchestrator.AllGroupsSucceeded.)
-	postStatuses := make([]string, len(q.Groups))
-	for i := range q.Groups {
-		postStatuses[i] = string(q.Groups[i].Status)
-	}
-	allSucceeded := orchestrator.AllGroupsSucceeded(postStatuses)
-
-	if allSucceeded {
-		// All groups complete-success → CompleteAndUnlink (QM-003 / QM-053).
-		// This internally sets q.Status = completed and persists before
-		// unlinking queue.json (hk-xsutm).
-		completeQueue := port.completeQueue
-		if completeQueue == nil {
-			completeQueue = queue.CompleteAndUnlinkResult
-		}
-		result := completeQueue(ctx, port.projectDir, q)
-		if err := result.Err(); err != nil {
-			fmt.Fprintf(os.Stderr, "daemon: workloop: CompleteAndUnlink queueID=%s: %v\n",
-				queueID, err)
-			if !result.Committed {
-				events = nil
-			}
-			// Fall through: still clear in-memory state so the loop isn't stuck.
-		}
-		lq.Done()
-		// Release the write lock before ClearQueueByName (which acquires its own
-		// lock). NQ-B1: clear the slot for THIS queue's name, not the main-only
-		// ClearQueue shim — otherwise a completed non-"main" queue lingers in the
-		// store and the round-robin selector keeps re-scanning a drained queue.
-		port.queueStore.ClearQueueByName(queue.NormaliseQueueName(queueName))
-		// hk-icecw: if a drain-cancel is registered (harmonik run path), cancel
-		// the daemon context now so the work loop exits cleanly instead of
-		// idle-spinning waiting for more work.
-		if port.cancelOnQueueDrain != nil {
-			port.cancelOnQueueDrain()
-		}
-		// hk-8jh26 Fix 1: if a queue-exit cancel is registered, fire it on the
-		// success path too (covers the case where only cancelOnQueueExit is set).
-		if port.cancelOnQueueExit != nil {
-			port.cancelOnQueueExit()
-		}
-	} else {
-		// Intermediate state or paused-by-failure: persist the updated queue.json
-		// so on-disk state matches in-memory after each item completion (hk-xsutm).
-		if err := queue.Persist(ctx, port.projectDir, q); err != nil {
-			fmt.Fprintf(os.Stderr, "daemon: workloop: Persist queueID=%s after item completion: %v\n",
-				queueID, err)
-			// Non-fatal: in-memory state is still updated; file will resync on next persist.
-			// Suppress group-advance events — they describe state not yet durable on disk.
-			events = nil
-		}
-		pausedByFailure := q.Status == queue.QueueStatusPausedByFailure
-		// NQ-B1: write back to the same name slot we resolved from.
-		lq.LockedSetQueueByName(queue.NormaliseQueueName(queueName), q)
-		lq.Done()
-		// hk-nbjht Gap 2: wake the idle dispatch loop after every run completion.
-		// lq.SetQueue (the LockedQueueStore no-wake variant) does NOT fire wakeC,
-		// so without this the loop stays parked in workloopIdleWait and never runs
-		// its §2.8 deferred-item re-evaluation — a chained stream queue would stall
-		// permanently once its head bead completes. Wake touches only wakeC (no
-		// queue mutation, no second persist), so there is no double-persist race
-		// with the SetQueue above. Fired unconditionally on run_completed: the
-		// woken loop re-runs EligibleItems + ReevaluateDeferred, which is cheap and
-		// idempotent if no item un-defers.
-		port.queueStore.Wake()
-		// hk-8jh26 Fix 1: if the queue is now paused-by-failure and an exit-cancel
-		// is registered (harmonik run path), cancel the daemon context so the work
-		// loop exits promptly instead of idle-spinning waiting for more work.
-		// pausedByFailure is captured before lq.Done() to avoid a data race with
-		// another goroutine that may call CompleteAndUnlink (which writes q.Status)
-		// after acquiring the lock we just released.
-		if pausedByFailure && port.cancelOnQueueExit != nil {
-			port.cancelOnQueueExit()
-		}
-	}
-
-	// Emit the queued events (after lock release above). Bus.Emit is non-blocking
-	// per EV-002a so ordering relative to the lock release is acceptable.
-	for _, evt := range events {
-		_ = port.bus.Emit(ctx, evt.Type, evt.Payload) //nolint:errcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
-	}
-
-	// EM-062: eager-refill fires AFTER all terminal-event processing (merge,
-	// reviewer-launch, CloseBead, group-advance evaluation) completes for this
-	// run. Finishing in-flight work takes priority over pulling new work.
-	//
-	// Spec ref: specs/execution-model.md §4.13 EM-062.
-	// Bead ref: hk-9321v.
-	eagerRefillEval(ctx, port)
+	applyGroupCompletionEffects(ctx, port, decision.Intents, effects, execution.err)
 }
 
 // ── hk-o85ye: run-session adoption helpers ───────────────────────────────────

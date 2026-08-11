@@ -141,7 +141,7 @@ Run the daemon in a detached tmux session so it survives your terminal:
 
 ```bash
 tmux new-session -d -s harmonik-daemon \
-  'harmonik --project /path/to/your/repo --no-auto-pull --max-concurrent 4'
+  'harmonik start daemon --project /path/to/your/repo --no-auto-pull --max-concurrent 4'
 ```
 
 - `--no-auto-pull` — queue-only mode. The daemon dispatches only work you explicitly submit;

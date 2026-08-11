@@ -19,7 +19,7 @@ new_fixture() {
 }
 
 output="$(run_ratchet "$repo_root")"
-grep -q 'baseline direct assignments bravo=20 daemon=14' <<<"$output"
+grep -q 'baseline direct assignments bravo=3 daemon=13' <<<"$output"
 grep -q 'construction-path writes=0' <<<"$output"
 grep -q 'durable transition edges=8/8' <<<"$output"
 grep -q 'queue-status-writer-ratchet: OK' <<<"$output"
@@ -38,7 +38,7 @@ if failed_output="$(run_ratchet "$fixture")"; then
     echo "queue-status-writer-ratchet test: expected owner growth to fail" >&2
     exit 1
 fi
-grep -q 'transition owner grew from 20 to 21' <<<"$failed_output"
+grep -q 'transition owner grew from 3 to 4' <<<"$failed_output"
 
 fixture="$(new_fixture)"
 printf 'package daemon\nimport "github.com/gregberns/harmonik/internal/queue"\nfunc daemonBypass(item queue.Item) { item.Status = queue.ItemStatusPending }\n' >"$fixture/internal/daemon/queue_status_bypass.go"
@@ -46,7 +46,7 @@ if failed_output="$(run_ratchet "$fixture")"; then
     echo "queue-status-writer-ratchet test: expected daemon growth to fail" >&2
     exit 1
 fi
-grep -q 'daemon baseline grew from 14 to 15' <<<"$failed_output"
+grep -q 'daemon baseline grew from 13 to 14' <<<"$failed_output"
 
 fixture="$(new_fixture)"
 printf 'package queue\nfunc constructionBypass() { _ = Item{Status: ItemStatusPending} }\n' >"$fixture/internal/queue/queue_status_construction.go"

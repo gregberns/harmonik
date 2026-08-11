@@ -55,6 +55,8 @@ type TransactionStore interface {
 // CompletionRequest supplies fixed identity and time to the QM-053 owner.
 type CompletionRequest struct {
 	Snapshot      QueueSnapshot
+	Candidate     *Queue
+	DecisionInput GroupCompletionInput
 	ProjectDir    string
 	TransactionID string
 	ReceiptID     string

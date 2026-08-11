@@ -160,7 +160,18 @@ func buildPsResult(projectDir string) (PsResult, error) {
 		{
 			Name:        "daemon",
 			Description: "daemon process managed by the supervisor or fallback keeper",
-			Pattern:     "harmonik --project " + realDir,
+			// `start daemon` is the only spelling that starts a daemon. Before
+			// hk-cli-flag-first-starts-daemon-gjhiy an argv that matched no verb
+			// started one, so the pattern here was `harmonik --project <dir>`.
+			// That form now prints help and exits 2, so it matches no live
+			// daemon (hk-8fdbe).
+			//
+			// The three words must stay next to each other. Every spawn site puts
+			// --project immediately after the verb — see buildDaemonCmd in this
+			// package, scripts/hk-supervise.sh and scripts/hk-keeper.sh. The
+			// adjacency is what keeps an ordinary CLI call out of the result,
+			// because `harmonik queue submit --project <dir>` is not a daemon.
+			Pattern: "harmonik start daemon --project " + realDir,
 		},
 		{
 			Name:        "keeper-fallback",

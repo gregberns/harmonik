@@ -83,7 +83,7 @@ func TestSubprocessDaemonBootSmoke(t *testing.T) {
 	// with the generic twin keeps dispatch billing-free and tmux-free.
 	daemonCtx, cancelDaemon := context.WithCancel(context.Background())
 	//nolint:gosec // G204: harmonikBin is a test-built binary; args are literals.
-	daemonCmd := exec.CommandContext(daemonCtx, harmonikBin, "--project", projectDir)
+	daemonCmd := exec.CommandContext(daemonCtx, harmonikBin, "start", "daemon", "--project", projectDir)
 	daemonCmd.Dir = projectDir
 	daemonCmd.Env = append(os.Environ(),
 		"HARMONIK_SUBSTRATE=codexdriver",

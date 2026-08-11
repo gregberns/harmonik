@@ -225,7 +225,7 @@ func sendVerdictOverrideRequest(projectDir, runID, op, promoteTo string) int {
 	if dialErr != nil {
 		if isVerdictSocketAbsent(dialErr) || isVerdictConnectionRefused(dialErr) {
 			fmt.Fprintf(os.Stderr, "harmonik %s: daemon is not running (socket absent or connection refused)\n", cmdName)
-			fmt.Fprintf(os.Stderr, "harmonik %s: start the daemon with 'harmonik --project %s' and retry\n", cmdName, projectDir)
+			fmt.Fprintf(os.Stderr, "harmonik %s: start the daemon with 'harmonik start daemon --project %s' and retry\n", cmdName, projectDir)
 			return 17
 		}
 		fmt.Fprintf(os.Stderr, "harmonik %s: socket dial error: %v\n", cmdName, dialErr)

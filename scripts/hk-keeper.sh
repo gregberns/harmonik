@@ -66,7 +66,7 @@ while true; do
   # Liveness check = a harmonik daemon PROCESS exists. This covers the
   # restart-backoff window where the process is alive but the socket is not
   # yet open — don't relaunch during that window.
-  if pgrep -f "harmonik --project $PROJ" >/dev/null 2>&1; then
+  if pgrep -f "harmonik start daemon --project $PROJ" >/dev/null 2>&1; then
     sleep 15
     continue
   fi
@@ -77,7 +77,7 @@ while true; do
   rm -f "$PROJ/.harmonik/daemon.sock"
   tmux new-session -d -s "$SESS" \
     "env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
-      harmonik --project $PROJ --no-auto-pull --max-concurrent $CONCURRENCY $BRANCH_FLAGS \
+      harmonik start daemon --project $PROJ --no-auto-pull --max-concurrent $CONCURRENCY $BRANCH_FLAGS \
       2>&1 | tee -a $LOG"
   sleep 25
 done

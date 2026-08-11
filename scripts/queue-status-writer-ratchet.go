@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	bravoBaseline        = 20
-	daemonBaseline       = 14
+	bravoBaseline        = 3
+	daemonBaseline       = 13
 	constructionBaseline = 0
 )
 

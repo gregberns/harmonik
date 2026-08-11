@@ -11,7 +11,7 @@
 > **Corrected 2026-07-30:** this line named `reviewloop.go` as a third file. That file no longer
 > exists. Commit `3cec5afd7` (2026-07-28) retired review-loop mode and deleted its driver, so Phase 3
 > is a two-file unit. `runWorkLoop` also moved out of `workloop.go` into `internal/daemon/scheduler.go`
-> in commit `756b6604c`. The **daemon is intentionally DOWN** (no `harmonik --project` process on this
+> in commit `756b6604c`. The **daemon is intentionally DOWN** (no `harmonik start daemon` process on this
 > machine, checked 2026-07-30). Work lands single-writer and human-reviewed on branch
 > `phase1-session-restart-substrate`.
 > **Corrected 2026-07-30:** this line called that branch unpushed. It is pushed —
@@ -134,7 +134,7 @@ Landed in code by `1f8781730` (confirmed an ancestor of HEAD on 2026-07-30). The
 **The daemon runs detached in a tmux session.** Launch with:
 ```bash
 tmux new-session -d -s harmonik-daemon \
-  'harmonik --project /Users/gb/github/harmonik --no-auto-pull --max-concurrent N'
+  'harmonik start daemon --project /Users/gb/github/harmonik --no-auto-pull --max-concurrent N'
 ```
 
 Key properties:

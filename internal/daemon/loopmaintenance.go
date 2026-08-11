@@ -234,12 +234,17 @@ func (m *loopMaintenance) tickBeforeDispatch(ctx context.Context) maintenanceObs
 	// that never ran. Full rationale in the file-level comment on
 	// diskcheck_hksxlb.go.
 	runPeriodicDiskCheck(ctx, m.diskReclaim, &m.state)
-	m.runCompletionReceiptGC(ctx)
+	m.runCompletionReceiptGC()
 
 	return maintenanceObservation{diskLow: m.state.diskLow}
 }
 
-func (m *loopMaintenance) runCompletionReceiptGC(ctx context.Context) {
+// runCompletionReceiptGC sweeps completion receipts once per maintenance tick.
+//
+// It takes no context because the port it calls accepts none, so a shutdown
+// cannot stop a sweep that is already running. That is a real gap, recorded as
+// hk-eohs9. Add the parameter back when the port can honour a context.
+func (m *loopMaintenance) runCompletionReceiptGC() {
 	if m.queueSurface.completionGC == nil {
 		return
 	}

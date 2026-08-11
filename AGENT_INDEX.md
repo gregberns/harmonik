@@ -145,7 +145,7 @@ Most recent entries:
 - [2026-06-09: Captain & Crew lands](docs/plans/captain/SESSION.md) -- 15/15 tasks on main; crew system live via `claude --remote-control`; tapCh race (18h incident) fixed
 - [2026-06-03: Productization P0 gate](docs/INITIATIVES.md) -- Integration-branch enforcement landed; `harmonik init` / operating-manual in progress
 - [2026-06-01: harmonik comms bus](docs/orchestration-protocol-v2.md) -- `harmonik comms send/recv/who/log`; file-outbox convention retired
-- [2026-05-30: Persistent daemon model](docs/orchestration-protocol-v2.md) -- `harmonik --project` + supervisor; `harmonik run` → legacy/solo path
+- [2026-05-30: Persistent daemon model](docs/orchestration-protocol-v2.md) -- `harmonik start daemon --project` + supervisor; `harmonik run` → legacy/solo path
 - [2026-05-14: Phase 1 operational milestone](docs/historical/dogfood-smoke-traces/dogfood-smoke-run-2026-05-14-operational-green.md) -- Harmonik runs Claude end-to-end on a bead; zero human input
 - [2026-04-24: Spec Corpus Foundation Pass](docs/log/2026-04-24-spec-corpus-foundation.md) -- 10 specs authored; 5 reviewed *(historical)*
 - [2026-04-13: Initial Brainstorm Session](docs/log/2026-04-13-initial-brainstorm.md) -- First comprehensive capture *(historical)*

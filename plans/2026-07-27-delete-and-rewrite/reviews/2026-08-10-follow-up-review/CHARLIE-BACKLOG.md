@@ -7,17 +7,78 @@ Charlie must deliberately break each new claim test before accepting it.
 
 ## Charlie status
 
-Updated: 2026-08-10
+Updated: 2026-08-11
 
 - Owner: Charlie.
-- Active slice: C13 is complete. C14 is next.
+- Active slice: C21 design is approved. C21a is the next implementation unit.
 - Start revision: `b49210d67` on `work/alpha-integration-merge`.
 - State: C01 through C04 are complete and independently approved.
 - Implementation commit: `de0a6ca3`.
 - Integration reconciliation commit: `b0cac51a`.
 - Stop gate: C05 through C07 received independent approval before C08.
 - Coordination note: the queue RPC overlap retained both the active-run status work and the event-intent path.
-- Later tasks: C14 through C31 remain unstarted.
+- Later tasks: C22 through C31 remain unstarted.
+
+### C18 evidence
+
+- The existing QM-001 syscall cut table remains the low-level boundary proof.
+- New join tests start with real transaction fault states instead of hand-built policy facts.
+- Public startup resolves a receipt-durable completion without event replay.
+- Receipt failure retains and quarantines the exact pre-release live owner.
+- Canonical and intent post-unlink faults retain the completed owner until directory durability is known.
+- Final observation uses the one bound receipt and runs exactly once.
+- Marker-install ambiguity keeps the queue name released and keeps the first marker bytes.
+- Receipt and marker no-replace ambiguity accept exact installed bytes and preserve conflicts.
+- The final executor maps each store phase and diagnostic into the durability policy.
+- Deliberate mutations broke startup recovery, owner retention, observation count, receipt binding, phase mapping, ambiguity reload, and conflict refusal.
+
+### C17 evidence
+
+- The daemon completion path calls the pure decision. Each changed result uses one queue-owned transaction.
+- The completion store validates the exact detached candidate and its bound receipt before I/O.
+- Live memory changes only after a durable non-final commit.
+- Final observation stays inside the receipt-aware completion transaction.
+- The outer shell does not install, clear, wake, or emit final state a second time.
+- Exact effect tests cover each disposition and each commit, cleanup, marker, and emit fault.
+- Receipt and effect-order mutations made their named tests fail.
+- Focused force-reap, claim, reservation, and normal-completion tests pass.
+- `make fast` passed with 8,437 tests across nine packages.
+- Independent reviewer verdict: `APPROVE` after two blocking correction rounds.
+
+### C16 evidence
+
+- A pure daemon policy maps durable facts to only the remaining outer effects.
+- It never authorizes a second raw queue install, clear, or final event emit.
+- The policy authorizes refill after every terminal call except the internal receipt retry.
+- Final cancellation requires proven queue-name ownership release.
+- Contradictory disposition, outcome, phase, and diagnostic facts fail closed.
+- Exact tables cover every completion transaction phase and the receipt-install fault boundary.
+- Named daemon tests, focused vet, and the diff check pass.
+- A receipt-retry refill mutation made the effect table fail.
+- Independent reviewer verdict: `APPROVE` after two blocking correction rounds.
+
+### C15 evidence
+
+- `DecideGroupCompletion` returns detached, value-only results for every disposition.
+- Matching terminal outcomes still finish an available aggregate transition.
+- Final success uses a receipt-required retry and binds the receipt to its one completion intent.
+- The decision validates the full dense queue topology, group kinds, statuses, and sibling items.
+- One supplied time controls canonical UTC millisecond state and payload times.
+- The event payload now implements the specified optional final completion receipt ID.
+- Focused queue and core tests, repository compilation, `go vet ./...`, and the diff check pass.
+- An incorrect early terminal no-change mutation made its aggregate-transition test fail.
+- Independent reviewer verdict: `APPROVE` after two blocking correction rounds.
+
+### C14 evidence
+
+- Typed values name item outcomes, locations, dispositions, no-change reasons, and decision inputs.
+- A receipt-required result lets the shell mint an ID without duplicating finality policy.
+- Result validation rejects inconsistent changed, no-change, and receipt-required values.
+- Typed input, stored-state, and conflict errors retain their reason and location facts.
+- The C17 boundary requires durable validation of the exact detached decision candidate.
+- Focused queue tests, repository compilation, `go vet ./...`, and the diff check pass.
+- Weakening no-change reason validation made its invariant test fail.
+- Independent reviewer verdict: `APPROVE` after one blocking correction round.
 
 ### C13 evidence
 
@@ -302,6 +363,8 @@ Updated: 2026-08-10
 
 **Scope:** Call the decision, execute the receipt-aware transaction, apply the durability policy, then perform outer effects. Keep slow work outside locks when the writer rule allows it.
 
+The completion transaction must accept the exact detached candidate returned by the decision. It must validate that candidate against the prior snapshot. The shell must not install the candidate in live memory before durable commit.
+
 **Acceptance:** Positive effect counters prove exact calls and order for each disposition. Focused force-reap, claim-failure, reservation-failure, and normal-completion tests pass.
 
 **Limits:** Do not extend `CompleteAndUnlink` or preserve it as the target path.
@@ -328,6 +391,14 @@ Updated: 2026-08-10
 
 **Limits:** Do not change code until the model closes.
 
+**Status:** Review-ready on 2026-08-11.
+
+**Evidence:** `specs/live-bead-state.md` defines the authority order, state
+vocabulary, valid steady combinations, invalid combinations, transition
+owners, and one recovery result for each process-death cut from reservation
+through queue terminal application. It also gives C20 and C21 their required
+bindings and result classes. This slice changes no runtime code.
+
 ### C20. Define a dispatch intent and transaction result
 
 **Problem:** Reservation and bead claim are two durable writes with compensation between them.
@@ -338,6 +409,14 @@ Updated: 2026-08-10
 
 **Limits:** Do not add another best-effort repair record.
 
+**Status:** Review-ready on 2026-08-11.
+
+**Evidence:** `internal/dispatch` defines a value-only intent for prepared,
+claim-durable, run-durable, and handoff-durable phases. Strict JSON decoding
+rejects unknown, partial, early, and conflicting fields. The transaction result
+admits only committed, replayable, refused, or repair-required shapes. C20 adds
+no persistence or daemon wiring.
+
 ### C21. Make startup replay dispatch intents
 
 **Problem:** Recovery policy is spread across scheduler branches and boot repair.
@@ -347,6 +426,14 @@ Updated: 2026-08-10
 **Acceptance:** Fault tests cover stop after reservation, claim, run record, and launch handoff. Replay never double-dispatches.
 
 **Limits:** Do not use log text or event presence as authority.
+
+**Status:** Design-approved on 2026-08-11. Implementation has not started.
+
+**Evidence:** `C21-DESIGN.md` defines four review units. It requires a
+fail-closed intent store, a universal run record, an amended startup order, and
+atomic landing of replay with scheduler producer wiring. The design corrects
+the old session-before-durability order. It keeps new dispatch disabled until
+replay owns every durable intent.
 
 ### C22. Extract pure queue selection
 

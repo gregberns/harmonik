@@ -1,12 +1,34 @@
 package queue
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
+
+// parseCompletionGCTime reads a marker timestamp in the one wire layout.
+// A bad timestamp is a broken fixture, so the test stops here.
+func parseCompletionGCTime(t *testing.T, value string) time.Time {
+	t.Helper()
+	parsed, err := time.Parse("2006-01-02T15:04:05.000Z", value)
+	if err != nil {
+		t.Fatalf("parse completion timestamp %q: %v", value, err)
+	}
+	return parsed
+}
+
+// completionMarkerBasename names the release marker for one receipt.
+func completionMarkerBasename(t *testing.T, queueID, receiptID string) string {
+	t.Helper()
+	basename, err := CompletionReleaseMarkerBasename(queueID, receiptID)
+	if err != nil {
+		t.Fatalf("marker basename for %q/%q: %v", queueID, receiptID, err)
+	}
+	return basename
+}
 
 func completionGCFixture(t *testing.T) (string, CompletionPlan, CompletionReleaseMarker) {
 	t.Helper()
@@ -39,8 +61,8 @@ func completionGCFixture(t *testing.T) (string, CompletionPlan, CompletionReleas
 
 func TestCompletionReceiptGCEligibilityUsesOnlyTrustedRetentionTime(t *testing.T) {
 	_, _, marker := completionGCFixture(t)
-	releasedAt, _ := time.Parse("2006-01-02T15:04:05.000Z", marker.ReleasedAt)
-	gcNotBefore, _ := time.Parse("2006-01-02T15:04:05.000Z", marker.GCNotBefore)
+	releasedAt := parseCompletionGCTime(t, marker.ReleasedAt)
+	gcNotBefore := parseCompletionGCTime(t, marker.GCNotBefore)
 	for _, tc := range []struct {
 		name         string
 		now          time.Time
@@ -67,7 +89,7 @@ func TestCompletionReceiptGCEligibilityUsesOnlyTrustedRetentionTime(t *testing.T
 
 func TestGarbageCollectCompletionReceiptsRemovesReceiptBeforeMarker(t *testing.T) {
 	projectDir, prepared, marker := completionGCFixture(t)
-	now, _ := time.Parse("2006-01-02T15:04:05.000Z", marker.GCNotBefore)
+	now := parseCompletionGCTime(t, marker.GCNotBefore)
 	results, err := GarbageCollectCompletionReceipts(projectDir, CompletionGCObservation{Now: now, Synchronized: true})
 	if err != nil || len(results) != 1 || results[0].Err != nil ||
 		!results[0].ReceiptRemoved || !results[0].MarkerRemoved ||
@@ -126,7 +148,7 @@ func TestGarbageCollectCompletionReceiptsTrustedClockRejectsSymlinkRoot(t *testi
 		t.Fatalf("results = %+v, err=%v", results, err)
 	}
 	got, readErr := os.ReadFile(externalPath) //nolint:gosec // path is under t.TempDir
-	if readErr != nil || string(got) != string(want) {
+	if readErr != nil || !bytes.Equal(got, want) {
 		t.Fatalf("external bytes = %q, err=%v", got, readErr)
 	}
 }
@@ -155,7 +177,7 @@ func TestGarbageCollectCompletionReceiptsNeverCollectsUnreleasedReceipt(t *testi
 		t.Fatalf("results = %+v, err=%v", results, err)
 	}
 	got, err := os.ReadFile(receiptPath) //nolint:gosec // path is under t.TempDir
-	if err != nil || string(got) != string(want) {
+	if err != nil || !bytes.Equal(got, want) {
 		t.Fatalf("unreleased receipt = %q, err=%v", got, err)
 	}
 }
@@ -164,7 +186,7 @@ func TestGarbageCollectCompletionReceiptsBeforeRetentionChangesNothing(t *testin
 	projectDir, prepared, marker := completionGCFixture(t)
 	root := completionReceiptsDir(projectDir)
 	receiptPath := filepath.Join(root, prepared.Binding.Basename)
-	markerBase, _ := CompletionReleaseMarkerBasename(prepared.Receipt.QueueID, prepared.Receipt.ReceiptID)
+	markerBase := completionMarkerBasename(t, prepared.Receipt.QueueID, prepared.Receipt.ReceiptID)
 	markerPath := filepath.Join(root, markerBase)
 	wantReceipt, err := os.ReadFile(receiptPath) //nolint:gosec // paths are under t.TempDir
 	if err != nil {
@@ -174,7 +196,7 @@ func TestGarbageCollectCompletionReceiptsBeforeRetentionChangesNothing(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	gcNotBefore, _ := time.Parse("2006-01-02T15:04:05.000Z", marker.GCNotBefore)
+	gcNotBefore := parseCompletionGCTime(t, marker.GCNotBefore)
 	results, err := GarbageCollectCompletionReceipts(
 		projectDir,
 		CompletionGCObservation{Now: gcNotBefore.Add(-time.Millisecond), Synchronized: true},
@@ -185,14 +207,15 @@ func TestGarbageCollectCompletionReceiptsBeforeRetentionChangesNothing(t *testin
 	}
 	gotReceipt, receiptErr := os.ReadFile(receiptPath) //nolint:gosec // paths are under t.TempDir
 	gotMarker, markerErr := os.ReadFile(markerPath)    //nolint:gosec // paths are under t.TempDir
-	if receiptErr != nil || markerErr != nil || string(gotReceipt) != string(wantReceipt) || string(gotMarker) != string(wantMarker) {
+	if receiptErr != nil || markerErr != nil ||
+		!bytes.Equal(gotReceipt, wantReceipt) || !bytes.Equal(gotMarker, wantMarker) {
 		t.Fatalf("records changed: receipt_err=%v marker_err=%v", receiptErr, markerErr)
 	}
 }
 
 func TestGarbageCollectCompletionReceiptsRetriesAfterReceiptSyncFailure(t *testing.T) {
 	projectDir, prepared, marker := completionGCFixture(t)
-	now, _ := time.Parse("2006-01-02T15:04:05.000Z", marker.GCNotBefore)
+	now := parseCompletionGCTime(t, marker.GCNotBefore)
 	ops := osNamespaceOps()
 	openDir := ops.openDir
 	rootSyncs := 0
@@ -217,7 +240,7 @@ func TestGarbageCollectCompletionReceiptsRetriesAfterReceiptSyncFailure(t *testi
 	if _, statErr := os.Stat(filepath.Join(root, prepared.Binding.Basename)); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("receipt removal was not observed: %v", statErr)
 	}
-	markerBase, _ := CompletionReleaseMarkerBasename(prepared.Receipt.QueueID, prepared.Receipt.ReceiptID)
+	markerBase := completionMarkerBasename(t, prepared.Receipt.QueueID, prepared.Receipt.ReceiptID)
 	if _, statErr := os.Stat(filepath.Join(root, markerBase)); statErr != nil {
 		t.Fatalf("marker did not preserve retry state: %v", statErr)
 	}
@@ -230,7 +253,7 @@ func TestGarbageCollectCompletionReceiptsRetriesAfterReceiptSyncFailure(t *testi
 func TestGarbageCollectCompletionReceiptsPreservesMismatchedPair(t *testing.T) {
 	projectDir, prepared, marker := completionGCFixture(t)
 	receiptPath := filepath.Join(completionReceiptsDir(projectDir), prepared.Binding.Basename)
-	data, err := os.ReadFile(receiptPath)
+	data, err := os.ReadFile(receiptPath) //nolint:gosec // path is under t.TempDir
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +261,7 @@ func TestGarbageCollectCompletionReceiptsPreservesMismatchedPair(t *testing.T) {
 	if err := os.WriteFile(receiptPath, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	now, _ := time.Parse("2006-01-02T15:04:05.000Z", marker.GCNotBefore)
+	now := parseCompletionGCTime(t, marker.GCNotBefore)
 	results, err := GarbageCollectCompletionReceipts(projectDir, CompletionGCObservation{Now: now, Synchronized: true})
 	if err != nil || len(results) != 1 || results[0].Err == nil || results[0].ReceiptRemoved || results[0].MarkerRemoved {
 		t.Fatalf("results = %+v, err=%v", results, err)
@@ -257,7 +280,7 @@ func TestGarbageCollectCompletionReceiptsRemovesEligibleMarkerOnlyOrphan(t *test
 	if err := syncDirectory(root, osNamespaceOps()); err != nil {
 		t.Fatal(err)
 	}
-	now, _ := time.Parse("2006-01-02T15:04:05.000Z", marker.GCNotBefore)
+	now := parseCompletionGCTime(t, marker.GCNotBefore)
 	results, err := GarbageCollectCompletionReceipts(
 		projectDir,
 		CompletionGCObservation{Now: now, Synchronized: true},
@@ -270,7 +293,7 @@ func TestGarbageCollectCompletionReceiptsRemovesEligibleMarkerOnlyOrphan(t *test
 
 func TestGarbageCollectCompletionReceiptsMarkerSyncFailureIsRetryable(t *testing.T) {
 	projectDir, _, marker := completionGCFixture(t)
-	now, _ := time.Parse("2006-01-02T15:04:05.000Z", marker.GCNotBefore)
+	now := parseCompletionGCTime(t, marker.GCNotBefore)
 	ops := osNamespaceOps()
 	openDir := ops.openDir
 	rootSyncs := 0
@@ -308,8 +331,8 @@ func TestGarbageCollectCompletionReceiptsMarkerSyncFailureIsRetryable(t *testing
 
 func TestGarbageCollectCompletionReceiptsMarkerUnlinkFailureKeepsReceiptAbsence(t *testing.T) {
 	projectDir, prepared, marker := completionGCFixture(t)
-	now, _ := time.Parse("2006-01-02T15:04:05.000Z", marker.GCNotBefore)
-	markerBase, _ := CompletionReleaseMarkerBasename(prepared.Receipt.QueueID, prepared.Receipt.ReceiptID)
+	now := parseCompletionGCTime(t, marker.GCNotBefore)
+	markerBase := completionMarkerBasename(t, prepared.Receipt.QueueID, prepared.Receipt.ReceiptID)
 	markerPath := filepath.Join(completionReceiptsDir(projectDir), markerBase)
 	ops := osNamespaceOps()
 	remove := ops.remove
@@ -336,7 +359,7 @@ func TestGarbageCollectCompletionReceiptsMarkerUnlinkFailureKeepsReceiptAbsence(
 
 func TestGarbageCollectCompletionReceiptsReceiptUnlinkFailurePreservesPair(t *testing.T) {
 	projectDir, prepared, marker := completionGCFixture(t)
-	now, _ := time.Parse("2006-01-02T15:04:05.000Z", marker.GCNotBefore)
+	now := parseCompletionGCTime(t, marker.GCNotBefore)
 	receiptPath := filepath.Join(completionReceiptsDir(projectDir), prepared.Binding.Basename)
 	ops := osNamespaceOps()
 	remove := ops.remove
@@ -363,7 +386,7 @@ func TestGarbageCollectCompletionReceiptsReceiptUnlinkFailurePreservesPair(t *te
 
 func TestGarbageCollectCompletionReceiptsConvergesWhenReceiptUnlinkReturnsErrorAfterRemoval(t *testing.T) {
 	projectDir, prepared, marker := completionGCFixture(t)
-	now, _ := time.Parse("2006-01-02T15:04:05.000Z", marker.GCNotBefore)
+	now := parseCompletionGCTime(t, marker.GCNotBefore)
 	receiptPath := filepath.Join(completionReceiptsDir(projectDir), prepared.Binding.Basename)
 	ops := osNamespaceOps()
 	remove := ops.remove
@@ -391,7 +414,7 @@ func TestGarbageCollectCompletionReceiptsConvergesWhenReceiptUnlinkReturnsErrorA
 
 func TestGarbageCollectCompletionReceiptsRefusesReceiptChangedAtDeletionCAS(t *testing.T) {
 	projectDir, prepared, marker := completionGCFixture(t)
-	now, _ := time.Parse("2006-01-02T15:04:05.000Z", marker.GCNotBefore)
+	now := parseCompletionGCTime(t, marker.GCNotBefore)
 	receiptPath := filepath.Join(completionReceiptsDir(projectDir), prepared.Binding.Basename)
 	ops := osNamespaceOps()
 	readFile := ops.readFile
@@ -419,15 +442,15 @@ func TestGarbageCollectCompletionReceiptsRefusesReceiptChangedAtDeletionCAS(t *t
 		t.Fatalf("results = %+v, err=%v", results, err)
 	}
 	got, readErr := os.ReadFile(receiptPath) //nolint:gosec // path is under t.TempDir
-	if readErr != nil || string(got) != string(changed) {
+	if readErr != nil || !bytes.Equal(got, changed) {
 		t.Fatalf("changed receipt = %q, err=%v", got, readErr)
 	}
 }
 
 func TestGarbageCollectCompletionReceiptsRefusesMarkerChangedAtDeletionCAS(t *testing.T) {
 	projectDir, prepared, marker := completionGCFixture(t)
-	now, _ := time.Parse("2006-01-02T15:04:05.000Z", marker.GCNotBefore)
-	markerBase, _ := CompletionReleaseMarkerBasename(prepared.Receipt.QueueID, prepared.Receipt.ReceiptID)
+	now := parseCompletionGCTime(t, marker.GCNotBefore)
+	markerBase := completionMarkerBasename(t, prepared.Receipt.QueueID, prepared.Receipt.ReceiptID)
 	markerPath := filepath.Join(completionReceiptsDir(projectDir), markerBase)
 	ops := osNamespaceOps()
 	readFile := ops.readFile
@@ -455,14 +478,14 @@ func TestGarbageCollectCompletionReceiptsRefusesMarkerChangedAtDeletionCAS(t *te
 		t.Fatalf("results = %+v, err=%v", results, err)
 	}
 	got, readErr := os.ReadFile(markerPath) //nolint:gosec // path is under t.TempDir
-	if readErr != nil || string(got) != string(changed) {
+	if readErr != nil || !bytes.Equal(got, changed) {
 		t.Fatalf("changed marker = %q, err=%v", got, readErr)
 	}
 }
 
 func TestGarbageCollectCompletionReceiptsInitialSyncFailureDeletesNothing(t *testing.T) {
 	projectDir, prepared, marker := completionGCFixture(t)
-	now, _ := time.Parse("2006-01-02T15:04:05.000Z", marker.GCNotBefore)
+	now := parseCompletionGCTime(t, marker.GCNotBefore)
 	ops := osNamespaceOps()
 	openDir := ops.openDir
 	cut := errors.New("cut initial root sync")
@@ -487,8 +510,8 @@ func TestGarbageCollectCompletionReceiptsInitialSyncFailureDeletesNothing(t *tes
 
 func TestGarbageCollectCompletionReceiptsPreservesNonRegularMarker(t *testing.T) {
 	projectDir, prepared, marker := completionGCFixture(t)
-	now, _ := time.Parse("2006-01-02T15:04:05.000Z", marker.GCNotBefore)
-	markerBase, _ := CompletionReleaseMarkerBasename(prepared.Receipt.QueueID, prepared.Receipt.ReceiptID)
+	now := parseCompletionGCTime(t, marker.GCNotBefore)
+	markerBase := completionMarkerBasename(t, prepared.Receipt.QueueID, prepared.Receipt.ReceiptID)
 	markerPath := filepath.Join(completionReceiptsDir(projectDir), markerBase)
 	if err := os.Remove(markerPath); err != nil {
 		t.Fatal(err)
@@ -515,7 +538,7 @@ func TestGarbageCollectCompletionReceiptsPreservesNonRegularReceiptAndMarker(t *
 	if err := os.Mkdir(receiptPath, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	now, _ := time.Parse("2006-01-02T15:04:05.000Z", marker.GCNotBefore)
+	now := parseCompletionGCTime(t, marker.GCNotBefore)
 	results, err := GarbageCollectCompletionReceipts(
 		projectDir,
 		CompletionGCObservation{Now: now, Synchronized: true},
@@ -524,7 +547,7 @@ func TestGarbageCollectCompletionReceiptsPreservesNonRegularReceiptAndMarker(t *
 		results[0].Phase != CompletionGCPhasePreserved || results[0].MarkerRemoved {
 		t.Fatalf("results = %+v, err=%v", results, err)
 	}
-	markerBase, _ := CompletionReleaseMarkerBasename(prepared.Receipt.QueueID, prepared.Receipt.ReceiptID)
+	markerBase := completionMarkerBasename(t, prepared.Receipt.QueueID, prepared.Receipt.ReceiptID)
 	if _, statErr := os.Stat(filepath.Join(completionReceiptsDir(projectDir), markerBase)); statErr != nil {
 		t.Fatalf("marker was removed after non-regular receipt: %v", statErr)
 	}

@@ -77,7 +77,7 @@ Check first:
 If exit 17, start the daemon in a detached tmux session:
 
   tmux new-session -d -s harmonik-daemon \
-    'harmonik --project $PROJECT_DIR --no-auto-pull --max-concurrent 4 \
+    'harmonik start daemon --project $PROJECT_DIR --no-auto-pull --max-concurrent 4 \
        --target-branch $TARGET_BRANCH --protect-branch main'
 
 The daemon refuses to start if the resolved target branch is protected. That is

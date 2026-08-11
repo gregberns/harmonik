@@ -114,7 +114,7 @@ func TestRunTmuxEnvUnset_BootsAndReachesDispatchLoop(t *testing.T) {
 	mainFixtureSaveRestoreEnv(t, "TMUX", "", true /* unset */)
 
 	projectDir := t.TempDir()
-	mainFixtureSaveRestoreArgs(t, []string{"harmonik", "--project", projectDir})
+	mainFixtureSaveRestoreArgs(t, []string{"harmonik", "start", "daemon", "--project", projectDir})
 
 	sessionName := tmux.DefaultSessionName(projectDir)
 	t.Cleanup(func() {
@@ -182,7 +182,7 @@ func TestRunTmuxUnusable_TmuxSubstrateStillRefuses(t *testing.T) {
 	// Empty PATH → exec.LookPath("tmux") fails → ProbeTmux returns ErrTmuxMissing.
 	mainFixtureSaveRestoreEnv(t, "PATH", "", false /* set */)
 
-	mainFixtureSaveRestoreArgs(t, []string{"harmonik", "--project", t.TempDir()})
+	mainFixtureSaveRestoreArgs(t, []string{"harmonik", "start", "daemon", "--project", t.TempDir()})
 
 	exitCh := make(chan int, 1)
 	go func() { exitCh <- run() }()
@@ -241,7 +241,7 @@ func TestRunTmuxEnvSet_ProceedsToSubstratePath(t *testing.T) {
 	// zero delay — the test must not inherit accumulated rapid-boot penalties
 	// from earlier runs.
 	projectDir := t.TempDir()
-	mainFixtureSaveRestoreArgs(t, []string{"harmonik", "--project", projectDir})
+	mainFixtureSaveRestoreArgs(t, []string{"harmonik", "start", "daemon", "--project", projectDir})
 
 	// A panic here would indicate the substrate path has a nil-pointer bug.
 	defer func() {

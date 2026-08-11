@@ -25,7 +25,7 @@ Start the daemon **once**, detached in a tmux session, so it outlives your termi
 
 ```bash
 tmux new-session -d -s harmonik-daemon \
-  'harmonik --project /path/to/your/repo --no-auto-pull --max-concurrent 4'
+  'harmonik start daemon --project /path/to/your/repo --no-auto-pull --max-concurrent 4'
 ```
 
 - `--no-auto-pull` — **queue-only** (this is already the default; passing it makes the intent explicit): the daemon runs only the beads you explicitly submit and never auto-drains your whole ledger.

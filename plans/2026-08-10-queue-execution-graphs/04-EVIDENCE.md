@@ -177,4 +177,10 @@ go test -tags=scenario ./internal/daemon -run '^TestScenario_QueueSubmit_(Deferr
 
 Result: all five scenarios passed in 118.51 seconds on 2026-08-11. The clean-restart fixture then disabled the production restart backoff and passed alone in 8.81 seconds. This keeps the same two-daemon behavior while removing 30 seconds of test-only delay.
 
+The strengthened gate passed again in 88.54 seconds after the dry-run and omitted-blocker assertions were added.
+
+The real merge conflict and merge serialization scenarios passed together in 5.57 seconds after all delta changes.
+
+The focused queue, queue-wiring, and workspace packages pass. The broad daemon package has three unrelated failures in `dot_node_baseline_test.go`. Each fixture reached no terminal transition within 50 seconds. Delta does not change those tests or their product path. The operator directed delta to disregard unrelated red tests and continue.
+
 Use one section per scenario. Include the exact command, binary commit, fixture commit, event IDs or stable log paths, branch graph, ledger state, and result.

@@ -4,7 +4,7 @@ Updated: 2026-08-11
 
 ## Current stage
 
-Research and runtime proof. Serial and fan-out or fan-in graphs passed through the real daemon and Unix-socket CLI without supervisor action.
+Core research and runtime proof are complete. Serial and fan-out or fan-in graphs pass through the real daemon and Unix-socket CLI without supervisor action. Crash replay will gain stronger assertions when alpha's durable producer and startup replay land.
 
 ## Completed
 
@@ -39,11 +39,14 @@ Research and runtime proof. Serial and fan-out or fan-in graphs passed through t
 - Strengthened the fan graph with the real dry-run client. It reports all six dependency edges, marks only the root ready, and persists nothing.
 - Confirmed that onward promotion of a completed epic branch is an external policy step under `WM-007`. The daemon emits `epic_completed` and does not merge that branch onward.
 - Proved that dry-run does not discover an omitted blocker. Submission-set completeness belongs to the planning agent under the current contract.
+- Re-ran the strengthened five-scenario live gate. All paths passed in 88.54 seconds.
+- Re-ran conflict handling and merge serialization. Both passed in 5.57 seconds.
+- Ran the broad focused package set. Queue, queue wiring, and workspace passed. Three unrelated DOT baseline tests timed out in the daemon package.
 
 ## Next
 
 - Coordinate the abrupt-crash scenario with C21 when its producer and startup replay land.
-- Run the focused package and scenario gates after the next change.
+- Review alpha integration changes and add durable replay assertions when that work lands.
 
 ## Constraints
 

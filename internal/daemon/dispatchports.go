@@ -20,8 +20,14 @@ func newCapacityPort(maxConcurrent int, concurrencyCtrl *ConcurrencyController) 
 // queueSurfacePort holds the queue-specific inputs of the dispatch loop. The
 // QueueStore remains a shared run handle on legacy aggregate.
 type queueSurfacePort struct {
-	submitWakeC <-chan struct{}
-	queueLedger queue.BeadLedger
+	submitWakeC  <-chan struct{}
+	queueLedger  queue.BeadLedger
+	completionGC completionGCStore
+	projectDir   string
+}
+
+type completionGCStore interface {
+	GarbageCollectCompletionReceipts(string, queue.CompletionGCObservation) ([]queue.CompletionGCResult, error)
 }
 
 func newQueueSurfacePort(submitWakeC <-chan struct{}, queueLedger queue.BeadLedger) queueSurfacePort {

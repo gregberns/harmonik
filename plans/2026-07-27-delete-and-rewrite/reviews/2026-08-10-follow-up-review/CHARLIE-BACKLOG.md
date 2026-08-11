@@ -10,14 +10,33 @@ Charlie must deliberately break each new claim test before accepting it.
 Updated: 2026-08-10
 
 - Owner: Charlie.
-- Active slice: C11 is complete. C12 is next.
+- Active slice: C12 is complete. C13 is next.
 - Start revision: `b49210d67` on `work/alpha-integration-merge`.
 - State: C01 through C04 are complete and independently approved.
 - Implementation commit: `de0a6ca3`.
 - Integration reconciliation commit: `b0cac51a`.
 - Stop gate: C05 through C07 received independent approval before C08.
 - Coordination note: the queue RPC overlap retained both the active-run status work and the event-intent path.
-- Later tasks: C12 through C31 remain unstarted.
+- Later tasks: C13 through C31 remain unstarted.
+
+### C12 evidence
+
+- GC eligibility uses only an explicit trusted, synchronized, non-regressed UTC observation.
+- Unavailable, unsynchronized, regressed, and pre-retention observations delete nothing.
+- Unreleased receipts with no release marker are never selected.
+- GC revalidates the exact marker and receipt pair immediately before deletion.
+- GC removes and syncs the receipt before it removes and syncs the marker.
+- Marker-only cleanup first makes receipt absence durable.
+- Result phases distinguish durable receipt absence, durable marker absence, and indeterminate sync cuts.
+- Initial-sync, unlink, post-unlink sync, deletion-time CAS, symlink-root, and non-regular file faults preserve the required facts.
+- A later pass completes durability after an earlier root-sync failure.
+- QueueStore serializes GC with completion marker installation.
+- Live loop maintenance calls the QueueStore port with an untrusted observation and reports phased faults.
+- Production deletion remains fail-safe disabled until a platform owner supplies trusted clock status.
+- Focused queue, queue-store, and daemon tests pass with `-count=1`.
+- Repository compilation, `go vet ./...`, and the diff check pass.
+- A retention-gate mutation made the pre-retention transaction test delete both records and fail.
+- Independent reviewer verdict: `APPROVE` after one blocking correction round.
 
 ### C11 evidence
 

@@ -78,10 +78,11 @@ const submitWakeCBufSize = 1
 // Spec ref: specs/queue-model.md §9.1 QM-060.
 // Bead ref: hk-j808w, hk-tigaf.2.
 type QueueStore struct {
-	queueMu     sync.RWMutex
-	queues      map[string]*queue.Queue
-	generations map[string]uint64
-	quarantined map[string]error
+	queueMu      sync.RWMutex
+	completionMu sync.Mutex
+	queues       map[string]*queue.Queue
+	generations  map[string]uint64
+	quarantined  map[string]error
 	// wakeC receives a signal after every SetQueue / SetQueueByName call so the
 	// workloop can break out of its idle sleep immediately on queue-submit (hk-24xn1).
 	// Buffer of 1 coalesces rapid bursts; a full buffer is silently dropped
@@ -879,6 +880,8 @@ func (s *QueueStore) finishCompletion(
 	s.generations[name]++
 	result.Phase = queue.CompletionPhaseOwnershipReleased
 	s.queueMu.Unlock()
+	s.completionMu.Lock()
+	defer s.completionMu.Unlock()
 	releasedAt := req.ReleaseTime()
 	if _, err := installMarker(req.ProjectDir, prepared.MarkerInputs, releasedAt); err != nil {
 		result.Phase = queue.CompletionPhaseMarkerFailed
@@ -887,6 +890,25 @@ func (s *QueueStore) finishCompletion(
 	}
 	result.Phase = queue.CompletionPhaseMarkerDurable
 	return result
+}
+
+// GarbageCollectCompletionReceipts serializes receipt deletion with marker
+// installation. An untrusted observation returns before namespace I/O.
+func (s *QueueStore) GarbageCollectCompletionReceipts(
+	projectDir string,
+	observation queue.CompletionGCObservation,
+) ([]queue.CompletionGCResult, error) {
+	return s.garbageCollectCompletionReceipts(projectDir, observation, queue.GarbageCollectCompletionReceipts)
+}
+
+func (s *QueueStore) garbageCollectCompletionReceipts(
+	projectDir string,
+	observation queue.CompletionGCObservation,
+	collect func(string, queue.CompletionGCObservation) ([]queue.CompletionGCResult, error),
+) ([]queue.CompletionGCResult, error) {
+	s.completionMu.Lock()
+	defer s.completionMu.Unlock()
+	return collect(projectDir, observation)
 }
 
 // otherQueuesLocked returns a deep copy of every queue except exclude. The

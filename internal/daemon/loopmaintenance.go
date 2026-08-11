@@ -38,13 +38,16 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/handlercontract"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/projectconfig"
+	"github.com/gregberns/harmonik/internal/queue"
 )
 
 // periodicCoordinatorReapInterval is the default minimum interval between
@@ -145,6 +148,8 @@ type loopMaintenance struct {
 	// governor is the sentinel movement governor, or nil when
 	// `subsystems.movement_governor.enabled: false`. Every method tolerates nil.
 	governor *movementGovernor
+
+	logW io.Writer
 }
 
 // newLoopMaintenance builds the loop's maintenance state and constructs the two
@@ -184,6 +189,7 @@ func newLoopMaintenance(projectCfg projectconfig.ProjectConfig, lifecycle loopLi
 		dispatchGates:   dispatchGates,
 		dashGate:        newDashboardGateIfEnabled(projectCfg, logW),
 		governor:        newMovementGovernorIfEnabled(governor, governorEnabled, logW),
+		logW:            logW,
 	}
 }
 
@@ -228,8 +234,41 @@ func (m *loopMaintenance) tickBeforeDispatch(ctx context.Context) maintenanceObs
 	// that never ran. Full rationale in the file-level comment on
 	// diskcheck_hksxlb.go.
 	runPeriodicDiskCheck(ctx, m.diskReclaim, &m.state)
+	m.runCompletionReceiptGC(ctx)
 
 	return maintenanceObservation{diskLow: m.state.diskLow}
+}
+
+func (m *loopMaintenance) runCompletionReceiptGC(ctx context.Context) {
+	if m.queueSurface.completionGC == nil {
+		return
+	}
+	// QM-006: the maintenance port is live, but deletion stays disabled until a
+	// platform owner can attest synchronized, non-regressed UTC.
+	results, err := m.queueSurface.completionGC.GarbageCollectCompletionReceipts(
+		m.queueSurface.projectDir,
+		queue.CompletionGCObservation{},
+	)
+	if err != nil {
+		m.logCompletionGCFault("", "", "", err)
+		return
+	}
+	for _, result := range results {
+		if result.Err != nil {
+			m.logCompletionGCFault(result.QueueID, result.ReceiptID, string(result.Phase), result.Err)
+		}
+	}
+}
+
+func (m *loopMaintenance) logCompletionGCFault(queueID, receiptID, phase string, err error) {
+	w := m.logW
+	if w == nil {
+		w = os.Stderr
+	}
+	if _, writeErr := fmt.Fprintf(w, "queue: completion receipt GC failed queue_id=%s receipt_id=%s phase=%s error=%v\n",
+		queueID, receiptID, phase, err); writeErr != nil {
+		return
+	}
 }
 
 // reapCoordinatorSessions runs the periodic coordinator-session reap when its

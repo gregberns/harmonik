@@ -1,7 +1,9 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -15,6 +17,7 @@ import (
 	"github.com/google/uuid"
 
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
+	"github.com/gregberns/harmonik/internal/queue"
 	"github.com/gregberns/harmonik/internal/workspace"
 )
 
@@ -64,6 +67,53 @@ func haltFixture(t *testing.T) (coordinatorReapPort, diskReclaimPort, *recording
 		diskFreeBytesFunc: func(string) (uint64, error) { return 1 << 62, nil },
 	}
 	return port, diskReclaim, adapter
+}
+
+type recordingCompletionGC struct {
+	calls       int
+	projectDir  string
+	observation queue.CompletionGCObservation
+	results     []queue.CompletionGCResult
+}
+
+func (r *recordingCompletionGC) GarbageCollectCompletionReceipts(
+	projectDir string,
+	observation queue.CompletionGCObservation,
+) ([]queue.CompletionGCResult, error) {
+	r.calls++
+	r.projectDir = projectDir
+	r.observation = observation
+	return r.results, nil
+}
+
+func TestTickBeforeDispatchCallsCompletionGCMaintenanceWithUntrustedClock(t *testing.T) {
+	coordinator, disk, _ := haltFixture(t)
+	gc := &recordingCompletionGC{}
+	gc.results = []queue.CompletionGCResult{{
+		QueueID: "queue-one", ReceiptID: "receipt-one",
+		Phase: queue.CompletionGCPhaseReceiptSyncIndeterminate,
+		Err:   errors.New("cut receipt sync"),
+	}}
+	projectDir := t.TempDir()
+	var logOutput bytes.Buffer
+	m := &loopMaintenance{
+		coordinatorReap: coordinator,
+		diskReclaim:     disk,
+		queueSurface: queueSurfacePort{
+			completionGC: gc,
+			projectDir:   projectDir,
+		},
+		logW: &logOutput,
+	}
+	m.tickBeforeDispatch(t.Context())
+	if gc.calls != 1 || gc.projectDir != projectDir || gc.observation != (queue.CompletionGCObservation{}) {
+		t.Fatalf("GC call = count=%d project=%q observation=%+v", gc.calls, gc.projectDir, gc.observation)
+	}
+	for _, want := range []string{"queue-one", "receipt-one", "receipt_sync_indeterminate", "cut receipt sync"} {
+		if !strings.Contains(logOutput.String(), want) {
+			t.Fatalf("GC log %q does not contain %q", logOutput.String(), want)
+		}
+	}
 }
 
 // TestTickBeforeDispatchHaltShortCircuits pins the invariant loopmaintenance.go

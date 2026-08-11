@@ -139,6 +139,8 @@ func (bs *bootState) launchWorkLoop(ctx context.Context, daemonStartTime time.Ti
 	}
 	capacity := newCapacityPort(maxConcurrent, bs.concurrencyCtrl)
 	queueSurface := newQueueSurfacePort(bs.qs.WakeCh(), queuewiring.NewBRQueueLedger(ledger))
+	queueSurface.completionGC = bs.qs
+	queueSurface.projectDir = cfg.ProjectDir
 	dispatchGates := newDispatchGatesPort(bs.bus, bs.handlerPauseCtrl, bs.opPauseCtrl, bs.decisionBlocker)
 	schedulePort := newSchedulePort(daemonBinaryPath, cfg.ProjectDir, handlerEnv, scheduleStore, bs.crewHandler)
 	// `harmonik sleep` suspends enabled jobs; `wake --all` restores them

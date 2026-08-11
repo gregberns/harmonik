@@ -50,17 +50,16 @@ func newModelDoneCycler(
 		HandoffFilePath: func(_, a string) string {
 			return "/tmp/HANDOFF-" + a + ".md"
 		},
-		ReadHandoff:            rs.readHandoff,
-		HandoffModTimeFn:       rs.handoffModTime,
-		TruncateHandoffFn:      rs.truncate,
-		InjectFn:               rs.inject,
-		ReadGaugeFn:            rs.readGauge,
-		CrispIdleFn:            func(_, _ string) bool { return true },
-		HoldingDispatchFn:      func(_, _ string) bool { return false },
-		WriteJournalFn:         jc.write,
-		SetTmuxEnvFn:           func(_ context.Context, _, _, _ string) error { return nil },
-		IdleMarkerModTimeFn:    idleMarker,
-		RecentTranscriptTurnFn: transcriptTurn,
+		ReadHandoff:         rs.readHandoff,
+		HandoffModTimeFn:    rs.handoffModTime,
+		TruncateHandoffFn:   rs.truncate,
+		InjectFn:            rs.inject,
+		ReadGaugeFn:         rs.readGauge,
+		CrispIdleFn:         func(_, _ string) bool { return true },
+		HoldingDispatchFn:   func(_, _ string) bool { return false },
+		WriteJournalFn:      jc.write,
+		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
+		IdleMarkerModTimeFn: idleMarker,
 		SetManagedSessionFn: func(_, _, sid string) error {
 			mu.Lock()
 			defer mu.Unlock()
@@ -68,7 +67,13 @@ func newModelDoneCycler(
 			return nil
 		},
 	}
-	return mustNewCycler(cfg, em)
+	return mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Activity = testActivityWithTurns{
+			ActivityProbe: deps.Activity,
+			dir:           projectDir,
+			turn:          transcriptTurn,
+		}
+	})
 }
 
 // noIdleMarker models an agent whose Stop hook is not wired.

@@ -42,7 +42,7 @@ func (p configActivityProbe) lastTurn(sid, role string) (time.Time, bool) {
 	if sid == "" {
 		return time.Time{}, false
 	}
-	return p.cfg.recentTurnFn()(p.cfg.resolvedTranscriptDir(), sid, role)
+	return recentTranscriptTurn(p.cfg.resolvedTranscriptDir(), sid, role)
 }
 
 type configHandoffDocument struct{ cfg *CyclerConfig }

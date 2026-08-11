@@ -2,6 +2,7 @@ package keeper_test
 
 import (
 	"context"
+	"time"
 
 	"github.com/gregberns/harmonik/internal/keeper"
 )
@@ -43,4 +44,18 @@ type testRespawnFunc func(context.Context, string) error
 
 func (f testRespawnFunc) ForceRestart(ctx context.Context, agent string) error {
 	return f(ctx, agent)
+}
+
+type testActivityWithTurns struct {
+	keeper.ActivityProbe
+	dir  string
+	turn func(string, string, string) (time.Time, bool)
+}
+
+func (a testActivityWithTurns) LastUserTurn(sid string) (time.Time, bool) {
+	return a.turn(a.dir, sid, "user")
+}
+
+func (a testActivityWithTurns) LastAssistantTurn(sid string) (time.Time, bool) {
+	return a.turn(a.dir, sid, "assistant")
 }

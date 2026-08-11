@@ -300,12 +300,6 @@ type CyclerConfig struct {
 	// Gate 5e. Refs: hk-74iyd.
 	PostAnswerGrace time.Duration
 
-	// RecentTranscriptTurnFn returns the timestamp of the most recent "real"
-	// transcript entry with the given role ("user" or "assistant") under
-	// transcriptDir/sessionID.jsonl. Nil → recentTranscriptTurn (production).
-	// Injectable for tests that write controlled transcript files. Refs: hk-74iyd.
-	RecentTranscriptTurnFn func(transcriptDir, sessionID, role string) (time.Time, bool)
-
 	// hasRespawn is set by NewCycler once the RespawnPort is bound; the pure
 	// reactor reads it (a policy scalar, not IO) to reproduce the pre-rebuild
 	// "count marches but never fires when no respawn is wired" escalation
@@ -889,15 +883,6 @@ func (c *CyclerConfig) resolvedTranscriptDir() string {
 		return c.TranscriptDir
 	}
 	return transcriptDirFor(c.ProjectDir)
-}
-
-// recentTurnFn returns the effective RecentTranscriptTurnFn: the configured
-// one when set, otherwise the production recentTranscriptTurn. Refs: hk-74iyd.
-func (c *CyclerConfig) recentTurnFn() func(transcriptDir, sessionID, role string) (time.Time, bool) {
-	if c.RecentTranscriptTurnFn != nil {
-		return c.RecentTranscriptTurnFn
-	}
-	return recentTranscriptTurn
 }
 
 // NOTE (T7): the hk-fi78d freshness recovery is now split between the

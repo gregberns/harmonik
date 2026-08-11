@@ -7,6 +7,21 @@ import (
 	"time"
 )
 
+type countingActivity struct {
+	ActivityProbe
+	roles map[string]int
+}
+
+func (a countingActivity) LastUserTurn(string) (time.Time, bool) {
+	a.roles["user"]++
+	return time.Time{}, false
+}
+
+func (a countingActivity) LastAssistantTurn(string) (time.Time, bool) {
+	a.roles["assistant"]++
+	return time.Time{}, false
+}
+
 func TestConfigAdaptersKeepEntryTranscriptReadsLazy(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -22,13 +37,11 @@ func TestConfigAdaptersKeepEntryTranscriptReadsLazy(t *testing.T) {
 				AgentName: "adapter", ProjectDir: t.TempDir(), TmuxTarget: "adapter:0",
 				OperatorTurnLookback: tc.lookback,
 				IsManagedFn:          func(string, string) bool { return false },
-				RecentTranscriptTurnFn: func(_, _, role string) (time.Time, bool) {
-					roles[role]++
-					return time.Time{}, false
-				},
 			}
+			deps := CycleDepsFromConfig(cfg, nil)
+			deps.Activity = countingActivity{ActivityProbe: deps.Activity, roles: roles}
 			cycler, err := NewCyclerWithDeps(
-				CyclePolicyFromConfig(cfg), CycleEnvFromConfig(cfg), CycleDepsFromConfig(cfg, nil),
+				CyclePolicyFromConfig(cfg), CycleEnvFromConfig(cfg), deps,
 			)
 			if err != nil {
 				t.Fatal(err)

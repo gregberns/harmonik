@@ -12,7 +12,6 @@ OperatorAttachedFn
 ReadGaugeFn
 ReadHandoff
 ReadJournalFn
-RecentTranscriptTurnFn
 SetManagedSessionFn
 SetTmuxEnvFn
 SleepingCheckFn

@@ -10,14 +10,14 @@ Charlie must deliberately break each new claim test before accepting it.
 Updated: 2026-08-11
 
 - Owner: Charlie.
-- Active slice: C20 is in review. C21 is next after the dispatch contract closes.
+- Active slice: C21 design is approved. C21a is the next implementation unit.
 - Start revision: `b49210d67` on `work/alpha-integration-merge`.
 - State: C01 through C04 are complete and independently approved.
 - Implementation commit: `de0a6ca3`.
 - Integration reconciliation commit: `b0cac51a`.
 - Stop gate: C05 through C07 received independent approval before C08.
 - Coordination note: the queue RPC overlap retained both the active-run status work and the event-intent path.
-- Later tasks: C20 through C31 remain unstarted.
+- Later tasks: C22 through C31 remain unstarted.
 
 ### C18 evidence
 
@@ -426,6 +426,14 @@ no persistence or daemon wiring.
 **Acceptance:** Fault tests cover stop after reservation, claim, run record, and launch handoff. Replay never double-dispatches.
 
 **Limits:** Do not use log text or event presence as authority.
+
+**Status:** Design-approved on 2026-08-11. Implementation has not started.
+
+**Evidence:** `C21-DESIGN.md` defines four review units. It requires a
+fail-closed intent store, a universal run record, an amended startup order, and
+atomic landing of replay with scheduler producer wiring. The design corrects
+the old session-before-durability order. It keeps new dispatch disabled until
+replay owns every durable intent.
 
 ### C22. Extract pure queue selection
 

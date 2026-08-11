@@ -1,7 +1,9 @@
 package queuewiring
 
 import (
+	"bytes"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -60,8 +62,12 @@ func TestQueueStoreCompleteOrdersReceiptObservationCleanupAndRelease(t *testing.
 	if err := queue.Persist(t.Context(), projectDir, q); err != nil {
 		t.Fatal(err)
 	}
-	observed := false
+	observationCalls := 0
 	releaseSampled := false
+	wantPlan, err := queue.PrepareCompletion(*storeCompletionCandidate(t, q, stamp), storeCompletionTransactionID, storeCompletionReceiptID, stamp)
+	if err != nil {
+		t.Fatal(err)
+	}
 	result := store.Complete(t.Context(), queue.CompletionRequest{
 		Snapshot:      store.Snapshot(queue.QueueNameMain),
 		Candidate:     storeCompletionCandidate(t, q, stamp),
@@ -78,7 +84,10 @@ func TestQueueStoreCompleteOrdersReceiptObservationCleanupAndRelease(t *testing.
 			return stamp.Add(time.Minute)
 		},
 		Observe: func(receipt queue.CompletionReceipt) error {
-			observed = true
+			observationCalls++
+			if receipt != wantPlan.Receipt {
+				t.Fatalf("observed receipt = %+v, want %+v", receipt, wantPlan.Receipt)
+			}
 			before := store.Snapshot(queue.QueueNameMain)
 			if before.Queue == nil || before.Queue.Status != queue.QueueStatusCompleted {
 				t.Fatalf("observer could not read completed snapshot: %+v", before.Queue)
@@ -112,8 +121,8 @@ func TestQueueStoreCompleteOrdersReceiptObservationCleanupAndRelease(t *testing.
 			return errors.New("observation failure does not gate cleanup")
 		},
 	})
-	if !observed {
-		t.Fatal("completion observation was not attempted")
+	if observationCalls != 1 {
+		t.Fatalf("completion observation calls = %d, want 1", observationCalls)
 	}
 	if !releaseSampled {
 		t.Fatal("release time was not sampled")
@@ -134,6 +143,69 @@ func TestQueueStoreCompleteOrdersReceiptObservationCleanupAndRelease(t *testing.
 		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("cleanup path %s: %v", path, err)
 		}
+	}
+}
+
+func TestQueueStoreCompleteReceiptFailureRetainsPreReleaseOwnership(t *testing.T) {
+	store := NewQueueStore()
+	q, stamp := storeCompletionFixture()
+	store.SetQueue(q)
+	projectDir := t.TempDir()
+	if err := queue.Persist(t.Context(), projectDir, q); err != nil {
+		t.Fatal(err)
+	}
+	receiptRoot := filepath.Join(projectDir, ".harmonik", "queues", ".completion-receipts")
+	externalRoot := t.TempDir()
+	if err := os.Symlink(externalRoot, receiptRoot); err != nil {
+		t.Fatal(err)
+	}
+	observationCalls := 0
+	releaseCalls := 0
+	result := store.Complete(t.Context(), queue.CompletionRequest{
+		Snapshot:      store.Snapshot(queue.QueueNameMain),
+		Candidate:     storeCompletionCandidate(t, q, stamp),
+		DecisionInput: storeCompletionInput(q, stamp),
+		ProjectDir:    projectDir,
+		TransactionID: storeCompletionTransactionID,
+		ReceiptID:     storeCompletionReceiptID,
+		CompletedAt:   stamp,
+		ReleaseTime: func() time.Time {
+			releaseCalls++
+			return stamp.Add(time.Minute)
+		},
+		Observe: func(queue.CompletionReceipt) error {
+			observationCalls++
+			return nil
+		},
+	})
+	if result.Phase != queue.CompletionPhaseCanonicalCommitted || result.Outcome != queue.OutcomeCommitIndeterminate || result.Err == nil {
+		t.Fatalf("result = %+v", result)
+	}
+	if observationCalls != 0 || releaseCalls != 0 {
+		t.Fatalf("pre-release effects: observation=%d release=%d", observationCalls, releaseCalls)
+	}
+	retained := store.Snapshot(queue.QueueNameMain)
+	if !sameQueue(retained.Queue, q) {
+		t.Fatalf("receipt failure changed live owner: %+v", retained.Queue)
+	}
+	transact := store.Transact(t.Context(), queue.TransactionRequest{
+		Snapshot:      retained,
+		ProjectDir:    projectDir,
+		OperationKind: queue.OperationMaintenance,
+		Mutate:        func(*queue.Queue) error { return nil },
+	})
+	if !errors.Is(transact.Err, ErrQueueQuarantined) {
+		t.Fatalf("receipt failure did not quarantine owner: %v", transact.Err)
+	}
+	canonical, err := queue.Load(t.Context(), projectDir, queue.QueueNameMain)
+	if err != nil || canonical == nil || canonical.Status != queue.QueueStatusCompleted {
+		t.Fatalf("completed canonical = %+v, err=%v", canonical, err)
+	}
+	if _, err := os.Stat(filepath.Join(projectDir, ".harmonik", "queues", "main.replace-intent")); err != nil {
+		t.Fatalf("completion intent missing: %v", err)
+	}
+	if entries, err := os.ReadDir(externalRoot); err != nil || len(entries) != 0 {
+		t.Fatalf("symlink target changed: entries=%v err=%v", entries, err)
 	}
 }
 
@@ -197,6 +269,99 @@ func TestQueueStoreCompleteCleanupFailureRetainsOwnershipAndQuarantine(t *testin
 	}
 }
 
+func TestQueueStoreCompleteRetainsExactOwnerAtPostUnlinkFaults(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		absentPath       string
+		cleanupCanonical func(string, string, string, string) error
+		cleanupIntent    func(string, string) error
+	}{
+		{
+			name:       "canonical unlinked before directory durability",
+			absentPath: filepath.Join(".harmonik", "queues", "main.json"),
+			cleanupCanonical: func(projectDir, name, _, _ string) error {
+				if err := os.Remove(filepath.Join(projectDir, ".harmonik", "queues", name+".json")); err != nil {
+					return err
+				}
+				return errors.New("cut canonical directory sync")
+			},
+			cleanupIntent: queue.CleanupReplaceIntent,
+		},
+		{
+			name:             "intent unlinked before directory durability",
+			absentPath:       filepath.Join(".harmonik", "queues", "main.replace-intent"),
+			cleanupCanonical: queue.CleanupCompletedCanonical,
+			cleanupIntent: func(projectDir, name string) error {
+				if err := os.Remove(filepath.Join(projectDir, ".harmonik", "queues", name+".replace-intent")); err != nil {
+					return err
+				}
+				return errors.New("cut intent directory sync")
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := NewQueueStore()
+			q, stamp := storeCompletionFixture()
+			store.SetQueue(q)
+			projectDir := t.TempDir()
+			if err := queue.Persist(t.Context(), projectDir, q); err != nil {
+				t.Fatal(err)
+			}
+			observationCalls := 0
+			releaseCalls := 0
+			markerCalls := 0
+			result := store.complete(t.Context(), queue.CompletionRequest{
+				Snapshot:      store.Snapshot(queue.QueueNameMain),
+				Candidate:     storeCompletionCandidate(t, q, stamp),
+				DecisionInput: storeCompletionInput(q, stamp),
+				ProjectDir:    projectDir,
+				TransactionID: storeCompletionTransactionID,
+				ReceiptID:     storeCompletionReceiptID,
+				CompletedAt:   stamp,
+				ReleaseTime: func() time.Time {
+					releaseCalls++
+					return stamp.Add(time.Minute)
+				},
+				Observe: func(queue.CompletionReceipt) error {
+					observationCalls++
+					return nil
+				},
+			}, tc.cleanupCanonical, tc.cleanupIntent,
+				func(string, queue.CompletionReleaseMarkerInputs, time.Time) (queue.CompletionReleaseMarker, error) {
+					markerCalls++
+					return queue.CompletionReleaseMarker{}, nil
+				},
+			)
+			if result.Phase != queue.CompletionPhaseObservationAttempted || result.CleanupErr == nil {
+				t.Fatalf("result = %+v", result)
+			}
+			if observationCalls != 1 || releaseCalls != 0 || markerCalls != 0 {
+				t.Fatalf("calls: observe=%d release=%d marker=%d", observationCalls, releaseCalls, markerCalls)
+			}
+			if _, err := os.Lstat(filepath.Join(projectDir, tc.absentPath)); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("selected cleanup path still exists or could not be classified: %v", err)
+			}
+			retained := store.Snapshot(queue.QueueNameMain)
+			if retained.Queue == nil || retained.Queue.Status != queue.QueueStatusCompleted {
+				t.Fatalf("completed owner was not retained: %+v", retained.Queue)
+			}
+			generation := retained.Generation
+			transact := store.Transact(t.Context(), queue.TransactionRequest{
+				Snapshot:      retained,
+				ProjectDir:    projectDir,
+				OperationKind: queue.OperationMaintenance,
+				Mutate:        func(*queue.Queue) error { return nil },
+			})
+			if !errors.Is(transact.Err, ErrQueueQuarantined) {
+				t.Fatalf("post-unlink fault did not quarantine owner: %v", transact.Err)
+			}
+			if after := store.Snapshot(queue.QueueNameMain); after.Generation != generation || !sameQueue(after.Queue, retained.Queue) {
+				t.Fatalf("refused writer changed retained owner: before=%+v after=%+v", retained, after)
+			}
+		})
+	}
+}
+
 func TestQueueStoreCompleteMarkerFailureKeepsReleasedNameAndRetriesSameReceipt(t *testing.T) {
 	store := NewQueueStore()
 	q, stamp := storeCompletionFixture()
@@ -246,6 +411,85 @@ func TestQueueStoreCompleteMarkerFailureKeepsReleasedNameAndRetriesSameReceipt(t
 	repeated, err := queue.InstallCompletionReleaseMarker(projectDir, prepared.MarkerInputs, stamp.Add(3*time.Minute))
 	if err != nil || repeated != marker {
 		t.Fatalf("marker retry = %+v, err=%v; want %+v", repeated, err, marker)
+	}
+}
+
+func TestQueueStoreCompleteMarkerInstallAmbiguityKeepsNameReleased(t *testing.T) {
+	store := NewQueueStore()
+	q, stamp := storeCompletionFixture()
+	store.SetQueue(q)
+	projectDir := t.TempDir()
+	if err := queue.Persist(t.Context(), projectDir, q); err != nil {
+		t.Fatal(err)
+	}
+	observationCalls := 0
+	releaseCalls := 0
+	markerCalls := 0
+	cut := errors.New("marker root sync reported failure after install")
+	result := store.complete(t.Context(), queue.CompletionRequest{
+		Snapshot:      store.Snapshot(queue.QueueNameMain),
+		Candidate:     storeCompletionCandidate(t, q, stamp),
+		DecisionInput: storeCompletionInput(q, stamp),
+		ProjectDir:    projectDir,
+		TransactionID: storeCompletionTransactionID,
+		ReceiptID:     storeCompletionReceiptID,
+		CompletedAt:   stamp,
+		ReleaseTime: func() time.Time {
+			releaseCalls++
+			return stamp.Add(time.Minute)
+		},
+		Observe: func(queue.CompletionReceipt) error {
+			observationCalls++
+			return nil
+		},
+	}, queue.CleanupCompletedCanonical, queue.CleanupReplaceIntent,
+		func(projectDir string, inputs queue.CompletionReleaseMarkerInputs, releasedAt time.Time) (queue.CompletionReleaseMarker, error) {
+			markerCalls++
+			marker, err := queue.InstallCompletionReleaseMarker(projectDir, inputs, releasedAt)
+			if err != nil {
+				return queue.CompletionReleaseMarker{}, err
+			}
+			return marker, cut
+		},
+	)
+	if result.Phase != queue.CompletionPhaseMarkerFailed || !errors.Is(result.MarkerErr, cut) {
+		t.Fatalf("result = %+v", result)
+	}
+	if observationCalls != 1 || releaseCalls != 1 || markerCalls != 1 {
+		t.Fatalf("calls: observe=%d release=%d marker=%d", observationCalls, releaseCalls, markerCalls)
+	}
+	if snapshot := store.Snapshot(queue.QueueNameMain); snapshot.Queue != nil {
+		t.Fatalf("marker ambiguity reacquired released owner: %+v", snapshot.Queue)
+	}
+	markerBasename, err := queue.CompletionReleaseMarkerBasename(q.QueueID, storeCompletionReceiptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	markerPath := filepath.Join(projectDir, ".harmonik", "queues", ".completion-receipts", markerBasename)
+	firstBytes, err := os.ReadFile(markerPath) //nolint:gosec // path is under t.TempDir and uses validated IDs.
+	if err != nil {
+		t.Fatal(err)
+	}
+	newQueue := queue.CloneQueue(q)
+	newQueue.QueueID = "0197c452-0000-7000-8000-000000000099"
+	store.SetQueueByName(queue.QueueNameMain, newQueue)
+	if got := store.Snapshot(queue.QueueNameMain).Queue; got == nil || got.QueueID != newQueue.QueueID {
+		t.Fatalf("released name refused newer identity: %+v", got)
+	}
+	retryTimeCalls := 0
+	recovered, err := queue.RecoverCompletionReleaseMarkers(projectDir, func() time.Time {
+		retryTimeCalls++
+		return stamp.Add(2 * time.Minute)
+	})
+	if err != nil || len(recovered) != 1 || recovered[0].Err != nil {
+		t.Fatalf("marker recovery = %+v, err=%v", recovered, err)
+	}
+	if retryTimeCalls != 0 {
+		t.Fatalf("existing marker resampled release time %d times", retryTimeCalls)
+	}
+	secondBytes, err := os.ReadFile(markerPath) //nolint:gosec // path is under t.TempDir and uses validated IDs.
+	if err != nil || !bytes.Equal(secondBytes, firstBytes) {
+		t.Fatalf("marker changed on retry: err=%v", err)
 	}
 }
 

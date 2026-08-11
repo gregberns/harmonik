@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -72,6 +73,70 @@ func TestInstallCompletionReleaseMarkerKeepsFirstDurableTime(t *testing.T) {
 	entries, err := os.ReadDir(completionReceiptsDir(plan.ProjectDir))
 	if err != nil || len(entries) != 2 {
 		t.Fatalf("receipt root entries = %d, err=%v", len(entries), err)
+	}
+}
+
+func TestCompletionMarkerNoReplaceAmbiguityReloadsExactInstalledFacts(t *testing.T) {
+	plan, prepared := completionReplacementFixture(t)
+	if err := writeCompletionReceipt(plan.ProjectDir, prepared.Receipt.QueueID, prepared.Receipt.TransactionID, prepared.Binding, osNamespaceOps()); err != nil {
+		t.Fatal(err)
+	}
+	ops := osNamespaceOps()
+	link := ops.link
+	linkCalls := 0
+	ops.link = func(oldPath, newPath string) error {
+		linkCalls++
+		if err := link(oldPath, newPath); err != nil {
+			return err
+		}
+		return errors.New("marker link reported ambiguity after install")
+	}
+	marker, err := installCompletionReleaseMarker(plan.ProjectDir, prepared.MarkerInputs, completionFixtureTime().Add(time.Minute), ops)
+	if err != nil || marker.ReceiptID != prepared.Receipt.ReceiptID {
+		t.Fatalf("marker = %+v, err=%v", marker, err)
+	}
+	if linkCalls != 1 {
+		t.Fatalf("marker link calls = %d, want 1", linkCalls)
+	}
+	basename, err := CompletionReleaseMarkerBasename(prepared.Receipt.QueueID, prepared.Receipt.ReceiptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(completionReceiptsDir(plan.ProjectDir), basename)) //nolint:gosec // path is under t.TempDir and uses validated IDs.
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeCompletionReleaseMarker(data)
+	if err != nil || decoded != marker {
+		t.Fatalf("installed marker = %+v, err=%v", decoded, err)
+	}
+}
+
+func TestCompletionMarkerNoReplaceAmbiguityPreservesConflictingInstalledFacts(t *testing.T) {
+	plan, prepared := completionReplacementFixture(t)
+	if err := writeCompletionReceipt(plan.ProjectDir, prepared.Receipt.QueueID, prepared.Receipt.TransactionID, prepared.Binding, osNamespaceOps()); err != nil {
+		t.Fatal(err)
+	}
+	ops := osNamespaceOps()
+	link := ops.link
+	conflict := []byte("conflicting installed marker")
+	var target string
+	ops.link = func(oldPath, newPath string) error {
+		target = newPath
+		if err := link(oldPath, newPath); err != nil {
+			return err
+		}
+		if err := os.WriteFile(newPath, conflict, 0o600); err != nil {
+			return err
+		}
+		return errors.New("marker link reported ambiguity with conflicting target")
+	}
+	if _, err := installCompletionReleaseMarker(plan.ProjectDir, prepared.MarkerInputs, completionFixtureTime().Add(time.Minute), ops); err == nil {
+		t.Fatal("conflicting installed marker was accepted")
+	}
+	got, err := os.ReadFile(target) //nolint:gosec // target is captured from the t.TempDir-backed install.
+	if err != nil || !bytes.Equal(got, conflict) {
+		t.Fatalf("conflicting marker changed: %q, err=%v", got, err)
 	}
 }
 

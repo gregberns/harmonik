@@ -106,6 +106,100 @@ func TestLoadQueueAtStartupInstallsMarkerForReceiptOnlyCrashState(t *testing.T) 
 	}
 }
 
+func TestCompletionFaultStateConvergesThroughPublicStartup(t *testing.T) {
+	projectDir := t.TempDir()
+	completedAt := time.Date(2026, 8, 11, 9, 0, 0, 123000000, time.UTC)
+	q := queue.Queue{
+		SchemaVersion: 1,
+		QueueID:       "0197c453-0000-7000-8000-000000000011",
+		Name:          queue.QueueNameMain,
+		Status:        queue.QueueStatusActive,
+		Groups: []queue.Group{{
+			GroupIndex: 0,
+			Kind:       queue.GroupKindStream,
+			Status:     queue.GroupStatusActive,
+			Items:      []queue.Item{{BeadID: core.BeadID("hk-startup-completion"), Status: queue.ItemStatusDispatched}},
+		}},
+	}
+	if err := queue.Persist(t.Context(), projectDir, &q); err != nil {
+		t.Fatal(err)
+	}
+	input := queue.GroupCompletionInput{
+		ExpectedQueueID:     q.QueueID,
+		Location:            queue.GroupCompletionLocation{GroupIndex: 0, ItemIndex: 0},
+		Outcome:             queue.GroupCompletionOutcomeCompleted,
+		CompletedAt:         completedAt,
+		CompletionReceiptID: "0197c453-0000-7000-8000-000000000013",
+	}
+	decision, err := queue.DecideGroupCompletion(q, input)
+	if err != nil || decision.Disposition != queue.GroupCompletionDispositionQueueCompleted {
+		t.Fatalf("completion decision = %+v, err=%v", decision, err)
+	}
+	prepared, err := queue.PrepareCompletion(
+		*decision.NextQueue,
+		"0197c453-0000-7000-8000-000000000012",
+		input.CompletionReceiptID,
+		completedAt,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	priorBytes, err := json.Marshal(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := queue.WriteReplacement(t.Context(), queue.ReplacementPlan{
+		ProjectDir:               projectDir,
+		TransactionID:            prepared.TransactionID,
+		OperationKind:            queue.OperationCompletion,
+		NormalizedName:           q.Name,
+		QueueID:                  q.QueueID,
+		PriorBytes:               priorBytes,
+		CandidateBytes:           prepared.CandidateBytes,
+		CompletionReceiptBinding: prepared.Binding,
+	})
+	if !commit.Committed() || commit.Phase != queue.CompletionPhaseReceiptDurable {
+		t.Fatalf("completion fault state = %+v", commit)
+	}
+	intentPath := filepath.Join(projectDir, ".harmonik", "queues", "main.replace-intent")
+	if _, err := os.Stat(intentPath); err != nil {
+		t.Fatalf("fault state has no intent: %v", err)
+	}
+	emitter := &bootRevertEmitter{projectDir: projectDir}
+	loaded, err := LoadQueueAtStartup(t.Context(), projectDir, emptyBeadLedger{}, emitter, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded) != 0 {
+		t.Fatalf("completed queue loaded after convergence: %+v", loaded)
+	}
+	if len(emitter.types) != 0 {
+		t.Fatalf("startup replayed completion events: %v", emitter.types)
+	}
+	for _, path := range []string{filepath.Join(projectDir, ".harmonik", "queues", "main.json"), intentPath} {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("startup retained resolved path %s: %v", path, err)
+		}
+	}
+	receiptPath := filepath.Join(projectDir, ".harmonik", "queues", ".completion-receipts", prepared.Binding.Basename)
+	receiptBytes, err := os.ReadFile(receiptPath) //nolint:gosec // path is under t.TempDir and uses a validated basename.
+	if err != nil || !bytes.Equal(receiptBytes, prepared.ReceiptBytes) {
+		t.Fatalf("receipt changed: err=%v", err)
+	}
+	markerBase, err := queue.CompletionReleaseMarkerBasename(q.QueueID, input.CompletionReceiptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	markerBytes, err := os.ReadFile(filepath.Join(projectDir, ".harmonik", "queues", ".completion-receipts", markerBase)) //nolint:gosec // path is under t.TempDir and uses validated IDs.
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker, err := queue.DecodeCompletionReleaseMarker(markerBytes)
+	if err != nil || marker.ReceiptID != input.CompletionReceiptID || marker.CompletedQueueSHA256 != prepared.Receipt.CompletedQueueSHA256 {
+		t.Fatalf("marker = %+v, err=%v", marker, err)
+	}
+}
+
 func TestLoadQueueAtStartupRefusesInvalidCompletionReceiptRoot(t *testing.T) {
 	projectDir := t.TempDir()
 	receiptRoot := filepath.Join(projectDir, ".harmonik", "queues", ".completion-receipts")

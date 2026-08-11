@@ -10,14 +10,27 @@ Charlie must deliberately break each new claim test before accepting it.
 Updated: 2026-08-11
 
 - Owner: Charlie.
-- Active slice: C17 is complete. C18 is next.
+- Active slice: C18 is complete. C19 is next.
 - Start revision: `b49210d67` on `work/alpha-integration-merge`.
 - State: C01 through C04 are complete and independently approved.
 - Implementation commit: `de0a6ca3`.
 - Integration reconciliation commit: `b0cac51a`.
 - Stop gate: C05 through C07 received independent approval before C08.
 - Coordination note: the queue RPC overlap retained both the active-run status work and the event-intent path.
-- Later tasks: C18 through C31 remain unstarted.
+- Later tasks: C19 through C31 remain unstarted.
+
+### C18 evidence
+
+- The existing QM-001 syscall cut table remains the low-level boundary proof.
+- New join tests start with real transaction fault states instead of hand-built policy facts.
+- Public startup resolves a receipt-durable completion without event replay.
+- Receipt failure retains and quarantines the exact pre-release live owner.
+- Canonical and intent post-unlink faults retain the completed owner until directory durability is known.
+- Final observation uses the one bound receipt and runs exactly once.
+- Marker-install ambiguity keeps the queue name released and keeps the first marker bytes.
+- Receipt and marker no-replace ambiguity accept exact installed bytes and preserve conflicts.
+- The final executor maps each store phase and diagnostic into the durability policy.
+- Deliberate mutations broke startup recovery, owner retention, observation count, receipt binding, phase mapping, ambiguity reload, and conflict refusal.
 
 ### C17 evidence
 

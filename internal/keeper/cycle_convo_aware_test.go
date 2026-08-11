@@ -108,7 +108,6 @@ func newConvoAwareCycler(
 		CrispIdleFn:       func(_, _ string) bool { return true },
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
-		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
 		// Conversation-aware fields under test:
 		TranscriptDir:        transcriptDir,
 		OperatorTurnLookback: operatorTurnLookback,
@@ -205,7 +204,6 @@ func TestCycler_StaleOperatorTurn_DoesNotSuppress(t *testing.T) {
 		CrispIdleFn:          func(_, _ string) bool { return true },
 		HoldingDispatchFn:    func(_, _ string) bool { return false },
 		WriteJournalFn:       jc.write,
-		SetTmuxEnvFn:         func(_ context.Context, _, _, _ string) error { return nil },
 		TranscriptDir:        transcriptDir,
 		OperatorTurnLookback: 5 * time.Minute, // lookback shorter than 10m stale turn
 		PostAnswerGrace:      0,
@@ -272,7 +270,6 @@ func TestCycler_ToolResultUserTurn_DoesNotSuppress(t *testing.T) {
 		CrispIdleFn:          func(_, _ string) bool { return true },
 		HoldingDispatchFn:    func(_, _ string) bool { return false },
 		WriteJournalFn:       jc.write,
-		SetTmuxEnvFn:         func(_ context.Context, _, _, _ string) error { return nil },
 		TranscriptDir:        transcriptDir,
 		OperatorTurnLookback: 5 * time.Minute,
 		PostAnswerGrace:      0,
@@ -339,7 +336,6 @@ func TestCycler_OperatorTurnLookbackZero_DisablesGate5d(t *testing.T) {
 		CrispIdleFn:          func(_, _ string) bool { return true },
 		HoldingDispatchFn:    func(_, _ string) bool { return false },
 		WriteJournalFn:       jc.write,
-		SetTmuxEnvFn:         func(_ context.Context, _, _, _ string) error { return nil },
 		TranscriptDir:        transcriptDir,
 		OperatorTurnLookback: 0, // DISABLED — gate must not fire
 		PostAnswerGrace:      0,
@@ -495,7 +491,6 @@ func TestCycler_PostAnswerGrace_Expired_DoesNotSuppress(t *testing.T) {
 		CrispIdleFn:          func(_, _ string) bool { return true },
 		HoldingDispatchFn:    func(_, _ string) bool { return false },
 		WriteJournalFn:       jc.write,
-		SetTmuxEnvFn:         func(_ context.Context, _, _, _ string) error { return nil },
 		TranscriptDir:        transcriptDir,
 		OperatorTurnLookback: 0,
 		PostAnswerGrace:      30 * time.Second,
@@ -561,7 +556,6 @@ func TestCycler_AssistantToolUseTurn_DoesNotTriggerGrace(t *testing.T) {
 		CrispIdleFn:          func(_, _ string) bool { return true },
 		HoldingDispatchFn:    func(_, _ string) bool { return false },
 		WriteJournalFn:       jc.write,
-		SetTmuxEnvFn:         func(_ context.Context, _, _, _ string) error { return nil },
 		TranscriptDir:        transcriptDir,
 		OperatorTurnLookback: 0,
 		PostAnswerGrace:      30 * time.Second,

@@ -721,7 +721,6 @@ func TestRunForIdle_SuppressedWhenHeld(t *testing.T) {
 			CrispIdleFn:          func(_, _ string) bool { return true },
 			HoldingDispatchFn:    func(_, _ string) bool { return false },
 			WriteJournalFn:       jc.write,
-			SetTmuxEnvFn:         func(_ context.Context, _, _, _ string) error { return nil },
 			IdleRestartAbsTokens: 150_000,
 			IdleRestartCooldown:  0,
 		}

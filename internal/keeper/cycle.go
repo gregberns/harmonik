@@ -190,12 +190,6 @@ type CyclerConfig struct {
 	// WriteManagedSessionID. (Refs: hk-igt, hk-uxu)
 	SetManagedSessionFn func(projectDir, agent, sessionID string) error
 
-	// SetTmuxEnvFn sets a key=value in the tmux session that owns TmuxTarget.
-	// Called after nonce confirmation so HARMONIK_AGENT is inherited by the
-	// new Claude process started after /clear. Nil → default tmux setenv call.
-	// No-op when TmuxTarget is empty.
-	SetTmuxEnvFn func(ctx context.Context, target, key, value string) error
-
 	// ForceRetryInterval is the minimum duration after a forced-clear attempt
 	// (above ForceActPct) before the keeper retries on the same session_id.
 	// After an abort (handoff_timeout) or a completed forced cycle, the
@@ -377,9 +371,6 @@ func (c *CyclerConfig) applyDefaults() {
 	}
 	if c.SetManagedSessionFn == nil {
 		c.SetManagedSessionFn = WriteManagedSessionID
-	}
-	if c.SetTmuxEnvFn == nil {
-		c.SetTmuxEnvFn = SetTmuxEnv
 	}
 	if c.HoldTTL <= 0 {
 		c.HoldTTL = DefaultHoldTTL

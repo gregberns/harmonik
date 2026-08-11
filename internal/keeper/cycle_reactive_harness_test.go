@@ -338,7 +338,6 @@ func newReactiveCyclerWithBackstop(
 		CrispIdleFn:       func(_, _ string) bool { return true },
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
-		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, sid string) error {
 			mu.Lock()
 			defer mu.Unlock()

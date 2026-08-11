@@ -18,6 +18,7 @@ func mustNewCyclerWithDeps(
 ) *keeper.Cycler {
 	deps := keeper.CycleDepsFromConfig(cfg, emitter)
 	deps.Operator = testOperatorProbe(func(string) bool { return false })
+	deps.Pane = testPaneWithEnv{PaneWriter: deps.Pane}
 	if modify != nil {
 		modify(&deps)
 	}
@@ -35,6 +36,18 @@ func mustNewCyclerWithDeps(
 type testPaneWithEscape struct {
 	keeper.PaneWriter
 	sendEscape func(context.Context, string) error
+}
+
+type testPaneWithEnv struct {
+	keeper.PaneWriter
+	setEnv func(context.Context, string, string, string) error
+}
+
+func (p testPaneWithEnv) SetEnv(ctx context.Context, target, key, value string) error {
+	if p.setEnv == nil {
+		return nil
+	}
+	return p.setEnv(ctx, target, key, value)
 }
 
 func (p testPaneWithEscape) SendEscape(ctx context.Context, target string) error {

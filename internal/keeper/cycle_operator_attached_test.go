@@ -81,7 +81,6 @@ func newAttachTestCycler(
 		CrispIdleFn:       func(_, _ string) bool { return true },
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
-		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
 	}
 	return mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
 		deps.Operator = testOperatorProbe(attachFn)
@@ -287,7 +286,6 @@ func TestCycler_Precompact_OperatorAttached_Suppresses(t *testing.T) {
 		CrispIdleFn:       func(_, _ string) bool { return true },
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
-		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
 		deps.Context = testContextWithClear{ContextStore: deps.Context, clear: func() error { cleared++; return nil }}

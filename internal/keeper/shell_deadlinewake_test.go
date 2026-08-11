@@ -126,7 +126,6 @@ func TestCycler_DelayedPollTick_HandoffTimeoutStaysPunctual(t *testing.T) {
 		CrispIdleFn:         func(_, _ string) bool { return false },
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
-		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
 	cycler := mustNewCycler(cfg, em)
@@ -235,7 +234,6 @@ func TestCycler_ClearingElapsedBackstop_NoHotSpin(t *testing.T) {
 		CrispIdleFn:          func(_, _ string) bool { return true },
 		HoldingDispatchFn:    func(_, _ string) bool { return false },
 		WriteJournalFn:       jc.write,
-		SetTmuxEnvFn:         func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn:  func(_, _, _ string) error { return nil },
 	}
 	cycler := mustNewCycler(cfg, em)

@@ -12,7 +12,7 @@ func (p configPaneWriter) Inject(ctx context.Context, target, value string) erro
 }
 func (p configPaneWriter) SendEscape(context.Context, string) error { return nil }
 func (p configPaneWriter) SetEnv(ctx context.Context, target, key, value string) error {
-	return p.cfg.SetTmuxEnvFn(ctx, target, key, value)
+	return SetTmuxEnv(ctx, target, key, value)
 }
 
 type configContextStore struct{ cfg *CyclerConfig }

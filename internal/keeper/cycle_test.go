@@ -255,7 +255,6 @@ func newTestCyclerManaged(
 		CrispIdleFn:       func(_, _ string) bool { return crispIdle },
 		HoldingDispatchFn: func(_, _ string) bool { return holdingDispatch },
 		WriteJournalFn:    jc.write,
-		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil }, // no-op in most tests
 		// Stop hook wired and freshly fired (T8, SK-014): the .idle marker
 		// reads as "await-input boundary now", so ModelDone{idle_marker} lands
 		// on the first AwaitModelDone detection tick — the real primary path,
@@ -1252,9 +1251,10 @@ func TestCycler_BriefRestartAfterNonceConfirm(t *testing.T) {
 		CrispIdleFn:       func(_, _ string) bool { return true },
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
-		SetTmuxEnvFn:      setEnvFn,
 	}
-	cycler := mustNewCycler(cfg, em)
+	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
+		deps.Pane = testPaneWithEnv{PaneWriter: deps.Pane, setEnv: setEnvFn}
+	})
 
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
@@ -1266,14 +1266,14 @@ func TestCycler_BriefRestartAfterNonceConfirm(t *testing.T) {
 
 	// HARMONIK_AGENT must still be set before /clear (step 3b).
 	if envKey != "HARMONIK_AGENT" {
-		t.Errorf("SetTmuxEnvFn key = %q; want %q", envKey, "HARMONIK_AGENT")
+		t.Errorf("pane env key = %q; want %q", envKey, "HARMONIK_AGENT")
 	}
 	if envVal != agent {
-		t.Errorf("SetTmuxEnvFn value = %q; want %q", envVal, agent)
+		t.Errorf("pane env value = %q; want %q", envVal, agent)
 	}
 	// env must be set before /clear (inject call #2).
 	if envOrder >= 2 {
-		t.Errorf("SetTmuxEnvFn called after /clear (inject count was %d; /clear is call 2)", envOrder)
+		t.Errorf("pane env set after /clear (inject count was %d; /clear is call 2)", envOrder)
 	}
 
 	// Step 6 inject must be briefRestartCmd, not /session-resume (T8 / I1).
@@ -1353,7 +1353,6 @@ func TestCycler_AbsoluteTokenGate(t *testing.T) {
 		CrispIdleFn:       func(_, _ string) bool { return true },
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
-		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
 	}
 	cycler := mustNewCycler(cfg, em)
 
@@ -1478,7 +1477,6 @@ func TestCycler_AbsoluteTokenGate_200kWindow(t *testing.T) {
 		CrispIdleFn:       func(_, _ string) bool { return true },
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
-		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
 	}
 	cycler := mustNewCycler(cfg, em)
 
@@ -1538,7 +1536,6 @@ func TestCycler_UpdatesManagedSessionAfterCycle(t *testing.T) {
 		CrispIdleFn:       func(_, _ string) bool { return true },
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
-		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(projectDir, agent, sessionID string) error {
 			gotProjectDir = projectDir
 			gotAgent = agent
@@ -1618,7 +1615,6 @@ func TestCycler_ClearSettleTimeout_ClearsManagedSessionID(t *testing.T) {
 		CrispIdleFn:       func(_, _ string) bool { return true },
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
-		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, sessionID string) error {
 			gotSessionID = sessionID
 			setManagedCalled++
@@ -1690,7 +1686,6 @@ func TestCycler_AntiLoopEscapeHatch_ResetOnSameSessionLowPct(t *testing.T) {
 		CrispIdleFn:         func(_, _ string) bool { return true },
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
-		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
 
@@ -1795,7 +1790,6 @@ func TestCycler_ForcedClear_BypassesCrispIdle(t *testing.T) {
 		CrispIdleFn:         func(_, _ string) bool { return false }, // perpetually busy
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
-		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
 	cycler := mustNewCycler(cfg, em)
@@ -1898,7 +1892,6 @@ func TestCycler_ForcedClear_RetryAfterInterval(t *testing.T) {
 		CrispIdleFn:         func(_, _ string) bool { return false }, // perpetually busy
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
-		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
 	cycler := mustNewCycler(cfg, em)
@@ -1994,7 +1987,6 @@ func TestCycler_ForcedClear_EscapeInjected(t *testing.T) {
 		CrispIdleFn:         func(_, _ string) bool { return false }, // busy pane
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
-		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
@@ -2096,7 +2088,6 @@ func TestCycler_ForcedClear_EscalatesAfterNTimeouts(t *testing.T) {
 		CrispIdleFn:         func(_, _ string) bool { return false },
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
-		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
@@ -2186,7 +2177,6 @@ func TestCycler_BootGrace_SuppressesAndThenAllows(t *testing.T) {
 		CrispIdleFn:         func(_, _ string) bool { return true }, // idle — fires without force path
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
-		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
 	cycler := mustNewCycler(cfg, em)
@@ -2280,7 +2270,6 @@ func TestCycler_YoungSessionGuard_NewBand_AbsTokens(t *testing.T) {
 		CrispIdleFn:         func(_, _ string) bool { return true },
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
-		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
 	cycler := mustNewCycler(cfg, em)
@@ -2359,7 +2348,6 @@ func TestCycler_CleanHandoffGuard_DispatchingSuppressesAboveForce(t *testing.T) 
 		// HoldingDispatchFn intentionally LEFT NIL so applyDefaults wires the real
 		// HoldingDispatch (reads the on-disk .dispatching marker).
 		WriteJournalFn:      jc.write,
-		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
 	cycler := mustNewCycler(cfg, em)
@@ -2446,7 +2434,6 @@ func TestCycler_AbortClearsManaged(t *testing.T) {
 		CrispIdleFn:         func(_, _ string) bool { return true },
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
-		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: setManagedFn,
 	}
 	cycler := mustNewCycler(cfg, em)
@@ -2539,7 +2526,6 @@ func TestCycler_ForcedClear_BelowThreshold_StillBlocked(t *testing.T) {
 		CrispIdleFn:         func(_, _ string) bool { return false }, // perpetually busy
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
-		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
 	cycler := mustNewCycler(cfg, em)
@@ -2607,7 +2593,6 @@ func TestCycler_ForceThresholdTracksActPct(t *testing.T) {
 		CrispIdleFn:         func(_, _ string) bool { return false }, // perpetually busy
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
-		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
 	cycler := mustNewCycler(cfg, em)
@@ -2701,7 +2686,6 @@ func TestCycler_BootGrace_ForcePathBypasses(t *testing.T) {
 		CrispIdleFn:         func(_, _ string) bool { return false }, // busy — force-path needed
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
-		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
 	cycler := mustNewCycler(cfg, em)
@@ -2787,7 +2771,6 @@ func TestCycler_AbortDoesNotClearManaged_FirstSession(t *testing.T) {
 		CrispIdleFn:         func(_, _ string) bool { return true },
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
-		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: setManagedFn,
 	}
 	cycler := mustNewCycler(cfg, em)
@@ -2865,7 +2848,6 @@ func TestCycler_BootGrace_FlappingSID(t *testing.T) {
 		CrispIdleFn:         func(_, _ string) bool { return true }, // idle — fires without force path
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
-		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
 	cycler := mustNewCycler(cfg, em)
@@ -2998,7 +2980,6 @@ func TestCycler_AbortToResumeGraceToRefire(t *testing.T) {
 		CrispIdleFn:         func(_, _ string) bool { return true },
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      writeJournalFn,
-		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: setManagedFn,
 	}
 	cycler := mustNewCycler(cfg, em)
@@ -3175,7 +3156,6 @@ func TestCycler_CrossSID_ForceRetry_AfterAbort(t *testing.T) {
 				CrispIdleFn:         func(_, _ string) bool { return true },
 				HoldingDispatchFn:   func(_, _ string) bool { return false },
 				WriteJournalFn:      writeJournalFn,
-				SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 				SetManagedSessionFn: func(_, _, _ string) error { return nil },
 			}
 			cycler := mustNewCycler(cfg, em)
@@ -3288,7 +3268,6 @@ func TestCycler_BootGrace_BurstRelativeCap(t *testing.T) {
 		CrispIdleFn:         func(_, _ string) bool { return true },
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
-		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, _ string) error { return nil },
 	}
 	cycler := mustNewCycler(cfg, em)

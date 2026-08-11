@@ -141,7 +141,6 @@ func TestScenario_LateHandoff300sFakeClock_Aborts_qji8g(t *testing.T) {
 		CrispIdleFn:         func(_, _ string) bool { return true },
 		HoldingDispatchFn:   func(_, _ string) bool { return false },
 		WriteJournalFn:      jc.write,
-		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
 		IdleMarkerModTimeFn: func(_, _ string) (time.Time, bool) { return clock.Now(), true },
 	}
 	cycler := mustNewCyclerWithDeps(cfg, em, func(deps *keeper.CycleDeps) {
@@ -294,7 +293,6 @@ func TestScenario_ForceAct_NeverIdleStillCut_qji8g(t *testing.T) {
 		CrispIdleFn:       func(_, _ string) bool { return false }, // NEVER idle → force path
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
-		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, sid string) error {
 			mu.Lock()
 			defer mu.Unlock()

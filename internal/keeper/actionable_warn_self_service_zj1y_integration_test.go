@@ -288,7 +288,6 @@ func TestZJ1Y_SelfServiceRestart_GaugeDrop_ExactlyOneClear(t *testing.T) {
 		CrispIdleFn:       func(_, _ string) bool { return true },
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    func(_ string, _ *CycleJournal) error { return nil },
-		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
 		// Stop-hook .idle marker reads fresh so model-done lands on the first
 		// AwaitModelDone poll (SK-014) — without it the cycle waits the full
 		// ModelDoneTimeout (60s) fail-open before clearing, making this test

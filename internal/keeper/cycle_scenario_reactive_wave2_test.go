@@ -211,7 +211,6 @@ func TestKeeperCycle_ForcedClearAboveHardThreshold(t *testing.T) {
 		CrispIdleFn:       func(_, _ string) bool { return false }, // perpetually busy → force path
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
-		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, sid string) error {
 			managedBinding = sid
 			return nil
@@ -419,7 +418,6 @@ func TestKeeperCycle_PreCompactBackstop(t *testing.T) {
 		CrispIdleFn:       func(_, _ string) bool { return false }, // NOT idle — precompact must skip this gate
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
-		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, sid string) error {
 			managedBinding = sid
 			return nil
@@ -575,7 +573,6 @@ func TestKeeperCycle_ClearBriefHardGate_SlowClear(t *testing.T) {
 		CrispIdleFn:       func(_, _ string) bool { return true },
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
-		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
 		SetManagedSessionFn: func(_, _, sid string) error {
 			mu.Lock()
 			defer mu.Unlock()

@@ -8,6 +8,5 @@ IsManagedFn
 ReadGaugeFn
 ReadHandoff
 SetManagedSessionFn
-SetTmuxEnvFn
 TruncateHandoffFn
 WriteJournalFn

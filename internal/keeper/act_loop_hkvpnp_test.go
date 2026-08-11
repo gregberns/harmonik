@@ -57,7 +57,6 @@ func realHandoffCycler(t *testing.T, agent, projectDir, cycleID string, spy *cyc
 		CrispIdleFn:       func(_, _ string) bool { return true },
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
-		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
 	}
 	return mustNewCycler(cfg, &keeper.RecordingEmitter{})
 }
@@ -161,7 +160,6 @@ func TestActLoop_HKVPNP_DoesNotRefireSecondNonceAfterTimeout(t *testing.T) {
 		CrispIdleFn:       func(_, _ string) bool { return true },
 		HoldingDispatchFn: func(_, _ string) bool { return false },
 		WriteJournalFn:    jc.write,
-		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
 	}
 	cycler := mustNewCycler(cfg, &keeper.RecordingEmitter{})
 

@@ -141,11 +141,12 @@ Before concluding anything from a red matrix, check that the gate could execute 
 ## LP-013 — protocol: check the gate can pass BEFORE you read anything into a run failure
 
 Class: protocol
-Exercises: the whole dispatch loop's dependence on repo health
-Bead: `hk-4sp1z`
-Status: OPEN at `daf396b41` — the gate cannot currently pass
+Exercises: the whole dispatch loop's dependence on repo AND box health
+Bead: `hk-scenario-tier-nondeterministic-xt1wa`
+Status: OPEN at `14b632046` — the gate is red for a different reason on every run
 
-**The question:** is this run red because of the run, or because the tree is red?
+**The question:** is this run red because of the run, because the tree is red, or because the
+box is starved?
 
 Method: before dispatching anything, run the commit gate by hand on the tree you are about to
 test from. The standard workflow's `commit_gate` node is `make full`, fail-closed, and costs
@@ -155,20 +156,98 @@ roughly 22 minutes per pass.
 
 Expect: exit 0 before you dispatch anything.
 
-Failure signature at `daf396b41` — two independent blockers, and the second is hidden behind
-the first:
+**Run it more than once.** Measured 2026-08-10, three passes on the same box within two hours,
+two of them on the identical commit:
 
-1. The reachability gate exits 2 on 20 `internal/keeper` names left behind by a port-split
-   refactor. `make fast` and `make full` share every static step, so this stops both.
-2. Behind it, `make full` tests EVERY package, and the root module contains `evaltasks/`,
-   where `eval-bugfix-rate-limiter` holds a bug **on purpose** — grading an agent on fixing it
-   is the entire point of the fixture. Its own test catches that bug and fails. The other
-   twelve fixtures pass.
+| Pass | Tree | Free disk | Failed |
+|---|---|---|---|
+| 1 | `9089bda08` | 9.8 GiB | `internal/keeper` — one heartbeat test |
+| 2 | `14b632046` | 9.8 GiB | `internal/daemon` — three T6 tests; `internal/workers` — one poll test |
+| 3 | `14b632046` | 12 GiB | **no test failures at all — 108/108 packages** |
+
+**No test failure repeated, and none survived pass 3.** Every failing test passed 3/3 when
+re-run by hand, and the whole `internal/keeper` package passed 3/3 on its own. Nothing was
+wrong with any of that code. Passes 1 and 2 were below the daemon's 10 GiB dispatch floor and
+pass 3 was above it — see LP-014, which is most of this story.
+
+A single green pass here does not mean the gate is green, and a single red pass names nothing.
+**Read the disk before you read the failures.**
+
+Pass 3 then failed at the step AFTER the tests — `lint-allow`, on six file/linter pairs in newly
+added code (`hk-pw1wv`). That failure is deterministic and it is the honest state of the branch:
+the tests are clean, the lint gate is not, and `make test-scenario` sits behind `lint-allow` and
+has still never been reached above the floor.
+
+Two earlier blockers recorded in this case are now closed and are kept only so the next reader
+does not re-derive them:
+
+1. The reachability gate exiting 2 on retired `internal/keeper` names — fixed in `2c7bd3258`.
+2. The `evaltasks/eval-bugfix-rate-limiter` fixture, which holds a bug on purpose — **this one
+   was never real.** `make full` runs its tests with `-short` and the fixture skips itself under
+   `testing.Short()`. The original measurement used a bare `go test ./...`, which is not the
+   gate. Refuted on `hk-4sp1z` by direct measurement. The general lesson is worth more than the
+   case: **measure the gate by running the gate**, not by running something that resembles it.
 
 Why it matters: with the gate red, every dispatched run fails at the gate for a reason that
 has nothing to do with the agent's work, gets routed back to the implementer, and burns ~22
 minutes plus Opus tokens per pass. **Any conclusion drawn about the daemon from such a run is
 worthless.**
 
-The sequencing trap: fixing (1) does not turn the gate green, it reveals (2) — and (2) fails
-with output that looks exactly like an ordinary broken test in a package nobody touched.
+---
+
+## LP-014 — the daemon stops dispatching below 10 GiB free and says so only in its own log
+
+Class: protocol
+Exercises: the disk watermark guard vs. every test that waits for a bead to close
+Bead: `hk-scenario-tier-nondeterministic-xt1wa`
+Status: OPEN at `14b632046` — the guard works as designed; what is missing is that nothing
+tells the reader of a failing test why it failed
+
+Preconditions: a box below `diskLowWatermarkDefault` (10 GiB, `internal/daemon/workloop.go`).
+Reaching that state needs no effort at all — see below.
+
+**The question:** this test timed out waiting for a bead to close. Was the bead never
+dispatched, or did it fail?
+
+Steps:
+
+    df -h /System/Volumes/Data          # BEFORE you read anything into a timeout
+    go test -run TestT6_1MBBeadBody ./internal/daemon/
+
+Expect: on a box above the watermark, the bead closes in a few seconds.
+
+Failure signature. The test fails on its own 60-second deadline with a message about the work
+not completing, and the reason sits several lines above it in the daemon's own output where
+nothing draws attention to it:
+
+    daemon: disk-check: available=10097MiB watermark=10240MiB path=/... — dispatch paused
+    t6_scale_shape_test.go:464: T6-2: all_closed=false elapsed=60.06s
+    t6_scale_shape_test.go:466: T6-2 FAIL: 1MB bead not closed within 60s
+
+Measured 2026-08-10 at `14b632046`. Three `internal/daemon` tests failed this way inside
+`make full`, each burning its full 61-second deadline. Free space was 9.8 GiB. Deleting two
+Go build caches belonging to checkouts that no longer existed returned 1.9 GiB, and the same
+three tests then passed **together in 23 seconds**. The code was never involved.
+
+Note the third line of the signature: `available` was still DROPPING across the three tests —
+10097, then 9903, then 9796 MiB — because the test run itself was consuming the disk it needed.
+
+Why it matters: the guard is correct and the pause is the right behaviour, but a paused
+dispatch is indistinguishable from a broken daemon at the place anyone actually looks. It
+manufactures fake failures and fake hangs fleet-wide, and the event log makes them look like
+real regressions — `docs/disk-reclaim.md` says exactly this in its opening and it was still
+missed here for most of a day. Any test that waits for a bead to close is testing the disk.
+
+**How the box gets there, which is the part worth internalising.** Nothing leaks. The Go caches
+just grow with the work: `~/Library/Caches/go-build` at 20 GiB and
+`~/Library/Caches/harmonik-lane-gocache` at 19 GiB on 2026-08-10 — 39 GiB of regenerable cache
+against 9.8 GiB free. The shared one had doubled in 13 days. A box running two or three lanes
+crosses the floor in about a week from a clean start, so this is a recurring condition, not an
+incident.
+
+**What to do about it, in order.** `docs/disk-reclaim.md` §0 owns this and its order is
+load-bearing: per-checkout caches first, shared caches LAST and only when nothing is compiling.
+Clearing the shared `go-build` mid-build has produced builds that reported success without
+rebuilding — a wrong answer that looks like a right one, on a box where several agents are
+deciding whether to merge. Deleting `~/Library/Caches/harmonik-lane-gocache/<dir>` for a
+checkout that no longer exists is always safe and costs nothing that still exists a rebuild.

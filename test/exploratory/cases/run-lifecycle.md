@@ -304,9 +304,17 @@ The tier contains tests that inject synthetic disk readings on purpose — `avai
 **3. Run the tier TWICE and intersect the failure sets.** One run names nothing; that is the whole
 content of both beads above.
 
-    run 1, box load 10.89 → 9 failures
-    run 2, box load  5.4  → 6 failures
-    intersection          → 3
+    run 1 → 9 failures
+    run 2 → 6 failures
+    intersection → 3
+
+**Do not try to explain the difference in counts by box load, and do not sample load the lazy way.**
+The first version of this case did both and was wrong. It read the opening samples of run 2, called
+it "the quieter box", and presented 9-vs-6 as a load correlation. Sampling every 20s for the whole
+run showed run 2 ranged from **3.19 to 34.24**, peaking well above anything measured during run 1 —
+because **the tier generates its own load**, so a "quiet box" does not survive first contact with
+it. The count difference is unexplained and does not need explaining: the intersection is what the
+next step consumes.
 
 **4. Run each survivor of the intersection ALONE, and time it.**
 
@@ -329,6 +337,11 @@ Starvation looks like this, and all nine failures in run 1 had this shape: an el
 at or just above the test's own `WithTimeout` value, and a message that says *timed out waiting
 for* something. **Not one was a failed logical assertion.** Deadlines in this tier are 3s, 15s,
 20s, 30s and 60s — grep `WithTimeout` in the failing file and compare it to the elapsed time.
+
+**The isolation margin in step 4 is the evidence, not the box load.** A test that needs 3.878s and
+is given 20s is not failing because of a race you got lucky on; it is failing because it never got
+scheduled. That reasoning holds regardless of what `uptime` said, which is the point — load is
+hard to attribute on a shared box and the margin is not.
 
 Two shapes that look worse than they are:
 

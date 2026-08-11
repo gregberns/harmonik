@@ -235,3 +235,44 @@ real bead end to end on a scratch daemon — is still not done.
 
 **Five surfaces, five wrong answers, all of them confident.** That is the finding of this session
 more than any individual bug.
+
+---
+
+## CORRECTION — 2026-08-11 00:05
+
+> Added after the entries above, which are left exactly as written. The record is not edited to
+> agree with what was learned later.
+
+**The claim withdrawn:** that run 2 ran on a quieter box ("load ~5.4"), and that the 9-vs-6 failure
+counts correlate with load. Both the run-2 row in the Runs table and the intersection table state
+this. Both are wrong.
+
+**What the full sample shows.** The load figure was taken from the opening samples of run 2. The
+complete 60-sample series says:
+
+    run 2 load: min 3.19, max 34.24, 9 of 60 samples above 15
+                peak at 23:34:43, mid `internal/daemon`
+    run 2 free: min 19889 MiB, max 22397 MiB
+
+Run 1 has only a single `uptime` reading near its end (10.89 / 13.61) — it was sampled for disk,
+not load. So **run 2 peaked higher than anything measured during run 1**, and the "quieter box"
+framing is backwards. The tier generates its own load; neither run was quiet, and there is no clean
+low-load measurement of this tier in this record.
+
+**What survives.** The starvation conclusion does not rest on the load comparison. It rests on runs
+3 and 4 in the table above: the two load-varying stable failures pass ALONE in 3.878s and 13.695s
+against deadlines of 20s and 60s that they blew inside the tier. That margin is the evidence, and
+it is independent of what `uptime` said.
+
+**What does not survive.** The 9-vs-6 difference is unexplained, and this record should not be read
+as explaining it. Two runs is a small sample for any claim about which tests are stable, so the
+intersection of 3 is a this-tree-this-night result rather than a standing list.
+
+**Disk is unaffected.** Run 2's minimum free space, 19889 MiB, is still nearly double the 10240 MiB
+watermark, and the zero-real-pauses result holds for both runs.
+
+**Method note worth carrying forward.** Sampling a box for load at the start of a run and quoting
+that number for the whole run is how this error happened. `uptime` at one instant does not describe
+an eleven-minute parallel test run, and on a box whose load the run itself creates, the opening
+sample is the least representative one available. LP-018 has been corrected so it no longer teaches
+the load correlation as a diagnostic step.

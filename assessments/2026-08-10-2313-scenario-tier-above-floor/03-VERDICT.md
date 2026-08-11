@@ -35,6 +35,12 @@ The evidence that it is starvation and not broken code: every failure is a wall-
 expiring, none is a failed logical assertion, and the two load-varying survivors of the
 intersection pass alone with large margins — 3.878s against a 20s deadline, 13.695s against 60s.
 
+**The difference between 9 and 6 is NOT part of that evidence.** An earlier draft of this verdict
+attributed it to run 2 having a quieter box; the full load sample refutes that (run 2 peaked at
+34.24, higher than anything measured in run 1) and the correction is dated in `01-EVIDENCE.md`.
+The count difference is unexplained. The isolation margins carry the conclusion on their own, and
+they are the part that does not depend on attributing load on a shared box.
+
 **This is not a caveat about the measurement. It is the finding.** These lanes run two or three
 agents at once, so the contended box IS the condition under test, and a suite of wall-clock
 deadlines cannot produce evidence on it.

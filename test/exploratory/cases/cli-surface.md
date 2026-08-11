@@ -137,9 +137,9 @@ compounds LP-003 and LP-010 — all three make a broken run look fine.
 Class: probe
 Exercises: `queue set-concurrency`
 Bead: `hk-set-concurrency-unbounded-ad79i`
-Status: OPEN at `daf396b41`; **still OPEN, re-verified live at `aedbd770`** — `set-concurrency 99999`
-exits 0 and prints `max_concurrent: 1 → 99999`. The lower bound IS enforced (`0` exits 2 with "n
-must be an integer >= 1"), so the guard exists and only the upper end is missing.
+Status: **FIXED at `1a33cd904` (verified live 2026-08-11 at `4ebd8a334`)** — was OPEN at
+`daf396b41`, re-verified OPEN at `aedbd770`. The upper bound now exists and is derived from the
+host rather than from a constant.
 
 Steps:
 
@@ -150,6 +150,29 @@ Expect: refusal above a sane ceiling, naming the ceiling.
 
 Failure signature: applied to the live daemon and reported back as safe. A lower bound is
 enforced (`n >= 1`); there is no upper bound.
+
+Verified by running, against a live scratch daemon on a 10-core host:
+
+    999999 -> rc=2  error: spawn_cap_exceeded (code -32099)
+     99999 -> rc=2  error: spawn_cap_exceeded (code -32099)
+         0 -> rc=2  n must be an integer >= 1, got "0"     (lower bound, unchanged)
+         2 -> rc=0  max_concurrent: 1 → 2
+         4 -> rc=0  max_concurrent: 2 → 4
+         8 -> rc=0  max_concurrent: 4 → 8
+        16 -> rc=0  max_concurrent: 8 → 16
+        32 -> rc=2  error: spawn_cap_exceeded (code -32099)
+
+The ceiling moves with the cap in force, so a sane raise still works and the typo is refused.
+**The refusal is checked as well as the acceptance** — a bound that refused everything would pass a
+test that only tried the big number, and that is the failure mode this library's README warns about.
+
+**Residual, and it is not release-critical.** The refusal names neither the ceiling nor the current
+value: the operator who types an extra digit gets `spawn_cap_exceeded (code -32099)` and no way to
+learn what would have worked. The SUCCESS path already prints the number
+(`safe max_concurrent = 16; restart to raise`), so the refusal is the one place the reader needs it
+and does not get it. The case's own "Expect" line asked for a refusal *naming the ceiling*, so this
+is a partial pass against the stated bar, not a clean one. Filed as `hk-qm3zv`. The dangerous
+behaviour — a fleet outage by typo — is gone, which is what made this case release-critical.
 
 Why it matters: once in production this is a fleet outage by typo, with no confirmation step
 between the keystroke and the effect.

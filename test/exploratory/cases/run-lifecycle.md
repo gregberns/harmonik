@@ -272,6 +272,11 @@ Exercises: any parallel test tier with wall-clock deadlines — `make full`, `ma
 Bead: `hk-scenario-tier-nondeterministic-xt1wa`, `hk-core-gate-nondeterministic-m9vlf`
 Status: OPEN at `84ad44e20` — the tier is red for both reasons at once, and they separate cleanly
 
+> **Read [`LP-019`](#lp-019--a-uniform-deadline-is-a-lock-not-a-slow-box-and-the-two-look-identical-in-the-log)
+> after this one.** This case offers two answers, broken code and a busy box, and on 2026-08-11 the
+> real answer on a QUIET box was a third one: a blocking file lock. The steps below stay correct and
+> the starvation they describe is real, but "not a defect" does not imply "load". Do not stop here.
+
 **The question:** a tier named N failing tests. How many of those are defects?
 
 `LP-013` asks whether the gate can pass at all and `LP-014` asks whether the box has disk. This
@@ -394,3 +399,123 @@ step costs two runs and separates them.
 two or three agents at once, so the contended run IS the condition under test. A suite of
 wall-clock deadlines cannot be trusted on it, which is the finding, not a caveat about the
 measurement.
+
+---
+
+## LP-019 — a uniform deadline is a lock, not a slow box, and the two look identical in the log
+
+Class: protocol
+Exercises: `make full` / `make test-scenario`, `internal/workspace` `EnsureWorktreeTrustVia`
+Bead: `hk-g8d5x` (P0, the mechanism), `hk-n4vsc` (the leak), `hk-core-gate-nondeterministic-m9vlf`
+Status: OPEN at `4ebd8a334` — proved in both directions 2026-08-11; the repair exists at
+`d119d5149` on `work/alpha-trust-isolation` and is NOT merged
+
+**LP-018 is the case before this one and it is not sufficient.** LP-018 separates "the code is
+broken" from "the box is busy". This case exists because on 2026-08-11 the box was NOT busy — load
+2.5 to 5.6, 16 GiB free — and ten tests still died on a wall-clock deadline. There is a third
+answer, LP-018 does not reach it, and its shape in the log is nearly the same.
+
+**The question:** the failures are all deadlines and the box is quiet. What is holding them?
+
+### The tell: look at the spread, not the value
+
+Starvation produces a SPREAD of elapsed times — each test crosses its own deadline whenever the
+scheduler abandons it. A blocking lock produces a UNIFORM one, because every waiter is released by
+the same event or by nothing at all.
+
+Measured, in one `make full`: eight failures at exactly `50.18s`, one at `50.19s`, one at `50.23s`.
+Ten tests, one number. **That is not a busy box. Nothing schedules that evenly.**
+
+The second tell is the event set. All ten printed the identical line:
+
+    reached no terminal transition; events=[run_started node_dispatch_requested
+    node_dispatch_decided node_dispatch_requested]
+
+Compare it to a healthy run, which continues `handler_capabilities session_log_location
+skills_provisioned launch_initiated`. The wedged runs stop at the same edge every time. A starved
+test stops wherever it happened to be.
+
+### Steps
+
+**1. Find the holder while it is still holding.** Do this BEFORE anything else — the evidence
+exits when the process does, and on this box the holder outlives the run that made it.
+
+    lsof ~/.claude.json.lock
+    lsof ~/.claude.json
+
+Measured: `daemon.te 89524 gb 9u REG /Users/gb/.claude.json.lock` — a `daemon.test` binary from the
+run that had just finished, still holding the exclusive flock eight minutes after `make full`
+exited, past its own `-test.timeout=10m0s`, burning 98.6% of a core.
+
+**2. Positive control — kill the holder and re-run the failures, unchanged, on the same commit.**
+
+    kill -9 <pid>
+    out=$(go test -tags=scenario ./internal/daemon -count=1 -v -run '^(TestA|TestB|...)$' 2>&1); rc=$?
+
+Measured: all five passed, in **0.99s to 1.47s against a 50s deadline**. A 35-fold margin. If the
+margin is that wide, no threshold change is honest and the deadline was never the problem.
+
+**3. Negative control — hold the lock yourself and prove the failure comes back.** Skipping this
+step is how a correlation gets written up as a cause; this library has done it before.
+
+    python3 - <<'PY' &
+    import fcntl, os, time
+    f = open(os.path.expanduser("~/.claude.json.lock"), "a+")
+    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+    print("HOLDING", os.getpid(), flush=True); time.sleep(300)
+    PY
+
+Re-run the same tests. Measured: the same two failed at `50.19s` with the same event set, and the
+third passed in 0.89s. Remove the lock, they pass in a second. Put it back, they wedge. That is
+causation.
+
+**4. Note WHICH tests passed under the held lock.** In the run above,
+`TestDotNode_SessionMachineReachesTheRunHandle` failed in the gate and passed under a deliberately
+held lock. Which tests wedge depends on which ones need the config write during the window the lock
+is held. **That is the mechanism behind `hk-core-gate-nondeterministic-m9vlf`** — a different subset
+every run, from a single cause. Do not read a changed failure set as a changed problem.
+
+### Expect
+
+A test tier is hermetic. Nothing in `internal/daemon` should touch `~/.claude.json`, which is the
+operator's real Claude Code config, live, in their home directory.
+
+### Failure signature
+
+Ten-plus deadline failures at one uniform elapsed time, on a quiet box, all stopping at
+`node_dispatch_decided → node_dispatch_requested`, with a `daemon.test` process holding
+`~/.claude.json.lock` in `lsof`. Sometimes also visible directly in the log:
+
+    runmerge: prune worktree trust for ... failed: workspace: EnsureWorktreeTrust:
+    handlercontract: structural: write-lock acquire timed out (contended ~/.claude.json)
+
+That line appeared five times in the same run. **It names the cause outright and it is buried in
+16,000 lines** — nobody had grepped for it, which is why this went four days as a load story.
+
+### Why it matters
+
+This is the gate blocker. `make full` is red on a clean box for a reason unrelated to any work being
+gated, and a merge decision that behaves that way trains every reader to say "probably flake" — which
+is the exact habit that lets a real failure through. It also self-perpetuates: **one `make full` is
+enough to poison itself.** The box was verifiably clean before the run; the run created its own lock
+holder. No stale corpse from a previous session is required, which is why searching for one found
+nothing.
+
+The repair is written: `d119d5149` bounds the wait and honours `HARMONIK_CLAUDE_CONFIG_PATH` in both
+python worker programs. It is held back by an unaddressed `REQUEST_CHANGES` review and has not been
+merged since 2026-08-09.
+
+### A trap that cost this session twenty minutes
+
+The scratch daemon in this library's README is run at `/tmp/h/<name>`. **That short path is
+load-bearing and not a style choice.** A Unix socket path is capped at 104 bytes; an agent
+scratchpad directory is comfortably longer, and `<scratchdir>/.harmonik/daemon.sock` came to 131.
+The daemon starts, wires all 21 singletons, logs the reason clearly, and then runs forever without
+ever binding a socket. `scratch-daemon.sh status` reports `RUNNING` from the pidfile, and
+`harmonik queue status` exits 2 with empty stdout AND empty stderr. Three plausible findings, all
+of them the operator's choice of directory. The daemon said so on one line near the top of its log:
+
+    daemon.Start: socket path "..." is 131 bytes, at or beyond the platform sun_path limit of 104
+
+Re-run at `/tmp/h/<name>` and it comes up in two seconds. **Read the whole daemon log before you
+file anything against a daemon that will not start.**

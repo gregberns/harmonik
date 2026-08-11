@@ -18,25 +18,24 @@ func productionLikePolicy() keeper.CyclePolicy {
 	return p
 }
 
-func waitForScenarioEffect(t *testing.T, ports *RecordingPorts, count int) []string {
+func waitForScenarioEffect(t *testing.T, ports *RecordingPorts, count int) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		effects := ports.EffectsSnapshot()
 		if len(effects) >= count {
-			return effects
+			return
 		}
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %d effects; got %v", count, ports.EffectsSnapshot())
-	return nil
 }
 
-func waitForScenarioEffectContaining(t *testing.T, ports *RecordingPorts, want string) []string {
-	return waitForScenarioEffectCount(t, ports, want, 1)
+func waitForScenarioEffectContaining(t *testing.T, ports *RecordingPorts, want string) {
+	waitForScenarioEffectCount(t, ports, want, 1)
 }
 
-func waitForScenarioEffectCount(t *testing.T, ports *RecordingPorts, want string, count int) []string {
+func waitForScenarioEffectCount(t *testing.T, ports *RecordingPorts, want string, count int) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -48,12 +47,11 @@ func waitForScenarioEffectCount(t *testing.T, ports *RecordingPorts, want string
 			}
 		}
 		if found >= count {
-			return effects
+			return
 		}
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %d effect(s) containing %q; got %v", count, want, ports.EffectsSnapshot())
-	return nil
 }
 
 func TestScenarioRequiresReasonsForGateOptOuts(t *testing.T) {

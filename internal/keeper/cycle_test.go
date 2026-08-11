@@ -263,8 +263,6 @@ func newTestCyclerManaged(
 // .idle marker whose mtime is always "now" (≥ t_nonce on the first
 // AwaitModelDone poll). Tests exercising the timeout/backstop paths override
 // it explicitly.
-func idleMarkerFreshNow(_, _ string) (time.Time, bool) { return time.Now(), true }
-
 // TestCycler_HappyPath verifies the full 7-step ordering:
 // journal(opened) → handoff inject → nonce confirmed → /clear inject →
 // agent-brief inject → journal(complete) → cycle_complete event.
@@ -1665,7 +1663,7 @@ func TestCycler_ForcedClear_BypassesCrispIdle(t *testing.T) {
 		ClearSettle:    200 * time.Millisecond,
 		PollInterval:   10 * time.Millisecond,
 	}
-	cycler := mustNewCyclerWithOverridesAndIdle(cfg, em, cfgOverrides, false)
+	cycler := mustNewCyclerWithOverridesAndBusyPane(cfg, em, cfgOverrides)
 
 	// Context at exactly the force threshold — cycle MUST fire despite CrispIdle=false.
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
@@ -1760,7 +1758,7 @@ func TestCycler_ForcedClear_RetryAfterInterval(t *testing.T) {
 		ClearSettle:        10 * time.Millisecond,
 		PollInterval:       5 * time.Millisecond,
 	}
-	cycler := mustNewCyclerWithOverridesAndIdle(cfg, em, cfgOverrides, false)
+	cycler := mustNewCyclerWithOverridesAndBusyPane(cfg, em, cfgOverrides)
 
 	// Call 1: fires (above force), aborts (nonce timeout).
 	cf := &keeper.CtxFile{Pct: 97.0, SessionID: sid}
@@ -2329,7 +2327,7 @@ func TestCycler_ForcedClear_BelowThreshold_StillBlocked(t *testing.T) {
 		ClearSettle:    50 * time.Millisecond,
 		PollInterval:   10 * time.Millisecond,
 	}
-	cycler := mustNewCyclerWithOverridesAndIdle(cfg, em, cfgOverrides, false)
+	cycler := mustNewCyclerWithOverridesAndBusyPane(cfg, em, cfgOverrides)
 
 	// Context above ActPct (90) but below ForceActPct (95) with CrispIdle=false.
 	// Cycle must NOT fire.
@@ -2390,7 +2388,7 @@ func TestCycler_ForceThresholdTracksActPct(t *testing.T) {
 		ClearSettle:    200 * time.Millisecond,
 		PollInterval:   10 * time.Millisecond,
 	}
-	cycler := mustNewCyclerWithOverridesAndIdle(cfg, em, cfgOverrides, false)
+	cycler := mustNewCyclerWithOverridesAndBusyPane(cfg, em, cfgOverrides)
 
 	// pct=41: above ActPct (35) and above derived ForceActPct (40). CrispIdle=false
 	// must be bypassed so the cycle fires — verifies dead zone is eliminated.
@@ -2428,7 +2426,7 @@ func TestCycler_ForceThresholdTracksActPct(t *testing.T) {
 		Gauge = func(_, _ string) (*keeper.CtxFile, time.Time, error) {
 		return &keeper.CtxFile{Pct: 37.0, SessionID: prevSID}, time.Now(), nil
 	}
-	cycler2 := mustNewCyclerWithOverridesAndIdle(cfg2, em2, cfg2Overrides, false)
+	cycler2 := mustNewCyclerWithOverridesAndBusyPane(cfg2, em2, cfg2Overrides)
 
 	cf2 := &keeper.CtxFile{Pct: 37.0, SessionID: prevSID}
 	if err := cycler2.MaybeRun(context.Background(), cf2); err != nil {
@@ -2476,7 +2474,7 @@ func TestCycler_BootGrace_ForcePathBypasses(t *testing.T) {
 		PollInterval:    10 * time.Millisecond,
 		BootGracePeriod: bootGrace,
 	}
-	cycler := mustNewCyclerWithOverridesAndIdle(cfg, em, cfgOverrides, false)
+	cycler := mustNewCyclerWithOverridesAndBusyPane(cfg, em, cfgOverrides)
 
 	// Establish prevSID (first session, no grace armed).
 	cfPrev := &keeper.CtxFile{Pct: 70.0, SessionID: prevSID}

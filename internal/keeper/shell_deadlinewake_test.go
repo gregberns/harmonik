@@ -121,7 +121,7 @@ func TestCycler_DelayedPollTick_HandoffTimeoutStaysPunctual(t *testing.T) {
 
 		Clock: &delayedTickClock{delayInterval: pollInterval, firstDelay: tickWithheldFor},
 	}
-	cycler := mustNewCyclerWithOverridesAndIdle(cfg, em, cfgOverrides, false)
+	cycler := mustNewCyclerWithOverridesAndBusyPane(cfg, em, cfgOverrides)
 
 	// Call 1: fires (above force) and must abort on the PUNCTUAL 30ms handoff
 	// timeout — the deadline wake, not the starved 65ms detection tick.

@@ -458,7 +458,6 @@ internal/hooksystem/dispatcher.go	forbidigo
 internal/keeper/awaitack.go	gocognit
 internal/keeper/awaitack.go	gosec
 internal/keeper/cycle.go	gocognit
-internal/keeper/heartbeat.go	cyclop
 internal/keeper/heartbeat.go	gocognit
 internal/keeper/tmuxresolve.go	gocognit
 internal/keeper/watcher.go	cyclop

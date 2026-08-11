@@ -9,16 +9,6 @@ import (
 	"github.com/gregberns/harmonik/internal/keeper"
 )
 
-func mustNewCycler(cfg keeper.CyclerConfig, emitter keeper.Emitter) *keeper.Cycler {
-	return mustNewCyclerWithDeps(cfg, emitter, nil)
-}
-
-func mustNewCyclerWithIdle(cfg keeper.CyclerConfig, emitter keeper.Emitter, idle bool) *keeper.Cycler {
-	return mustNewCyclerWithDeps(cfg, emitter, func(deps *keeper.CycleDeps) {
-		deps.Idle = testIdleProbe(idle)
-	})
-}
-
 type testCycleOverrides struct {
 	CycleIDs     func() string
 	HandoffPath  func(string, string) string
@@ -33,9 +23,9 @@ func mustNewCyclerWithOverrides(cfg keeper.CyclerConfig, emitter keeper.Emitter,
 	return mustNewCyclerWithOverridesAndDeps(cfg, emitter, o, nil)
 }
 
-func mustNewCyclerWithOverridesAndIdle(cfg keeper.CyclerConfig, emitter keeper.Emitter, o testCycleOverrides, idle bool) *keeper.Cycler {
+func mustNewCyclerWithOverridesAndBusyPane(cfg keeper.CyclerConfig, emitter keeper.Emitter, o testCycleOverrides) *keeper.Cycler {
 	return mustNewCyclerWithOverridesAndDeps(cfg, emitter, o, func(deps *keeper.CycleDeps) {
-		deps.Idle = testIdleProbe(idle)
+		deps.Idle = testIdleProbe(false)
 	})
 }
 
@@ -155,7 +145,7 @@ func mustNewCyclerWithDeps(
 		deps,
 	)
 	if err != nil {
-		panic(err)
+		return nil
 	}
 	return cycler
 }

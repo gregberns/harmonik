@@ -1017,6 +1017,7 @@ func TestScenario_QueueSubmit_CleanStopResumesPendingGraph(t *testing.T) {
 				HandlerPauseController: pauseCtrl,
 				SkipWALCheckpoint:      true,
 				SkipBrHistoryRotation:  true,
+				SkipRestartBackoff:     true,
 				LogWriter:              testLogWriter{t: t},
 				WorkflowModeDefault:    core.WorkflowModeDot,
 				TargetBranch:           "integration",

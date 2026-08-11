@@ -163,4 +163,14 @@ The second full daemon used the same Git repository, Beads database, queue file,
 
 This proves abrupt process death for the current queue and run-session contract. Alpha's durable dispatch replay work can add stronger intent-level assertions when its producer and startup replay paths land.
 
+## Combined queue scenario gate
+
+Command:
+
+```text
+go test -tags=scenario ./internal/daemon -run '^TestScenario_QueueSubmit_(DeferredUndefer_hknbjht|FanOutFanIn|FailedBlockerPauses|CleanStopResumesPendingGraph|AbruptCrashResumesFanGraph)$' -count=1 -v
+```
+
+Result: all five scenarios passed in 118.51 seconds on 2026-08-11. The clean-restart fixture then disabled the production restart backoff and passed alone in 8.81 seconds. This keeps the same two-daemon behavior while removing 30 seconds of test-only delay.
+
 Use one section per scenario. Include the exact command, binary commit, fixture commit, event IDs or stable log paths, branch graph, ledger state, and result.

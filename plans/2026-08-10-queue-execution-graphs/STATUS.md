@@ -34,6 +34,7 @@ Research and runtime proof. Serial and fan-out or fan-in graphs passed through t
 - Replaced clean-shutdown cancellation with a durable one-shot restart drain.
 - Proved a second real daemon continues the pending queue without resubmit or supervisor action.
 - Proved a killed daemon process group resumes the fan graph on a second daemon. The completed root does not run twice and fan-in does not start early.
+- Ran the combined five-scenario queue gate. All scenarios passed.
 
 ## Next
 

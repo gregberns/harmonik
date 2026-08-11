@@ -206,6 +206,23 @@ func queueSubmitDispatchGitRepo(t *testing.T, dir string) {
 	run("push", "origin", "integration")
 }
 
+func queueSubmitDispatchInstallFailingGate(t *testing.T, projectDir string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "Makefile"), []byte("full:\n\t@false\n"), 0o644),
+		"write failing validation gate")
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.CommandContext(t.Context(), "git", args...)
+		cmd.Dir = projectDir
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, "git %v\n%s", args, out)
+	}
+	run("add", "Makefile")
+	run("commit", "-m", "Install failing scenario gate")
+	run("branch", "-f", "integration", "HEAD")
+	run("push", "--force", "origin", "main", "integration")
+}
+
 func queueSubmitDispatchAssertLanded(t *testing.T, projectDir, targetBranch string, ids []core.BeadID) {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "git", "rev-list", "--count", "main.."+targetBranch)
@@ -970,7 +987,8 @@ func TestScenario_QueueSubmit_FailedBlockerPauses(t *testing.T) {
 	dbPath := filepath.Join(projectDir, ".beads", "beads.db")
 	brWrapper := queueSubmitDispatchBrWrapper(t, realBrPath, dbPath)
 	aID, bID := queueSubmitDispatchInitBrWithDep(t, realBrPath, projectDir, brWrapper)
-	scenariotest.WriteReviewLoopWorkflowDot(t, projectDir)
+	queueSubmitDispatchInstallFailingGate(t, projectDir)
+	scenariotest.WriteStandardWorkflowDot(t, projectDir)
 
 	qs := daemon.ExportedNewQueueStore()
 	loopCtx, loopCancel := context.WithCancel(context.Background())
@@ -979,7 +997,7 @@ func TestScenario_QueueSubmit_FailedBlockerPauses(t *testing.T) {
 		ProjectDir:            projectDir,
 		JSONLLogPath:          jsonlPath,
 		BrPath:                brWrapper,
-		HandlerBinary:         queueSubmitDispatchFailTwinWrapper(t, twinPath),
+		HandlerBinary:         queueSubmitDispatchTwinWrapper(t, twinPath),
 		HandlerEnv:            os.Environ(),
 		SkipWALCheckpoint:     true,
 		SkipBrHistoryRotation: true,
@@ -997,7 +1015,7 @@ func TestScenario_QueueSubmit_FailedBlockerPauses(t *testing.T) {
 	queueSubmitDispatchWaitSocket(t, projectDir)
 	_ = queueSubmitDispatchSubmitCLI(t, projectDir, []core.BeadID{aID, bID})
 
-	scenariotest.MustCompleteWithin(t, jsonlPath, "", nil, 30*time.Second, func() {
+	scenariotest.MustCompleteWithin(t, jsonlPath, "", nil, 75*time.Second, func() {
 		for {
 			q, err := queue.Load(t.Context(), projectDir, queue.QueueNameMain)
 			if err == nil && q != nil && q.Status == queue.QueueStatusPausedByFailure {
@@ -1017,6 +1035,13 @@ func TestScenario_QueueSubmit_FailedBlockerPauses(t *testing.T) {
 		"only failed root A may start; dependent B must not launch")
 	scenariotest.AssertBeadStatus(t, brWrapper, string(aID), "open")
 	scenariotest.AssertBeadStatus(t, brWrapper, string(bID), "open")
+	_, validationErr := os.Stat(filepath.Join(projectDir, ".harmonik", "validation-runs"))
+	require.ErrorIs(t, validationErr, os.ErrNotExist, "a failed gate must not record a validation pass")
+	cmd := exec.CommandContext(t.Context(), "git", "rev-list", "--count", "main..integration")
+	cmd.Dir = projectDir
+	landed, landedErr := cmd.CombinedOutput()
+	require.NoError(t, landedErr, "count failed-gate landings: %s", landed)
+	require.Equal(t, "0", strings.TrimSpace(string(landed)), "failed validation must not merge the root")
 	scenariotest.AssertEventSequence(t, jsonlPath, []scenariotest.ExpectedEvent{
 		{Type: string(core.EventTypeRunStarted)},
 		{Type: string(core.EventTypeRunFailed)},

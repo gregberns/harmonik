@@ -99,9 +99,11 @@ go test -tags=scenario ./internal/daemon -run '^TestScenario_QueueSubmit_FailedB
 
 Result: PASS in 5.80 seconds on 2026-08-10.
 
-The scenario created `A -> B`, submitted both once through the Unix-socket CLI, and made A fail through the Claude twin. The daemon emitted `run_started(A)`, `run_failed(A)`, `queue_group_completed`, then `queue_paused`. B never emitted `run_started`. Both beads were open after the failure.
+The scenario created `A -> B` and submitted both once through the Unix-socket CLI. It now lets A implement and commit, then fails A's canonical `make full` node four times until the DOT traversal cap routes the run to failure. The daemon emitted `run_started(A)`, `run_failed(A)`, `queue_group_completed`, then `queue_paused`. B never emitted `run_started`. Both beads were open after the failure.
 
-The core did not choose a repair. It recorded typed failure state and stopped. This is the correct supervisor boundary.
+The integration branch stayed unchanged and no validation-pass record was written. After A reopened, the scheduler briefly offered B, but the ledger's blocked-claim guard refused it before launch. The core did not choose a repair. It recorded typed failure state and stopped. This is the correct supervisor boundary.
+
+The strengthened validation-failure scenario passed in 16.01 seconds on 2026-08-11.
 
 ## Restart contract trace
 

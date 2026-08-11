@@ -81,6 +81,8 @@ The agent must submit every child bead that it wants the queue to execute. The a
 
 Dry-run does not prove that the submitted set is complete. It examines dependency edges only when both endpoints are in the request. In a dry run that omitted A from `A -> [B, C, D] -> E`, it reported B, C, and D as pending. It reported only their three edges into E. The planning agent therefore owns submission-set completeness under the current contract.
 
+The ledger prevents a dependency cycle at its write boundary. A real `br dep add` accepted `B depends on A` and rejected the closing `A depends on B` edge with exit 5. A following `br dep cycles --json` reported zero cycles. The queue does not need to infer or repair a cycle that the ledger refuses to store.
+
 A JSON queue document is useful when the agent needs more than one ordered group, an explicit wave, a named queue, queue-specific workers, per-item context, or per-item workflow settings. The dependency graph remains in Beads. Queue groups add execution-plan barriers and append rules. They do not replace ledger dependencies.
 
 ### Epic integration branch composition and promotion

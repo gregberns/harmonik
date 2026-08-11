@@ -1,0 +1,104 @@
+package keeper
+
+import (
+	"context"
+	"reflect"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/substrate"
+)
+
+type constructorDifferentialResult struct {
+	Injections []string
+	Phases     []string
+	Final      CycleJournal
+	Events     []EmittedEvent
+	Err        string
+}
+
+func runConstructorTimeoutFixture(t *testing.T, legacy bool) constructorDifferentialResult {
+	t.Helper()
+	clock := substrate.NewFakeClock(time.Unix(1_700_000_000, 0))
+	injected := make(chan string, 4)
+	var mu sync.Mutex
+	result := constructorDifferentialResult{}
+	cfg := CyclerConfig{
+		AgentName: "differential", ProjectDir: t.TempDir(), TmuxTarget: "differential:0",
+		Clock: clock, PollInterval: time.Second, HandoffTimeout: 3 * time.Second,
+		CycleIDGen: func() string { return "cyc-differential" },
+		HandoffFilePath: func(string, string) string {
+			return "/tmp/HANDOFF-differential.md"
+		},
+		InjectFn: func(_ context.Context, _, text string) error {
+			mu.Lock()
+			result.Injections = append(result.Injections, text)
+			mu.Unlock()
+			injected <- text
+			return nil
+		},
+		IsManagedFn:        func(string, string) bool { return true },
+		CrispIdleFn:        func(string, string) bool { return true },
+		HoldingDispatchFn:  func(string, string) bool { return false },
+		SleepingCheckFn:    func(string, string) bool { return false },
+		HeldCheckFn:        func(string, string) bool { return false },
+		OperatorAttachedFn: func(string) bool { return false },
+		ReadHandoff:        func(string) (string, error) { return "", nil },
+		WriteJournalFn: func(_ string, journal *CycleJournal) error {
+			mu.Lock()
+			result.Phases = append(result.Phases, journal.Phase)
+			result.Final = *journal
+			mu.Unlock()
+			return nil
+		},
+	}
+	emitter := &RecordingEmitter{}
+	var cycler *Cycler
+	if legacy {
+		cycler = NewCycler(cfg, emitter)
+	} else {
+		var err error
+		cycler, err = NewCyclerWithDeps(
+			CyclePolicyFromConfig(cfg), CycleEnvFromConfig(cfg), CycleDepsFromConfig(cfg, emitter),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- cycler.MaybeRun(context.Background(), &CtxFile{
+			Pct: 90, SessionID: "11111111-1111-4111-8111-111111111111",
+		})
+	}()
+	select {
+	case <-injected:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for handoff injection")
+	}
+	time.Sleep(10 * time.Millisecond)
+	clock.Advance(cfg.HandoffTimeout)
+	if err := <-done; err != nil {
+		result.Err = err.Error()
+	}
+	result.Events = append(result.Events, emitter.Events...)
+	return result
+}
+
+func TestLegacyAndNarrowConstructorsMatchHandoffTimeout(t *testing.T) {
+	legacy := runConstructorTimeoutFixture(t, true)
+	narrow := runConstructorTimeoutFixture(t, false)
+	if !reflect.DeepEqual(narrow, legacy) {
+		t.Fatalf("constructor behavior changed\nlegacy: %#v\nnarrow: %#v", legacy, narrow)
+	}
+	if narrow.Final.Phase != "aborted" || narrow.Final.Reason != "handoff_timeout" {
+		t.Fatalf("timeout fixture ended as %+v", narrow.Final)
+	}
+	for _, event := range narrow.Events {
+		if event.Type == core.EventTypeSessionKeeperCycleComplete {
+			t.Fatalf("timeout emitted cycle complete: %+v", narrow.Events)
+		}
+	}
+}

@@ -323,3 +323,43 @@ defect (LP-001) and now refuse:
 
     rc=2  daemon: operator-pause: no queue named "ghostqueue":
           `harmonik queue pause` changed nothing and no queue was paused
+
+---
+
+## LP-017 — held up: every daemon-requiring verb refuses correctly when the daemon is down
+
+Class: probe
+Exercises: the `17 = daemon not running` contract across the whole CLI
+Bead: none — held up
+Status: HELD UP at `aedbd770` (swept 2026-08-10)
+
+Preconditions: a scratch daemon that has been brought DOWN. The point is the socket's absence.
+
+Steps:
+
+    bash scripts/scratch-daemon.sh down "$S"
+    for v in "queue status" "queue list" "queue pause --queue main" \
+             "queue set-concurrency 4" "comms send --to alpha --from bravo --no-wake hi" \
+             "comms recv --agent alpha" "wake --all" "sleep"; do
+      out=$(harmonik $v --project "$S" 2>&1); echo "$v -> rc=$?"
+    done
+
+Expect: exit 17 and a message naming the missing socket. Anything that hangs, or exits 0, or
+starts a daemon of its own, is the finding.
+
+Result: **all eight exit 17**, each naming the socket path it looked for:
+
+    harmonik queue status: daemon not running (no socket at <project>/.harmonik/daemon.sock)
+
+`comms who` correctly exits 0 — its help lists it as one of the two verbs needing no daemon — and
+it degrades honestly rather than pretending, marking the registry entries `stale (last seen 3m
+ago)` instead of reporting them online.
+
+Why it matters: this is the failure every operator and every agent hits constantly, and it is the
+one place a CLI is most tempted to be helpful by starting a daemon for you. Nothing here does. Note
+the contrast that makes this worth recording: **the flag-first hole (LP-002) reaches daemon-start
+through this same binary**, so "the daemon-down path is safe" is true of the verb-first spelling and
+NOT of `harmonik --project DIR queue list`. Sweeping this surface is how you tell those apart.
+
+Do not re-sweep this surface looking for silent-success defects. The two found in this pass
+(LP-015, LP-016) are on the *live-daemon* path, not this one.

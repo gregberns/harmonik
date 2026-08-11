@@ -39,14 +39,21 @@ func DecideGroupCompletion(prior Queue, input GroupCompletionInput) (GroupComple
 	if err != nil {
 		return GroupCompletionResult{}, fmt.Errorf("queue: decide group completion: %w", err)
 	}
+	return decideAdvancedGroupCompletion(next, groupPos, input, itemChanged, stamp, newStatus, intents)
+}
+
+func decideAdvancedGroupCompletion(
+	next *Queue,
+	groupPos int,
+	input GroupCompletionInput,
+	itemChanged bool,
+	stamp time.Time,
+	newStatus GroupStatus,
+	intents []EventIntent,
+) (GroupCompletionResult, error) {
+	target := &next.Groups[groupPos]
 	if newStatus == GroupStatusActive {
-		if input.CompletionReceiptID != "" {
-			return GroupCompletionResult{}, unexpectedCompletionReceipt(input)
-		}
-		if !itemChanged {
-			return GroupCompletionResult{Disposition: GroupCompletionDispositionNoChange, NoChangeReason: GroupCompletionNoChangeMatchingTerminalOutcome}, nil
-		}
-		return changedCompletionResult(next, intents, GroupCompletionDispositionIntermediate), nil
+		return decideIntermediateGroupCompletion(next, input, itemChanged, intents)
 	}
 	if err := CompleteActiveGroup(target, stamp); err != nil {
 		return GroupCompletionResult{}, fmt.Errorf("queue: apply group completion status %q: %w", newStatus, err)
@@ -55,15 +62,32 @@ func DecideGroupCompletion(prior Queue, input GroupCompletionInput) (GroupComple
 		return GroupCompletionResult{}, fmt.Errorf("queue: group completion status %q does not match decision %q", target.Status, newStatus)
 	}
 	if newStatus == GroupStatusCompleteWithFailures {
-		if input.CompletionReceiptID != "" {
-			return GroupCompletionResult{}, unexpectedCompletionReceipt(input)
-		}
-		if err := PauseQueueForGroupFailure(next, target.GroupIndex); err != nil {
-			return GroupCompletionResult{}, err
-		}
-		return changedCompletionResult(next, intents, GroupCompletionDispositionPausedByFailure), nil
+		return decideFailedGroupCompletion(next, target, input, intents)
 	}
+	return decideSuccessfulGroupCompletion(next, groupPos, input, stamp, intents)
+}
 
+func decideIntermediateGroupCompletion(next *Queue, input GroupCompletionInput, itemChanged bool, intents []EventIntent) (GroupCompletionResult, error) {
+	if input.CompletionReceiptID != "" {
+		return GroupCompletionResult{}, unexpectedCompletionReceipt(input)
+	}
+	if !itemChanged {
+		return GroupCompletionResult{Disposition: GroupCompletionDispositionNoChange, NoChangeReason: GroupCompletionNoChangeMatchingTerminalOutcome}, nil
+	}
+	return changedCompletionResult(next, intents, GroupCompletionDispositionIntermediate), nil
+}
+
+func decideFailedGroupCompletion(next *Queue, target *Group, input GroupCompletionInput, intents []EventIntent) (GroupCompletionResult, error) {
+	if input.CompletionReceiptID != "" {
+		return GroupCompletionResult{}, unexpectedCompletionReceipt(input)
+	}
+	if err := PauseQueueForGroupFailure(next, target.GroupIndex); err != nil {
+		return GroupCompletionResult{}, err
+	}
+	return changedCompletionResult(next, intents, GroupCompletionDispositionPausedByFailure), nil
+}
+
+func decideSuccessfulGroupCompletion(next *Queue, groupPos int, input GroupCompletionInput, stamp time.Time, intents []EventIntent) (GroupCompletionResult, error) {
 	if groupPos+1 < len(next.Groups) {
 		i := groupPos + 1
 		if next.Groups[i].Status != GroupStatusPending {

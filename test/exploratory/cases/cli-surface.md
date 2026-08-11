@@ -402,8 +402,9 @@ defect (LP-001) and now refuse:
 
 Class: probe
 Exercises: the `17 = daemon not running` contract across the whole CLI
-Bead: none — held up
-Status: HELD UP at `aedbd770` (swept 2026-08-10)
+Bead: `hk-11zpm` (the amendment below); the original sweep found nothing
+Status: HELD UP at `aedbd770` (swept 2026-08-10) — **partially OVERTURNED at `4ebd8a334`
+2026-08-11 for `comms who` against an empty registry, and for `comms log`, which was never swept**
 
 Preconditions: a scratch daemon that has been brought DOWN. The point is the socket's absence.
 
@@ -426,6 +427,20 @@ Result: **all eight exit 17**, each naming the socket path it looked for:
 `comms who` correctly exits 0 — its help lists it as one of the two verbs needing no daemon — and
 it degrades honestly rather than pretending, marking the registry entries `stale (last seen 3m
 ago)` instead of reporting them online.
+
+> **AMENDED 2026-08-11 at `4ebd8a334` — that holds only while the registry has entries in it.**
+> Re-hit with the fleet daemon down and an EMPTY registry, `comms who` prints
+> `no agents currently online` and exits 0. There is nothing in that sentence to mark stale, so the
+> honest-degradation mechanism has no surface to act on and silently does not fire. A live bus that
+> nobody has joined prints the identical line, so the operator cannot tell the two apart — and the
+> empty registry is the normal state after a restart, which is exactly when someone asks. `comms
+> log` is worse and was never in the verb list below: it served traffic from 2026-06-02 with nothing
+> marking it as history. Filed as `hk-11zpm`.
+>
+> **The lesson is about the sweep, not the verb.** A `HELD UP` result is only as strong as its verb
+> list and the fixture state it ran against. This one was careful and still generalised from one
+> registry state to all of them. When you record a surface as holding up, record what state it was
+> in.
 
 Why it matters: this is the failure every operator and every agent hits constantly, and it is the
 one place a CLI is most tempted to be helpful by starting a daemon for you. Nothing here does.

@@ -52,6 +52,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -404,15 +405,13 @@ func decisionsBlockedWait(absProject, sockPath, decisionID string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	conn, rc := decisionsArmSubscribe(ctx, sockPath)
+	conn, closeConn, rc := decisionsArmSubscribe(ctx, sockPath)
 	if rc != 0 {
 		return rc
 	}
-	defer func() {
-		if closeErr := conn.Close(); closeErr != nil {
-			fmt.Fprintf(os.Stderr, "harmonik decisions wait: close connection: %v\n", closeErr)
-		}
-	}()
+	// closeConn is the ONLY closer, and it joins the signal goroutine before it
+	// returns. Both properties are load-bearing — see decisionsArmSubscribe.
+	defer closeConn()
 
 	// Step 2 + 3: re-project the durable log for this decision_id. If a terminal
 	// is already logged (the answer landed before/at our arm), return immediately.
@@ -644,13 +643,28 @@ func decisionsDialOp(sockPath, op string, payload map[string]any, verb string) (
 
 // decisionsArmSubscribe dials the daemon and sends a live-only subscribe request
 // for the two decision terminals. It returns the open connection (the caller
-// reads NDJSON event lines from it) on success. No since_event_id is set — the
-// stream is deliberately live-only so the N8 re-project below catches anything
-// already logged.
+// reads NDJSON event lines from it) and the func that closes it. No
+// since_event_id is set — the stream is deliberately live-only so the N8
+// re-project below catches anything already logged.
 //
 // The server-side heartbeat (default 60s) keeps the stream — and thus the
 // agent's keeper gauge — fresh while blocked (SPEC §4 keeper-alive).
-func decisionsArmSubscribe(ctx context.Context, sockPath string) (net.Conn, int) {
+//
+// ONE OWNER CLOSES THE CONNECTION, AND THE CALLER JOINS THE CLOSER. Both halves
+// of that were wrong before (hk-ibp5y) and each half caused its own defect. The
+// caller used to close conn in its own defer WHILE the signal goroutine below
+// also closed it; the ctx comes from signal.NotifyContext, whose stop() cancels
+// on EVERY return and not only on SIGINT, so both closers ran on every normal
+// exit and the loser printed "use of closed network connection" — a connection
+// error on a SUCCESSFUL wait, at the one moment a blocked agent is reading for
+// exactly that. And because the goroutine was never joined, it could write to
+// os.Stderr after the caller had returned: a data race that the merge decision
+// caught under -race when a test harness swapped os.Stderr underneath it.
+//
+// So the goroutine is the only closer, it stops on either a signal or the
+// returned func, and that func waits for it to finish. Nothing this function
+// starts can outlive the caller.
+func decisionsArmSubscribe(ctx context.Context, sockPath string) (net.Conn, func(), int) {
 	reqBytes, err := json.Marshal(map[string]any{
 		"op":                "subscribe",
 		"types":             []string{"decision_resolved", "decision_withdrawn"},
@@ -658,7 +672,7 @@ func decisionsArmSubscribe(ctx context.Context, sockPath string) (net.Conn, int)
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "harmonik decisions wait: marshal subscribe request: %v\n", err)
-		return nil, 1
+		return nil, nil, 1
 	}
 
 	dialCtx, cancelDial := context.WithTimeout(ctx, 5*time.Second)
@@ -667,10 +681,10 @@ func decisionsArmSubscribe(ctx context.Context, sockPath string) (net.Conn, int)
 	if dialErr != nil {
 		if commsIsSocketAbsent(dialErr) || commsIsConnRefused(dialErr) {
 			fmt.Fprintf(os.Stderr, "harmonik decisions wait: daemon not running (socket %s missing or refused)\n", sockPath)
-			return nil, 17
+			return nil, nil, 17
 		}
 		fmt.Fprintf(os.Stderr, "harmonik decisions wait: dial %s: %v\n", sockPath, dialErr)
-		return nil, 1
+		return nil, nil, 1
 	}
 
 	if _, writeErr := conn.Write(reqBytes); writeErr != nil {
@@ -678,18 +692,34 @@ func decisionsArmSubscribe(ctx context.Context, sockPath string) (net.Conn, int)
 			fmt.Fprintf(os.Stderr, "harmonik decisions wait: close connection after write failure: %v\n", closeErr)
 		}
 		fmt.Fprintf(os.Stderr, "harmonik decisions wait: write subscribe request: %v\n", writeErr)
-		return nil, 1
+		return nil, nil, 1
 	}
 
-	// Close conn on signal so the blocking scan unblocks and we exit cleanly.
+	// Close conn on a signal so the caller's blocking scan unblocks, or when the
+	// caller is done. Whichever comes first, this goroutine closes exactly once
+	// and then exits.
+	closed := make(chan struct{})
+	finished := make(chan struct{})
 	go func() {
-		<-ctx.Done()
+		defer close(finished)
+		select {
+		case <-ctx.Done():
+		case <-closed:
+		}
 		if closeErr := conn.Close(); closeErr != nil {
-			fmt.Fprintf(os.Stderr, "harmonik decisions wait: close connection on signal: %v\n", closeErr)
+			fmt.Fprintf(os.Stderr, "harmonik decisions wait: close connection: %v\n", closeErr)
 		}
 	}()
 
-	return conn, 0
+	// Idempotent so a caller that closes early and also defers cannot panic on a
+	// second close of the channel.
+	var once sync.Once
+	closeConn := func() {
+		once.Do(func() { close(closed) })
+		<-finished
+	}
+
+	return conn, closeConn, 0
 }
 
 // -----------------------------------------------------------------------------

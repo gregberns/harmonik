@@ -261,3 +261,38 @@ func TestStandardBeadRoutesTransientGateFailToSelfLoop(t *testing.T) {
 		t.Fatalf("a transient gate FAIL routed to %q; the self-loop is what retries a gate that hit an infra glitch", dec.NextNodeID)
 	}
 }
+
+// TestGateTimedOut_ClassifiesTransientNotCanceled pins the check ORDER inside
+// classifyDotToolNodeFailure. The node's own timeout is a kill the daemon
+// issues, and it must be read BEFORE the outside-signal branch.
+//
+// exec.CommandContext kills on the deadline with SIGKILL, so a gate that ran out
+// of time is Signaled() too. Move the signal branch up and it swallows every
+// timeout and calls it canceled, which stops the run for triage instead of
+// retrying the gate on the transient self-loop. The whole package stayed green
+// when a reviewer made exactly that swap, so nothing else guards the order.
+func TestGateTimedOut_ClassifiesTransientNotCanceled(t *testing.T) {
+	node := &dot.Node{
+		ID:         "commit_gate",
+		Type:       core.NodeTypeNonAgentic,
+		HandlerRef: "shell",
+		// Runs much longer than the budget below, so the node deadline is what
+		// stops it.
+		ToolCommand: "sleep 5",
+		Timeout:     "1",
+	}
+
+	outcome, err := dispatchDotToolNode(context.Background(), nil, gateLogNewRunID(t), nil, t.TempDir(), t.TempDir(), node, nil)
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if outcome.Status != core.OutcomeStatusFail {
+		t.Fatalf("expected FAIL, got %q; the gate outlived its 1s budget, so the timeout must stop it", outcome.Status)
+	}
+	if outcome.FailureClass == nil {
+		t.Fatal("a gate FAIL carries no failure class")
+	}
+	if *outcome.FailureClass != core.FailureClassTransient {
+		t.Fatalf("a gate that the node timeout killed is classified %q; transient is what retries it on the self-loop, and canceled would stop the run for a kill the daemon itself issued", *outcome.FailureClass)
+	}
+}

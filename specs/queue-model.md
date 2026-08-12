@@ -8,7 +8,7 @@ requirement-prefix: QM
 status: draft
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.1.8
+version: 0.1.10
 spec-template-version: 1.1
 owner: foundation-author
 last-updated: 2026-08-05
@@ -65,6 +65,7 @@ RECORD Queue:
   submitted_at      : Timestamp   -- ISO 8601 with ms, UTC; set at queue-submit accept
   groups            : List<Group> -- ordered; at least one entry; group_index is dense 0..N-1
   status            : QueueStatus -- queue-level lifecycle state (see §2.2)
+  resume_on_start   : Bool        -- true only for a clean shutdown drain; omitted/false for operator pause
   name              : String      -- durable routing key (NQ-A1); omitted or empty = "main"; per-queue
                                   -- on-disk file is .harmonik/queues/<name>.json (NQ-A2)
   workers           : Integer     -- per-queue concurrent-dispatch ceiling (QM-066, NQ-B1); omitted/0
@@ -492,16 +493,10 @@ After QM-002a completes, the daemon MUST run a full three-way reconciliation pas
 
 **Class C — `bead_closed_queue_inprogress`:** A queue item has `status=completed` or `status=failed` but the Beads ledger still shows the bead as `in_progress`. The queue-side terminal is already set; no queue mutation is applied. The daemon MUST emit `reconciliation_mismatch_observed` with `mismatch_class: "bead_closed_queue_inprogress"` and log a structured warning for operator visibility.
 
-**Class D — `queue_paused_by_drain_item_stranded`:** The queue's own `status` is `paused-by-drain` (abandoned — a `paused-by-drain` queue does not auto-resume across a daemon restart in v0.1, per §3.2 QM-002) and it still carries an item with `status=pending` or `status=deferred-for-ledger-dep`. That item will never be dispatched from this queue again, but the EM-065 cross-queue occupancy guard [/Users/gb/github/harmonik/specs/execution-model.md §4.14] still counts any non-terminal item as "claimed" for its bead — permanently blocking that bead from being queued anywhere else even while the bead itself remains open. Unlike Class A, this correction does NOT depend on the Beads ledger status: the queue's own abandonment is sufficient grounds to release the item. The daemon MUST:
-
-1. Advance the item's status to `failed` in the in-memory queue envelope (the queue-level `status` is left untouched — it remains `paused-by-drain`).
-2. Persist the corrected queue envelope via QM-001 atomic write (per QM-063 — persist BEFORE emit).
-3. Emit `reconciliation_mismatch_observed` per [/Users/gb/github/harmonik/specs/event-model.md §8.6.15] with `mismatch_class: "queue_paused_by_drain_item_stranded"`.
-
 **Execution ordering (per QM-063):**
 
-1. Scan all queue items; collect Class A/D mutations and all pending event payloads for Classes A, C, and D. Class D takes priority over Class A for the same item (a paused-by-drain queue is abandoned regardless of ledger status).
-2. If any Class A/D mutations were collected: persist the corrected queue envelope via QM-001 before proceeding.
+1. Scan all queue items. Collect Class A mutations and all pending event payloads for Classes A and C. A paused queue keeps its pending and deferred items for a later resume.
+2. If any Class A mutations were collected: persist the corrected queue envelope via QM-001 before proceeding.
 3. Enumerate in-progress Beads ledger entries (via `br list --status in_progress`); collect Class B payloads for any bead not referenced by a queue item.
 4. Emit all collected events in the order: Class A/D, then Class C, then Class B.
 
@@ -899,6 +894,8 @@ queue_item_deferred_for_ledger_dep{
 
 The submission proceeds and the affected item starts in `ItemStatus: deferred-for-ledger-dep`; it transitions to `pending` when its blocker closes (§2.8). The cross-reference for the `blocks` edge semantics is [/Users/gb/github/harmonik/specs/beads-integration.md §4.3 BI-006].
 
+If an in-group blocker reaches `failed`, each item deferred on that blocker MUST transition directly to `failed` with `last_failure_reason: dependency_failed:<blocker_bead_id>`. The dispatcher MUST NOT move that dependent through `pending`, reserve it, or attempt a Beads claim. This is a structural consequence of the failed dependency. It needs no agent decision. The queue then reaches `complete-with-failures` and pauses under QM-052.
+
 ### 6.7 QM-026 — Persisted-size bound
 
 After applying the proposed mutation to the detached candidate (without
@@ -1187,6 +1184,8 @@ status; a newer same-name queue is never touched. No separate
 
 When the daemon enters operator-pause or shutdown-drain per [/Users/gb/github/harmonik/specs/operator-nfr.md §4.7 ON-027] step (1), the queue MUST transition `Queue.status` from `active → paused-by-drain`. The drain pseudocode (which in-flight runs may complete, which are interrupted, observability obligations) is owned by ON-027 and is NOT duplicated here.
 
+The daemon MUST set `resume_on_start: true` for a clean shutdown drain. It MUST set or retain `resume_on_start: false` for an explicit operator pause. This durable bit records restart intent. It does not add a queue lifecycle state.
+
 On entry to `paused-by-drain` the daemon MUST:
 
 1. Persist the new queue status via QM-001.
@@ -1198,12 +1197,7 @@ No new items are dispatched while `status == paused-by-drain`. In-flight runs co
 
 ### 8.6 QM-055 — Persisted pause survives restart
 
-The canonical named queue written under QM-001 retains
-`status: paused-by-failure` or `status: paused-by-drain` across daemon restart.
-On QM-002 read, the queue loads with its persisted pause status and remains
-paused. v0.1 recovery from a persisted pause is daemon restart + fresh
-`queue-submit` after operator action, or the `queue-recover` transaction of
-§8.3b QM-052b for a failure park. `queue-clear` stays deferred.
+The canonical named queue written under QM-001 retains its pause state across daemon restart. On QM-002 read, a `paused-by-drain` queue with `resume_on_start: true` MUST first complete the QM-002a dispatched-item recovery. It MUST then transition to `active`, clear the bit, and persist before QM-002b three-way reconciliation and dispatch. A `paused-by-drain` queue with the bit absent or false is an explicit operator pause. It MUST remain paused with its pending and deferred items unchanged until operator resume. A `paused-by-failure` queue remains paused until the `queue-recover` transaction of §8.3b QM-052b.
 
 ### 8.7 QM-056 — `queue_paused.reason` enumeration
 
@@ -1382,6 +1376,21 @@ The following operations are explicitly out of scope for v0.1 and reserved for v
 - Write coalescing across QM-001 mutations.
 
 ### A.4 Changelog
+
+v0.1.10 — 2026-08-11 — Failed dependency propagation. QM-025 now moves a
+dependent directly from dependency-deferred to failed when its in-group blocker
+fails. It forbids a pending transition, reservation, or claim for that
+dependent. This removes a dispatch attempt that previously relied on the Beads
+claim guard as the last safety layer. No requirement IDs were added or
+renumbered. The header now also includes the prior v0.1.9 version bump.
+
+v0.1.9 — 2026-08-11 — Clean restart continuation. Added the optional
+`resume_on_start` queue field. A clean shutdown drain sets it. Startup clears
+it and restores the queue to active before reconciliation. An explicit
+operator pause leaves it false and stays paused. Retired the Class D startup
+mutation that marked pending items failed. The shipped resume operation made
+that mutation destructive and stale. No requirement IDs were added or
+renumbered.
 
 v0.1.8 — 2026-08-05 — Failed recovery is one operation again (spec repair,
 hk-6lt60). QM-058 is retired and its number is not reusable. It described the

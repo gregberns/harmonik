@@ -629,9 +629,8 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 
 	// exitClean terminates the loop cleanly: it waits for in-flight goroutines
 	// (up to shutdownDrainTimeout), kills any orphan tmux windows spawned by this
-	// daemon instance (hk-j6npz), then drains any still-active queue to
-	// QueueStatusCancelled so the next harmonik run can start without the QM-027
-	// "already active" guard blocking it (hk-ppt32). The background context is
+	// daemon instance (hk-j6npz), then parks any still-active queue with a
+	// durable one-shot restart intent. The background context is
 	// intentional: by the time exitClean runs, ctx is always cancelled;
 	// queue.Persist and KillAllWindows need a live context.
 	exitClean := func() error { //nolint:unparam // pre-existing: Seam A moved this code out of workloop.go unchanged
@@ -662,7 +661,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 		if wc, ok := substratePort.(windowCleaner); ok {
 			_ = wc.KillAllWindows(context.Background()) //nolint:errcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
 		}
-		drainCancelledQueue(context.Background(), queueStore, baseEnv.ProjectDir)
+		drainQueuesForRestart(context.Background(), queueStore, baseEnv.ProjectDir, basePorts.Emitter)
 		return nil
 	}
 
@@ -1432,20 +1431,14 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 				}
 
 				// hk-lr5t: initialize beadRecord with the pre-claim ShowBead result so
-				// labels (harness:<agent-type>, workflow:<mode>, model:<alias>, etc.)
-				// are available to resolveHarness and resolveWorkflowMode even when
+				// labels and dependency edges are available to the run plan even when
 				// the post-claim ShowBead below fails. The post-claim ShowBead
 				// refreshes these fields after the claim and stays the authoritative
 				// source. This initialization closes the label-load gap where a
 				// post-claim ShowBead failure left Labels nil, which made
 				// resolveHarness fall through to the claude-code built-in fallback
 				// despite a harness:codex label on the bead (root cause of hk-lr5t).
-				beadRecord = core.BeadRecord{
-					BeadID:      snapItemBeadID,
-					Labels:      preClaimRecord.Labels,
-					Title:       preClaimRecord.Title,
-					Description: preClaimRecord.Description,
-				}
+				beadRecord = preClaimRecord
 				queueItemIndex = snapItemIdx
 				capturedQueueName = snapQueueName // NQ-B1: tag the run with its queue
 				qID := snapQueueID
@@ -1597,11 +1590,8 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 			// ShowBead serves two purposes here:
 			//   1. Guard: confirm the bead is still open before claiming (TOCTOU
 			//      window is acceptable per the claim-semaphore note above).
-			//   2. Label hydration: `br ready --format json` (br v0.1.45) does not
-			//      include the `labels` field, so BeadRecord.Labels from Ready() is
-			//      always nil.  ShowBead returns the full record including labels;
-			//      we overwrite beadRecord.Labels so resolveWorkflowMode (tier-1)
-			//      and ResolveModelPreference can read per-bead overrides correctly.
+			//   2. Record hydration: `br ready --format json` omits fields that the
+			//      run plan needs. ShowBead returns labels and dependency edges.
 			//
 			// Queue-path items are already exclusively owned by this loop (set to
 			// dispatched under write lock), so the guard is skipped there; their
@@ -1635,9 +1625,7 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 				continue
 			}
 			// Hydrate from the full ShowBead record (hk-a0htu).
-			beadRecord.Labels = showRecord.Labels
-			beadRecord.Title = showRecord.Title
-			beadRecord.Description = showRecord.Description
+			beadRecord = showRecord
 		}
 
 		// Do NOT re-check the local cap at this point (hk-l5saf). The queue item is
@@ -1766,20 +1754,15 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 			continue
 		}
 
-		// Queue-path label hydration (hk-a0htu): queue Item carries only BeadID;
-		// call ShowBead now (after claim) to populate Labels for resolveWorkflowMode
-		// and ResolveModelPreference.  The br-ready path hydrated labels earlier
-		// from its pre-claim ShowBead response; this block handles the queue path.
-		// Hydration failure is non-fatal: log to stderr and proceed with nil labels
-		// (resolveWorkflowMode falls through to tier-3/4 as before the fix).
+		// Queue-path record hydration (hk-a0htu): queue Item carries only BeadID.
+		// ShowBead supplies labels, description, and dependency edges after claim.
+		// Hydration failure is non-fatal. The pre-claim record remains available.
 		if queueItemIndex >= 0 {
 			showRecord, showErr := ledger.ShowBead(ctx, beadID)
 			if showErr != nil {
-				fmt.Fprintf(os.Stderr, "daemon: workloop: ShowBead label-hydrate %s error (labels nil, falling through): %v\n", beadID, showErr)
+				fmt.Fprintf(os.Stderr, "daemon: workloop: ShowBead record refresh %s error (using pre-claim record): %v\n", beadID, showErr)
 			} else {
-				beadRecord.Labels = showRecord.Labels
-				beadRecord.Title = showRecord.Title
-				beadRecord.Description = showRecord.Description
+				beadRecord = showRecord
 			}
 		}
 
@@ -1936,14 +1919,9 @@ func autoCloseStaleBlockersOnClaimFailure(ctx context.Context, ledger beadLedger
 	}
 }
 
-// drainCancelledQueue transitions all active queues (if any) to
-// QueueStatusCancelled and archives their files so that the next harmonik run
-// invocation can proceed without the QM-027 "already active" guard blocking it.
-//
-// Prior to hk-u6m4l this function only drained the "main" queue via the
-// backward-compat lq.Queue() shim, leaving named queues (e.g. "cp") on disk
-// with status=active after shutdown. The fix iterates all queues in the store
-// via AllQueues() so every active named queue is archived on exit.
+// drainQueuesForRestart persists all active queues as paused-by-drain with a
+// one-shot restart intent. Startup consumes that intent and restores active
+// before dispatch begins. It visits every named queue.
 //
 // This is called on every clean exit of runWorkLoop — when ctx is cancelled due
 // to SIGINT, SIGTERM, or a timeout — after wg.Wait() ensures all in-flight
@@ -1954,18 +1932,18 @@ func autoCloseStaleBlockersOnClaimFailure(ctx context.Context, ledger beadLedger
 //     already transitioned them.
 //
 // Uses context.Background() because ctx is always cancelled by the time this
-// runs; queue.CancelQueueOnShutdown needs a non-cancelled context for Persist.
+// runs and the durable queue write needs a live context.
 //
 // Errors are logged to stderr but do not block shutdown; other queues are still
 // drained even if one fails.
 //
 // Spec ref: specs/queue-model.md §8 (shutdown drain).
 // Bead ref: hk-ppt32, hk-u6m4l.
-func drainCancelledQueue(ctx context.Context, queueStore *queuewiring.QueueStore, projectDir string) {
+func drainQueuesForRestart(ctx context.Context, queueStore *queuewiring.QueueStore, projectDir string, emitter runloop.EmitterPort) { //nolint:gocognit // One pass must park every named queue and emit its matching fact.
 	if queueStore == nil {
 		return
 	}
-	// Snapshot all queues under the read lock. drainCancelledQueue is called
+	// Snapshot all queues under the read lock. drainQueuesForRestart is called
 	// after wg.Wait() so there are no concurrent mutations; AllQueues is safe
 	// here and avoids holding the write lock across I/O.
 	snapshot := queueStore.AllQueues()
@@ -1973,14 +1951,35 @@ func drainCancelledQueue(ctx context.Context, queueStore *queuewiring.QueueStore
 		if q == nil || q.Status != queue.QueueStatusActive {
 			continue
 		}
-		// Queue is still active: transition to cancelled and archive.
-		if err := queue.CancelQueueOnShutdown(ctx, projectDir, q); err != nil {
-			fmt.Fprintf(os.Stderr, "daemon: workloop: drainCancelledQueue queueID=%s name=%q: %v\n",
+		if err := queue.PauseQueueForRestart(q); err != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: drainQueuesForRestart queueID=%s name=%q: %v\n",
 				q.QueueID, name, err)
-			// Continue draining other queues even if one fails.
+			continue
 		}
-		// Clear in-memory state for this queue.
-		queueStore.ClearQueueByName(name)
+		if err := queue.Persist(ctx, projectDir, q); err != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: drainQueuesForRestart persist queueID=%s name=%q: %v\n",
+				q.QueueID, name, err)
+			continue
+		}
+		queueStore.SetQueueByName(name, q)
+		if emitter != nil {
+			groupIndex := 0
+			for _, group := range q.Groups {
+				if group.Status == queue.GroupStatusActive {
+					groupIndex = group.GroupIndex
+					break
+				}
+			}
+			payload, marshalErr := json.Marshal(core.QueuePausedPayload{
+				QueueID: q.QueueID, GroupIndex: groupIndex,
+				PausedAt: time.Now().UTC().Format(time.RFC3339Nano), Reason: "operator_drain",
+			})
+			if marshalErr == nil {
+				if emitErr := emitter.Emit(ctx, core.EventTypeQueuePaused, payload); emitErr != nil {
+					fmt.Fprintf(os.Stderr, "daemon: workloop: drainQueuesForRestart emit queueID=%s name=%q: %v\n", q.QueueID, name, emitErr)
+				}
+			}
+		}
 	}
 }
 
@@ -2335,11 +2334,25 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, port reapSeamPort, que
 		Outcome:         outcome,
 		CompletedAt:     completedAt,
 	}
-	decision, err := queue.DecideGroupCompletion(*snapshot.Queue, input) //nolint:contextcheck // The value-only decision checks cancellation inside queue.AdvanceGroup.
+	completionQueue := queue.CloneQueue(snapshot.Queue)
+	if !success && port.queueLedger != nil {
+		for i := range completionQueue.Groups {
+			if completionQueue.Groups[i].GroupIndex != groupIndex || itemIdx >= len(completionQueue.Groups[i].Items) {
+				continue
+			}
+			failedBead := completionQueue.Groups[i].Items[itemIdx].BeadID
+			if _, propagateErr := queue.FailDeferredDependents(ctx, &completionQueue.Groups[i], failedBead, port.queueLedger); propagateErr != nil {
+				fmt.Fprintf(os.Stderr, "daemon: workloop: propagate failed dependency queueID=%s groupIndex=%d: %v\n", queueID, groupIndex, propagateErr)
+				eagerRefillEval(ctx, port)
+				return
+			}
+		}
+	}
+	decision, err := queue.DecideGroupCompletion(*completionQueue, input) //nolint:contextcheck // The value-only decision checks cancellation inside queue.AdvanceGroup.
 	if err == nil && decision.Disposition == queue.GroupCompletionDispositionReceiptRequired {
 		input.CompletionReceiptID, err = newGroupCompletionID()
 		if err == nil {
-			decision, err = queue.DecideGroupCompletion(*snapshot.Queue, input) //nolint:contextcheck // The value-only decision checks cancellation inside queue.AdvanceGroup.
+			decision, err = queue.DecideGroupCompletion(*completionQueue, input) //nolint:contextcheck // The value-only decision checks cancellation inside queue.AdvanceGroup.
 		}
 	}
 	if err == nil && decision.Disposition == queue.GroupCompletionDispositionReceiptRequired {

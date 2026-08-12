@@ -93,6 +93,7 @@ func (r workerEnvRunner) Command(ctx context.Context, name string, args ...strin
 type fixedResultRunner struct{ script string }
 
 func (r fixedResultRunner) Command(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+	//nolint:gosec // G204: script is a literal written by this test to drive one exit status.
 	return exec.CommandContext(ctx, "sh", "-c", r.script)
 }
 
@@ -116,7 +117,12 @@ func homeConfigUntouched(t *testing.T, home string) {
 	strayCfg := filepath.Join(home, ".claude.json")
 	if _, err := os.Stat(strayCfg); err == nil {
 		//nolint:gosec // G304: strayCfg is inside this test's t.TempDir fixture.
-		body, _ := os.ReadFile(strayCfg)
+		body, readErr := os.ReadFile(strayCfg)
+		if readErr != nil {
+			// The file exists, so the test has already failed. Report why the
+			// contents are missing rather than dropping the diagnostic.
+			body = []byte("unreadable: " + readErr.Error())
+		}
 		t.Fatalf("the worker program wrote %s, so it expanded ~ instead of using the configured "+
 			"HARMONIK_CLAUDE_CONFIG_PATH. On a real machine that file is the operator's own "+
 			"~/.claude.json, and the program locks it too.\nwrote: %s", strayCfg, body)
@@ -149,7 +155,6 @@ func TestEnsureWorktreeTrustVia_RemoteWritesTheConfiguredPath(t *testing.T) {
 	if resolved, err := filepath.EvalSymlinks(worktree); err == nil {
 		key = resolved
 	}
-	//nolint:gosec // G304: cfgPath is inside this test's t.TempDir fixture.
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
 		t.Fatalf("the configured config %s was not written: %v", cfgPath, err)
@@ -237,6 +242,7 @@ func TestWorkerTrustUpsert_BoundedWaitFailsWhenTheLockIsHeld(t *testing.T) {
 	const budget = time.Second
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
+	//nolint:gosec // G204: worktree is a path this test made under t.TempDir.
 	cmd := exec.CommandContext(ctx, "python3", "-", worktree)
 	cmd.Stdin = strings.NewReader(workerTrustUpsertProgram(cfgPath, budget))
 	cmd.Env = append(os.Environ(), "HOME="+home)

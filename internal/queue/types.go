@@ -370,6 +370,12 @@ type Queue struct {
 
 	// Status is the queue-level lifecycle state (§2.2).
 	Status QueueStatus `json:"status"`
+
+	// ResumeOnStart distinguishes a shutdown drain from an explicit operator
+	// pause. A clean daemon exit sets it with paused-by-drain. Startup clears it
+	// and returns the queue to active before reconciliation. An operator pause
+	// leaves it false and therefore stays paused across restart.
+	ResumeOnStart bool `json:"resume_on_start,omitempty"`
 }
 
 // UnmarshalQueue deserialises a Queue from JSON and enforces the

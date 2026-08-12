@@ -85,6 +85,13 @@ check on it is void.
 
 Traps that have produced false results in this library's own history:
 
+- **A case that expects a refusal will PASS when its own command is malformed.** This is the
+  library's worst failure mode because it is silent and it inverts the result. LP-006 recorded
+  `promote --dry-run --sha <commit>`; `promote` has no `--sha` (SHAs are positional), so the step
+  died on flag parsing with exit 1 — and since the case expects a non-zero exit, it read as a pass
+  and reported a live bug as FIXED for as long as it stood. **Never write a step from memory of a
+  command surface.** Paste it from a run, and confirm the failure you got is the failure you meant:
+  a refusal naming a missing flag is not a refusal naming bad input. `hk-q21jt`.
 - **Read `$?` directly, never after a pipe.** `cmd | head; echo $?` reports `head`'s status.
   Use `out=$(cmd 2>&1); rc=$?`.
 - **Trust git over the event stream** when the question is whether work landed.

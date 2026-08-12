@@ -54,6 +54,22 @@ func ResolveDeferredItem(item *Item) error {
 	return nil
 }
 
+// FailDeferredItem records that an upstream ledger dependency failed.
+func FailDeferredItem(item *Item, blocker string) error {
+	if item == nil {
+		return fmt.Errorf("queue: fail deferred item: nil item")
+	}
+	if item.Status != ItemStatusDeferredForLedgerDep {
+		return fmt.Errorf("queue: fail deferred item: status %q is not deferred", item.Status)
+	}
+	if blocker == "" {
+		return fmt.Errorf("queue: fail deferred item: blocker is empty")
+	}
+	setItemStatus(item, ItemStatusFailed)
+	item.LastFailureReason = "dependency_failed:" + blocker
+	return nil
+}
+
 // RecoverDispatchedItemToPending restores an item whose durable dispatch claim
 // was lost during startup recovery.
 func RecoverDispatchedItemToPending(item *Item) error {
@@ -79,20 +95,6 @@ func ReconcileItemToCompleted(item *Item) error {
 		return nil
 	default:
 		return fmt.Errorf("queue: reconcile item completed: status %q is not recoverable", item.Status)
-	}
-}
-
-// ReconcileItemToFailed records a stranded pending startup item as failed.
-func ReconcileItemToFailed(item *Item) error {
-	if item == nil {
-		return fmt.Errorf("queue: reconcile item failed: nil item")
-	}
-	switch item.Status {
-	case ItemStatusPending, ItemStatusDeferredForLedgerDep:
-		setItemStatus(item, ItemStatusFailed)
-		return nil
-	default:
-		return fmt.Errorf("queue: reconcile item failed: status %q is not recoverable", item.Status)
 	}
 }
 
@@ -204,6 +206,22 @@ func PauseQueueForDrain(q *Queue) error {
 		return fmt.Errorf("queue: pause queue for drain: status %q is not active", q.Status)
 	}
 	setQueueStatus(q, QueueStatusPausedByDrain)
+	q.ResumeOnStart = false
+	return nil
+}
+
+// PauseQueueForRestart parks an active queue during a clean daemon shutdown.
+// The durable resume bit lets startup distinguish this mechanical pause from
+// an explicit operator pause.
+func PauseQueueForRestart(q *Queue) error {
+	if q == nil {
+		return fmt.Errorf("queue: pause queue for restart: nil queue")
+	}
+	if q.Status != QueueStatusActive {
+		return fmt.Errorf("queue: pause queue for restart: status %q is not active", q.Status)
+	}
+	setQueueStatus(q, QueueStatusPausedByDrain)
+	q.ResumeOnStart = true
 	return nil
 }
 
@@ -216,6 +234,7 @@ func ResumeQueueFromDrain(q *Queue) error {
 		return fmt.Errorf("queue: resume queue from drain: status %q is not paused-by-drain", q.Status)
 	}
 	setQueueStatus(q, QueueStatusActive)
+	q.ResumeOnStart = false
 	return nil
 }
 
@@ -238,18 +257,6 @@ func CompleteQueue(q *Queue) error {
 	if q.Status == QueueStatusActive {
 		setQueueStatus(q, QueueStatusCompleted)
 	}
-	return nil
-}
-
-// CancelQueue marks an active queue cancelled before its archive handoff.
-func CancelQueue(q *Queue) error {
-	if q == nil {
-		return fmt.Errorf("queue: cancel queue: nil queue")
-	}
-	if q.Status != QueueStatusActive {
-		return fmt.Errorf("queue: cancel queue: status %q is not active", q.Status)
-	}
-	setQueueStatus(q, QueueStatusCancelled)
 	return nil
 }
 

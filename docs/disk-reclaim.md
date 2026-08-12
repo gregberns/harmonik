@@ -239,6 +239,17 @@ runbook did not mention at all, held another **1.1 GiB**.
 du -sh ~/Library/Caches/go-build ~/Library/Caches/golangci-lint
 ```
 
+**Re-measured 2026-08-10: `go-build` held 20 GiB and `harmonik-lane-gocache` held
+19 GiB — 39 GiB of Go cache on a box with 9.8 GiB free.** The shared cache had
+doubled from the 9.4 GiB above in 13 days, and the per-checkout caches in step 1
+had grown from 13 GiB in six days. Read every figure in this section as a floor,
+not a size. They describe how fast these directories grow, and the growth rate is
+the part that stays true.
+
+Both caches grow with the number of lanes running, so the interval between
+sweeps matters more than the sweep. A week of two or three active lanes is
+enough to put the box back under the dispatch floor from a clean start.
+
 **Measure these first. Do not clear them first.** This section used to call
 `go clean -cache` "regenerable, zero risk" and put it at the head of the sweep.
 That was wrong, and the daemon acted on the same belief until 2026-08-03.

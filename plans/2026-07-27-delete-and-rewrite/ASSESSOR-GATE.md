@@ -389,10 +389,13 @@ These matter more than usual because lanes run beside the assessor on one box.
 
 **Placed 2026-08-09.**
 
-- **`hk-cli-flag-first-starts-daemon-gjhiy`** (P1) — a leading flag turns off the
-  unknown-subcommand guard, so `harmonik --project DIR queue list` boots a daemon instead of listing.
-  This is `hk-ifj6p` above reached by a second route. Fix both in one change or the guard grows a
-  third hole.
+- ~~**`hk-cli-flag-first-starts-daemon-gjhiy`** (P1) — a leading flag turns off the
+  unknown-subcommand guard, so `harmonik --project DIR queue list` boots a daemon instead of
+  listing.~~ **FIXED at `5dd157cb9`, verified 2026-08-11.** The repair was structural rather than
+  another patch to the guard: starting a daemon was simply what `run()` did when no verb claimed
+  the arguments, so the guard could never have caught it. `harmonik start daemon` is now the only
+  spelling that starts one; the other four exit 2 and write nothing. Left struck through rather
+  than deleted because this entry was quoted into other documents while it was live.
 
 ---
 

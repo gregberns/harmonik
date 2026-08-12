@@ -73,7 +73,7 @@ done
 
 ### Stream vs wave
 
-Use `kind: "stream"` groups for the daily loop — they accept mid-flight appends and dispatch in order (head-of-line blocking). Use `kind: "wave"` only when you need true concurrent dispatch of a fixed, immutable set up to `--max-concurrent`; waves do not accept appends. Remaining gap: hk-24xn1 — the daemon doesn't wake on submit/append when idle, so newly-added beads sit `pending` until the next workloop tick.
+Use `kind: "stream"` groups for the daily loop. They accept mid-flight appends and scan items in stored order. A blocked or dispatched item does not stop a later dependency-ready item from using an open worker slot. This lets one stream run dependency graphs such as `A -> [B, C, D] -> E` without a supervisor advancing the queue. Use `kind: "wave"` when you need a fixed, immutable group. Waves dispatch their eligible items concurrently up to the queue and daemon worker limits. Waves do not accept appends. Submit and append wake an idle daemon.
 
 ## `harmonik run` is the legacy / solo-bootstrap path
 

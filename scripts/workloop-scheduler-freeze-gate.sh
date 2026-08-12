@@ -87,7 +87,7 @@ SCHEDULER_SYMS=(
     projectActiveGroup
     runWorkLoop
     autoCloseStaleBlockersOnClaimFailure
-    drainCancelledQueue
+    drainQueuesForRestart
     workloopSleep
     workloopIdleWait
     scheduleAwareIdleWait

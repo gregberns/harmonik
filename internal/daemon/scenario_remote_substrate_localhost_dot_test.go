@@ -147,6 +147,20 @@ func rsb12RunRemoteDot(t *testing.T, shutdownDrain bool) {
 	// ── Pre-flight guard: ssh localhost must work (no sshd / no key → skip). ──
 	rsb12RequireSSHOrSkip(t)
 
+	// ── Claude-config isolation. The remote leg runs EnsureWorktreeTrust on the
+	//    worker, and without this it resolves the OPERATOR'S OWN ~/.claude.json
+	//    and takes that file's write lock. On any box with a live agent session
+	//    the lock is held, so both tests spent the worker's full 15s budget and
+	//    then failed on a contended path that has nothing to do with what they
+	//    assert. Measured: 317s and red without this line, 17s and green with it.
+	//    The worker honours this override; ~ expansion is what it falls back to.
+	claudeCfg := filepath.Join(t.TempDir(), ".claude.json")
+	//nolint:gosec // G306: test fixture file
+	if err := os.WriteFile(claudeCfg, []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("seed the isolated Claude config: %v", err)
+	}
+	t.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", claudeCfg)
+
 	bead := core.BeadID("hk-rs-b12-e2e-localhost-dot")
 	if shutdownDrain {
 		bead = core.BeadID("hk-rs-b12-drain-localhost-dot")

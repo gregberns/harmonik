@@ -173,6 +173,50 @@ func (o OSAdapter) ProbeDispatchTarget(ctx context.Context, session, window stri
 	return o.readDispatchTargetPane(ctx, session, window)
 }
 
+// BindDispatchTargetOptions writes the immutable identity options on one window.
+func (o OSAdapter) BindDispatchTargetOptions(
+	ctx context.Context,
+	session, window, runID, claimTransitionID string,
+) error {
+	target := session + ":" + window
+	options := []struct{ name, value string }{
+		{name: "@harmonik-run-id", value: runID},
+		{name: "@harmonik-claim-transition-id", value: claimTransitionID},
+		{name: "@harmonik-session-name", value: session},
+		{name: "@harmonik-window-name", value: window},
+	}
+	for _, option := range options {
+		if err := o.setImmutableWindowOption(ctx, target, option.name, option.value); err != nil {
+			return err
+		}
+	}
+	probe := o.ProbeDispatchTarget(ctx, session, window)
+	if probe.Status != TargetProbeExact || probe.RunID != runID || probe.ClaimTransitionID != claimTransitionID ||
+		probe.SessionName != session || probe.WindowName != window {
+		return errors.New("tmux: dispatch target options did not verify")
+	}
+	return nil
+}
+
+func (o OSAdapter) setImmutableWindowOption(ctx context.Context, target, name, value string) error {
+	out, err := o.effectiveRunner().Command(
+		ctx, "tmux", "set-option", "-w", "-o", "-t", target, name, value,
+	).CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	current, readErr := o.effectiveRunner().Command(
+		ctx, "tmux", "show-options", "-w", "-v", "-t", target, name,
+	).CombinedOutput()
+	if readErr == nil && strings.TrimSuffix(string(current), "\n") == value {
+		return nil
+	}
+	return &ErrTmuxFailure{
+		Op: "set-option", ExitCode: exitCodeOf(err),
+		Stderr: strings.TrimSpace(string(out)),
+	}
+}
+
 func (o OSAdapter) readDispatchTargetPane(ctx context.Context, session, window string) TargetProbe {
 	const format = "#{@harmonik-run-id}\t#{@harmonik-claim-transition-id}\t" +
 		"#{@harmonik-session-name}\t#{@harmonik-window-name}\t#{pane_pid}\t#{pane_dead}"

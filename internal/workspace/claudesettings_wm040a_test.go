@@ -227,21 +227,160 @@ func TestWM040a_MergeWithExistingUserHooks(t *testing.T) {
 		}
 	}
 
-	// Assert: user hook for SessionStart is preserved (len >= 2: user + bridge).
+	// Assert: the user hook is preserved and exactly one bridge group joins it.
+	// The count is EXACT on purpose. This assertion used to read ">= 2", which a
+	// duplicate satisfies, so it could not fail on the defect it exists to
+	// prevent — and duplicates did ship (hk-dknb2).
 	sessionStartArr := claudeSettingsFixtureHookEntries(t, hooks, "SessionStart")
-	if len(sessionStartArr) < 2 {
-		t.Errorf("WM-040a merge: SessionStart array len = %d; want >= 2 (user + bridge)", len(sessionStartArr))
+	if len(sessionStartArr) != 2 {
+		t.Errorf("WM-040a merge: SessionStart array len = %d; want exactly 2 (user + one bridge)", len(sessionStartArr))
 	}
 
-	// Assert: user hook for Stop is preserved.
 	stopArr := claudeSettingsFixtureHookEntries(t, hooks, "Stop")
-	if len(stopArr) < 2 {
-		t.Errorf("WM-040a merge: Stop array len = %d; want >= 2 (user + bridge)", len(stopArr))
+	if len(stopArr) != 2 {
+		t.Errorf("WM-040a merge: Stop array len = %d; want exactly 2 (user + one bridge)", len(stopArr))
 	}
 
 	// Assert: unrelated key "theme" is preserved.
 	if _, ok := m["theme"]; !ok {
 		t.Errorf("WM-040a merge: 'theme' key was removed; user settings must be preserved")
+	}
+}
+
+// TestWM040a_RepeatedLaunchesLeaveOneBridgeGroup is the regression test for
+// hk-dknb2. One worktree hosts several launches — implementer, resume,
+// reviewer, and every retry — and this function runs on each of them. It used
+// to append, so a worktree accumulated one copy of every bridge group per
+// launch. Seven of forty live worktrees carried duplicates and the worst held
+// four copies of each of the five groups, which makes Claude fire each hook
+// four times and report every agent finish four times.
+func TestWM040a_RepeatedLaunchesLeaveOneBridgeGroup(t *testing.T) {
+	t.Parallel()
+
+	workspacePath := t.TempDir()
+
+	// A user hook that must survive every launch, so this also proves the
+	// de-duplication does not reach past harmonik's own groups.
+	userSettings := map[string]interface{}{
+		"hooks": map[string]interface{}{
+			"Stop": []interface{}{
+				map[string]interface{}{
+					"matcher": "",
+					"hooks": []interface{}{
+						map[string]interface{}{
+							"type":    "command",
+							"command": "user-stop-hook",
+							"args":    []interface{}{},
+							"timeout": 5,
+						},
+					},
+				},
+			},
+		},
+	}
+	settingsPath := claudeSettingsFixturePath(workspacePath)
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
+		t.Fatalf("WM-040a: MkdirAll: %v", err)
+	}
+	raw, err := json.Marshal(userSettings)
+	if err != nil {
+		t.Fatalf("WM-040a: marshal user settings: %v", err)
+	}
+	if err := os.WriteFile(settingsPath, raw, 0o600); err != nil {
+		t.Fatalf("WM-040a: WriteFile user settings: %v", err)
+	}
+
+	const launches = 4
+	for i := 0; i < launches; i++ {
+		if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
+			t.Fatalf("WM-040a: MaterializeClaudeSettings (launch %d): %v", i+1, err)
+		}
+	}
+
+	m := claudeSettingsFixtureReadJSON(t, settingsPath)
+	hooks := claudeSettingsFixtureHooksMap(t, m)
+
+	for _, kind := range bridgeEventKinds {
+		arr := claudeSettingsFixtureHookEntries(t, hooks, kind)
+		bridges := 0
+		for _, group := range arr {
+			if isBridgeGroup(group) {
+				bridges++
+			}
+		}
+		if bridges != 1 {
+			t.Errorf("WM-040a: %q holds %d bridge groups after %d launches; want exactly 1 — Claude fires a hook once per copy",
+				kind, bridges, launches)
+		}
+	}
+
+	// The user's own Stop hook survived all four launches.
+	stopArr := claudeSettingsFixtureHookEntries(t, hooks, "Stop")
+	if len(stopArr) != 2 {
+		t.Errorf("WM-040a: Stop array len = %d after %d launches; want exactly 2 (user + one bridge)", len(stopArr), launches)
+	}
+	userHookSurvived := false
+	for _, group := range stopArr {
+		if !isBridgeGroup(group) {
+			userHookSurvived = true
+		}
+	}
+	if !userHookSurvived {
+		t.Errorf("WM-040a: the user's own Stop hook was removed; de-duplication must only touch harmonik's groups")
+	}
+}
+
+// TestWM040a_StaleBridgeGroupIsReplacedNotKept proves the replacement is keyed
+// on the hook-relay verb and not on the whole group. A binary that moved leaves
+// a group naming a path that no longer exists; keeping it beside the new one
+// would fire a hook that cannot run.
+func TestWM040a_StaleBridgeGroupIsReplacedNotKept(t *testing.T) {
+	t.Parallel()
+
+	workspacePath := t.TempDir()
+	settingsPath := claudeSettingsFixturePath(workspacePath)
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
+		t.Fatalf("WM-040a: MkdirAll: %v", err)
+	}
+
+	// A bridge group written by an older binary: different path, different
+	// timeout, same verb.
+	stale := map[string]interface{}{
+		"hooks": map[string]interface{}{
+			"Stop": []interface{}{
+				map[string]interface{}{
+					"matcher": "",
+					"hooks": []interface{}{
+						map[string]interface{}{
+							"type":    "command",
+							"command": "/old/path/to/harmonik",
+							"args":    []interface{}{"hook-relay", "Stop"},
+							"timeout": 15,
+						},
+					},
+				},
+			},
+		},
+	}
+	raw, err := json.Marshal(stale)
+	if err != nil {
+		t.Fatalf("WM-040a: marshal stale settings: %v", err)
+	}
+	if err := os.WriteFile(settingsPath, raw, 0o600); err != nil {
+		t.Fatalf("WM-040a: WriteFile stale settings: %v", err)
+	}
+
+	if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
+		t.Fatalf("WM-040a: MaterializeClaudeSettings: %v", err)
+	}
+
+	hooks := claudeSettingsFixtureHooksMap(t, claudeSettingsFixtureReadJSON(t, settingsPath))
+	stopArr := claudeSettingsFixtureHookEntries(t, hooks, "Stop")
+	if len(stopArr) != 1 {
+		t.Fatalf("WM-040a: Stop array len = %d; want exactly 1 — the stale bridge group must be replaced, not joined", len(stopArr))
+	}
+	if !claudeSettingsFixtureBridgeGroupPresent(stopArr, "Stop", testDaemonBinaryPath) {
+		t.Errorf("WM-040a: the surviving Stop group does not name the current binary")
 	}
 }
 

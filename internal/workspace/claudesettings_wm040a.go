@@ -47,6 +47,11 @@ var bridgeEventKinds = []string{
 	"Notification",
 }
 
+// hookRelayVerb is the harmonik subcommand every bridge hook invokes. It is the
+// one part of a bridge group that does not change between binaries or versions,
+// so it is what identifies a group as ours.
+const hookRelayVerb = "hook-relay"
+
 // bridgeMatcherGroupFor returns the single bridge matcher-group for eventKind.
 // daemonBinaryPath MUST be the absolute path to the running harmonik binary
 // (resolved at daemon start via os.Executable) so that the hook command can
@@ -58,7 +63,7 @@ func bridgeMatcherGroupFor(eventKind, daemonBinaryPath string) bridgeMatcherGrou
 			{
 				Type:    "command",
 				Command: daemonBinaryPath,
-				Args:    []string{"hook-relay", eventKind},
+				Args:    []string{hookRelayVerb, eventKind},
 				Timeout: 30,
 			},
 		},
@@ -272,7 +277,21 @@ func mergeSettingsWithBridge(existing map[string]interface{}, daemonBinaryPath s
 			hooksMap[kind] = []interface{}{bridgeGroup}
 			continue
 		}
-		hooksMap[kind] = append(arr, bridgeGroup)
+		// Replace any bridge group already here, do not add a second one. One
+		// worktree hosts several launches — implementer, resume, reviewer, each
+		// retry — and this merge runs on every one of them. Appending gave a
+		// worktree four byte-identical copies of every group, and Claude fires a
+		// hook once per copy, so that session reported every Stop four times.
+		// Dropping the old copy also retires a stale daemon binary path, which
+		// an append would have left behind pointing at a binary that has moved.
+		kept := make([]interface{}, 0, len(arr)+1)
+		for _, group := range arr {
+			if isBridgeGroup(group) {
+				continue
+			}
+			kept = append(kept, group)
+		}
+		hooksMap[kind] = append(kept, bridgeGroup)
 	}
 
 	merged["hooks"] = hooksMap
@@ -302,6 +321,37 @@ func mergeSettingsWithBridge(existing map[string]interface{}, daemonBinaryPath s
 	merged["autoLoadedSkillsDirectories"] = []interface{}{}
 
 	return merged
+}
+
+// isBridgeGroup reports whether a decoded matcher-group is one harmonik wrote.
+// It matches on the hook-relay verb rather than on the whole group, so a group
+// written by an older binary — a different path, a different timeout — is still
+// recognised as ours and replaced instead of accumulating beside the new one. A
+// group the user wrote is left alone, because nothing the user writes invokes
+// hook-relay.
+func isBridgeGroup(group interface{}) bool {
+	groupMap, ok := group.(map[string]interface{})
+	if !ok {
+		return false
+	}
+	entries, ok := groupMap["hooks"].([]interface{})
+	if !ok {
+		return false
+	}
+	for _, entry := range entries {
+		entryMap, ok := entry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		args, ok := entryMap["args"].([]interface{})
+		if !ok || len(args) == 0 {
+			continue
+		}
+		if verb, ok := args[0].(string); ok && verb == hookRelayVerb {
+			return true
+		}
+	}
+	return false
 }
 
 // groupToInterface converts a bridgeMatcherGroup to the interface{} shape

@@ -436,12 +436,11 @@ and worktree identities to the orphan sweep. Mixed schema run-registry readers
 protect valid schema-v2 run facts. Reviewed pure classifiers now validate the
 exact queue, Beads record, universal run record, and worktree lease facts.
 
-The session fact is the next contract gap. The universal record binds the
-session name before spawn. A missing tmux session does not say whether spawn
-was never attempted or whether the session started and later died. The
-workspace sessions directory can exist before process launch and does not bind
-the top-level tmux session name. C21 must add exact durable start-attempt
-evidence before it classifies `session_absent` versus `session_dead`.
+The session-start acknowledgement now has a daemon control operation. The
+operation accepts the exact receipt only after the durable intent, durable run
+record, and live target agree. It installs the receipt before it returns an
+explicit success response. The bootstrap client and startup replay executor
+remain.
 
 The exact claim, session, git, and run-outcome readers remain. The startup
 action executor, resumable provisioning, queue-path producer wiring, and crash

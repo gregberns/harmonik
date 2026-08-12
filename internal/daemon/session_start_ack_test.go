@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,7 +12,115 @@ import (
 	"github.com/gregberns/harmonik/internal/dispatchstore"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	runpkg "github.com/gregberns/harmonik/internal/run"
+	"github.com/gregberns/harmonik/internal/workers"
 )
+
+type recordingSessionStartAcknowledgementHandler struct {
+	payload json.RawMessage
+}
+
+func (h *recordingSessionStartAcknowledgementHandler) HandleSessionStartAcknowledgement(
+	_ context.Context,
+	payload json.RawMessage,
+) (json.RawMessage, error) {
+	h.payload = append(h.payload[:0], payload...)
+	return json.RawMessage(`{"acknowledged":true}`), nil
+}
+
+func TestSessionStartAcknowledgementRoutesPayloadThroughSocketControlChannel(t *testing.T) {
+	handler := &recordingSessionStartAcknowledgementHandler{}
+	router := buildSocketRouter(&socketDispatch{sessionStarth: handler})
+	result := router.Dispatch(t.Context(), "session-start-ack", json.RawMessage(
+		`{"op":"session-start-ack","payload":{"schema_version":1}}`,
+	))
+	if !result.OK || string(result.Payload) != `{"acknowledged":true}` {
+		t.Fatalf("result = %+v; want explicit success", result)
+	}
+	if string(handler.payload) != `{"schema_version":1}` {
+		t.Fatalf("handler payload = %s; want exact request payload", handler.payload)
+	}
+}
+
+func TestSessionStartAcknowledgementHandlerInstallsExactReceipt(t *testing.T) {
+	projectDir := t.TempDir()
+	intent, record, receipt := sessionStartAckFixture(t)
+	persistSessionStartAuthority(t, projectDir, intent, record)
+	handler := sessionStartAcknowledgementHandler{
+		projectDir: projectDir,
+		resolveAdapter: func(runpkg.ExecutionLocation) (ltmux.Adapter, error) {
+			return &dispatchTargetProbeAdapter{probe: sessionStartAckProbe(intent, ltmux.TargetProbeExact)}, nil
+		},
+	}
+	payload, err := json.Marshal(receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := handler.HandleSessionStartAcknowledgement(t.Context(), payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(result) != `{"acknowledged":true}` {
+		t.Fatalf("result = %s; want explicit acknowledgement", result)
+	}
+	got, err := dispatchstore.New(projectDir).LoadSessionStartReceipt(intent.Binding.RunID)
+	if err != nil || got != receipt {
+		t.Fatalf("receipt = (%+v, %v), want exact", got, err)
+	}
+}
+
+func TestSessionStartAcknowledgementHandlerRejectsInvalidPayloadBeforeIO(t *testing.T) {
+	projectDir := t.TempDir()
+	handler := sessionStartAcknowledgementHandler{projectDir: projectDir}
+	if _, err := handler.HandleSessionStartAcknowledgement(t.Context(), json.RawMessage(`{"schema_version":1}`)); err == nil {
+		t.Fatal("invalid receipt returned nil error")
+	}
+	root := filepath.Join(projectDir, ".harmonik", "dispatch-session-starts")
+	if _, err := os.Lstat(root); !os.IsNotExist(err) {
+		t.Fatalf("receipt IO occurred: %v", err)
+	}
+}
+
+func TestSessionStartAcknowledgementResolvesRemoteWorkerAdapterFromDurableLocation(t *testing.T) {
+	projectDir := t.TempDir()
+	intent, _, receipt := sessionStartAckFixture(t)
+	startedAt := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
+	base, err := runpkg.NewDispatchRecord(intent.Binding, startedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	located, err := base.BindLocation(runpkg.ExecutionLocation{Kind: runpkg.ExecutionRemote, WorkerName: "worker-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := located.BindSession(intent.Handoff.SessionName, intent.Handoff.WindowName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persistSessionStartAuthority(t, projectDir, intent, record)
+
+	local := &dispatchTargetProbeAdapter{probe: ltmux.TargetProbe{Status: ltmux.TargetProbeSessionAbsent}}
+	remote := &dispatchTargetProbeAdapter{probe: sessionStartAckProbe(intent, ltmux.TargetProbeExact)}
+	remoteFactoryCalls := 0
+	resolver := newSessionStartAdapterResolverWithFactory(local, workers.Config{Workers: []workers.Worker{{
+		Name: "worker-a", Transport: "ssh", Host: "worker.example",
+	}}}, func(worker workers.Worker) ltmux.Adapter {
+		remoteFactoryCalls++
+		if worker.Name != "worker-a" || worker.Host != "worker.example" {
+			t.Fatalf("worker = %+v; want durable location worker", worker)
+		}
+		return remote
+	})
+	if err := acknowledgeSessionStartWithResolver(t.Context(), projectDir, resolver, receipt); err != nil {
+		t.Fatal(err)
+	}
+	if remoteFactoryCalls != 1 {
+		t.Fatalf("remote adapter calls = %d; want 1", remoteFactoryCalls)
+	}
+	got, err := dispatchstore.New(projectDir).LoadSessionStartReceipt(intent.Binding.RunID)
+	if err != nil || got != receipt {
+		t.Fatalf("receipt = (%+v, %v), want exact remote acknowledgement", got, err)
+	}
+}
 
 func TestAcknowledgeSessionStartInstallsReceiptAfterExactLiveProof(t *testing.T) {
 	projectDir := t.TempDir()

@@ -361,17 +361,18 @@ func RunSocketListenerWithSleepWake(ctx context.Context, sockPath string, h Requ
 // RunSocketListener* wrappers (giant-retirement SR-3). Any field may be nil; the
 // corresponding ops return their "… not registered" envelope.
 type SocketHandlers struct {
-	Request   RequestHandler
-	HookRelay HookRelayHandler
-	Queue     QueueHandler
-	Recovery  QueueRecoveryHandler
-	Subscribe SubscribeHandler
-	Operator  OperatorControlHandler
-	Comms     CommsSendHandler
-	Crew      crewrun.CrewHandler
-	SleepWake QuiesceOverrideHandler
-	State     StateHandler
-	Dashboard DashboardHandler
+	Request      RequestHandler
+	HookRelay    HookRelayHandler
+	Queue        QueueHandler
+	Recovery     QueueRecoveryHandler
+	Subscribe    SubscribeHandler
+	Operator     OperatorControlHandler
+	Comms        CommsSendHandler
+	Crew         crewrun.CrewHandler
+	SleepWake    QuiesceOverrideHandler
+	State        StateHandler
+	Dashboard    DashboardHandler
+	SessionStart SessionStartAcknowledgementHandler
 }
 
 // firstQueueHandler returns the first variadic QueueHandler, or nil. Bridges the
@@ -437,6 +438,7 @@ func Serve(ctx context.Context, sockPath string, hs SocketHandlers) error {
 	router := buildSocketRouter(&socketDispatch{
 		h: hs.Request, qh: hs.Queue, recoverh: hs.Recovery, oh: hs.Operator, ch: hs.Comms,
 		crewh: hs.Crew, sleepWakeh: hs.SleepWake, stateh: hs.State, dashh: hs.Dashboard,
+		sessionStarth: hs.SessionStart,
 	})
 
 	for {

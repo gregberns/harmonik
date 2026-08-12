@@ -504,6 +504,12 @@ func (bs *bootState) startSocketListener(ctx context.Context, sockPath string, q
 		State:     stateHandler,
 		Dashboard: dashHandler,
 	}
+	handlers.SessionStart = sessionStartAcknowledgementHandler{
+		projectDir: cfg.ProjectDir,
+		resolveAdapter: newSessionStartAdapterResolver(
+			extractTmuxAdapterFromSubstrate(cfg.Substrate), cfg.Workers,
+		),
+	}
 	// Assign Subscribe only when the hub exists. A nil *SubscribeHub written into
 	// this INTERFACE field makes a NON-nil interface, so handleSubscribe's
 	// `if sub == nil` refusal would not fire and the op would call a method on a

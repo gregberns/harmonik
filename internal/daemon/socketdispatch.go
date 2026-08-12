@@ -5,7 +5,7 @@ package daemon
 //
 // socketDispatch bundles the injected handler interfaces and exposes one small
 // named method per op, each returning a socketrouter.Result (the neutral,
-// wire-vocabulary-free outcome). buildSocketRouter registers all 28 routable ops
+// wire-vocabulary-free outcome). buildSocketRouter registers all 29 routable ops
 // (every op except subscribe, which stays a daemon pre-branch alongside
 // hook-relay). resultToResponse maps a socketrouter.Result back to the wire
 // SocketResponse — the single real byte-drift surface, pinned by T5.
@@ -30,15 +30,16 @@ import (
 // HookRelayHandler are deliberately absent — both are daemon pre-branches handled
 // before Dispatch (scope-F4/Q2).
 type socketDispatch struct {
-	h          RequestHandler
-	qh         QueueHandler
-	recoverh   QueueRecoveryHandler
-	oh         OperatorControlHandler
-	ch         CommsSendHandler // comma-ok asserted for presence/recv/decisions
-	crewh      crewrun.CrewHandler
-	sleepWakeh QuiesceOverrideHandler
-	stateh     StateHandler
-	dashh      DashboardHandler
+	h             RequestHandler
+	qh            QueueHandler
+	recoverh      QueueRecoveryHandler
+	oh            OperatorControlHandler
+	ch            CommsSendHandler // comma-ok asserted for presence/recv/decisions
+	crewh         crewrun.CrewHandler
+	sleepWakeh    QuiesceOverrideHandler
+	stateh        StateHandler
+	dashh         DashboardHandler
+	sessionStarth SessionStartAcknowledgementHandler
 }
 
 // decodeReq re-decodes SocketRequest from the re-encoded raw bytes. Byte-identical
@@ -95,6 +96,18 @@ func (d *socketDispatch) emitOutcome(ctx context.Context, raw json.RawMessage) s
 func (d *socketDispatch) claimNext(ctx context.Context, raw json.RawMessage) socketrouter.Result {
 	req := decodeReq(raw)
 	result, err := d.h.ClaimNext(ctx, req.Role)
+	if err != nil {
+		return socketrouter.Result{OK: false, Err: err.Error()}
+	}
+	return socketrouter.Result{OK: true, Payload: result}
+}
+
+func (d *socketDispatch) sessionStartAcknowledgement(ctx context.Context, raw json.RawMessage) socketrouter.Result {
+	if d.sessionStarth == nil {
+		return socketrouter.Result{OK: false, Err: "daemon: SessionStartAcknowledgementHandler not registered"}
+	}
+	req := decodeReq(raw)
+	result, err := d.sessionStarth.HandleSessionStartAcknowledgement(ctx, req.Payload)
 	if err != nil {
 		return socketrouter.Result{OK: false, Err: err.Error()}
 	}
@@ -403,12 +416,13 @@ func (d *socketDispatch) dashboard(ctx context.Context, _ json.RawMessage) socke
 	return socketrouter.Result{OK: true, Payload: result}
 }
 
-// buildSocketRouter registers all 28 routable ops (every op except subscribe,
+// buildSocketRouter registers all 29 routable ops (every op except subscribe,
 // which is a daemon pre-branch alongside hook-relay). cyclop(buildSocketRouter)=1.
 func buildSocketRouter(d *socketDispatch) *socketrouter.Router {
 	r := socketrouter.New()
 	r.Register("emit-outcome", d.emitOutcome)
 	r.Register("claim-next", d.claimNext)
+	r.Register("session-start-ack", d.sessionStartAcknowledgement)
 	r.Register("queue-submit", d.queueSubmit)
 	r.Register("queue-append", d.queueAppend)
 	r.Register("queue-status", d.queueStatus)

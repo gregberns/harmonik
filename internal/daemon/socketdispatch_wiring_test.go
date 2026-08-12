@@ -2,7 +2,7 @@ package daemon
 
 // T4 — wiring-completeness guard (MANDATORY, package daemon).
 //
-// Asserts buildSocketRouter(&socketDispatch{}).Ops() equals the frozen 28-op set
+// Asserts buildSocketRouter(&socketDispatch{}).Ops() equals the frozen 29-op set
 // (every op except subscribe, which is a daemon pre-branch). A dropped Register
 // would route a live op to the neutral Unknown path → "daemon: unknown op %q"
 // instead of its "… not registered" envelope (wire-F7). Plus a static assertion
@@ -44,6 +44,7 @@ var frozenRoutableOps = []string{
 	"queue-set-concurrency",
 	"queue-status",
 	"queue-submit",
+	"session-start-ack",
 	"state",
 	"veto_verdict",
 	"worker-set-enabled",
@@ -55,8 +56,8 @@ func TestBuildSocketRouter_FrozenOpSet(t *testing.T) {
 	want := append([]string(nil), frozenRoutableOps...)
 	sort.Strings(want)
 
-	if len(got) != 28 {
-		t.Fatalf("router registered %d ops, want 28: %v", len(got), got)
+	if len(got) != 29 {
+		t.Fatalf("router registered %d ops, want 29: %v", len(got), got)
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("router op set drift:\n got: %v\nwant: %v", got, want)
@@ -64,12 +65,12 @@ func TestBuildSocketRouter_FrozenOpSet(t *testing.T) {
 }
 
 // TestSocketSurface_TwoPreBranches statically pins the daemon pre-branch surface:
-// the 28 routable ops + the two pre-branches (subscribe, hook-relay) == the full
-// 29-op protocol surface + the hook-relay envelope. If subscribe ever appears in
+// the 29 routable ops + the two pre-branches (subscribe, hook-relay) == the full
+// 30-op protocol surface + the hook-relay envelope. If subscribe ever appears in
 // the router's Ops(), or the routable count changes, this fails.
 func TestSocketSurface_TwoPreBranches(t *testing.T) {
 	const daemonPreBranchOps = 1 // "subscribe" (hook-relay is keyed on the "type" envelope, not an op)
-	const totalProtocolOps = 29  // the frozen op surface of handleSocketConn's switch
+	const totalProtocolOps = 30  // the frozen op surface of handleSocketConn's switch
 	routable := len(buildSocketRouter(&socketDispatch{}).Ops())
 
 	if routable+daemonPreBranchOps != totalProtocolOps {

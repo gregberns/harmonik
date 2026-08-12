@@ -2296,49 +2296,157 @@ func propagateFailedDependents(ctx context.Context, port reapSeamPort, completio
 	return true
 }
 
-// evaluateGroupAdvanceWithOutcome is called from the per-run goroutine after a run that
-// the run's success outcome from the goroutine wrapper in runWorkLoop.
+// groupCompletionRetryBudget bounds the completion's re-snapshot loop.
+//
+// The write is optimistic: it refuses a transaction whose snapshot moved, and
+// the generation on one queue is bumped by five ordinary writers — the dispatch
+// loop stamping items, the failure-reason writer, the eager refill, the
+// per-queue spend meter and the review-loop counter — including an eager refill
+// fired by a SIBLING completion's own effects. Two runs in one wave group
+// finishing together is the normal case whenever more than one may run at once.
+//
+// A completion MUST NOT simply give up on that refusal. Nothing else marks the
+// item terminal: the run is unregistered by the dispatch goroutine's own
+// deferred call as this returns, so the stale watcher cannot re-drive it, and
+// nothing re-selects a dispatched item. The group never reaches all-terminal
+// and the queue never advances again. One lost race is a permanent stall.
+//
+// The code this replaced held one lock across the whole read-modify-write, so
+// it could not lose the race. Holding the lock is not available here: the write
+// path takes that lock itself and Go locks are not reentrant. Re-reading and
+// retrying buys the durability back without giving it up.
+//
+// Three is a judgement, not a measurement: each attempt re-reads the live queue,
+// and losing three times means sustained contention rather than one unlucky
+// interleave. It matches releaseRetryBudget, which solved this same problem on
+// the other half of the reservation pair. The two tests below it pin the value
+// to two or three and no tighter — the retry test goes red at a budget of one
+// and the give-up test goes red at four, so lowering it to two breaks neither.
+//
+// Bead ref: hk-nw6on.
+const groupCompletionRetryBudget = 3
+
+// groupCompletionVerdict says whether one optimistic pass finished the job.
+type groupCompletionVerdict string
+
+const (
+	// groupCompletionSettled — this pass reached a decision the caller must not
+	// repeat. It committed, or it refused for a reason a re-read would give
+	// again, and its effects have already been applied.
+	groupCompletionSettled groupCompletionVerdict = "settled"
+
+	// groupCompletionContended — the write was refused because the snapshot
+	// moved. Nothing was written and nothing was applied. The item is still
+	// this completion's to record, so the caller re-reads and tries again.
+	groupCompletionContended groupCompletionVerdict = "contended"
+)
+
+// groupCompletion names the one item outcome a completion records. It mirrors
+// queueReservation on the reservation path: the coordinates travel as one value
+// so the retry loop and the attempt agree on what is being written.
+type groupCompletion struct {
+	// QueueName is the NORMALISED name of the queue the run was dispatched
+	// from (NQ-B1), captured at dispatch time. The completion path MUST resolve
+	// the queue by name — the main-only lq.Queue() shim would, for a non-"main"
+	// queue, return the wrong queue (or nil), trip the QueueID guard, and return
+	// early WITHOUT marking the item terminal, stalling that queue's group
+	// forever (hk-tigaf.4).
+	QueueName   string
+	QueueID     string
+	GroupIndex  int
+	ItemIndex   int
+	Success     bool
+	CompletedAt time.Time
+}
+
+// evaluateGroupAdvanceWithOutcome is called from the per-run goroutine after a run
+// reaches a terminal outcome, and from the force-reap path.
 //
 // It marks the queue item terminal (completed/failed), calls AdvanceGroup, and
 // emits the resulting group events. If the group transitions to complete-success,
-// it also activates the next group (pending → active). If complete-with-failures,
-// it marks the queue status as paused-by-failure.
-//
-// queueName identifies the queue the run was dispatched from (NQ-B1). It is
-// the normalised name captured at dispatch time (capturedQueueName). The
-// completion path MUST resolve the queue by name — using the main-only
-// lq.Queue() shim instead would, for a non-"main" queue, return the wrong
-// queue (or nil), trip the QueueID guard, and return early WITHOUT marking the
-// item terminal, stalling that queue's group forever (hk-tigaf.4).
+// it also activates the next group (pending → active) — unless the queue is
+// paused, in which case the successor is held. If complete-with-failures, it
+// marks the queue status as paused-by-failure.
 //
 // Spec ref: specs/execution-model.md §4.3.EM-015f.
-// Bead ref: hk-45ude, hk-tigaf.4.
-//
-//nolint:gocritic // pre-existing: Seam A moved this code out of workloop.go unchanged
+// Bead ref: hk-45ude, hk-tigaf.4, hk-nw6on.
 func evaluateGroupAdvanceWithOutcome(ctx context.Context, port reapSeamPort, queueName string, queueID string, groupIndex int, itemIdx int, success bool, completedAt time.Time) {
 	if port.queueStore == nil {
 		return
 	}
-	snapshot := port.queueStore.Snapshot(queue.NormaliseQueueName(queueName))
+	completion := groupCompletion{
+		QueueName:   queue.NormaliseQueueName(queueName),
+		QueueID:     queueID,
+		GroupIndex:  groupIndex,
+		ItemIndex:   itemIdx,
+		Success:     success,
+		CompletedAt: completedAt,
+	}
+	evaluateGroupAdvanceFrom(ctx, port, port.queueStore.Snapshot(completion.QueueName), completion)
+}
+
+// evaluateGroupAdvanceFrom records the outcome from a caller-supplied first
+// snapshot, re-reading the queue after every attempt that lost the snapshot
+// race, and saying so on stderr when the budget runs out.
+//
+// Seeding the first snapshot is what makes the retry testable: a test can hand
+// this a snapshot it has already invalidated and watch the second attempt heal
+// it. Racing a real writer for the window between the read and the write does
+// not reliably reproduce a lost attempt, so a test built that way passes
+// whether the loop retries or not. releaseFrom exists for the same reason.
+func evaluateGroupAdvanceFrom(ctx context.Context, port reapSeamPort, snapshot queuewiring.Snapshot, completion groupCompletion) {
+	for attempt := 0; attempt < groupCompletionRetryBudget; attempt++ {
+		if groupCompletionAttempt(ctx, port, snapshot, completion) == groupCompletionSettled {
+			return
+		}
+		snapshot = port.queueStore.Snapshot(completion.QueueName)
+	}
+
+	// Every attempt lost. Say what that costs, because the symptom is a queue
+	// that looks slow rather than an error: the item is still dispatched in
+	// memory and on disk, nothing re-selects a dispatched item, and its group
+	// cannot reach all-terminal, so this queue does not advance again.
+	fmt.Fprintf(os.Stderr,
+		"daemon: workloop: GROUP COMPLETION STRANDED — queue %q group %d item %d lost the snapshot race on all %d "+
+			"attempts, so its outcome was never recorded. The item is still dispatched, its group cannot reach "+
+			"all-terminal, and nothing re-selects a dispatched item, so this queue does not advance until the next "+
+			"daemon start reconciles it.\n",
+		completion.QueueName, completion.GroupIndex, completion.ItemIndex, groupCompletionRetryBudget)
+	eagerRefillEval(ctx, port)
+}
+
+// groupCompletionAttempt is one optimistic pass of the completion against one
+// snapshot. It is separate from the loop so a test can hand it a snapshot that
+// is already stale and pin the contended classification without racing for the
+// window.
+//
+// groupCompletionContended is the ONLY verdict the caller may retry, and it is
+// classified positively off queuewiring.ErrStaleSnapshot rather than as
+// "rejected and not quarantined". The two read the same today and diverge on
+// the final-completion path, which returns its quarantine reason unwrapped: a
+// negative test there would spend the budget re-reading a queue that is shut
+// until an operator repairs it, and report a strand instead of the write error
+// that caused it.
+func groupCompletionAttempt(ctx context.Context, port reapSeamPort, snapshot queuewiring.Snapshot, completion groupCompletion) groupCompletionVerdict {
 	if snapshot.Queue == nil {
 		eagerRefillEval(ctx, port)
-		return
+		return groupCompletionSettled
 	}
 	outcome := queue.GroupCompletionOutcomeFailed
-	if success {
+	if completion.Success {
 		outcome = queue.GroupCompletionOutcomeCompleted
 	}
 	input := queue.GroupCompletionInput{
-		ExpectedQueueID: queueID,
-		Location:        queue.GroupCompletionLocation{GroupIndex: groupIndex, ItemIndex: itemIdx},
+		ExpectedQueueID: completion.QueueID,
+		Location:        queue.GroupCompletionLocation{GroupIndex: completion.GroupIndex, ItemIndex: completion.ItemIndex},
 		Outcome:         outcome,
-		CompletedAt:     completedAt,
+		CompletedAt:     completion.CompletedAt,
 	}
 	completionQueue := queue.CloneQueue(snapshot.Queue)
-	if !success && port.queueLedger != nil {
-		if !propagateFailedDependents(ctx, port, completionQueue, queueID, groupIndex, itemIdx) {
+	if !completion.Success && port.queueLedger != nil {
+		if !propagateFailedDependents(ctx, port, completionQueue, completion.QueueID, completion.GroupIndex, completion.ItemIndex) {
 			eagerRefillEval(ctx, port)
-			return
+			return groupCompletionSettled
 		}
 	}
 	decision, err := queue.DecideGroupCompletion(*completionQueue, input) //nolint:contextcheck // The value-only decision checks cancellation inside queue.AdvanceGroup.
@@ -2355,18 +2463,36 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, port reapSeamPort, que
 		err = decision.Validate()
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "daemon: workloop: decide group completion queueID=%s groupIndex=%d: %v\n", queueID, groupIndex, err)
+		fmt.Fprintf(os.Stderr, "daemon: workloop: decide group completion queueID=%s groupIndex=%d: %v\n", completion.QueueID, completion.GroupIndex, err)
 		eagerRefillEval(ctx, port)
-		return
+		return groupCompletionSettled
 	}
 	execution := executeGroupCompletion(ctx, port, snapshot, decision, input)
+	if lostGroupCompletionSnapshotRace(execution) {
+		// Nothing was written, so nothing is applied. Applying the effects here
+		// would log a failure and fire a refill on every losing pass, which is
+		// noise the operator reads as three failures rather than one retry.
+		return groupCompletionContended
+	}
 	effects, policyErr := decideGroupCompletionEffects(execution.durability)
 	if policyErr != nil {
-		fmt.Fprintf(os.Stderr, "daemon: workloop: group completion policy queueID=%s groupIndex=%d: %v\n", queueID, groupIndex, policyErr)
+		fmt.Fprintf(os.Stderr, "daemon: workloop: group completion policy queueID=%s groupIndex=%d: %v\n", completion.QueueID, completion.GroupIndex, policyErr)
 		eagerRefillEval(ctx, port)
-		return
+		return groupCompletionSettled
 	}
 	applyGroupCompletionEffects(ctx, port, decision.Intents, effects, execution.err)
+	return groupCompletionSettled
+}
+
+// lostGroupCompletionSnapshotRace reports whether the write was refused ONLY
+// because the caller's snapshot moved. A quarantine refusal, a cancelled
+// context and a failed write all reach the same OutcomeRejected or a worse
+// outcome, and none of them is healed by re-reading — a quarantine in
+// particular is sticky, so retrying it would turn a queue that will never
+// accept another write into three silent passes.
+func lostGroupCompletionSnapshotRace(execution groupCompletionExecution) bool {
+	return execution.durability.Outcome == queue.OutcomeRejected &&
+		errors.Is(execution.err, queuewiring.ErrStaleSnapshot)
 }
 
 // ── hk-o85ye: run-session adoption helpers ───────────────────────────────────

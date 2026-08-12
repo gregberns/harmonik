@@ -640,7 +640,7 @@ func WriteStandardWorkflowDot(t *testing.T, projectDir string) {
 	if err != nil {
 		t.Fatalf("WriteStandardWorkflowDot: read %s: %v", src, err)
 	}
-	if err := os.WriteFile(filepath.Join(projectDir, "workflow.dot"), content, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(projectDir, "workflow.dot"), content, 0o600); err != nil {
 		t.Fatalf("WriteStandardWorkflowDot: write workflow.dot: %v", err)
 	}
 }

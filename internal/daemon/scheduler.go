@@ -1917,7 +1917,7 @@ func autoCloseStaleBlockersOnClaimFailure(ctx context.Context, ledger beadLedger
 //
 // Spec ref: specs/queue-model.md §8 (shutdown drain).
 // Bead ref: hk-ppt32, hk-u6m4l.
-func drainQueuesForRestart(ctx context.Context, queueStore *queuewiring.QueueStore, projectDir string, emitter runloop.EmitterPort) {
+func drainQueuesForRestart(ctx context.Context, queueStore *queuewiring.QueueStore, projectDir string, emitter runloop.EmitterPort) { //nolint:gocognit // One pass must park every named queue and emit its matching fact.
 	if queueStore == nil {
 		return
 	}
@@ -1953,7 +1953,9 @@ func drainQueuesForRestart(ctx context.Context, queueStore *queuewiring.QueueSto
 				PausedAt: time.Now().UTC().Format(time.RFC3339Nano), Reason: "operator_drain",
 			})
 			if marshalErr == nil {
-				_ = emitter.Emit(ctx, core.EventTypeQueuePaused, payload)
+				if emitErr := emitter.Emit(ctx, core.EventTypeQueuePaused, payload); emitErr != nil {
+					fmt.Fprintf(os.Stderr, "daemon: workloop: drainQueuesForRestart emit queueID=%s name=%q: %v\n", q.QueueID, name, emitErr)
+				}
 			}
 		}
 	}

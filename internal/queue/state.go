@@ -430,7 +430,7 @@ func ReevaluateDeferred(ctx context.Context, g *Group, ledger BeadLedger) ([]cor
 // FailDeferredDependents propagates one failed item through the dependency
 // edges in its group. It marks only descendants of failedBead. Independent
 // chains in the same group continue to run.
-func FailDeferredDependents(ctx context.Context, g *Group, failedBead core.BeadID, ledger BeadLedger) ([]core.BeadID, error) {
+func FailDeferredDependents(ctx context.Context, g *Group, failedBead core.BeadID, ledger BeadLedger) ([]core.BeadID, error) { //nolint:gocognit // Transitive graph propagation needs the fixed-point loop and edge checks together.
 	if g == nil || ledger == nil || failedBead == "" {
 		return nil, nil
 	}

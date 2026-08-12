@@ -118,7 +118,14 @@ func TestScenario_LateHandoff300sFakeClock_Aborts_qji8g(t *testing.T) {
 
 	rs := newReactiveSession(s1, s2, false /*writeNonce*/, true /*flipOnClear*/)
 	clock := substrate.NewFakeClock(time.Unix(1_700_000_000, 0))
+	cfgOverrides := testCycleOverrides{CycleIDs:
 
+	// the real 300s K2 window
+	// unreached
+	// coarse virtual cadence
+	func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: rs.readHandoff, HandoffScrub: rs.truncate, Inject: rs.inject, Gauge: rs.readGauge, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:      agent,
 		ProjectDir:     t.TempDir(),
@@ -126,27 +133,14 @@ func TestScenario_LateHandoff300sFakeClock_Aborts_qji8g(t *testing.T) {
 		Clock:          clock,
 		ActPct:         90.0,
 		WarnPct:        80.0,
-		HandoffTimeout: keeper.DefaultHandoffTimeout, // the real 300s K2 window
-		ClearSettle:    10 * time.Second,             // unreached
-		PollInterval:   30 * time.Second,             // coarse virtual cadence
-		CycleIDGen:     func() string { return cycleID },
-		IsManagedFn:    func(_, _ string) bool { return true },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:         rs.readHandoff,
-		HandoffModTimeFn:    rs.handoffModTime,
-		TruncateHandoffFn:   rs.truncate,
-		InjectFn:            rs.inject,
-		ReadGaugeFn:         rs.readGauge,
-		CrispIdleFn:         func(_, _ string) bool { return true },
-		HoldingDispatchFn:   func(_, _ string) bool { return false },
-		WriteJournalFn:      jc.write,
-		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
-		OperatorAttachedFn:  func(string) bool { return false }, // deterministic, no real tmux
-		IdleMarkerModTimeFn: func(_, _ string) (time.Time, bool) { return clock.Now(), true },
+		HandoffTimeout: keeper.DefaultHandoffTimeout,
+		ClearSettle:    10 * time.Second,
+		PollInterval:   30 * time.Second,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
+		deps.Handoff = testHandoffWithModTime{HandoffDocument: deps.Handoff, modTime: rs.handoffModTime}
+		deps.Activity = testActivityWithIdle{ActivityProbe: deps.Activity, idleMarker: func() (time.Time, bool) { return clock.Now(), true }}
+	})
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -246,7 +240,7 @@ func TestScenario_ClientActivityMidWait_DoesNotHideHandoff_qji8g(t *testing.T) {
 }
 
 // (e) FORCE-ACT STILL CUTS A NEVER-IDLE SESSION. A perpetually-busy session
-// (CrispIdleFn always false) above the FORCE threshold must be cut UNCONDITIONALLY:
+// (IdleProbe always false) above the FORCE threshold must be cut UNCONDITIONALLY:
 // the CrispIdle gate is bypassed on the force path, the cycle fires, and /clear is
 // STILL gated on a confirmed nonce (the deferral machinery does NOT relax the
 // safety gate). Proves the K2 leader-defer work did not weaken the FORCE-ACT
@@ -268,43 +262,35 @@ func TestScenario_ForceAct_NeverIdleStillCut_qji8g(t *testing.T) {
 	// writeNonce=true so /clear is reachable (proving the nonce gate is NOT skipped
 	// on the force path); flipOnClear=true so /clear causally rotates S1→S2.
 	rs := newReactiveSession(s1, s2, true /*writeNonce*/, true /*flipOnClear*/)
+	cfgOverrides := testCycleOverrides{CycleIDs:
 
+	// Stop hook wired and freshly fired (T8, SK-014): ModelDone lands on the
+	// first AwaitModelDone poll so the force cycle does not stall the phase.
+
+	func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: rs.readHandoff, HandoffScrub: rs.truncate, Inject: rs.inject, Gauge: rs.readGauge, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
-		// Stop hook wired and freshly fired (T8, SK-014): ModelDone lands on the
-		// first AwaitModelDone poll so the force cycle does not stall the phase.
-		IdleMarkerModTimeFn: idleMarkerFreshNow,
-		AgentName:           agent,
-		ProjectDir:          t.TempDir(),
-		TmuxTarget:          "fake-pane",
-		ActPct:              90.0,
-		WarnPct:             80.0,
-		ForceActPct:         95.0,
-		HandoffTimeout:      500 * time.Millisecond,
-		ClearSettle:         300 * time.Millisecond,
-		PollInterval:        5 * time.Millisecond,
-		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:       rs.readHandoff,
-		HandoffModTimeFn:  rs.handoffModTime,
-		TruncateHandoffFn: rs.truncate,
-		InjectFn:          rs.inject,
-		ReadGaugeFn:       rs.readGauge,
-		CrispIdleFn:       func(_, _ string) bool { return false }, // NEVER idle → force path
-		HoldingDispatchFn: func(_, _ string) bool { return false },
-		WriteJournalFn:    jc.write,
-		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
-		SendEscapeFn:      func(_ context.Context, _ string) error { return nil }, // no-op escape (force path)
-		SetManagedSessionFn: func(_, _, sid string) error {
+		AgentName:      agent,
+		ProjectDir:     t.TempDir(),
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		ForceActPct:    95.0,
+		HandoffTimeout: 500 * time.Millisecond,
+		ClearSettle:    300 * time.Millisecond,
+		PollInterval:   5 * time.Millisecond,
+	}
+	cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
+		deps.Handoff = testHandoffWithModTime{HandoffDocument: deps.Handoff, modTime: rs.handoffModTime}
+		deps.Idle = testIdleProbe(false)
+		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error {
 			mu.Lock()
 			defer mu.Unlock()
 			managedBinding = sid
 			return nil
-		},
-	}
-	cycler := keeper.NewCycler(cfg, em)
+		}}
+	})
 
 	// Tokens well above the default ForceActAbsTokens (240K) with CrispIdle=false.
 	cf := &keeper.CtxFile{Pct: 97.0, Tokens: 390_000, WindowSize: 1_000_000, SessionID: s1}

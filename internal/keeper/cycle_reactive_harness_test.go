@@ -201,7 +201,7 @@ func (rs *reactiveSession) readHandoff(_ /*path*/ string) (string, error) {
 	return rs.handoffBody, nil
 }
 
-// handoffModTime is the reactive HandoffModTimeFn: it reports a fresh mtime
+// handoffModTime is the reactive handoff freshness read. It reports a fresh mtime
 // (now) whenever a handoff body has been written, and "absent" while empty. This
 // mirrors os.Stat on a real handoff file and lets the ack-timeout recovery path
 // (hk-fi78d) distinguish "agent wrote a fresh handoff" from "nothing written".
@@ -284,7 +284,7 @@ func (rs *reactiveSession) withClearDelay(d time.Duration) *reactiveSession {
 // never confirm — see newReactiveCyclerWithBackstop for scenarios that need an
 // explicit, larger backstop (e.g. a delayed-flip race).
 //
-// managedSet is set to true by SetManagedSessionFn so the test can assert the
+// managedSet is set to true by managed-session port so the test can assert the
 // final binding == S2 without touching disk (mirrors the IdentityPinned test's
 // capture-the-arg idiom).
 func newReactiveCycler(
@@ -315,10 +315,17 @@ func newReactiveCyclerWithBackstop(
 	clearConfirmRetries int,
 ) *keeper.Cycler {
 	var mu sync.Mutex
+	cfgOverrides := testCycleOverrides{CycleIDs:
+
+	// non-empty so injection branches run
+
+	func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: rs.readHandoff, HandoffScrub: rs.truncate, Inject: rs.inject, Gauge: rs.readGauge, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:            agent,
 		ProjectDir:           projectDir,
-		TmuxTarget:           "fake-pane", // non-empty so injection branches run
+		TmuxTarget:           "fake-pane",
 		ActPct:               90.0,
 		WarnPct:              80.0,
 		HandoffTimeout:       handoffTimeout,
@@ -326,30 +333,18 @@ func newReactiveCyclerWithBackstop(
 		PollInterval:         5 * time.Millisecond,
 		ClearConfirmBackstop: clearConfirmBackstop,
 		ClearConfirmRetries:  clearConfirmRetries,
-		CycleIDGen:           func() string { return cycleID },
-		IsManagedFn:          func(_, _ string) bool { return true },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:       rs.readHandoff,
-		HandoffModTimeFn:  rs.handoffModTime,
-		TruncateHandoffFn: rs.truncate,
-		InjectFn:          rs.inject,
-		ReadGaugeFn:       rs.readGauge,
-		CrispIdleFn:       func(_, _ string) bool { return true },
-		HoldingDispatchFn: func(_, _ string) bool { return false },
-		WriteJournalFn:    jc.write,
-		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
-		SetManagedSessionFn: func(_, _, sid string) error {
+
+		// Stop hook wired and freshly fired (T8, SK-014): ModelDone{idle_marker}
+		// lands on the first AwaitModelDone detection tick, preserving the
+		// pre-T8 clear-right-after-confirm scenario cadence.
+	}
+	return mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
+		deps.Handoff = testHandoffWithModTime{HandoffDocument: deps.Handoff, modTime: rs.handoffModTime}
+		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error {
 			mu.Lock()
 			defer mu.Unlock()
 			*managedSet = sid
 			return nil
-		},
-		// Stop hook wired and freshly fired (T8, SK-014): ModelDone{idle_marker}
-		// lands on the first AwaitModelDone detection tick, preserving the
-		// pre-T8 clear-right-after-confirm scenario cadence.
-		IdleMarkerModTimeFn: idleMarkerFreshNow,
-	}
-	return keeper.NewCycler(cfg, em)
+		}}
+	})
 }

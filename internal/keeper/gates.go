@@ -175,7 +175,7 @@ func SetHold(projectDir, agent string) (sessionID string, err error) {
 
 // setHoldAt is SetHold with the marker timestamp read through the given
 // ClockPort (SK-008/SK-R3): the cycle path stamps holds via the injected
-// Clock (GaugePort.SetHold), while the public SetHold keeps the wall clock
+// Clock, while the public SetHold keeps the wall clock
 // for CLI callers. Nil clock falls back to the system clock.
 func setHoldAt(projectDir, agent string, clock substrate.ClockPort) (sessionID string, err error) {
 	if clock == nil {
@@ -244,7 +244,7 @@ func IsHeld(projectDir, agent string, ttl time.Duration) bool {
 }
 
 // isHeldAt is IsHeld with the TTL-expiry math read through the given ClockPort
-// (SK-008/SK-R3): the cycle path's HeldCheckFn default routes through the
+// (SK-008/SK-R3): the cycle hold probe routes through the
 // injected Clock so a FakeClock can drive hold expiry deterministically. Nil
 // clock falls back to the system clock.
 func isHeldAt(projectDir, agent string, ttl time.Duration, clock substrate.ClockPort) bool {

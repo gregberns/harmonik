@@ -24,7 +24,7 @@ func precompactAction(t *testing.T, ev keeper.EmittedEvent) string {
 }
 
 // newPrecompactCycler builds a Cycler for precompact tests. It wires the same
-// fakes as cycle_test.go but adds a no-op ClearPrecompactTriggerFn so tests
+// fakes as cycle_test.go but adds a no-op context-store clear so tests
 // can control the marker file directly.
 func newPrecompactCycler(
 	t *testing.T,
@@ -53,32 +53,24 @@ func newPrecompactCycler(
 			return &keeper.CtxFile{Pct: 95.0, SessionID: "sess-new"}, time.Now(), nil
 		}
 	}
-
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, agent string) string {
+		return filepath.Join(projectDir, "HANDOFF-"+agent+".md")
+	}, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: readGaugeFn, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
-		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
-		AgentName:           "precompact-agent",
-		ProjectDir:          projectDir,
-		TmuxTarget:          "fake-pane",
-		ActPct:              90.0,
-		WarnPct:             80.0,
-		HandoffTimeout:      500 * time.Millisecond,
-		ClearSettle:         50 * time.Millisecond,
-		PollInterval:        10 * time.Millisecond,
-		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return isManaged },
-		HandoffFilePath: func(_, agent string) string {
-			return filepath.Join(projectDir, "HANDOFF-"+agent+".md")
-		},
-		ReadHandoff:              readHandoff,
-		TruncateHandoffFn:        func(_ string) error { return nil },
-		InjectFn:                 spy.inject,
-		ReadGaugeFn:              readGaugeFn,
-		CrispIdleFn:              func(_, _ string) bool { return false }, // not used by RunForPrecompact
-		HoldingDispatchFn:        func(_, _ string) bool { return holdingDispatch },
-		WriteJournalFn:           jc.write,
-		ClearPrecompactTriggerFn: func(_, _ string) error { return nil }, // no-op; test controls marker
+		AgentName:      "precompact-agent",
+		ProjectDir:     projectDir,
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		HandoffTimeout: 500 * time.Millisecond,
+		ClearSettle:    50 * time.Millisecond,
+		PollInterval:   10 * time.Millisecond,
 	}
-	return keeper.NewCycler(cfg, em)
+	return mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
+		deps.Context = testContextWithClear{ContextStore: deps.Context, clear: func() error { return nil }}
+		deps.Managed = testManagedProbe(isManaged)
+		deps.Dispatch = testDispatchProbe(holdingDispatch)
+	})
 }
 
 // TestRunForPrecompact_NotManaged verifies that an unmanaged agent emits

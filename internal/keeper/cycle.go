@@ -157,66 +157,6 @@ type CyclerConfig struct {
 	// substrate.FakeClock can drive timeouts and poll cadences in virtual time.
 	Clock substrate.ClockPort
 
-	// Named ports (T6, session-keeper-design §1 / D10). When non-nil these
-	// OVERRIDE the corresponding function-field adapters below: the cycle core
-	// depends exclusively on the port interfaces (ports.go), and a nil port is
-	// filled by NewCycler with the fn* adapter over the (defaulted) function
-	// fields — so existing fn-field wiring and test fakes keep working while
-	// T7's Step reactor drives every side effect through a port.
-	Pane    PanePort
-	Gauge   GaugePort
-	Handoff HandoffPort
-	Respawn RespawnPort // nil AND ForceRestartFn nil → escalation dormant
-
-	// Injectable dependencies. Nil → production default. These are the WIRING
-	// INPUTS for the fn* port adapters (ports.go); the cycle core never calls
-	// them directly. CycleIDGen stays a config seam (not a port): the shell
-	// mints cycle ids (design §2a).
-	CycleIDGen      func() string
-	IsManagedFn     func(projectDir, agentName string) bool
-	HandoffFilePath func(projectDir, agentName string) string
-	ReadHandoff     func(path string) (string, error)
-	// HandoffModTimeFn returns the handoff file's modification time and whether it
-	// exists. Nil → defaultHandoffModTime (os.Stat). Used by the ack-timeout
-	// recovery path (hk-fi78d) to decide whether the agent actually WROTE a fresh
-	// handoff despite the nonce echo never landing — in which case the brief
-	// injection must still survive rather than blindly aborting before /clear.
-	HandoffModTimeFn func(path string) (time.Time, bool)
-	// TruncateHandoffFn SCRUBS the keeper's own `<!-- KEEPER:... -->` nonce
-	// marker(s) out of the handoff file, preserving every other byte. The name is
-	// historical: it once truncated the whole file, which silently destroyed the
-	// crew's handoff on every cycle after the first (hk-4tjyj). Nil →
-	// defaultScrubHandoffNonces.
-	TruncateHandoffFn func(path string) error
-	// IdleMarkerModTimeFn reports the Stop-hook .idle marker's mtime and whether
-	// it exists — the PRIMARY model-done source (SK-014): in AwaitModelDone the
-	// shell reads it each detection tick and the first mtime ≥ t_nonce (the
-	// nonce-confirmation instant, strict compare, NO crispIdleTolerance) yields
-	// ModelDone{source:"idle_marker"}. Nil → defaultIdleMarkerModTime (os.Stat
-	// on .harmonik/keeper/<agent>.idle).
-	IdleMarkerModTimeFn      func(projectDir, agentName string) (time.Time, bool)
-	InjectFn                 func(ctx context.Context, target, text string) error
-	ReadGaugeFn              func(projectDir, agentName string) (*CtxFile, time.Time, error)
-	CrispIdleFn              func(projectDir, agentName string) bool
-	HoldingDispatchFn        func(projectDir, agentName string) bool
-	WriteJournalFn           func(path string, j *CycleJournal) error
-	ReadJournalFn            func(path string) (*CycleJournal, error)
-	ClearPrecompactTriggerFn func(projectDir, agentName string) error
-
-	// SetManagedSessionFn writes the new session_id into .managed after a cycle
-	// completes post-/clear. This unblocks the watcher's session_id binding so it
-	// resumes monitoring the resumed session. Called unconditionally: an empty
-	// sessionID clears the binding so the .sid channel can rebind the next
-	// session (IsManaged stays true; only the binding is cleared). Nil →
-	// WriteManagedSessionID. (Refs: hk-igt, hk-uxu)
-	SetManagedSessionFn func(projectDir, agent, sessionID string) error
-
-	// SetTmuxEnvFn sets a key=value in the tmux session that owns TmuxTarget.
-	// Called after nonce confirmation so HARMONIK_AGENT is inherited by the
-	// new Claude process started after /clear. Nil → default tmux setenv call.
-	// No-op when TmuxTarget is empty.
-	SetTmuxEnvFn func(ctx context.Context, target, key, value string) error
-
 	// ForceRetryInterval is the minimum duration after a forced-clear attempt
 	// (above ForceActPct) before the keeper retries on the same session_id.
 	// After an abort (handoff_timeout) or a completed forced cycle, the
@@ -260,51 +200,12 @@ type CyclerConfig struct {
 	MaxBootGraceTotal time.Duration
 
 	// MaxHandoffTimeouts is the number of consecutive handoff timeouts above
-	// the force threshold before escalating to ForceRestartFn. Zero disables
+	// the force threshold before escalating through RespawnPort. Zero disables
 	// escalation. Default: 3. Refs: hk-qoz.
 	MaxHandoffTimeouts int
 
-	// ForceRestartFn, when non-nil, is called after MaxHandoffTimeouts
-	// consecutive handoff timeouts while above the force threshold. Expected
-	// to kill and restart the agent (e.g. via the respawn path). Non-fatal:
-	// a failure is logged but does not stop the keeper loop. Refs: hk-qoz.
-	ForceRestartFn func(ctx context.Context, agentName string) error
-
-	// SendEscapeFn, when non-nil, is called before injecting /session-handoff
-	// to preempt any in-progress input on a busy pane. Nil → no Escape sent.
-	// Set to keeper.SendEscapeKey in production; leave nil in tests.
-	// Refs: hk-qoz (forced-clear busy-pane fix).
-	SendEscapeFn func(ctx context.Context, target string) error
-
-	// OperatorAttachedFn reports whether a human operator is currently attached
-	// to the target tmux session. When it returns true the act-path goes
-	// warn-only: the destructive reset-cycle injection (/session-handoff,
-	// /clear, agent brief) is suppressed so the keeper never races the
-	// operator's own keystrokes and clobbers an in-flight turn. The watcher's
-	// warn/gauge emissions continue, and the cycle resumes on the next tick
-	// once the operator detaches. Nil → OperatorAttached (real tmux
-	// list-clients). The check is skipped entirely when TmuxTarget is empty
-	// (no pane to inject into). Refs: hk-6qf.
-	OperatorAttachedFn func(target string) bool
-
-	// SleepingCheckFn reports whether the session identified by sessionID is
-	// currently parked by the QuiesceArbiter (.harmonik/.sleeping.<sessionID>,
-	// M1 / hk-jeby). MaybeRun returns nil (cycle deferred) when this returns
-	// true, so the keeper does not inject /session-handoff into a sleeping
-	// session. M1's max-sleep failsafe wakes the session first; the keeper acts
-	// on the next tick after the marker is cleared. When nil, IsSleeping is used.
-	// Refs: hk-l3gs, hk-jeby.
-	SleepingCheckFn func(projectDir, sessionID string) bool
-
 	// HoldTTL is the keeper HOLD timer backstop; zero → DefaultHoldTTL.
 	HoldTTL time.Duration
-
-	// HeldCheckFn reports whether a fresh, session-scoped operator HOLD is active
-	// (D5). MaybeRun returns nil (cycle deferred) when true — the destructive
-	// clear/restart is suspended while WARN still fires. Auto-reverts structurally
-	// (keyed by the re-minted session-id) plus a timer backstop. When nil, a
-	// closure over IsHeld(.,.,HoldTTL) is used. Refs: hk-9waz.
-	HeldCheckFn func(projectDir, agent string) bool
 
 	// TranscriptDir is the Claude Code transcript projects directory (~/.claude/projects/<munged>).
 	// When empty the cycler derives it from ProjectDir via transcriptDirFor.
@@ -324,12 +225,6 @@ type CyclerConfig struct {
 	// that lifts automatically when the grace window expires. Zero disables
 	// Gate 5e. Refs: hk-74iyd.
 	PostAnswerGrace time.Duration
-
-	// RecentTranscriptTurnFn returns the timestamp of the most recent "real"
-	// transcript entry with the given role ("user" or "assistant") under
-	// transcriptDir/sessionID.jsonl. Nil → recentTranscriptTurn (production).
-	// Injectable for tests that write controlled transcript files. Refs: hk-74iyd.
-	RecentTranscriptTurnFn func(transcriptDir, sessionID, role string) (time.Time, bool)
 
 	// hasRespawn is set by NewCycler once the RespawnPort is bound; the pure
 	// reactor reads it (a policy scalar, not IO) to reproduce the pre-rebuild
@@ -403,72 +298,8 @@ func (c *CyclerConfig) applyDefaults() {
 	if c.Clock == nil {
 		c.Clock = substrate.SystemClock{}
 	}
-	if c.CycleIDGen == nil {
-		c.CycleIDGen = newCycleIDGen(c.Clock)
-	}
-	if c.IsManagedFn == nil {
-		c.IsManagedFn = IsManaged
-	}
-	if c.HandoffFilePath == nil {
-		c.HandoffFilePath = defaultHandoffFilePath
-	}
-	if c.ReadHandoff == nil {
-		c.ReadHandoff = defaultReadHandoff
-	}
-	if c.HandoffModTimeFn == nil {
-		c.HandoffModTimeFn = defaultHandoffModTime
-	}
-	if c.TruncateHandoffFn == nil {
-		c.TruncateHandoffFn = defaultScrubHandoffNonces
-	}
-	if c.IdleMarkerModTimeFn == nil {
-		c.IdleMarkerModTimeFn = defaultIdleMarkerModTime
-	}
-	if c.InjectFn == nil {
-		// Bind the production injector to the cycle Clock so the settle/retry
-		// sleeps honor the determinism port (the T5 injectorClock fold).
-		clock := c.Clock
-		c.InjectFn = func(ctx context.Context, target, text string) error {
-			return injectTextClocked(ctx, clock, target, text)
-		}
-	}
-	if c.ReadGaugeFn == nil {
-		c.ReadGaugeFn = ReadCtxFile
-	}
-	if c.CrispIdleFn == nil {
-		c.CrispIdleFn = CrispIdle
-	}
-	if c.HoldingDispatchFn == nil {
-		c.HoldingDispatchFn = HoldingDispatch
-	}
-	if c.WriteJournalFn == nil {
-		c.WriteJournalFn = writeJournalFile
-	}
-	if c.ReadJournalFn == nil {
-		c.ReadJournalFn = defaultReadJournal
-	}
-	if c.ClearPrecompactTriggerFn == nil {
-		c.ClearPrecompactTriggerFn = ClearPrecompactTrigger
-	}
-	if c.SetManagedSessionFn == nil {
-		c.SetManagedSessionFn = WriteManagedSessionID
-	}
-	if c.SetTmuxEnvFn == nil {
-		c.SetTmuxEnvFn = SetTmuxEnv
-	}
-	if c.OperatorAttachedFn == nil {
-		c.OperatorAttachedFn = OperatorAttached
-	}
-	if c.SleepingCheckFn == nil {
-		c.SleepingCheckFn = IsSleeping
-	}
 	if c.HoldTTL <= 0 {
 		c.HoldTTL = DefaultHoldTTL
-	}
-	if c.HeldCheckFn == nil {
-		ttl := c.HoldTTL
-		clock := c.Clock
-		c.HeldCheckFn = func(projectDir, agent string) bool { return isHeldAt(projectDir, agent, ttl, clock) }
 	}
 	if c.IdleRestartAbsTokens <= 0 {
 		c.IdleRestartAbsTokens = DefaultIdleRestartAbsTokens
@@ -914,15 +745,6 @@ func (c *CyclerConfig) resolvedTranscriptDir() string {
 		return c.TranscriptDir
 	}
 	return transcriptDirFor(c.ProjectDir)
-}
-
-// recentTurnFn returns the effective RecentTranscriptTurnFn: the configured
-// one when set, otherwise the production recentTranscriptTurn. Refs: hk-74iyd.
-func (c *CyclerConfig) recentTurnFn() func(transcriptDir, sessionID, role string) (time.Time, bool) {
-	if c.RecentTranscriptTurnFn != nil {
-		return c.RecentTranscriptTurnFn
-	}
-	return recentTranscriptTurn
 }
 
 // NOTE (T7): the hk-fi78d freshness recovery is now split between the

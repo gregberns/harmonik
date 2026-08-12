@@ -59,6 +59,8 @@ func StripNonceMarkersForTest(content string) string {
 	return stripNonceMarkers(content)
 }
 
+func ScrubHandoffFileForTest(path string) error { return defaultScrubHandoffNonces(path) }
+
 // ShellQuoteIfNeededForTest exposes the shell-quoting allowlist used to build the
 // injected reboot command. The output is pasted into a live pane and executed, so
 // the quoting rule is directly test-pinned. Refs: hk-4tjyj.

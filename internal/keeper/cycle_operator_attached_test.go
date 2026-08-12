@@ -59,32 +59,22 @@ func newAttachTestCycler(
 	readGaugeFn func(string, string) (*keeper.CtxFile, time.Time, error),
 	attachFn func(string) bool,
 ) *keeper.Cycler {
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: readGaugeFn, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
-		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
-		AgentName:           agent,
-		ProjectDir:          projectDir,
-		TmuxTarget:          "fake-pane",
-		ActPct:              90.0,
-		WarnPct:             80.0,
-		HandoffTimeout:      200 * time.Millisecond,
-		ClearSettle:         50 * time.Millisecond,
-		PollInterval:        5 * time.Millisecond,
-		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:        readHandoff,
-		TruncateHandoffFn:  func(_ string) error { return nil },
-		InjectFn:           spy.inject,
-		ReadGaugeFn:        readGaugeFn,
-		CrispIdleFn:        func(_, _ string) bool { return true },
-		HoldingDispatchFn:  func(_, _ string) bool { return false },
-		WriteJournalFn:     jc.write,
-		SetTmuxEnvFn:       func(_ context.Context, _, _, _ string) error { return nil },
-		OperatorAttachedFn: attachFn,
+		AgentName:      agent,
+		ProjectDir:     projectDir,
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		HandoffTimeout: 200 * time.Millisecond,
+		ClearSettle:    50 * time.Millisecond,
+		PollInterval:   5 * time.Millisecond,
 	}
-	return keeper.NewCycler(cfg, em)
+	return mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
+		deps.Operator = testOperatorProbe(attachFn)
+	})
 }
 
 // TestCycler_OperatorAttached_SuppressesInjection verifies that when the
@@ -264,33 +254,23 @@ func TestCycler_Precompact_OperatorAttached_Suppresses(t *testing.T) {
 	}
 
 	var cleared int
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: alwaysNonce, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: noopGauge, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
-		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
-		AgentName:           agent,
-		ProjectDir:          t.TempDir(),
-		TmuxTarget:          "fake-pane",
-		ActPct:              90.0,
-		WarnPct:             80.0,
-		HandoffTimeout:      200 * time.Millisecond,
-		ClearSettle:         50 * time.Millisecond,
-		PollInterval:        5 * time.Millisecond,
-		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:              alwaysNonce,
-		TruncateHandoffFn:        func(_ string) error { return nil },
-		InjectFn:                 spy.inject,
-		ReadGaugeFn:              noopGauge,
-		CrispIdleFn:              func(_, _ string) bool { return true },
-		HoldingDispatchFn:        func(_, _ string) bool { return false },
-		WriteJournalFn:           jc.write,
-		SetTmuxEnvFn:             func(_ context.Context, _, _, _ string) error { return nil },
-		ClearPrecompactTriggerFn: func(_, _ string) error { cleared++; return nil },
-		OperatorAttachedFn:       attach.fn,
+		AgentName:      agent,
+		ProjectDir:     t.TempDir(),
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		HandoffTimeout: 200 * time.Millisecond,
+		ClearSettle:    50 * time.Millisecond,
+		PollInterval:   5 * time.Millisecond,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
+		deps.Context = testContextWithClear{ContextStore: deps.Context, clear: func() error { cleared++; return nil }}
+		deps.Operator = testOperatorProbe(attach.fn)
+	})
 
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: sid}
 	if err := cycler.RunForPrecompact(context.Background(), cf); err != nil {

@@ -20,6 +20,20 @@ type Scenario struct {
 	disabled map[string]string
 }
 
+// RecordingPorts is the controlled external world for a Scenario.
+type RecordingPorts struct {
+	mu                                      sync.Mutex
+	Effects                                 []string
+	Gauge                                   *keeper.CtxFile
+	Managed, Idle, Dispatch                 bool
+	SleepingState, HeldState, AttachedState bool
+	UserTurn, AssistantTurn, IdleMarker     time.Time
+	HandoffText                             string
+	HandoffMtime                            time.Time
+	Journal                                 *keeper.CycleJournal
+	NextCycleID                             string
+}
+
 // NewScenario returns a Scenario for the given policy with a fake clock and
 // recording ports that start managed, idle, and 90 percent full. This is above
 // the ACT threshold and below the force threshold, so each normal gate remains
@@ -49,6 +63,12 @@ func (s *Scenario) Ports() *RecordingPorts { return s.record }
 
 // Clock returns the fake clock that drives the cycle.
 func (s *Scenario) Clock() *substrate.FakeClock { return s.clock }
+
+// Dependencies returns the narrow dependency graph backed by these recording
+// ports and the given clock.
+func (r *RecordingPorts) Dependencies(clock substrate.ClockPort) keeper.CycleDeps {
+	return r.deps(clock)
+}
 
 // DisabledGates returns a copy of the gates the test turned off, with the
 // reason it gave for each one.
@@ -114,18 +134,11 @@ func (s *Scenario) OperatorSays(at time.Time) { s.record.UserTurn = at }
 // AgentAnswers records a real assistant turn at the given time.
 func (s *Scenario) AgentAnswers(at time.Time) { s.record.AssistantTurn = at }
 
-// RecordingPorts is the controlled external world for a Scenario.
-type RecordingPorts struct {
-	mu                                      sync.Mutex
-	Effects                                 []string
-	Gauge                                   *keeper.CtxFile
-	Managed, Idle, Dispatch                 bool
-	SleepingState, HeldState, AttachedState bool
-	UserTurn, AssistantTurn, IdleMarker     time.Time
-	HandoffText                             string
-	HandoffMtime                            time.Time
-	Journal                                 *keeper.CycleJournal
-	NextCycleID                             string
+// EffectsSnapshot returns a stable copy of the recorded effect order.
+func (r *RecordingPorts) EffectsSnapshot() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.Effects...)
 }
 
 func (r *RecordingPorts) add(effect string) {

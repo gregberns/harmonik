@@ -99,37 +99,29 @@ func TestCycler_DelayedPollTick_HandoffTimeoutStaysPunctual(t *testing.T) {
 		pollInterval       = 5 * time.Millisecond
 		tickWithheldFor    = 200 * time.Millisecond
 	)
+	cfgOverrides := testCycleOverrides{CycleIDs:
 
+	// First detection tick withheld until AFTER ForceRetryInterval: on the
+	// pre-fix drive loop the handoff timeout is then detected only at
+	// ~200ms, call-1's wall time crosses 150ms, and call-2 wrongly fires.
+
+	func() string { return cycleID }, HandoffPath: func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" }, HandoffRead: handoffNeverReturnsNonce, HandoffScrub: // always abort
+	func(_ string) error { return nil }, Inject:   spy.inject, Gauge: noopGauge, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
-		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
-		AgentName:           agent,
-		ProjectDir:          t.TempDir(),
-		TmuxTarget:          "fake-pane",
-		ActPct:              90.0,
-		WarnPct:             80.0,
-		ForceActPct:         95.0,
-		ForceRetryInterval:  forceRetryInterval,
-		HandoffTimeout:      30 * time.Millisecond,
-		ClearSettle:         10 * time.Millisecond,
-		PollInterval:        pollInterval,
-		// First detection tick withheld until AFTER ForceRetryInterval: on the
-		// pre-fix drive loop the handoff timeout is then detected only at
-		// ~200ms, call-1's wall time crosses 150ms, and call-2 wrongly fires.
-		Clock:               &delayedTickClock{delayInterval: pollInterval, firstDelay: tickWithheldFor},
-		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
-		HandoffFilePath:     func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
-		ReadHandoff:         handoffNeverReturnsNonce, // always abort
-		TruncateHandoffFn:   func(_ string) error { return nil },
-		InjectFn:            spy.inject,
-		ReadGaugeFn:         noopGauge,
-		CrispIdleFn:         func(_, _ string) bool { return false },
-		HoldingDispatchFn:   func(_, _ string) bool { return false },
-		WriteJournalFn:      jc.write,
-		SetTmuxEnvFn:        func(_ context.Context, _, _, _ string) error { return nil },
-		SetManagedSessionFn: func(_, _, _ string) error { return nil },
+		AgentName:          agent,
+		ProjectDir:         t.TempDir(),
+		TmuxTarget:         "fake-pane",
+		ActPct:             90.0,
+		WarnPct:            80.0,
+		ForceActPct:        95.0,
+		ForceRetryInterval: forceRetryInterval,
+		HandoffTimeout:     30 * time.Millisecond,
+		ClearSettle:        10 * time.Millisecond,
+		PollInterval:       pollInterval,
+
+		Clock: &delayedTickClock{delayInterval: pollInterval, firstDelay: tickWithheldFor},
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCyclerWithOverridesAndBusyPane(cfg, em, cfgOverrides)
 
 	// Call 1: fires (above force) and must abort on the PUNCTUAL 30ms handoff
 	// timeout — the deadline wake, not the starved 65ms detection tick.
@@ -208,37 +200,28 @@ func TestCycler_ClearingElapsedBackstop_NoHotSpin(t *testing.T) {
 		gaugeMu.Unlock()
 		return &keeper.CtxFile{Pct: 95.0, SessionID: sid}, time.Now(), nil
 	}
+	cfgOverrides := testCycleOverrides{CycleIDs:
 
+	// Backstop deadline falls due almost immediately — long before the 60ms
+	// settle window ends — so the whole settle window runs with the backstop
+	// elapsed but not-yet-fired: nearestDeadline clamps its remaining to 1ns
+	// and (pre-fix) the repeating deadline ticker spins.
+
+	func() string { return cycleID }, HandoffPath: func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" }, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: readGaugeFn, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
-		IdleMarkerModTimeFn: idleMarkerFreshNow, // model-done on first AwaitModelDone poll (T8)
-		AgentName:           agent,
-		ProjectDir:          t.TempDir(),
-		TmuxTarget:          "fake-pane",
-		ActPct:              90.0,
-		WarnPct:             80.0,
-		HandoffTimeout:      500 * time.Millisecond,
-		ClearSettle:         60 * time.Millisecond,
-		PollInterval:        10 * time.Millisecond,
-		// Backstop deadline falls due almost immediately — long before the 60ms
-		// settle window ends — so the whole settle window runs with the backstop
-		// elapsed but not-yet-fired: nearestDeadline clamps its remaining to 1ns
-		// and (pre-fix) the repeating deadline ticker spins.
+		AgentName:      agent,
+		ProjectDir:     t.TempDir(),
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		HandoffTimeout: 500 * time.Millisecond,
+		ClearSettle:    60 * time.Millisecond,
+		PollInterval:   10 * time.Millisecond,
+
 		ClearConfirmBackstop: 50 * time.Microsecond,
 		ClearConfirmRetries:  5,
-		CycleIDGen:           func() string { return cycleID },
-		IsManagedFn:          func(_, _ string) bool { return true },
-		HandoffFilePath:      func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
-		ReadHandoff:          readHandoff,
-		TruncateHandoffFn:    func(_ string) error { return nil },
-		InjectFn:             spy.inject,
-		ReadGaugeFn:          readGaugeFn,
-		CrispIdleFn:          func(_, _ string) bool { return true },
-		HoldingDispatchFn:    func(_, _ string) bool { return false },
-		WriteJournalFn:       jc.write,
-		SetTmuxEnvFn:         func(_ context.Context, _, _, _ string) error { return nil },
-		SetManagedSessionFn:  func(_, _, _ string) error { return nil },
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 
 	cf := &keeper.CtxFile{Pct: 95.0, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {

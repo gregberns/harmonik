@@ -264,29 +264,25 @@ func TestIntegration_OperatorAttached_SuppressesAndResumes(t *testing.T) {
 		return &CtxFile{Pct: 95.0, SessionID: sid}, time.Now(), nil
 	}
 
+	overrides := configTestOverrides{
+		cycleIDs: func() string { return cycleID },
+		path:     func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
+		read:     readHandoff, scrub: func(_ string) error { return nil },
+		inject: injectSpy, gauge: readGauge,
+		journal: func(_ string, _ *CycleJournal) error { return nil },
+	}
 	cfg := CyclerConfig{
-		AgentName:         agent,
-		ProjectDir:        t.TempDir(),
-		TmuxTarget:        name, // REAL session — OperatorAttached probes it for real.
-		ActPct:            90.0,
-		WarnPct:           80.0,
-		HandoffTimeout:    1 * time.Second,
-		ClearSettle:       200 * time.Millisecond,
-		PollInterval:      10 * time.Millisecond,
-		CycleIDGen:        func() string { return cycleID },
-		IsManagedFn:       func(_, _ string) bool { return true },
-		HandoffFilePath:   func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" },
-		ReadHandoff:       readHandoff,
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          injectSpy,
-		ReadGaugeFn:       readGauge,
-		CrispIdleFn:       func(_, _ string) bool { return true },
-		HoldingDispatchFn: func(_, _ string) bool { return false },
-		WriteJournalFn:    func(_ string, _ *CycleJournal) error { return nil },
-		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
+		AgentName:      agent,
+		ProjectDir:     t.TempDir(),
+		TmuxTarget:     name, // REAL session — OperatorAttached probes it for real.
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		HandoffTimeout: 1 * time.Second,
+		ClearSettle:    200 * time.Millisecond,
+		PollInterval:   10 * time.Millisecond,
 		// OperatorAttachedFn left nil → real OperatorAttached (tmux list-clients).
 	}
-	cycler := NewCycler(cfg, em)
+	cycler := mustNewCyclerWithConfigOverrides(cfg, em, overrides)
 
 	// Attach a REAL client and confirm the probe sees it before driving the cycle.
 	detach := oaiAttachClient(t, name)

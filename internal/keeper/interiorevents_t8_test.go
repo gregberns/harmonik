@@ -33,6 +33,9 @@ func newModelDoneCycler(
 	modelDoneTimeout time.Duration,
 ) *keeper.Cycler {
 	var mu sync.Mutex
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: rs.readHandoff, HandoffScrub: rs.truncate, Inject: rs.inject, Gauge: rs.readGauge, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:            agent,
 		ProjectDir:           projectDir,
@@ -45,30 +48,24 @@ func newModelDoneCycler(
 		ClearConfirmBackstop: 900 * time.Millisecond,
 		ClearConfirmRetries:  5,
 		ModelDoneTimeout:     modelDoneTimeout,
-		CycleIDGen:           func() string { return cycleID },
-		IsManagedFn:          func(_, _ string) bool { return true },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:            rs.readHandoff,
-		HandoffModTimeFn:       rs.handoffModTime,
-		TruncateHandoffFn:      rs.truncate,
-		InjectFn:               rs.inject,
-		ReadGaugeFn:            rs.readGauge,
-		CrispIdleFn:            func(_, _ string) bool { return true },
-		HoldingDispatchFn:      func(_, _ string) bool { return false },
-		WriteJournalFn:         jc.write,
-		SetTmuxEnvFn:           func(_ context.Context, _, _, _ string) error { return nil },
-		IdleMarkerModTimeFn:    idleMarker,
-		RecentTranscriptTurnFn: transcriptTurn,
-		SetManagedSessionFn: func(_, _, sid string) error {
+	}
+	return mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
+		deps.Handoff = testHandoffWithModTime{HandoffDocument: deps.Handoff, modTime: rs.handoffModTime}
+		deps.Activity = testActivityWithTurns{
+			ActivityProbe: deps.Activity,
+			dir:           projectDir,
+			turn:          transcriptTurn,
+		}
+		deps.Activity = testActivityWithIdle{ActivityProbe: deps.Activity, idleMarker: func() (time.Time, bool) {
+			return idleMarker(projectDir, agent)
+		}}
+		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error {
 			mu.Lock()
 			defer mu.Unlock()
 			*managedSet = sid
 			return nil
-		},
-	}
-	return keeper.NewCycler(cfg, em)
+		}}
+	})
 }
 
 // noIdleMarker models an agent whose Stop hook is not wired.

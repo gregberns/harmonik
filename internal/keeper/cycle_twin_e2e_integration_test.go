@@ -391,25 +391,29 @@ func TestIntegration_TwinClearRestartCycle_E2E(t *testing.T) {
 	}
 
 	em := &keeper.RecordingEmitter{}
+	cfgOverrides := testCycleOverrides{Inject:
+
+	// Generous real-time budgets: real tmux send-keys + script emits are slow.
+
+	// REAL, UNMODIFIED keeper.InjectText — the production InjectFn default,
+	// performing the real tmux load-buffer → paste-buffer → send-keys Enter
+	// sequence with the verbatim MULTI-LINE /session-handoff directive (no
+	// flatten). The twin now parses the multi-line directive natively
+	// (hk-fan), so the E2E exercises the maximally-faithful path. Everything
+	// else (ReadGaugeFn, ReadHandoff, IdleProbe, DispatchProbe,
+	// ManagedProbe, managed-session port, HandoffFilePath, TruncateHandoffFn,
+	// defaults.
+	keeper.InjectText}
 	cfg := keeper.CyclerConfig{
 		AgentName:  agent,
 		ProjectDir: project,
 		TmuxTarget: sess,
-		// Generous real-time budgets: real tmux send-keys + script emits are slow.
+
 		HandoffTimeout: 10 * time.Second,
 		ClearSettle:    5 * time.Second,
 		PollInterval:   150 * time.Millisecond,
-		// REAL, UNMODIFIED keeper.InjectText — the production InjectFn default,
-		// performing the real tmux load-buffer → paste-buffer → send-keys Enter
-		// sequence with the verbatim MULTI-LINE /session-handoff directive (no
-		// flatten). The twin now parses the multi-line directive natively
-		// (hk-fan), so the E2E exercises the maximally-faithful path. Everything
-		// else (ReadGaugeFn, ReadHandoff, CrispIdleFn, HoldingDispatchFn,
-		// IsManagedFn, SetManagedSessionFn, HandoffFilePath, TruncateHandoffFn,
-		// defaults.
-		InjectFn: keeper.InjectText,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 
 	// Watch the gauge concurrently with the cycle so we capture the post-/clear
 	// token RESET directly. The twin's emitter keeps growing tokens after /clear
@@ -640,18 +644,21 @@ func TestIntegration_TwinE2E_OperatorRealEnv(t *testing.T) {
 	}
 
 	em := &keeper.RecordingEmitter{}
+	cfgOverrides := testCycleOverrides{Inject: recInject}
 	cfg := keeper.CyclerConfig{
-		AgentName:           agent,
-		ProjectDir:          project,
-		TmuxTarget:          sess,
-		HandoffTimeout:      10 * time.Second,
-		ClearSettle:         6 * time.Second,
-		PollInterval:        150 * time.Millisecond,
-		InjectFn:            recInject,
-		SetManagedSessionFn: recSetManaged,
-		OperatorAttachedFn:  operatorAttached,
+		AgentName:      agent,
+		ProjectDir:     project,
+		TmuxTarget:     sess,
+		HandoffTimeout: 10 * time.Second,
+		ClearSettle:    6 * time.Second,
+		PollInterval:   150 * time.Millisecond,
 	}
-	cycler := keeper.NewCycler(cfg, em)
+	cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
+		deps.Operator = testOperatorProbe(operatorAttached)
+		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error {
+			return recSetManaged(project, agent, sid)
+		}}
+	})
 
 	// Watch for the post-/clear token RESET on the rotated session (immune to the
 	// resumed emitter's regrowth), exactly as the happy-path E2E does.
@@ -847,24 +854,23 @@ func TestIntegration_TwinE2E_GaugeStateTransitions(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			em := &keeper.RecordingEmitter{}
+			cfgOverrides := testCycleOverrides{HandoffPath:
+
+			// no real pane: a fired cycle aborts on the missing nonce.
+
+			func(_, _ string) string { return filepath.Join(t.TempDir(), "HANDOFF.md") }, HandoffRead: func(_ string) (string, error) { return "", nil }, HandoffScrub: // never confirms → abort.
+			func(_ string) error { return nil }, JournalWrite:                                         func(_ string, _ *keeper.CycleJournal) error { return nil }, Inject: func(_ context.Context, _, _ string) error { return nil }}
 			cfg := keeper.CyclerConfig{
-				AgentName:           "twe2egst",
-				ProjectDir:          t.TempDir(),
-				TmuxTarget:          "", // no real pane: a fired cycle aborts on the missing nonce.
-				HandoffTimeout:      200 * time.Millisecond,
-				PollInterval:        30 * time.Millisecond,
-				ClearSettle:         30 * time.Millisecond,
-				IsManagedFn:         func(_, _ string) bool { return true },
-				CrispIdleFn:         func(_, _ string) bool { return c.crispIdle },
-				HoldingDispatchFn:   func(_, _ string) bool { return false },
-				HandoffFilePath:     func(_, _ string) string { return filepath.Join(t.TempDir(), "HANDOFF.md") },
-				ReadHandoff:         func(_ string) (string, error) { return "", nil }, // never confirms → abort.
-				TruncateHandoffFn:   func(_ string) error { return nil },
-				WriteJournalFn:      func(_ string, _ *keeper.CycleJournal) error { return nil },
-				SetManagedSessionFn: func(_, _, _ string) error { return nil },
-				InjectFn:            func(_ context.Context, _, _ string) error { return nil },
+				AgentName:      "twe2egst",
+				ProjectDir:     t.TempDir(),
+				TmuxTarget:     "",
+				HandoffTimeout: 200 * time.Millisecond,
+				PollInterval:   30 * time.Millisecond,
+				ClearSettle:    30 * time.Millisecond,
 			}
-			cycler := keeper.NewCycler(cfg, em)
+			cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
+				deps.Idle = testIdleProbe(c.crispIdle)
+			})
 			cf := &keeper.CtxFile{
 				Tokens:     c.tokens,
 				WindowSize: c.window,

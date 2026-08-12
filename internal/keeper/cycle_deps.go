@@ -151,7 +151,6 @@ func NewCyclerWithDeps(policy CyclePolicy, env CycleEnv, deps CycleDeps) (*Cycle
 	}
 	cfg := configFromPolicyAndEnv(policy, env)
 	cfg.Clock = deps.Clock
-	cfg.CycleIDGen = deps.CycleIDs.Next
 	cfg.hasRespawn = deps.Respawn != nil
 	sampler := narrowGaugeAdapter{deps: deps, policy: policy, target: env.TmuxTarget}
 	c := &Cycler{
@@ -164,26 +163,22 @@ func NewCyclerWithDeps(policy CyclePolicy, env CycleEnv, deps CycleDeps) (*Cycle
 	return c, nil
 }
 
-// CycleDepsFromConfig adapts the legacy function seams into the validated
-// dependency bundle. It is the migration bridge for production and old tests.
+// CycleDepsFromConfig resolves the command's configuration functions into the
+// narrow dependency bundle. Broad legacy ports are not part of this path.
 func CycleDepsFromConfig(cfg CyclerConfig, emitter Emitter) CycleDeps {
 	cfg.applyDefaults()
-	gauge := fnGauge{cfg: &cfg}
-	handoff := fnHandoff{cfg: &cfg}
 	deps := CycleDeps{
-		Clock: cfg.Clock, CycleIDs: cycleIDFunc(cfg.CycleIDGen),
-		Pane: fnPane{cfg: &cfg}, Context: gauge, Activity: gauge,
-		Managed:  boolProbe(func() bool { return cfg.IsManagedFn(cfg.ProjectDir, cfg.AgentName) }),
-		Idle:     boolProbe(func() bool { return cfg.CrispIdleFn(cfg.ProjectDir, cfg.AgentName) }),
-		Dispatch: boolProbe(func() bool { return cfg.HoldingDispatchFn(cfg.ProjectDir, cfg.AgentName) }),
-		Sleep:    sleepProbeFunc(func(sid string) bool { return cfg.SleepingCheckFn(cfg.ProjectDir, sid) }),
-		Hold:     boolProbe(func() bool { return cfg.HeldCheckFn(cfg.ProjectDir, cfg.AgentName) }),
-		Operator: operatorProbeFunc(cfg.OperatorAttachedFn),
-		Handoff:  legacyHandoffDocument{port: handoff}, Journal: legacyJournalStore{port: handoff},
-		Emitter: emitter, Respawn: cfg.Respawn,
-	}
-	if deps.Respawn == nil && cfg.ForceRestartFn != nil {
-		deps.Respawn = fnRespawn{fn: cfg.ForceRestartFn}
+		Clock: cfg.Clock, CycleIDs: cycleIDFunc(newCycleIDGen(cfg.Clock)),
+		Pane: configPaneWriter{cfg: &cfg}, Context: configContextStore{cfg: &cfg},
+		Activity: configActivityProbe{cfg: &cfg},
+		Managed:  boolProbe(func() bool { return IsManaged(cfg.ProjectDir, cfg.AgentName) }),
+		Idle:     boolProbe(func() bool { return CrispIdle(cfg.ProjectDir, cfg.AgentName) }),
+		Dispatch: boolProbe(func() bool { return HoldingDispatch(cfg.ProjectDir, cfg.AgentName) }),
+		Sleep:    sleepProbeFunc(func(sid string) bool { return IsSleeping(cfg.ProjectDir, sid) }),
+		Hold:     boolProbe(func() bool { return isHeldAt(cfg.ProjectDir, cfg.AgentName, cfg.HoldTTL, cfg.Clock) }),
+		Operator: operatorProbeFunc(OperatorAttached),
+		Handoff:  configHandoffDocument{cfg: &cfg}, Journal: configJournalStore{cfg: &cfg},
+		Emitter: emitter,
 	}
 	return deps
 }
@@ -206,18 +201,6 @@ func (f sleepProbeFunc) Sleeping(sid string) bool { return f(sid) }
 type operatorProbeFunc func(string) bool
 
 func (f operatorProbeFunc) Attached(target string) bool { return f(target) }
-
-type legacyHandoffDocument struct{ port HandoffPort }
-
-func (a legacyHandoffDocument) Path() string               { return a.port.HandoffPath() }
-func (a legacyHandoffDocument) Read() (string, error)      { return a.port.ReadHandoff() }
-func (a legacyHandoffDocument) ModTime() (time.Time, bool) { return a.port.HandoffModTime() }
-func (a legacyHandoffDocument) ScrubNonce() error          { return a.port.TruncateHandoff() }
-
-type legacyJournalStore struct{ port HandoffPort }
-
-func (a legacyJournalStore) Write(j *CycleJournal) error  { return a.port.WriteJournal(j) }
-func (a legacyJournalStore) Read() (*CycleJournal, error) { return a.port.ReadJournal() }
 
 func configFromPolicyAndEnv(p CyclePolicy, env CycleEnv) CyclerConfig {
 	return CyclerConfig{

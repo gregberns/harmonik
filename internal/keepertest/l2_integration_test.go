@@ -42,28 +42,28 @@ import (
 // KeeperBridgeSink is the keeper vertical's test-local bridge sink (RS-018:
 // bridge sinks stay per-vertical and test-local; substrate R9 — no generic
 // sink). It records what the real shell effector would drive onto the five
-// ports (PanePort / GaugePort / HandoffPort / EmitterPort — ClockPort is the
-// harness's virtual-time cursor), with no tmux and no filesystem.
+// effect boundaries. These are the pane, context, handoff, journal, and event
+// ports. The harness owns the virtual clock. It uses no tmux and no filesystem.
 type KeeperBridgeSink struct {
-	// PanePort effects.
+	// Pane effects.
 	Escapes     int
 	HandoffCmds []string // cycle ids of injected /session-handoff commands
 	Clears      int      // injected /clear count
 	Briefs      int      // injected agent-brief count
 	EnvSets     map[string]string
 
-	// GaugePort effects.
+	// Context effects.
 	ManagedWrites    []string // SetManagedSession values ("" = clear binding)
 	PrecompactClears int
 
-	// HandoffPort effects.
+	// Handoff and journal effects.
 	Journals  []keeper.CycleJournal
 	Truncates int
 
-	// EmitterPort effects.
+	// Event effects.
 	Emits []keeper.Action // ActEmit actions in order
 
-	// RespawnPort effects.
+	// Respawn effects.
 	ForceRestarts int
 }
 

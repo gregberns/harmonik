@@ -14,7 +14,7 @@ package keeper_test
 //     This guards against the keying TRAP (agent-name keying would survive a
 //     restart).
 //
-// hk-4rago: RunForPrecompact and RunForIdle now also check HeldCheckFn so a
+// hk-4rago: RunForPrecompact and RunForIdle now also check the hold probe so a
 // co-working hold prevents cycles on those entry points too (the "rehydration gap"
 // bug where those paths silently dropped in-flight hold directives).
 //
@@ -313,8 +313,8 @@ func TestHold_InvalidAgentName(t *testing.T) {
 // ── Cycler MaybeRun gate (Gate 5c) ─────────────────────────────────────────────
 
 // TestCyclerMaybeRun_DeferredWhenHeld verifies MaybeRun does NOT inject (cycle
-// suppressed) when HeldCheckFn returns true, even with all other gates satisfied;
-// and DOES proceed (HeldCheckFn consulted, then cycle attempted) when false.
+// suppressed) when the hold probe returns true, even with all other gates satisfied;
+// and DOES proceed (hold probe consulted, then cycle attempted) when false.
 func TestCyclerMaybeRun_DeferredWhenHeld(t *testing.T) {
 	t.Parallel()
 
@@ -335,28 +335,21 @@ func TestCyclerMaybeRun_DeferredWhenHeld(t *testing.T) {
 	// baseCfg builds a CyclerConfig whose gates ALL pass except (optionally) the
 	// hold gate. injectCount records cycle firings; heldCalled records that the HOLD
 	// gate (Gate 5c) was actually consulted.
-	baseCfg := func(projectDir, agent string, held bool, injectCount *int, heldCalled *bool) keeper.CyclerConfig {
+	baseCfg := func(projectDir, agent string, injectCount *int) (keeper.CyclerConfig, testCycleOverrides) {
 		return keeper.CyclerConfig{
-			AgentName:         agent,
-			ProjectDir:        projectDir,
-			TmuxTarget:        "",
-			ActPct:            80.0,
-			WarnPct:           70.0,
-			IsManagedFn:       func(_, _ string) bool { return true },
-			CrispIdleFn:       func(_, _ string) bool { return true },
-			HoldingDispatchFn: func(_, _ string) bool { return false },
-			SleepingCheckFn:   func(_, _ string) bool { return false },
-			HeldCheckFn: func(_, _ string) bool {
-				*heldCalled = true
-				return held
-			},
-			InjectFn: func(_ context.Context, _, _ string) error {
-				*injectCount++
-				return nil
-			},
-			ReadHandoff:     func(_ string) (string, error) { return "", nil },
-			HandoffFilePath: func(_, agentName string) string { return filepath.Join(projectDir, "HANDOFF-"+agentName+".md") },
-		}
+				AgentName:  agent,
+				ProjectDir: projectDir,
+				TmuxTarget: "",
+				ActPct:     80.0,
+				WarnPct:    70.0,
+			}, testCycleOverrides{
+				Inject: func(_ context.Context, _, _ string) error {
+					*injectCount++
+					return nil
+				},
+				HandoffRead: func(_ string) (string, error) { return "", nil },
+				HandoffPath: func(_, agentName string) string { return filepath.Join(projectDir, "HANDOFF-"+agentName+".md") },
+			}
 	}
 
 	t.Run("held_suppresses", func(t *testing.T) {
@@ -368,14 +361,17 @@ func TestCyclerMaybeRun_DeferredWhenHeld(t *testing.T) {
 
 		injectCount := 0
 		heldCalled := false
-		cfg := baseCfg(dir, agent, true, &injectCount, &heldCalled)
-		cycler := keeper.NewCycler(cfg, &keeper.RecordingEmitter{})
+		cfg, cfgOverrides := baseCfg(dir, agent, &injectCount)
+		cycler := mustNewCyclerWithOverridesAndDeps(cfg, &keeper.RecordingEmitter{}, cfgOverrides, func(deps *keeper.CycleDeps) {
+			deps.Sleep = testSleepProbe(func(string) bool { return false })
+			deps.Hold = testHoldProbe(func() bool { heldCalled = true; return true })
+		})
 		cf := &keeper.CtxFile{Pct: 90.0, SessionID: sessionID, Ts: time.Now().UTC().Format(time.RFC3339)}
 		if err := cycler.MaybeRun(context.Background(), cf); err != nil {
 			t.Fatalf("MaybeRun returned error: %v", err)
 		}
 		if !heldCalled {
-			t.Error("HeldCheckFn not called; Gate 5c was not reached")
+			t.Error("hold probe was not called; Gate 5c was not reached")
 		}
 		if injectCount != 0 {
 			t.Errorf("cycle injected %d time(s) while held; want 0", injectCount)
@@ -394,8 +390,11 @@ func TestCyclerMaybeRun_DeferredWhenHeld(t *testing.T) {
 
 		injectCount := 0
 		heldCalled := false
-		cfg := baseCfg(dir, agent, false, &injectCount, &heldCalled)
-		cycler := keeper.NewCycler(cfg, &keeper.RecordingEmitter{})
+		cfg, cfgOverrides := baseCfg(dir, agent, &injectCount)
+		cycler := mustNewCyclerWithOverridesAndDeps(cfg, &keeper.RecordingEmitter{}, cfgOverrides, func(deps *keeper.CycleDeps) {
+			deps.Sleep = testSleepProbe(func(string) bool { return false })
+			deps.Hold = testHoldProbe(func() bool { heldCalled = true; return false })
+		})
 		cf := &keeper.CtxFile{Pct: 90.0, SessionID: sessionID, Ts: time.Now().UTC().Format(time.RFC3339)}
 
 		// Pre-cancelled context so runCycle returns immediately without blocking on
@@ -409,7 +408,7 @@ func TestCyclerMaybeRun_DeferredWhenHeld(t *testing.T) {
 			t.Fatalf("MaybeRun with a pre-cancelled context: %v", err)
 		}
 		if !heldCalled {
-			t.Error("HeldCheckFn not called; Gate 5c bypassed when not held (gate off the hot path?)")
+			t.Error("hold probe was not called; Gate 5c bypassed when not held")
 		}
 	})
 }
@@ -590,7 +589,7 @@ func TestWatcher_WarnFiresUnderHold(t *testing.T) {
 
 // TestRunForPrecompact_SuppressedWhenHeld verifies that RunForPrecompact emits
 // a "hold_skip" precompact_blocked event and does NOT inject (cycle suppressed)
-// when HeldCheckFn returns true. Control: hold off → cycle proceeds (inject fires).
+// when the hold probe returns true. Control: hold off → cycle proceeds.
 // Refs: hk-4rago ("rehydration gap silently drops in-flight directives").
 func TestRunForPrecompact_SuppressedWhenHeld(t *testing.T) {
 	t.Parallel()
@@ -605,37 +604,28 @@ func TestRunForPrecompact_SuppressedWhenHeld(t *testing.T) {
 		jc := &journalCapture{}
 		const cycleID = "cyc-prec-hold"
 		nonce := "<!-- KEEPER:" + cycleID + " -->"
-
+		cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+			return filepath.Join(dir, "HANDOFF-"+a+".md")
+		}, HandoffRead: func(_ string) (string, error) {
+			return "# Handoff\n\n" + nonce + "\n", nil
+		}, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+			return &keeper.CtxFile{Pct: 95.0, SessionID: "sess-new"}, time.Now(), nil
+		}, JournalWrite: jc.write}
 		cfg := keeper.CyclerConfig{
-			IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
-			AgentName:           agent,
-			ProjectDir:          dir,
-			TmuxTarget:          "fake-pane",
-			ActPct:              90.0,
-			WarnPct:             80.0,
-			HandoffTimeout:      200 * time.Millisecond,
-			ClearSettle:         20 * time.Millisecond,
-			PollInterval:        10 * time.Millisecond,
-			CycleIDGen:          func() string { return cycleID },
-			IsManagedFn:         func(_, _ string) bool { return true },
-			HandoffFilePath: func(_, a string) string {
-				return filepath.Join(dir, "HANDOFF-"+a+".md")
-			},
-			ReadHandoff: func(_ string) (string, error) {
-				return "# Handoff\n\n" + nonce + "\n", nil
-			},
-			TruncateHandoffFn: func(_ string) error { return nil },
-			InjectFn:          spy.inject,
-			ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
-				return &keeper.CtxFile{Pct: 95.0, SessionID: "sess-new"}, time.Now(), nil
-			},
-			CrispIdleFn:              func(_, _ string) bool { return false },
-			HoldingDispatchFn:        func(_, _ string) bool { return false },
-			HeldCheckFn:              func(_, _ string) bool { return held },
-			WriteJournalFn:           jc.write,
-			ClearPrecompactTriggerFn: func(_, _ string) error { return nil },
+			AgentName:      agent,
+			ProjectDir:     dir,
+			TmuxTarget:     "fake-pane",
+			ActPct:         90.0,
+			WarnPct:        80.0,
+			HandoffTimeout: 200 * time.Millisecond,
+			ClearSettle:    20 * time.Millisecond,
+			PollInterval:   10 * time.Millisecond,
 		}
-		cycler := keeper.NewCycler(cfg, em)
+		cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
+			deps.Hold = testHoldProbe(func() bool { return held })
+			deps.Idle = testIdleProbe(false)
+			deps.Context = testContextWithClear{ContextStore: deps.Context, clear: func() error { return nil }}
+		})
 		cf := &keeper.CtxFile{Pct: 95.0, SessionID: "sess-abc"}
 		if err := cycler.RunForPrecompact(context.Background(), cf); err != nil {
 			t.Fatalf("RunForPrecompact: unexpected error: %v", err)
@@ -674,7 +664,7 @@ func TestRunForPrecompact_SuppressedWhenHeld(t *testing.T) {
 // ── RunForIdle gate 5b: hold suppresses idle restart (hk-4rago) ─────────────────
 
 // TestRunForIdle_SuppressedWhenHeld verifies that RunForIdle does NOT fire the
-// cycle when HeldCheckFn returns true, even with all other gates satisfied.
+// cycle when the hold probe returns true, even with all other gates satisfied.
 // Control: hold off → cycle proceeds (inject fires). Refs: hk-4rago.
 func TestRunForIdle_SuppressedWhenHeld(t *testing.T) {
 	t.Parallel()
@@ -689,43 +679,34 @@ func TestRunForIdle_SuppressedWhenHeld(t *testing.T) {
 		jc := &journalCapture{}
 		const cycleID = "cyc-idle-hold"
 		nonce := "<!-- KEEPER:" + cycleID + " -->"
-
+		cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+			return filepath.Join(dir, "HANDOFF-"+a+".md")
+		}, HandoffRead: func(_ string) (string, error) {
+			return "# Handoff\n\n" + nonce + "\n", nil
+		}, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge:
+		// WindowSize=400k: actThreshold = min(300k, 0.85×400k=340k) = 300k,
+		// so tokens=200k is below the act threshold and Gate 3 passes.
+		func(_, _ string) (*keeper.CtxFile, time.Time, error) {
+			return &keeper.CtxFile{Pct: 10.0, Tokens: 5_000, WindowSize: 400_000, SessionID: "sess-new"}, time.Now(), nil
+		}, JournalWrite: jc.write}
 		cfg := keeper.CyclerConfig{
-			IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
-			AgentName:           agent,
-			ProjectDir:          dir,
-			TmuxTarget:          "fake-pane",
-			ActAbsTokens:        300_000,
-			ActPct:              90.0,
-			WarnPct:             80.0,
-			HandoffTimeout:      200 * time.Millisecond,
-			ClearSettle:         20 * time.Millisecond,
-			PollInterval:        10 * time.Millisecond,
-			CycleIDGen:          func() string { return cycleID },
-			IsManagedFn:         func(_, _ string) bool { return true },
-			HandoffFilePath: func(_, a string) string {
-				return filepath.Join(dir, "HANDOFF-"+a+".md")
-			},
-			ReadHandoff: func(_ string) (string, error) {
-				return "# Handoff\n\n" + nonce + "\n", nil
-			},
-			TruncateHandoffFn: func(_ string) error { return nil },
-			InjectFn:          spy.inject,
-			// WindowSize=400k: actThreshold = min(300k, 0.85×400k=340k) = 300k,
-			// so tokens=200k is below the act threshold and Gate 3 passes.
-			ReadGaugeFn: func(_, _ string) (*keeper.CtxFile, time.Time, error) {
-				return &keeper.CtxFile{Pct: 10.0, Tokens: 5_000, WindowSize: 400_000, SessionID: "sess-new"}, time.Now(), nil
-			},
-			CrispIdleFn:              func(_, _ string) bool { return true },
-			HoldingDispatchFn:        func(_, _ string) bool { return false },
-			HeldCheckFn:              func(_, _ string) bool { return held },
-			WriteJournalFn:           jc.write,
-			SetTmuxEnvFn:             func(_ context.Context, _, _, _ string) error { return nil },
-			ClearPrecompactTriggerFn: func(_, _ string) error { return nil },
-			IdleRestartAbsTokens:     150_000,
-			IdleRestartCooldown:      0,
+			AgentName:      agent,
+			ProjectDir:     dir,
+			TmuxTarget:     "fake-pane",
+			ActAbsTokens:   300_000,
+			ActPct:         90.0,
+			WarnPct:        80.0,
+			HandoffTimeout: 200 * time.Millisecond,
+			ClearSettle:    20 * time.Millisecond,
+			PollInterval:   10 * time.Millisecond,
+
+			IdleRestartAbsTokens: 150_000,
+			IdleRestartCooldown:  0,
 		}
-		cycler := keeper.NewCycler(cfg, em)
+		cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
+			deps.Hold = testHoldProbe(func() bool { return held })
+			deps.Context = testContextWithClear{ContextStore: deps.Context, clear: func() error { return nil }}
+		})
 		// Tokens above IdleRestartAbsTokens (150k) but below actThreshold (300k).
 		cf := &keeper.CtxFile{Pct: 80.0, Tokens: 200_000, WindowSize: 400_000, SessionID: "sess-idle"}
 		if err := cycler.RunForIdle(context.Background(), cf); err != nil {

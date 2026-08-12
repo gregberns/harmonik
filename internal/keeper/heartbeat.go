@@ -257,15 +257,21 @@ func heartbeatSessionID(managedSID string, last *CtxFile) string {
 // Every early return below reports false, which is what keeps the two
 // suppression contracts intact — a pane-idle agent and a derive-miss-budget
 // exhaustion must both still reach genuine staleness.
-func (w *Watcher) maybeHeartbeat(ctx context.Context, last *CtxFile, age time.Duration) (wrote bool) {
+// heartbeatDue keeps the pane-alive check separate from the write path. An idle
+// pane must return false so the gauge can become stale and reach respawn.
+func (w *Watcher) heartbeatDue(ctx context.Context, age time.Duration) bool {
 	if !w.cfg.HeartbeatEnabled || w.cfg.TmuxTarget == "" {
 		return false
 	}
 	if age < w.cfg.HeartbeatThreshold {
 		return false
 	}
-	if w.cfg.IsPaneIdleFn(ctx, w.cfg.TmuxTarget) {
-		return false // agent has exited — let the gauge go stale so respawn can fire
+	return !w.cfg.IsPaneIdleFn(ctx, w.cfg.TmuxTarget)
+}
+
+func (w *Watcher) maybeHeartbeat(ctx context.Context, last *CtxFile, age time.Duration) (wrote bool) {
+	if !w.heartbeatDue(ctx, age) {
+		return false // agent has exited or the heartbeat is not due
 	}
 
 	managedSID, err := w.cfg.ReadManagedSessionFn(w.cfg.ProjectDir, w.cfg.AgentName)

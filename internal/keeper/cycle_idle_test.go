@@ -42,36 +42,28 @@ func newIdleCycler(
 			return &keeper.CtxFile{Pct: 10.0, Tokens: 5_000, WindowSize: 200_000, SessionID: "sess-new"}, time.Now(), nil
 		}
 	}
-
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, agent string) string {
+		return filepath.Join(projectDir, "HANDOFF-"+agent+".md")
+	}, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, Gauge: readGaugeFn, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
-		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
-		AgentName:           "idle-agent",
-		ProjectDir:          projectDir,
-		TmuxTarget:          "fake-pane",
-		ActAbsTokens:        actAbsForIdleTests,
-		ActPct:              90.0,
-		WarnPct:             80.0,
-		HandoffTimeout:      500 * time.Millisecond,
-		ClearSettle:         50 * time.Millisecond,
-		PollInterval:        10 * time.Millisecond,
-		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
-		HandoffFilePath: func(_, agent string) string {
-			return filepath.Join(projectDir, "HANDOFF-"+agent+".md")
-		},
-		ReadHandoff:              readHandoff,
-		TruncateHandoffFn:        func(_ string) error { return nil },
-		InjectFn:                 spy.inject,
-		ReadGaugeFn:              readGaugeFn,
-		CrispIdleFn:              func(_, _ string) bool { return crispIdle },
-		HoldingDispatchFn:        func(_, _ string) bool { return holdingDispatch },
-		WriteJournalFn:           jc.write,
-		SetTmuxEnvFn:             func(_ context.Context, _, _, _ string) error { return nil },
-		ClearPrecompactTriggerFn: func(_, _ string) error { return nil },
-		IdleRestartAbsTokens:     defaultIdleTokenThreshold,
-		IdleRestartCooldown:      idleRestartCooldown,
+		AgentName:      "idle-agent",
+		ProjectDir:     projectDir,
+		TmuxTarget:     "fake-pane",
+		ActAbsTokens:   actAbsForIdleTests,
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		HandoffTimeout: 500 * time.Millisecond,
+		ClearSettle:    50 * time.Millisecond,
+		PollInterval:   10 * time.Millisecond,
+
+		IdleRestartAbsTokens: defaultIdleTokenThreshold,
+		IdleRestartCooldown:  idleRestartCooldown,
 	}
-	return keeper.NewCycler(cfg, em)
+	return mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
+		deps.Context = testContextWithClear{ContextStore: deps.Context, clear: func() error { return nil }}
+		deps.Dispatch = testDispatchProbe(holdingDispatch)
+		deps.Idle = testIdleProbe(crispIdle)
+	})
 }
 
 // defaultIdleTokenThreshold is the default IdleRestartAbsTokens (150_000).

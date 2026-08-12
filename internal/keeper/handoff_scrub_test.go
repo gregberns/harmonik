@@ -20,18 +20,13 @@ import (
 // not a keeper marker survives, byte for byte.
 //
 // The pure scrub is reached through keeper.StripNonceMarkersForTest. The file
-// scrub is reached through the resolved production config field
-// TruncateHandoffFn, which the package wires to defaultScrubHandoffNonces.
+// scrub is reached through the production file adapter.
 
 // scrubHandoffFile returns the production file scrub that a Cycler runs when
 // the operator supplies no override.
 func scrubHandoffFile(t *testing.T) func(string) error {
 	t.Helper()
-	fn := keeper.ResolveCyclerDefaultsForTest().TruncateHandoffFn
-	if fn == nil {
-		t.Fatal("resolved cycler defaults carry no TruncateHandoffFn; the production handoff scrub is unreachable")
-	}
-	return fn
+	return keeper.ScrubHandoffFileForTest
 }
 
 func TestHandoffScrubKeepsEveryByteThatIsNotAKeeperMarker(t *testing.T) {

@@ -187,38 +187,28 @@ func TestKeeperCycle_ForcedClearAboveHardThreshold(t *testing.T) {
 		mu.Unlock()
 		return rs.inject(ctx, target, text)
 	}
-
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: rs.readHandoff, HandoffScrub: rs.truncate, Inject: injectFn, Gauge: rs.readGauge, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
-		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
-		AgentName:           agent,
-		ProjectDir:          t.TempDir(),
-		TmuxTarget:          "fake-pane",
-		ActPct:              90.0,
-		WarnPct:             80.0,
-		ForceActPct:         95.0,
-		HandoffTimeout:      500 * time.Millisecond,
-		ClearSettle:         300 * time.Millisecond,
-		PollInterval:        5 * time.Millisecond,
-		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:       rs.readHandoff,
-		TruncateHandoffFn: rs.truncate,
-		InjectFn:          injectFn,
-		ReadGaugeFn:       rs.readGauge,
-		CrispIdleFn:       func(_, _ string) bool { return false }, // perpetually busy → force path
-		HoldingDispatchFn: func(_, _ string) bool { return false },
-		WriteJournalFn:    jc.write,
-		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
-		SetManagedSessionFn: func(_, _, sid string) error {
+		AgentName:      agent,
+		ProjectDir:     t.TempDir(),
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		ForceActPct:    95.0,
+		HandoffTimeout: 500 * time.Millisecond,
+		ClearSettle:    300 * time.Millisecond,
+		PollInterval:   5 * time.Millisecond,
+	}
+	cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
+		deps.Pane = testPaneWithEscape{PaneWriter: deps.Pane, sendEscape: escapeFn}
+		deps.Idle = testIdleProbe(false)
+		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error {
 			managedBinding = sid
 			return nil
-		},
-		SendEscapeFn: escapeFn,
-	}
-	cycler := keeper.NewCycler(cfg, em)
+		}}
+	})
 
 	// Tokens at/above the default ForceActAbsTokens (240_000) with CrispIdle=false.
 	cf := &keeper.CtxFile{Pct: 97.0, Tokens: 390_000, WindowSize: 1_000_000, SessionID: s1}
@@ -253,7 +243,7 @@ func TestKeeperCycle_ForcedClearAboveHardThreshold(t *testing.T) {
 		}
 	}
 	if escapeIdx == -1 {
-		t.Errorf("SendEscapeFn was never called; order = %v", snap)
+		t.Errorf("pane port did not receive Escape; order = %v", snap)
 	}
 	if handoffIdx == -1 {
 		t.Fatalf("/session-handoff was never injected; order = %v", snap)
@@ -396,39 +386,30 @@ func TestKeeperCycle_PreCompactBackstop(t *testing.T) {
 	rs := newReactiveSession(s1, s2, true /*writeNonce*/, true /*flipOnClear*/)
 
 	var markerCleared bool
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: rs.readHandoff, HandoffScrub: rs.truncate, Inject: rs.inject, Gauge: rs.readGauge, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
-		IdleMarkerModTimeFn: idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
-		AgentName:           agent,
-		ProjectDir:          t.TempDir(),
-		TmuxTarget:          "fake-pane",
-		ActPct:              90.0,
-		WarnPct:             80.0,
-		HandoffTimeout:      500 * time.Millisecond,
-		ClearSettle:         300 * time.Millisecond,
-		PollInterval:        5 * time.Millisecond,
-		CycleIDGen:          func() string { return cycleID },
-		IsManagedFn:         func(_, _ string) bool { return true },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:       rs.readHandoff,
-		TruncateHandoffFn: rs.truncate,
-		InjectFn:          rs.inject,
-		ReadGaugeFn:       rs.readGauge,
-		CrispIdleFn:       func(_, _ string) bool { return false }, // NOT idle — precompact must skip this gate
-		HoldingDispatchFn: func(_, _ string) bool { return false },
-		WriteJournalFn:    jc.write,
-		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
-		SetManagedSessionFn: func(_, _, sid string) error {
-			managedBinding = sid
-			return nil
-		},
-		ClearPrecompactTriggerFn: func(_, _ string) error {
+		AgentName:      agent,
+		ProjectDir:     t.TempDir(),
+		TmuxTarget:     "fake-pane",
+		ActPct:         90.0,
+		WarnPct:        80.0,
+		HandoffTimeout: 500 * time.Millisecond,
+		ClearSettle:    300 * time.Millisecond,
+		PollInterval:   5 * time.Millisecond,
+	}
+	cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
+		deps.Idle = testIdleProbe(false)
+		deps.Context = testContextWithClear{ContextStore: deps.Context, clear: func() error {
 			markerCleared = true
 			return nil
-		},
-	}
-	cycler := keeper.NewCycler(cfg, em)
+		}}
+		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error {
+			managedBinding = sid
+			return nil
+		}}
+	})
 
 	// Context BELOW the act threshold (pct 50, well under ActPct=90) AND
 	// CrispIdle=false. MaybeRun would NOT fire on this; RunForPrecompact must.
@@ -479,7 +460,7 @@ func TestKeeperCycle_PreCompactBackstop(t *testing.T) {
 
 	// (d) the .precompact marker was cleared afterward.
 	if !markerCleared {
-		t.Error("ClearPrecompactTriggerFn was never called; the .precompact marker must be cleared after the cycle")
+		t.Error("context store did not clear the .precompact marker after the cycle")
 	}
 }
 
@@ -549,8 +530,10 @@ func TestKeeperCycle_ClearBriefHardGate_SlowClear(t *testing.T) {
 	}
 
 	var mu sync.Mutex
+	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string {
+		return "/tmp/HANDOFF-" + a + ".md"
+	}, HandoffRead: rs.readHandoff, HandoffScrub: rs.truncate, Inject: witnessInject, Gauge: rs.readGauge, JournalWrite: jc.write}
 	cfg := keeper.CyclerConfig{
-		IdleMarkerModTimeFn:  idleMarkerFreshNow, // Stop hook wired: model-done on first AwaitModelDone poll (T8)
 		AgentName:            agent,
 		ProjectDir:           t.TempDir(),
 		TmuxTarget:           "fake-pane",
@@ -561,28 +544,16 @@ func TestKeeperCycle_ClearBriefHardGate_SlowClear(t *testing.T) {
 		PollInterval:         5 * time.Millisecond,
 		ClearConfirmBackstop: clearConfirmBackstop,
 		ClearConfirmRetries:  clearConfirmRetries,
-		CycleIDGen:           func() string { return cycleID },
-		IsManagedFn:          func(_, _ string) bool { return true },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-" + a + ".md"
-		},
-		ReadHandoff:       rs.readHandoff,
-		HandoffModTimeFn:  rs.handoffModTime,
-		TruncateHandoffFn: rs.truncate,
-		InjectFn:          witnessInject,
-		ReadGaugeFn:       rs.readGauge,
-		CrispIdleFn:       func(_, _ string) bool { return true },
-		HoldingDispatchFn: func(_, _ string) bool { return false },
-		WriteJournalFn:    jc.write,
-		SetTmuxEnvFn:      func(_ context.Context, _, _, _ string) error { return nil },
-		SetManagedSessionFn: func(_, _, sid string) error {
+	}
+	cycler := mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
+		deps.Handoff = testHandoffWithModTime{HandoffDocument: deps.Handoff, modTime: rs.handoffModTime}
+		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error {
 			mu.Lock()
 			defer mu.Unlock()
 			managedBinding = sid
 			return nil
-		},
-	}
-	cycler := keeper.NewCycler(cfg, em)
+		}}
+	})
 
 	cf := &keeper.CtxFile{Pct: 95.0, Tokens: 320_000, WindowSize: 1_000_000, SessionID: s1}
 	if err := cycler.MaybeRun(context.Background(), cf); err != nil {

@@ -265,6 +265,17 @@ func TestZJ1Y_SelfServiceRestart_GaugeDrop_ExactlyOneClear(t *testing.T) {
 	spy := &zj1yInjectSpy{}
 	nonce := "<!-- KEEPER:" + cycleID + " -->"
 
+	overrides := configTestOverrides{
+		cycleIDs: func() string { return cycleID },
+		path:     func(_, a string) string { return "/tmp/HANDOFF-zj1y-" + a + ".md" },
+		read:     func(_ string) (string, error) { return "# Handoff\n\n" + nonce + "\n", nil },
+		scrub:    func(_ string) error { return nil },
+		inject:   spy.inject,
+		gauge: func(_, _ string) (*CtxFile, time.Time, error) {
+			return &CtxFile{Tokens: 40_000, WindowSize: 200_000, Pct: 20, SessionID: sid}, time.Now(), nil
+		},
+		journal: func(_ string, _ *CycleJournal) error { return nil },
+	}
 	cfg := CyclerConfig{
 		AgentName:      agent,
 		ProjectDir:     t.TempDir(),
@@ -274,30 +285,13 @@ func TestZJ1Y_SelfServiceRestart_GaugeDrop_ExactlyOneClear(t *testing.T) {
 		HandoffTimeout: 200 * time.Millisecond,
 		ClearSettle:    20 * time.Millisecond,
 		PollInterval:   5 * time.Millisecond,
-		CycleIDGen:     func() string { return cycleID },
-		IsManagedFn:    func(_, _ string) bool { return true },
-		HandoffFilePath: func(_, a string) string {
-			return "/tmp/HANDOFF-zj1y-" + a + ".md"
-		},
-		ReadHandoff:       func(_ string) (string, error) { return "# Handoff\n\n" + nonce + "\n", nil },
-		TruncateHandoffFn: func(_ string) error { return nil },
-		InjectFn:          spy.inject,
-		ReadGaugeFn: func(_, _ string) (*CtxFile, time.Time, error) {
-			return &CtxFile{Tokens: 40_000, WindowSize: 200_000, Pct: 20, SessionID: sid}, time.Now(), nil
-		},
-		CrispIdleFn:        func(_, _ string) bool { return true },
-		HoldingDispatchFn:  func(_, _ string) bool { return false },
-		WriteJournalFn:     func(_ string, _ *CycleJournal) error { return nil },
-		SetTmuxEnvFn:       func(_ context.Context, _, _, _ string) error { return nil },
-		OperatorAttachedFn: func(_ string) bool { return false },
 		// Stop-hook .idle marker reads fresh so model-done lands on the first
 		// AwaitModelDone poll (SK-014) — without it the cycle waits the full
 		// ModelDoneTimeout (60s) fail-open before clearing, making this test
 		// needlessly slow. Model-done speed does not affect the /clear count; it
 		// only removes the 60s wait.
-		IdleMarkerModTimeFn: func(_, _ string) (time.Time, bool) { return time.Now(), true },
 	}
-	cycler := NewCycler(cfg, em)
+	cycler := mustNewCyclerWithConfigOverrides(cfg, em, overrides)
 	ctx := context.Background()
 
 	// Tick 1: gauge ABOVE the act threshold, agent has not yet self-restarted —

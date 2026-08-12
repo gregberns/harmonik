@@ -205,6 +205,21 @@ func (rs *reactiveSession) readHandoff(_ /*path*/ string) (string, error) {
 // (now) whenever a handoff body has been written, and "absent" while empty. This
 // mirrors os.Stat on a real handoff file and lets the ack-timeout recovery path
 // (hk-fi78d) distinguish "agent wrote a fresh handoff" from "nothing written".
+//
+// THIS HARNESS CANNOT BE COMBINED WITH AN INJECTED CLOCK. The time returned
+// here is REAL. The Cycler compares it against handoffInjectedAt, which comes
+// from CyclerConfig.Clock. Wire a fake clock in and the two stop being
+// commensurate: an anchor stamped in 2023 is before any real mod-time, so
+// mt.Before(anchor) is false and EVERY body reads as FRESH. That is the
+// dangerous direction — the cycle takes the recovery path and /clear lands over
+// a handoff the agent never wrote. Nothing is broken today only because the one
+// scenario that runs a fake clock (TestScenario_LateHandoff300sFakeClock_Aborts_qji8g)
+// writes no body and returns on the empty-content guard before the compare.
+//
+// A scenario that needs BOTH a fake clock and a handoff body must make this
+// return a time drawn from the same clock, or use a real file whose mod-time
+// the filesystem stamps (see TestCycler_EmptyTarget_ScrubbedStaleHandoff_StillAborts,
+// which stays on real time throughout for exactly this reason). Refs: hk-3ty39.
 func (rs *reactiveSession) handoffModTime(_ /*path*/ string) (time.Time, bool) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()

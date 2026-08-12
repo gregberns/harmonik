@@ -182,6 +182,174 @@ func TestStoreSessionReceiptTemporaryNameUsesCanonicalUUIDv7(t *testing.T) {
 	}
 }
 
+func TestStoreRemovesExactSessionReceiptAndConverges(t *testing.T) {
+	store := New(t.TempDir())
+	receipt := testSessionReceipt(t)
+	if err := store.InstallSessionStartReceipt(receipt); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RemoveSessionStartReceipt(receipt); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RemoveSessionStartReceipt(receipt); err != nil {
+		t.Fatalf("absent retry = %v", err)
+	}
+	if _, err := store.LoadSessionStartReceipt(receipt.Binding.RunID); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("LoadSessionStartReceipt() error = %v", err)
+	}
+}
+
+func TestStoreSessionReceiptRemoveRejectsChangedBytes(t *testing.T) {
+	store := New(t.TempDir())
+	receipt := testSessionReceipt(t)
+	if err := store.InstallSessionStartReceipt(receipt); err != nil {
+		t.Fatal(err)
+	}
+	want := receipt
+	want.WindowName = "run-other"
+	if err := store.RemoveSessionStartReceipt(want); err == nil {
+		t.Fatal("RemoveSessionStartReceipt() = nil error")
+	}
+	loaded, err := store.LoadSessionStartReceipt(receipt.Binding.RunID)
+	if err != nil || !reflect.DeepEqual(loaded, receipt) {
+		t.Fatalf("receipt changed = (%+v, %v)", loaded, err)
+	}
+}
+
+func TestStoreSessionReceiptRemoveSideEffectConverges(t *testing.T) {
+	store := New(t.TempDir())
+	receipt := testSessionReceipt(t)
+	if err := store.InstallSessionStartReceipt(receipt); err != nil {
+		t.Fatal(err)
+	}
+	realRemove := store.ops.remove
+	store.ops.remove = func(path string) error {
+		if err := realRemove(path); err != nil {
+			return err
+		}
+		return errors.New("remove returned after effect")
+	}
+	if err := store.RemoveSessionStartReceipt(receipt); err != nil {
+		t.Fatalf("RemoveSessionStartReceipt() = %v", err)
+	}
+}
+
+func TestStoreSessionReceiptRemoveFailurePreservesExactFact(t *testing.T) {
+	store := New(t.TempDir())
+	receipt := testSessionReceipt(t)
+	if err := store.InstallSessionStartReceipt(receipt); err != nil {
+		t.Fatal(err)
+	}
+	store.ops.remove = func(string) error { return errors.New("cut remove") }
+	if err := store.RemoveSessionStartReceipt(receipt); err == nil {
+		t.Fatal("RemoveSessionStartReceipt() = nil error")
+	}
+	loaded, err := store.LoadSessionStartReceipt(receipt.Binding.RunID)
+	if err != nil || !reflect.DeepEqual(loaded, receipt) {
+		t.Fatalf("receipt changed = (%+v, %v)", loaded, err)
+	}
+}
+
+func TestStoreSessionReceiptRemoveSyncAmbiguityPreservesAbsence(t *testing.T) {
+	store := New(t.TempDir())
+	receipt := testSessionReceipt(t)
+	if err := store.InstallSessionStartReceipt(receipt); err != nil {
+		t.Fatal(err)
+	}
+	realSync := store.ops.syncDir
+	root := store.receiptRoot()
+	store.ops.syncDir = func(path string) error {
+		if path == root {
+			return errors.New("cut receipt remove sync")
+		}
+		return realSync(path)
+	}
+	var ambiguous *AmbiguousError
+	if err := store.RemoveSessionStartReceipt(receipt); !errors.As(err, &ambiguous) {
+		t.Fatalf("RemoveSessionStartReceipt() error = %v", err)
+	}
+	store.ops.syncDir = realSync
+	if err := store.RemoveSessionStartReceipt(receipt); err != nil {
+		t.Fatalf("converged remove retry = %v", err)
+	}
+}
+
+func TestStoreSessionReceiptAbsentRemoveRequiresRootSync(t *testing.T) {
+	store := New(t.TempDir())
+	receipt := testSessionReceipt(t)
+	if err := store.InstallSessionStartReceipt(receipt); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RemoveSessionStartReceipt(receipt); err != nil {
+		t.Fatal(err)
+	}
+	realSync := store.ops.syncDir
+	root := store.receiptRoot()
+	store.ops.syncDir = func(path string) error {
+		if path == root {
+			return errors.New("cut absent receipt sync")
+		}
+		return realSync(path)
+	}
+	var ambiguous *AmbiguousError
+	if err := store.RemoveSessionStartReceipt(receipt); !errors.As(err, &ambiguous) {
+		t.Fatalf("absent RemoveSessionStartReceipt() error = %v", err)
+	}
+}
+
+func TestStoreSessionReceiptRemoveRejectsUnsupportedEntryTypes(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		write func(t *testing.T, path string) string
+	}{
+		{name: "directory", write: func(t *testing.T, path string) string {
+			t.Helper()
+			if err := os.Mkdir(path, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			return ""
+		}},
+		{name: "symlink", write: func(t *testing.T, path string) string {
+			t.Helper()
+			external := filepath.Join(t.TempDir(), "receipt")
+			if err := os.WriteFile(external, []byte("external"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(external, path); err != nil {
+				t.Fatal(err)
+			}
+			return external
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := New(t.TempDir())
+			receipt := testSessionReceipt(t)
+			root := store.receiptRoot()
+			if err := os.MkdirAll(root, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(root, receiptBasename(receipt.Binding.RunID))
+			external := tc.write(t, path)
+			if err := store.RemoveSessionStartReceipt(receipt); err == nil {
+				t.Fatal("RemoveSessionStartReceipt() = nil error")
+			}
+			info, err := os.Lstat(path)
+			if err != nil {
+				t.Fatalf("entry was removed: %v", err)
+			}
+			if tc.name == "directory" && !info.IsDir() {
+				t.Fatalf("entry mode = %v, want directory", info.Mode())
+			}
+			if external != "" {
+				got, readErr := os.ReadFile(external) //nolint:gosec // test-owned path below t.TempDir.
+				if readErr != nil || string(got) != "external" {
+					t.Fatalf("external target changed = (%q, %v)", got, readErr)
+				}
+			}
+		})
+	}
+}
+
 func TestStoreSessionReceiptListRemovesOnlyConvergedTemporaryEntry(t *testing.T) {
 	projectDir := t.TempDir()
 	store := New(projectDir)

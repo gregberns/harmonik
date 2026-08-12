@@ -129,6 +129,46 @@ func (s *Store) ListSessionStartReceipts() ([]dispatch.SessionStartReceipt, erro
 	return receipts, nil
 }
 
+// RemoveSessionStartReceipt removes one exact receipt after terminal queue durability.
+func (s *Store) RemoveSessionStartReceipt(receipt dispatch.SessionStartReceipt) error {
+	namespaceMu.Lock()
+	defer namespaceMu.Unlock()
+	expected, err := canonicalReceiptBytes(receipt)
+	if err != nil {
+		return err
+	}
+	root, err := s.checkedReceiptRoot()
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(root, receiptBasename(receipt.Binding.RunID))
+	current, err := readExactRegular(path, "session receipt")
+	if errors.Is(err, os.ErrNotExist) {
+		return s.convergedSync(root)
+	}
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(current, expected) {
+		return errors.New("dispatchstore: session receipt changed before remove")
+	}
+	if err := s.ops.remove(path); err != nil {
+		_, statErr := os.Lstat(path)
+		if errors.Is(statErr, os.ErrNotExist) {
+			return s.convergedSync(root)
+		}
+		return errors.Join(fmt.Errorf("dispatchstore: remove session receipt: %w", err), statErr)
+	}
+	if syncErr := s.ops.syncDir(root); syncErr != nil {
+		_, statErr := os.Lstat(path)
+		if !errors.Is(statErr, os.ErrNotExist) {
+			return &AmbiguousError{Err: errors.Join(syncErr, statErr)}
+		}
+		return &AmbiguousError{Err: syncErr}
+	}
+	return nil
+}
+
 func (s *Store) cleanupConvergedReceiptTemp(root, name string) error {
 	runID, err := parseReceiptTempBasename(name)
 	if err != nil {

@@ -96,7 +96,49 @@ const (
 	// going to execute it, and nothing re-selects a dispatched item, so it is
 	// stranded until the boot reconciliation pass sees it.
 	reservationReleaseContended reservationVerdict = "release_contended"
+
+	// reservationCrossQueueCollision — another active queue holds this bead.
+	// NOTHING was written: the item is still pending, and the caller decides what
+	// to do from the Disposition field. This verdict is deliberately not a
+	// failure. A sibling holding the bead is a property of THIS tick, and
+	// specs/queue-model.md §9.8 QM-067 forbids making a per-tick refusal durable.
+	// Bead ref: hk-nsion.
+	reservationCrossQueueCollision reservationVerdict = "cross_queue_collision"
 )
+
+// crossQueueDisposition says what a sibling queue's hold on the same bead means
+// for the reservation that lost the race.
+//
+// The two live values behave in opposite directions and used to be welded into
+// one boolean, which is what made every collision terminal. A RUNNING sibling
+// can lapse — its run ends, and the loser's item becomes reservable or its bead
+// closes — so that is a refusal. A FINISHED sibling cannot lapse: the work is
+// done and the bead is closed, so the loser's item is advanced to completed per
+// specs/queue-model.md §3.2b QM-002b Class A rather than failed.
+//
+// Bead ref: hk-nsion.
+type crossQueueDisposition string
+
+const (
+	// crossQueueNoCollision — no other active queue holds the bead.
+	crossQueueNoCollision crossQueueDisposition = ""
+
+	// crossQueueSiblingRunning — a sibling queue holds the bead dispatched. The
+	// work is in flight there right now.
+	crossQueueSiblingRunning crossQueueDisposition = "sibling_running"
+
+	// crossQueueSiblingFinished — a sibling queue holds the bead completed. The
+	// work is done; running it again would duplicate finished work.
+	crossQueueSiblingFinished crossQueueDisposition = "sibling_finished"
+)
+
+// crossQueueCollision names the sibling queue that holds the bead and what its
+// hold means. It is filled by the reservation precondition, which is the only
+// place that can see the other queues under the same lock hold as the write.
+type crossQueueCollision struct {
+	ConflictingQueue string
+	Disposition      crossQueueDisposition
+}
 
 // releaseOutcomeAdvice states what an operator should expect to happen next
 // after a release that did not return the item.
@@ -160,9 +202,9 @@ type reservationResult struct {
 	// when Verdict is reservationItemFailed.
 	FailureReason string
 
-	// ConflictingQueue names the other queue that already holds the bead, set
-	// only when the item failed as a cross-queue duplicate.
-	ConflictingQueue string
+	// Collision names the other queue that already holds the bead and what its
+	// hold means, set only when Verdict is reservationCrossQueueCollision.
+	Collision crossQueueCollision
 
 	// Outcome and Err are the durable result of the last write attempted.
 	Outcome queue.NamespaceOutcome
@@ -171,10 +213,14 @@ type reservationResult struct {
 
 // reserveQueueItem performs the dispatch reservation as one durable write.
 //
-// On success the item is dispatched and carries res.RunID. The two conditions
-// that disqualify an item — another queue already running the bead, and the
-// attempt bound — produce a durably failed item instead, because an item left
-// pending after either would be re-picked on the next tick forever.
+// On success the item is dispatched and carries res.RunID. The attempt bound
+// produces a durably failed item instead, because an item left pending after it
+// would be re-picked on the next tick forever.
+//
+// A bead another active queue already holds is NOT a failure here. It returns
+// reservationCrossQueueCollision with nothing written, and the caller decides:
+// refuse the item for this tick, advance it to completed, or — past the
+// collision bound — fail it. See resolveCrossQueueCollision.
 //
 // It never launches anything and never claims a bead. The caller does that,
 // and only when the verdict is reservationReserved.
@@ -188,14 +234,14 @@ func reserveQueueItem(ctx context.Context, queueStore *queuewiring.QueueStore, p
 	}
 
 	var (
-		conflictingQueue string
-		maxAttemptsHit   bool
+		collision      crossQueueCollision
+		maxAttemptsHit bool
 	)
 	result := queueStore.Transact(ctx, queuewiring.TransactionRequest{
 		Snapshot:      snapshot,
 		ProjectDir:    projectDir,
 		OperationKind: queue.OperationReservation,
-		Precondition:  crossQueueDuplicateGuard(res.BeadID, &conflictingQueue),
+		Precondition:  crossQueueDuplicateGuard(res.BeadID, &collision),
 		Mutate: func(q *queue.Queue) error {
 			item := activeQueueItem(q, res.GroupIndex, res.ItemIndex, res.BeadID)
 			if item == nil || item.Status != queue.ItemStatusPending {
@@ -231,12 +277,14 @@ func reserveQueueItem(ctx context.Context, queueStore *queuewiring.QueueStore, p
 		return reservationResult{Verdict: reservationReserved, Outcome: result.Outcome}
 
 	case errors.Is(result.Err, errReserveCrossQueueDuplicate):
-		// The bead is already in flight elsewhere. Fail this duplicate in its
-		// own write so the group advances instead of stalling on an item that
-		// will never run here.
-		failed := failQueueItem(ctx, queueStore, projectDir, res, "cross_queue_duplicate")
-		failed.ConflictingQueue = conflictingQueue
-		return failed
+		// The bead is held by another queue. Nothing is written here — this is a
+		// property of the tick, not of the item, and the caller owns the choice
+		// between refusing, completing and failing it (§9.8 QM-067, hk-nsion).
+		return reservationResult{
+			Verdict:   reservationCrossQueueCollision,
+			Collision: collision,
+			Outcome:   result.Outcome,
+		}
 
 	case errors.Is(result.Err, queuewiring.ErrQueueQuarantined):
 		// An earlier write to this queue failed and the store now refuses it.
@@ -398,43 +446,302 @@ func activeQueueItem(q *queue.Queue, groupIndex, itemIdx int, beadID core.BeadID
 
 // crossQueueDuplicateGuard builds the reservation precondition that refuses to
 // reserve beadID when any OTHER active queue already holds it dispatched or
-// completed. On refusal it writes the offending queue name to conflict.
+// completed. On refusal it writes the offending queue name AND what its hold
+// means to collision, because the two holds ask for opposite repairs.
 //
 // The check runs inside the store write lock, in the same hold as the write it
 // guards. That is what makes two queues unable to reserve the same bead: the
 // generation guard covers one queue name and cannot see the other one change.
 //
-// Bead ref: hk-a11re, hk-dorz9.
-func crossQueueDuplicateGuard(beadID core.BeadID, conflict *string) func(map[string]*queue.Queue) error {
+// A RUNNING sibling wins over a FINISHED one when the scan finds both. The
+// queues are walked in map order, so "first match wins" would make the reported
+// disposition depend on Go's map iteration; and a bead that is completed in one
+// place and dispatched in another is in flight NOW, which is the more
+// restrictive of the two answers. Advancing the loser to completed on the
+// strength of an older completed item would call finished work that is running
+// right now done.
+//
+// Bead ref: hk-a11re, hk-dorz9, hk-nsion.
+func crossQueueDuplicateGuard(beadID core.BeadID, collision *crossQueueCollision) func(map[string]*queue.Queue) error {
 	return func(others map[string]*queue.Queue) error {
+		found := crossQueueCollision{}
 		for otherName, otherQueue := range others {
-			if holdsBeadInFlight(otherQueue, beadID) {
-				*conflict = otherName
+			switch siblingBeadDisposition(otherQueue, beadID) {
+			case crossQueueSiblingRunning:
+				*collision = crossQueueCollision{ConflictingQueue: otherName, Disposition: crossQueueSiblingRunning}
 				return errReserveCrossQueueDuplicate
+			case crossQueueSiblingFinished:
+				if found.Disposition == crossQueueNoCollision {
+					found = crossQueueCollision{ConflictingQueue: otherName, Disposition: crossQueueSiblingFinished}
+				}
+			case crossQueueNoCollision:
 			}
 		}
-		return nil
+		if found.Disposition == crossQueueNoCollision {
+			return nil
+		}
+		*collision = found
+		return errReserveCrossQueueDuplicate
 	}
 }
 
-// holdsBeadInFlight reports whether q is active and already holds beadID
-// dispatched or completed. A completed item counts: the bead ran there, and
-// running it again here would duplicate finished work.
-func holdsBeadInFlight(q *queue.Queue, beadID core.BeadID) bool {
+// siblingBeadDisposition reports how q — another active queue — holds beadID.
+//
+// A dispatched item means the bead is in flight there. A completed item means
+// the bead ran there and finished; running it again here would duplicate
+// finished work. The two are reported separately because the dispatcher does
+// opposite things with them, and the single boolean this replaced is why every
+// collision used to end in a durable failure (hk-nsion).
+//
+// A queue that is not active holds nothing: its items cannot run, so they cannot
+// collide with a dispatch happening now.
+func siblingBeadDisposition(q *queue.Queue, beadID core.BeadID) crossQueueDisposition {
 	if q == nil || q.Status != queue.QueueStatusActive {
-		return false
+		return crossQueueNoCollision
 	}
+	found := crossQueueNoCollision
 	for _, group := range q.Groups {
 		for _, item := range group.Items {
 			if item.BeadID != beadID {
 				continue
 			}
-			if item.Status == queue.ItemStatusDispatched || item.Status == queue.ItemStatusCompleted {
-				return true
+			switch item.Status {
+			case queue.ItemStatusDispatched:
+				// In flight beats finished — see crossQueueDuplicateGuard.
+				return crossQueueSiblingRunning
+			case queue.ItemStatusCompleted:
+				found = crossQueueSiblingFinished
+			default:
+				// pending, deferred and failed items hold nothing: none of them
+				// can be executing the bead, so none of them collides.
 			}
 		}
 	}
-	return false
+	return found
+}
+
+// maxCrossQueueCollisions bounds how many CONSECUTIVE times one item may be
+// refused because a sibling queue holds its bead, before the refusal becomes the
+// durable failure it used to be on the first collision.
+//
+// A refusal that never lapses is a quiet stall, and a stall reads as a slow
+// daemon rather than as an error. This bound is what keeps today's loud wrong
+// answer available as the tail case.
+//
+// It is deliberately NOT maxItemAttempts (3). Each refusal arms
+// claimSkipInProgressCooldown, so the item is re-tested about every five
+// minutes; a bound of 3 would fail the loser roughly fifteen minutes into a
+// perfectly healthy sibling run, and that durable failure parks the loser's
+// whole queue — the defect this bound sits inside the repair for. Twelve is
+// about an hour of the same collision, which is long enough that the sibling is
+// stuck rather than slow.
+//
+// Bead ref: hk-nsion.
+const maxCrossQueueCollisions = 12
+
+// crossQueueCollisionOutcome is what the dispatcher does about one collision.
+type crossQueueCollisionOutcome string
+
+const (
+	// crossQueueRefuseTick — the item stays pending and is refused for this tick.
+	crossQueueRefuseTick crossQueueCollisionOutcome = "refuse_tick"
+
+	// crossQueueAdvanceCompleted — the item is advanced to completed, because the
+	// sibling already finished the bead (§3.2b QM-002b Class A).
+	crossQueueAdvanceCompleted crossQueueCollisionOutcome = "advance_completed"
+
+	// crossQueueFailTerminal — the collision outlived maxCrossQueueCollisions, so
+	// the item is failed with the reason it always carried.
+	crossQueueFailTerminal crossQueueCollisionOutcome = "fail_terminal"
+)
+
+// crossQueueCollisionState is the in-memory record one queue item keeps between
+// collisions. It follows queuePreClaimShowAttempts exactly: in memory only,
+// keyed per item, CONSECUTIVE (progress deletes the entry), and forgiven by a
+// daemon restart.
+type crossQueueCollisionState struct {
+	// consecutive counts refusals since the last time this item made progress.
+	consecutive int
+
+	// reported is the disposition already announced for this item. It is what
+	// makes the collision report fire once per collision rather than once per
+	// tick: a refusal repeats every poll interval for as long as the sibling
+	// runs, and an event per repeat would bury the one an operator needs.
+	reported crossQueueDisposition
+}
+
+// recordCrossQueueCollision folds one observed collision into states and returns
+// what to do about it, plus whether this collision must be reported.
+//
+// It is a plain function over a plain map so the bound can be tested by calling
+// it, rather than by driving a work loop for an hour of simulated collisions.
+//
+// A finished sibling settles the item at once and cannot repeat, so it never
+// charges the bound. Any other disposition is treated as a running sibling: the
+// caller only reaches this function on a collision, and a defensive third branch
+// no test can reach would be worse than the totality.
+func recordCrossQueueCollision(
+	states map[queuePreClaimAttemptKey]crossQueueCollisionState,
+	key queuePreClaimAttemptKey,
+	disposition crossQueueDisposition,
+) (crossQueueCollisionOutcome, bool) {
+	state := states[key]
+	report := state.reported != disposition
+	state.reported = disposition
+
+	if disposition == crossQueueSiblingFinished {
+		states[key] = state
+		return crossQueueAdvanceCompleted, report
+	}
+
+	state.consecutive++
+	states[key] = state
+	if state.consecutive >= maxCrossQueueCollisions {
+		// Always reported: this one writes a durable failure, which is the
+		// outcome an operator most needs to see and the one they can act on.
+		return crossQueueFailTerminal, true
+	}
+	return crossQueueRefuseTick, report
+}
+
+// crossQueueCollisionSite identifies the losing queue item and stamps the time
+// the collision was seen.
+type crossQueueCollisionSite struct {
+	QueueName  string
+	QueueID    string
+	GroupIndex int
+	ItemIndex  int
+	BeadID     core.BeadID
+	Now        time.Time
+}
+
+// crossQueueCollisionPorts carries the loop state and seams the resolution needs.
+// The three maps are the loop's own, passed by reference: a refusal armed here
+// must be visible to the very next offerableSkipSet call.
+type crossQueueCollisionPorts struct {
+	emitter      handlercontract.EventEmitter
+	queueStore   *queuewiring.QueueStore
+	projectDir   string
+	reap         reapSeamPort
+	collisions   map[queuePreClaimAttemptKey]crossQueueCollisionState
+	tickRefusals map[core.BeadID]bool
+	refusedUntil map[core.BeadID]time.Time
+}
+
+// resolveCrossQueueCollision applies the three-way disposition of a cross-queue
+// collision and reports it once. It returns true when the item was refused for
+// this tick, which tells the caller it is still walking this tick rather than
+// starting a new one.
+//
+// The three arms are the whole point of hk-nsion:
+//
+//   - RUNNING — the item stays pending. It is refused for this tick, so the
+//     dispatcher offers the next eligible item behind it at once, and it is
+//     refused for a cooldown, so the bounded poll re-examines it rather than
+//     re-testing the collision every two seconds. Both are what §9.8 QM-067
+//     asks for, and neither writes anything durable.
+//   - FINISHED — the item is advanced to COMPLETED, per §3.2b QM-002b Class A.
+//     The bead is closed and the work is done; failing the item instead would
+//     park the queue over work that succeeded. Read this arm as the NARROW one:
+//     the BI-013c pre-claim ledger re-read runs earlier in the same loop body
+//     and advances the item on a closed bead itself (hk-rern1), so this arm
+//     fires only when the ledger still reads the bead OPEN while the sibling's
+//     item is already completed. That state has a real producer, not just a
+//     race window: a lost close-write leaves the bead in_progress with the
+//     sibling's item completed, and a startup pass then resets the bead to open
+//     — QM-002b Class B, whose "no queue item references this bead" test is
+//     scoped to the ONE queue being reconciled, so any sibling queue that does
+//     not hold the bead reaps it; the orphan sweep of BI-010d does the same to
+//     a bead whose run is gone. That the two detectors now give the same answer
+//     is the point — a finished bead is never recorded as a failure, whichever
+//     one sees it first.
+//   - past the bound — the item is failed exactly as it always was.
+//
+// Spec ref: specs/queue-model.md §9.8 QM-067, §9.8a QM-067a, §3.2b QM-002b.
+// Bead ref: hk-nsion, hk-a11re, hk-dorz9.
+func resolveCrossQueueCollision(ctx context.Context, ports crossQueueCollisionPorts, site crossQueueCollisionSite, collision crossQueueCollision) bool {
+	key := queuePreClaimAttemptKey{
+		queueID:    site.QueueID,
+		groupIndex: site.GroupIndex,
+		itemIdx:    site.ItemIndex,
+		beadID:     site.BeadID,
+	}
+	outcome, report := recordCrossQueueCollision(ports.collisions, key, collision.Disposition)
+	if report {
+		reportCrossQueueCollision(ctx, ports.emitter, site, collision, outcome)
+	}
+
+	switch outcome {
+	case crossQueueRefuseTick:
+		// Two refusal sets, two jobs. tickRefusals has no clock and is what makes
+		// THIS tick's walk terminate. refusedUntil has one and is what stops the
+		// collision being re-tested at poll cadence for as long as the sibling
+		// runs. See the comments on both maps in runWorkLoop.
+		ports.tickRefusals[site.BeadID] = true
+		ports.refusedUntil[site.BeadID] = site.Now.Add(claimSkipInProgressCooldown)
+		return true
+
+	case crossQueueAdvanceCompleted:
+		delete(ports.collisions, key)
+		evaluateGroupAdvanceWithOutcome(ctx, ports.reap, site.QueueName, site.QueueID, site.GroupIndex, site.ItemIndex, true, site.Now)
+		return false
+
+	default: // crossQueueFailTerminal
+		delete(ports.collisions, key)
+		failQueueItem(ctx, ports.queueStore, ports.projectDir, queueReservation{
+			QueueName:  site.QueueName,
+			GroupIndex: site.GroupIndex,
+			ItemIndex:  site.ItemIndex,
+			BeadID:     site.BeadID,
+		}, "cross_queue_duplicate")
+		evaluateGroupAdvanceWithOutcome(ctx, ports.reap, site.QueueName, site.QueueID, site.GroupIndex, site.ItemIndex, false, site.Now)
+		return false
+	}
+}
+
+// reportCrossQueueCollision says on stderr and on the bus that two queues hold
+// one bead, naming BOTH of them.
+//
+// The event exists because removing the durable failure would otherwise make a
+// real misconfiguration silent. Two queues holding one bead is a planning
+// mistake somebody has to fix, and neither queue name on its own tells them
+// where to look.
+func reportCrossQueueCollision(
+	ctx context.Context,
+	emitter handlercontract.EventEmitter,
+	site crossQueueCollisionSite,
+	collision crossQueueCollision,
+	outcome crossQueueCollisionOutcome,
+) {
+	var disposition core.CrossQueueCollisionDisposition
+	var advice string
+	switch outcome {
+	case crossQueueAdvanceCompleted:
+		disposition = core.CrossQueueCollisionCompleted
+		advice = "that queue already finished it, so this item is advanced to completed rather than run again"
+	case crossQueueFailTerminal:
+		disposition = core.CrossQueueCollisionFailed
+		advice = fmt.Sprintf("the collision outlived %d refusals, so this item is now failed and its queue parks — "+
+			"remove the bead from one of the two queues", maxCrossQueueCollisions)
+	default: // crossQueueRefuseTick
+		disposition = core.CrossQueueCollisionRefused
+		advice = "this item stays pending and is refused until that run ends; the queue keeps dispatching the items behind it"
+	}
+
+	fmt.Fprintf(os.Stderr,
+		"daemon: workloop: bead %s is held by queue %q as well as queue %q — %s (hk-nsion, hk-a11re)\n",
+		site.BeadID, collision.ConflictingQueue, site.QueueName, advice)
+
+	if emitter == nil {
+		return
+	}
+	emitTypedEvent(ctx, emitter, core.EventTypeCrossQueueCollision, core.CrossQueueCollisionPayload{
+		BeadID:       string(site.BeadID),
+		LosingQueue:  site.QueueName,
+		WinningQueue: collision.ConflictingQueue,
+		Disposition:  disposition,
+		DetectedAt:   site.Now.UTC().Format(time.RFC3339),
+	})
 }
 
 // failQueueItem marks one queue item failed with reason and commits that

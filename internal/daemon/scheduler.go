@@ -210,7 +210,12 @@ const maxItemAttempts = queue.MaxItemAttempts
 // bead is re-appended to a group, and beadID alone would conflate two entries
 // for the same bead in one stream group (the hk-wifef re-append case).
 //
-// Bead ref: hk-pina9.
+// The cross-queue collision counter (hk-nsion) keys on the same type. It is a
+// different budget for a different failure, but it identifies an item by exactly
+// the same four facts and for exactly the reasons above, so a second identical
+// key type would be a copy that can drift.
+//
+// Bead ref: hk-pina9, hk-nsion.
 type queuePreClaimAttemptKey struct {
 	queueID    string
 	groupIndex int
@@ -618,6 +623,21 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 	//
 	// Bead ref: hk-pina9.
 	queuePreClaimShowAttempts := make(map[queuePreClaimAttemptKey]int)
+
+	// crossQueueCollisions tracks consecutive cross-queue collisions per QUEUE
+	// ITEM: the times a sibling queue was found holding this item's bead. It is
+	// the bound that keeps a refusal from becoming a permanent one, and it is the
+	// dedup that keeps the collision report to one event per collision.
+	//
+	// Same shape and same reasons as queuePreClaimShowAttempts above: the same
+	// per-item key, in memory only, cleared as soon as the item makes progress,
+	// and forgiven by a daemon restart. It is a SEPARATE budget from the item's
+	// persisted Attempts, which the hk-6pspu dispatch-stamp bound owns — a queue
+	// item that never reached the stamp has spent no dispatch attempt, and
+	// sharing the budget would fail an item for a race it never took part in.
+	//
+	// Bead ref: hk-nsion.
+	crossQueueCollisions := make(map[queuePreClaimAttemptKey]crossQueueCollisionState)
 
 	// dispatchCtx is the context checked by the outer poll loop to decide
 	// whether to halt dispatch. It is separate from ctx (the main daemon context)
@@ -1196,13 +1216,35 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 						if raw, mErr := json.Marshal(skipPayload); mErr == nil {
 							_ = basePorts.Emitter.Emit(ctx, core.EventTypeBeadClaimSkipped, raw) //nolint:errcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
 						}
-						// BI-013c terminal path: closed/tombstone beads are done — fail the
-						// queue item directly via evaluateGroupAdvanceWithOutcome so the group
-						// can reach allItemsTerminal. Non-terminal statuses (in_progress, draft,
-						// deferred, pinned) remain deferred-for-ledger-dep to be re-evaluated
-						// on the next poll cycle (hk-3kq05).
+						// BI-013c terminal path: the bead is closed or tombstoned, so it is
+						// DONE. The item is advanced to COMPLETED, which takes its group to
+						// allItemsTerminal without parking the queue. Non-terminal statuses
+						// (in_progress, draft, deferred, pinned) remain deferred-for-ledger-dep
+						// to be re-evaluated on the next poll cycle (hk-3kq05).
+						//
+						// hk-rern1: this used to pass success=false, which failed the item and
+						// took its group to complete-with-failures — so one already-finished
+						// bead parked the whole queue and stopped every unrelated item behind
+						// it. §3.2b QM-002b Class A says the opposite for exactly this state:
+						// "The item is waiting for a bead that has already finished... Advance
+						// the item's status to completed." The startup reconciliation pass has
+						// always done that to the same item, so the old dispatch-time answer
+						// also meant a daemon restart silently flipped failed to completed.
+						//
+						// Tombstone advances too, and deliberately. QM-002b Class A names
+						// closed AND tombstone in one breath, IsTerminal() admits exactly those
+						// two, and maybeEmitEpicCompleted already counts a tombstoned child as
+						// finished. A tombstoned bead is withdrawn rather than delivered, so
+						// "completed" reads generously — but the queue item's status says
+						// whether this queue still has work to do, and it does not. Splitting
+						// the two here would make dispatch disagree with startup on the same
+						// item and buy nothing.
 						if preClaimRecord.Status.IsTerminal() {
-							evaluateGroupAdvanceWithOutcome(ctx, reapPort, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false, time.Now())
+							fmt.Fprintf(os.Stderr,
+								"daemon: workloop: bead %s is %s — advancing its queue item to completed rather than failing it "+
+									"(§3.2b QM-002b Class A, hk-rern1)\n",
+								snapItemBeadID, preClaimRecord.Status)
+							evaluateGroupAdvanceWithOutcome(ctx, reapPort, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, true, time.Now())
 						} else {
 							// hk-l2xd1: in_progress with no active run → auto-reset to break
 							// the bead_claim_skipped live-lock that starves sibling queue items.
@@ -1393,15 +1435,52 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 						RunID:      reservedRunID,
 					})
 
+					collisionSite := crossQueueCollisionSite{
+						QueueName:  snapQueueName,
+						QueueID:    snapQueueID,
+						GroupIndex: snapGroupIndex,
+						ItemIndex:  snapItemIdx,
+						BeadID:     snapItemBeadID,
+						Now:        time.Now(),
+					}
+
 					switch reservation.Verdict {
 					case reservationReserved:
-						// Durably dispatched. The launch may proceed.
+						// Durably dispatched. The launch may proceed. Progress
+						// clears the collision counter: only a CONSECUTIVE run of
+						// collisions may reach the terminal backstop.
+						delete(crossQueueCollisions, queuePreClaimAttemptKey{
+							queueID:    snapQueueID,
+							groupIndex: snapGroupIndex,
+							itemIdx:    snapItemIdx,
+							beadID:     snapItemBeadID,
+						})
+
+					case reservationCrossQueueCollision:
+						// hk-nsion: a sibling queue holds this bead. The loser's
+						// item is refused for this tick, advanced to completed, or
+						// — only past the bound — failed. It is NOT failed on the
+						// first collision: §9.8 QM-067 says a refusal belongs to
+						// the tick, and a durable failure here parks the loser's
+						// whole queue behind an item that did nothing wrong.
+						if resolveCrossQueueCollision(ctx, crossQueueCollisionPorts{
+							emitter:      basePorts.Emitter,
+							queueStore:   queueStore,
+							projectDir:   baseEnv.ProjectDir,
+							reap:         reapPort,
+							collisions:   crossQueueCollisions,
+							tickRefusals: tickRefusals,
+							refusedUntil: itemRefusedUntil,
+						}, collisionSite, reservation.Collision) {
+							// Refused, not failed. Re-select at once so a sibling
+							// item dispatches on this tick, exactly as the
+							// greenlight refusal does.
+							walkingThisTick = true
+						}
+						continue
 
 					case reservationItemFailed:
 						switch reservation.FailureReason {
-						case "cross_queue_duplicate":
-							fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s already dispatched/completed from queue %q — failing cross-queue duplicate item (hk-a11re, hk-dorz9)\n",
-								snapItemBeadID, reservation.ConflictingQueue)
 						case "max_attempts_exceeded":
 							fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s exceeded maxItemAttempts=%d — failing queue item (hk-6pspu)\n",
 								snapItemBeadID, maxItemAttempts)

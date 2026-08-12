@@ -606,3 +606,94 @@ func (p ReconciliationMismatchObservedPayload) Valid() bool {
 	}
 	return true
 }
+
+// ---------------------------------------------------------------------------
+// queue-model.md §9.8a QM-067a — cross_queue_collision
+// ---------------------------------------------------------------------------
+
+// CrossQueueCollisionDisposition names what the dispatcher did about one
+// cross-queue collision. The three values are the three ways the losing item can
+// leave the collision, and they are the reason the event is worth reading: the
+// same collision text with a different disposition means a different repair.
+type CrossQueueCollisionDisposition string
+
+const (
+	// CrossQueueCollisionRefused — the sibling is still running the bead, so the
+	// losing item stays pending and is refused for this tick only.
+	CrossQueueCollisionRefused CrossQueueCollisionDisposition = "refused"
+
+	// CrossQueueCollisionCompleted — the sibling already finished the bead, so
+	// the losing item is advanced to completed. Running it again would duplicate
+	// finished work.
+	CrossQueueCollisionCompleted CrossQueueCollisionDisposition = "completed"
+
+	// CrossQueueCollisionFailed — the collision outlived its bound, so the losing
+	// item is failed. A refusal that never lapses is a stall, and a stall reads
+	// as a slow daemon rather than an error.
+	CrossQueueCollisionFailed CrossQueueCollisionDisposition = "failed"
+)
+
+// CrossQueueCollisionPayload is the typed event payload for the
+// cross_queue_collision event (queue-model.md §9.8a QM-067a).
+//
+// Tags: mechanism
+// Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
+// Durability class: O (ordinary — observational. The durable record of the
+// outcome is the queue item's own status; this event says WHY.)
+//
+// Emitted by the daemon's dispatch reservation when the cross-queue guard finds
+// the same bead held by another active queue. One event per collision, not one
+// per tick: a refusal repeats every poll interval for as long as the sibling
+// runs, and an event per repeat would bury the one an operator needs.
+//
+// # Payload fields
+//
+//   - bead_id       — the bead both queues hold
+//   - losing_queue  — the queue whose item did not get the bead
+//   - winning_queue — the queue that already holds it dispatched or completed
+//   - disposition   — what happened to the losing item
+//   - detected_at   — RFC 3339 wall-clock timestamp at detection
+//
+// Bead ref: hk-nsion.
+type CrossQueueCollisionPayload struct {
+	// BeadID is the bead named by an item in both queues. Required (non-empty).
+	BeadID string `json:"bead_id"`
+
+	// LosingQueue is the queue whose reservation was refused. Required (non-empty).
+	LosingQueue string `json:"losing_queue"`
+
+	// WinningQueue is the queue that already holds the bead dispatched or
+	// completed. Required (non-empty).
+	WinningQueue string `json:"winning_queue"`
+
+	// Disposition is what the dispatcher did about the losing item. Required —
+	// one of the three declared values.
+	Disposition CrossQueueCollisionDisposition `json:"disposition"`
+
+	// DetectedAt is the RFC 3339 wall-clock timestamp at detection. Required
+	// (non-empty).
+	DetectedAt string `json:"detected_at"`
+}
+
+// Valid reports whether p is a well-formed CrossQueueCollisionPayload.
+//
+// Rules:
+//   - BeadID, LosingQueue, WinningQueue and DetectedAt must be non-empty.
+//   - Disposition must be one of the three declared values.
+//   - LosingQueue and WinningQueue must differ. A collision with itself is not a
+//     collision, and a payload that names one queue twice would send an operator
+//     looking for a second queue that does not exist.
+func (p CrossQueueCollisionPayload) Valid() bool {
+	if p.BeadID == "" || p.LosingQueue == "" || p.WinningQueue == "" || p.DetectedAt == "" {
+		return false
+	}
+	if p.LosingQueue == p.WinningQueue {
+		return false
+	}
+	switch p.Disposition {
+	case CrossQueueCollisionRefused, CrossQueueCollisionCompleted, CrossQueueCollisionFailed:
+		return true
+	default:
+		return false
+	}
+}

@@ -57,12 +57,17 @@ package daemon_test
 //   - 7 the two dispatch paths order the same gates differently — PINNED.
 //     TestAdmissionOrder_ReadyPathBoundsAttemptsBeforeHandlerPause.
 //   - 8 delay is two different outcomes — HALF PINNED.
-//     TestAdmissionOrder_TerminalDedupLeavesAWakeTokenPending pins the fact that
+//     TestAdmissionOrder_TerminalStampLeavesAWakeTokenPending pins the fact that
 //     decides the merge: a wake token is already pending at four of the five
 //     no-sleep sites, so merging those toward the sleeping variant costs zero
 //     latency, not one poll interval. The other direction — merging toward the
 //     no-sleep variant — busy-spins the cooldown, and no test can reach a code
 //     shape that does not exist. See OPEN-DEFECTS.md.
+//     That test used to drive the cross-queue duplicate. It cannot any more: a
+//     collision is no longer terminal on sight (hk-nsion), so that fixture never
+//     reaches all-terminal and the loop never exits. It now drives the hk-6pspu
+//     max-attempts stamp, which is another of the same five sites and reaches
+//     the SAME branch of evaluateGroupAdvanceWithOutcome on its first tick.
 //   - 9 decision-required and sentinel-queue are freely swappable — nothing to
 //     pin. The plan records this as the one pair with no real constraint, and
 //     re-reading the two blocks agrees: only the stderr string differs.
@@ -86,6 +91,7 @@ package daemon_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -436,11 +442,18 @@ func admissionParkedItem(id core.BeadID) queue.Item {
 // fallback cannot supply dispatch input, and the br-ready test clears it.
 func admissionDeps(t *testing.T, ledger *admissionLedger, qs *queuewiring.QueueStore, qLedger queue.BeadLedger, noAutoPull bool, pause *daemon.HandlerPauseController) daemon.TestRuntimeParams {
 	t.Helper()
+	return admissionDepsWithBus(t, ledger, qs, qLedger, noAutoPull, pause, &stubEventCollector{})
+}
+
+// admissionDepsWithBus is admissionDeps with the event collector supplied by the
+// caller, for the one test that reads what the loop emitted.
+func admissionDepsWithBus(t *testing.T, ledger *admissionLedger, qs *queuewiring.QueueStore, qLedger queue.BeadLedger, noAutoPull bool, pause *daemon.HandlerPauseController, bus *stubEventCollector) daemon.TestRuntimeParams {
+	t.Helper()
 	projectDir, _ := workloopFixtureProjectDir(t)
 	workloopFixtureGitRepo(t, projectDir)
 	return daemon.TestRuntimeParams{
 		BrAdapter:              ledger,
-		Bus:                    &stubEventCollector{},
+		Bus:                    bus,
 		ProjectDir:             projectDir,
 		HandlerBinary:          "/bin/sh",
 		HandlerArgs:            []string{"-c", "exit 0"},
@@ -823,9 +836,20 @@ func TestAdmissionOrder_GreenlightRunsAfterPreClaimShowBead(t *testing.T) {
 // cross-queue dedup guard.
 //
 // One bead sits in two queues. The winning queue's item is already stamped
-// dispatched. The dedup guard must see that stamp and fail the losing queue's
+// dispatched. The dedup guard must see that stamp and stop the losing queue's
 // item WITHOUT claiming the bead. Without the guard the same bead gets two
 // implementers, which is the bug hk-a11re fixed.
+//
+// # What the loser's item does, and why it changed
+//
+// The guard used to write the loser's item terminally FAILED. That parked the
+// loser's whole queue — one failed item takes its group to complete-with-
+// failures — over a bead that had done nothing wrong, and an operator could not
+// undo it while the winner still held the bead. specs/queue-model.md §9.8 QM-067
+// names this exact case as a per-tick REFUSAL and forbids making it durable:
+// "eligibility is a property of the queue item, and a refusal is a property of
+// this tick." So the loser now stays pending, and the queue goes on dispatching
+// the items behind it. Bead ref: hk-nsion.
 //
 // # What this test does NOT pin, and why
 //
@@ -844,7 +868,7 @@ func TestAdmissionOrder_CrossQueueDedupPrecedesTheClaim(t *testing.T) {
 	t.Parallel()
 
 	const sharedBead core.BeadID = "hk-a11re-shared-bead"
-	const parkedID core.BeadID = "hk-a11re-parked-bead"
+	const behindID core.BeadID = "hk-a11re-behind-bead"
 
 	ledger := newAdmissionLedger()
 
@@ -858,18 +882,21 @@ func TestAdmissionOrder_CrossQueueDedupPrecedesTheClaim(t *testing.T) {
 	})
 
 	// beta is the loser: the same bead, still pending, so selection picks it. The
-	// parked item keeps beta's group off all-terminal after the dedup guard fails
-	// item 0, which keeps the queue in the store for the snapshot below.
+	// second item is NOT parked — it is a plain dispatchable bead sitting behind
+	// the refused one, and it is the positive control. §9.8 QM-067 requires the
+	// dispatcher to offer it on the SAME tick, so a claim for it is the evidence
+	// that the refusal cost the queue nothing.
 	beta := admissionQueue("beta",
 		queue.Item{BeadID: sharedBead, Status: queue.ItemStatusPending},
-		admissionParkedItem(parkedID),
+		queue.Item{BeadID: behindID, Status: queue.ItemStatusPending},
 	)
 
 	qs := daemon.ExportedNewQueueStore()
 	qs.SetQueue(alpha)
 	qs.SetQueue(beta)
 
-	deps := daemon.ExportedTestRuntime(admissionDeps(t, ledger, qs, &admissionQueueLedger{}, true, nil))
+	bus := &stubEventCollector{}
+	deps := daemon.ExportedTestRuntime(admissionDepsWithBus(t, ledger, qs, &admissionQueueLedger{}, true, nil, bus))
 
 	var betaSnapshot, alphaSnapshot *queue.Queue
 	runAdmissionLoop(t, qs,
@@ -890,28 +917,296 @@ func TestAdmissionOrder_CrossQueueDedupPrecedesTheClaim(t *testing.T) {
 			"same bead gets two implementers.", got, "alpha")
 	}
 
-	// The reason assertion: the item is terminal FOR THE DEDUP REASON. Any other
-	// failure reason would mean some unrelated gate stopped the dispatch and this
-	// test proved nothing about the dedup guard.
-	betaItem := admissionFirstItem(t, betaSnapshot)
-	if betaItem.Status != queue.ItemStatusFailed {
-		t.Errorf("losing item status = %q, want %q", betaItem.Status, queue.ItemStatusFailed)
+	// The positive control. Without it "the loser stayed pending" is also what a
+	// fixture that never reached the dedup guard at all would produce.
+	if got := ledger.claimCount(behindID); got == 0 {
+		t.Errorf("ClaimBead was never called for the bead sitting BEHIND the refused one.\n" +
+			"Either the loop never reached the dedup guard — in which case every assertion here is empty — or the " +
+			"refusal cost the queue its turn, which is the head-of-line stall §9.8 QM-067 forbids.")
 	}
-	if betaItem.LastFailureReason != "cross_queue_duplicate" {
-		t.Errorf("losing item LastFailureReason = %q, want %q — a different reason means a different gate "+
-			"stopped this dispatch and the dedup guard is untested",
-			betaItem.LastFailureReason, "cross_queue_duplicate")
+
+	// The disposition assertion: the loser is REFUSED, not failed. A terminal
+	// status here is the durable form of a per-tick refusal, and it parks every
+	// unrelated item behind it.
+	betaItem := admissionFirstItem(t, betaSnapshot)
+	if betaItem.Status != queue.ItemStatusPending {
+		t.Errorf("losing item status = %q, want %q — a refusal belongs to the tick, so it must leave the item "+
+			"eligible (§9.8 QM-067, hk-nsion)", betaItem.Status, queue.ItemStatusPending)
+	}
+	if betaItem.LastFailureReason != "" {
+		t.Errorf("losing item LastFailureReason = %q, want empty — nothing failed, so nothing may claim it did",
+			betaItem.LastFailureReason)
+	}
+	if betaItem.Attempts != 0 {
+		t.Errorf("losing item Attempts = %d, want 0 — losing another queue's race must not spend this item's "+
+			"dispatch budget", betaItem.Attempts)
 	}
 	if betaItem.RunID != nil {
 		t.Errorf("losing item carries RunID %v — it was stamped before the dedup guard fired", *betaItem.RunID)
+	}
+	if betaSnapshot.Status != queue.QueueStatusActive {
+		t.Errorf("losing QUEUE status = %q, want %q — parking the queue is the cost the terminal failure carried, "+
+			"and it stops every unrelated item behind the collision", betaSnapshot.Status, queue.QueueStatusActive)
+	}
+
+	// The collision is reported. Removing the durable failure would otherwise
+	// leave a real misconfiguration with no signal at all.
+	collisions := admissionCollisionPayloads(t, bus)
+	if len(collisions) != 1 {
+		t.Fatalf("%d cross_queue_collision events, want exactly 1 naming both queues: %+v", len(collisions), collisions)
+	}
+	if collisions[0].LosingQueue != "beta" || collisions[0].WinningQueue != "alpha" {
+		t.Errorf("collision names losing=%q winning=%q, want losing=%q winning=%q",
+			collisions[0].LosingQueue, collisions[0].WinningQueue, "beta", "alpha")
+	}
+	if collisions[0].Disposition != core.CrossQueueCollisionRefused {
+		t.Errorf("collision disposition = %q, want %q", collisions[0].Disposition, core.CrossQueueCollisionRefused)
 	}
 
 	// The winner is untouched.
 	alphaItem := admissionFirstItem(t, alphaSnapshot)
 	if alphaItem.Status != queue.ItemStatusDispatched {
-		t.Errorf("winning item status = %q, want %q — the dedup guard must fail the loser, not the winner",
+		t.Errorf("winning item status = %q, want %q — the dedup guard must stop the loser, not the winner",
 			alphaItem.Status, queue.ItemStatusDispatched)
 	}
+}
+
+// admissionCollisionPayloads returns every cross_queue_collision payload the bus
+// recorded.
+func admissionCollisionPayloads(t *testing.T, bus *stubEventCollector) []core.CrossQueueCollisionPayload {
+	t.Helper()
+	events := bus.allEvents()
+	out := make([]core.CrossQueueCollisionPayload, 0, len(events))
+	for _, evt := range events {
+		if evt.EventType != string(core.EventTypeCrossQueueCollision) {
+			continue
+		}
+		var payload core.CrossQueueCollisionPayload
+		if err := json.Unmarshal(evt.Payload, &payload); err != nil {
+			t.Fatalf("unmarshal cross_queue_collision payload: %v", err)
+		}
+		out = append(out, payload)
+	}
+	return out
+}
+
+// TestAdmissionOrder_CrossQueueFinishedSiblingCompletesTheLoser is the other
+// half of the split guard.
+//
+// A sibling that is still RUNNING can lapse, so its collision is a refusal. A
+// sibling that has already FINISHED cannot: the bead is closed and the work is
+// done. specs/queue-model.md §3.2b QM-002b Class A says an item whose bead has
+// already finished is advanced to COMPLETED, and failing it instead parks the
+// queue over work that succeeded.
+//
+// The two cases were one boolean before hk-nsion, which is why every collision
+// ended in a durable failure.
+func TestAdmissionOrder_CrossQueueFinishedSiblingCompletesTheLoser(t *testing.T) {
+	t.Parallel()
+
+	const sharedBead core.BeadID = "hk-nsion-finished-shared-bead"
+	const parkedID core.BeadID = "hk-nsion-finished-parked-bead"
+
+	ledger := newAdmissionLedger()
+
+	// alpha already RAN the bead: its item is completed, not dispatched.
+	alpha := admissionQueue("alpha", queue.Item{BeadID: sharedBead, Status: queue.ItemStatusCompleted})
+
+	// The parked item keeps beta's group off all-terminal, so this test reads the
+	// item write rather than the queue-completion machinery.
+	beta := admissionQueue("beta",
+		queue.Item{BeadID: sharedBead, Status: queue.ItemStatusPending},
+		admissionParkedItem(parkedID),
+	)
+
+	qs := daemon.ExportedNewQueueStore()
+	qs.SetQueue(alpha)
+	qs.SetQueue(beta)
+
+	bus := &stubEventCollector{}
+	deps := daemon.ExportedTestRuntime(admissionDepsWithBus(t, ledger, qs, &admissionQueueLedger{}, true, nil, bus))
+
+	var betaSnapshot *queue.Queue
+	runAdmissionLoop(t, qs,
+		func(c context.Context) {
+			daemon.ExportedRunWorkLoop(c, deps) //nolint:errcheck,gosec // G104: background loop; returns on ctx cancel
+		},
+		func() { betaSnapshot = qs.QueueByName("beta") },
+	)
+	ledger.assertNoRunPathCalls(t)
+
+	if got := ledger.claimCount(sharedBead); got != 0 {
+		t.Errorf("ClaimBead called %d time(s) for a bead another queue has already finished, want 0 — the work is "+
+			"done, so claiming it again reopens finished work", got)
+	}
+
+	betaItem := admissionFirstItem(t, betaSnapshot)
+	if betaItem.Status != queue.ItemStatusCompleted {
+		t.Errorf("losing item status = %q, want %q — the bead is closed, so the item is advanced, not failed "+
+			"(§3.2b QM-002b Class A)", betaItem.Status, queue.ItemStatusCompleted)
+	}
+	if betaItem.LastFailureReason != "" {
+		t.Errorf("losing item LastFailureReason = %q, want empty — nothing failed", betaItem.LastFailureReason)
+	}
+	if betaSnapshot.Status != queue.QueueStatusActive {
+		t.Errorf("losing QUEUE status = %q, want %q — a queue must not park over an item whose work succeeded",
+			betaSnapshot.Status, queue.QueueStatusActive)
+	}
+
+	collisions := admissionCollisionPayloads(t, bus)
+	if len(collisions) != 1 || collisions[0].Disposition != core.CrossQueueCollisionCompleted {
+		t.Errorf("collision events = %+v, want exactly one with disposition %q",
+			collisions, core.CrossQueueCollisionCompleted)
+	}
+}
+
+// TestPreClaimTerminalStatusCompletesTheItem is the OTHER detector's half of the
+// same rule, and it is here rather than in an ordering constraint because it is
+// a disposition: it says what happens to an item, not which gate runs first.
+//
+// Two detectors in this loop can find that an item's work is already done. The
+// cross-queue guard above finds a sibling queue holding the bead completed. The
+// BI-013c pre-claim ledger re-read — which runs STRICTLY EARLIER in the same
+// loop body, so in a live daemon it usually gets there first — finds the bead
+// itself closed or tombstoned. They must agree, and hk-nsion's whole subject is
+// that recording finished work as a failure parks a queue over work that
+// succeeded.
+//
+// This one is worse than the case hk-nsion fixed. A cross-queue collision lapses
+// when the sibling's run ends, so `queue recover` eventually works. A closed
+// bead never reopens, and §8.3b QM-052b refuses to recover a queue whose bead is
+// not open — so the old durable failure here could not be undone at all.
+//
+// §3.2b QM-002b Class A states the rule: an item whose bead the ledger shows as
+// closed or tombstone "is waiting for a bead that has already finished", and the
+// daemon MUST advance it to completed. The startup reconciliation pass has
+// always done exactly that to the same item, so the old dispatch-time answer
+// also meant a daemon restart silently flipped the item from failed to
+// completed.
+//
+// Bead ref: hk-rern1, hk-nsion.
+func TestPreClaimTerminalStatusCompletesTheItem(t *testing.T) {
+	t.Parallel()
+
+	// Both terminal statuses, on purpose. QM-002b Class A names closed AND
+	// tombstone together, and core.CoarseStatus.IsTerminal() admits exactly those
+	// two. A tombstoned bead is withdrawn rather than delivered, so "completed"
+	// reads generously — but the item's status says whether this queue still has
+	// work to do, and it does not. Splitting them here would make dispatch
+	// disagree with startup on the same item.
+	for _, status := range []core.CoarseStatus{core.CoarseStatusClosed, core.CoarseStatusTombstone} {
+		t.Run(string(status), func(t *testing.T) {
+			t.Parallel()
+
+			beadID := core.BeadID("hk-rern1-terminal-" + string(status))
+			parkedID := core.BeadID("hk-rern1-parked-" + string(status))
+
+			ledger := newAdmissionLedger()
+			ledger.setStatus(status)
+
+			// The parked item keeps the group off all-terminal, so the queue stays
+			// in the store and this subtest reads the ITEM write rather than the
+			// queue-completion machinery. The queue-parking consequence is the
+			// subtest below.
+			qs := daemon.ExportedNewQueueStore()
+			qs.SetQueue(admissionQueue("main",
+				queue.Item{BeadID: beadID, Status: queue.ItemStatusPending},
+				admissionParkedItem(parkedID),
+			))
+
+			bus := &stubEventCollector{}
+			deps := daemon.ExportedTestRuntime(admissionDepsWithBus(t, ledger, qs, &admissionQueueLedger{}, true, nil, bus))
+
+			var snapshot *queue.Queue
+			runAdmissionLoop(t, qs,
+				func(c context.Context) {
+					daemon.ExportedRunWorkLoop(c, deps) //nolint:errcheck,gosec // G104: background loop; returns on ctx cancel
+				},
+				func() { snapshot = qs.QueueByName("main") },
+			)
+			ledger.assertNoRunPathCalls(t)
+
+			// The fixture control: the loop really took the BI-013c branch. Without
+			// this, "the item is completed" could be some other path's doing and the
+			// assertion below would prove nothing about the pre-claim guard.
+			if got := admissionSkippedStatuses(t, bus); len(got) == 0 || got[0] != string(status) {
+				t.Fatalf("bead_claim_skipped observed_status values = %v, want the first to be %q — the fixture "+
+					"did not reach the BI-013c pre-claim guard, so nothing below is evidence about it", got, status)
+			}
+			if got := ledger.claimCount(beadID); got != 0 {
+				t.Errorf("ClaimBead called %d time(s) for a %s bead, want 0", got, status)
+			}
+
+			item := admissionFirstItem(t, snapshot)
+			if item.Status != queue.ItemStatusCompleted {
+				t.Errorf("item status = %q, want %q — the bead has already finished, so the item is advanced, "+
+					"not failed (§3.2b QM-002b Class A, hk-rern1)", item.Status, queue.ItemStatusCompleted)
+			}
+			if item.LastFailureReason != "" {
+				t.Errorf("item LastFailureReason = %q, want empty — nothing failed", item.LastFailureReason)
+			}
+		})
+	}
+
+	// The consequence, on the fixture that can show it: with nothing else in the
+	// group, the item's disposition decides the QUEUE's. Failing it takes the
+	// group to complete-with-failures and parks the queue, and a closed bead
+	// makes that unrecoverable — §8.3b QM-052b refuses to recover a queue whose
+	// bead is not open.
+	t.Run("the queue does not park", func(t *testing.T) {
+		t.Parallel()
+
+		const beadID core.BeadID = "hk-rern1-lone-bead"
+
+		ledger := newAdmissionLedger()
+		ledger.setStatus(core.CoarseStatusClosed)
+
+		qs := daemon.ExportedNewQueueStore()
+		qs.SetQueue(admissionQueue("main", queue.Item{BeadID: beadID, Status: queue.ItemStatusPending}))
+
+		bus := &stubEventCollector{}
+		deps := daemon.ExportedTestRuntime(admissionDepsWithBus(t, ledger, qs, &admissionQueueLedger{}, true, nil, bus))
+
+		var snapshot *queue.Queue
+		runAdmissionLoop(t, qs,
+			func(c context.Context) {
+				daemon.ExportedRunWorkLoop(c, deps) //nolint:errcheck,gosec // G104: background loop; returns on ctx cancel
+			},
+			func() { snapshot = qs.QueueByName("main") },
+		)
+		ledger.assertNoRunPathCalls(t)
+
+		if got := admissionSkippedStatuses(t, bus); len(got) == 0 {
+			t.Fatal("no bead_claim_skipped event — the fixture did not reach the BI-013c pre-claim guard")
+		}
+		// A queue whose only item completed reaches complete-success and releases
+		// its name, so an absent snapshot is the SUCCESS shape here. A failed item
+		// leaves the queue in the store at paused-by-failure.
+		if snapshot != nil && snapshot.Status == queue.QueueStatusPausedByFailure {
+			t.Errorf("queue status = %q, want it not parked — one already-finished bead must not stop every "+
+				"unrelated item behind it, and a closed bead makes that park unrecoverable (§8.3b QM-052b)",
+				snapshot.Status)
+		}
+	})
+}
+
+// admissionSkippedStatuses returns the observed_status of every
+// bead_claim_skipped event the bus recorded, in order.
+func admissionSkippedStatuses(t *testing.T, bus *stubEventCollector) []string {
+	t.Helper()
+	events := bus.allEvents()
+	out := make([]string, 0, len(events))
+	for _, evt := range events {
+		if evt.EventType != string(core.EventTypeBeadClaimSkipped) {
+			continue
+		}
+		var payload core.BeadClaimSkippedPayload
+		if err := json.Unmarshal(evt.Payload, &payload); err != nil {
+			t.Fatalf("unmarshal bead_claim_skipped payload: %v", err)
+		}
+		out = append(out, payload.ObservedStatus)
+	}
+	return out
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1182,13 +1477,13 @@ func TestAdmissionOrder_ReadyPathBoundsAttemptsBeforeHandlerPause(t *testing.T) 
 // Constraint 8 — the two delay variants are not interchangeable
 // ─────────────────────────────────────────────────────────────────────────────
 
-// TestAdmissionOrder_TerminalDedupLeavesAWakeTokenPending pins the fact that
+// TestAdmissionOrder_TerminalStampLeavesAWakeTokenPending pins the fact that
 // decides how the two delay variants may be merged.
 //
 // runWorkLoop ends a tick in one of two ways. Twenty-six sites call
 // workloopSleep (or an idle wait) and then continue. Five continue with NO
 // sleep: the queue bootstrap, the hk-pina9 pre-claim ShowBead bound, the
-// cross-queue duplicate, the hk-6pspu max-attempts stamp, and the hk-n91y0
+// cross-queue collision, the hk-6pspu max-attempts stamp, and the hk-n91y0
 // claim-blocked path. Step 3 wants one delay(reason) result, which forces a
 // choice about those five.
 //
@@ -1199,25 +1494,39 @@ func TestAdmissionOrder_ReadyPathBoundsAttemptsBeforeHandlerPause(t *testing.T) 
 // Merging them toward the sleeping variant therefore costs zero latency, not one
 // poll interval.
 //
+// # Why this drives the attempts bound rather than the cross-queue collision
+//
+// It used to drive the collision, whose loser went terminal on sight. That is
+// exactly what hk-nsion removed: a collision is now a per-tick refusal, the
+// loser stays pending, its group never reaches all-terminal, and a fixture built
+// on it hangs to this test's own 20-second fatal. Only the collision BOUND is
+// still terminal, and reaching it takes twelve refusals spaced by a five-minute
+// cooldown — an hour of real time, which is not a unit test.
+//
+// The hk-6pspu max-attempts stamp is another of the same five sites and it
+// reaches the same branch: the reservation fails the item inside its own write,
+// the loop continues without sleeping, evaluateGroupAdvanceWithOutcome takes the
+// group to complete-with-failures, and the queue parks. One item at
+// MaxItemAttempts-1 gets there on the FIRST tick.
+//
 // This test measures the token, with no wall clock anywhere. It drains the wake
-// channel after fixture setup, drives the cross-queue duplicate, waits for the
-// loop to EXIT, and then reads the channel. The loop cannot have consumed the
-// token: the dedup continue does not sleep, and the tick after it returns at the
-// dispatch-halt check, so no workloopSleep runs at all. Shutdown adds no token
-// either. That was true while shutdown archived the queue through
-// ClearQueueByName, which does not wake. It is true no longer, and the
-// assertion below is degenerate as a result. The shutdown drain
-// (drainQueuesForRestart) now parks every still-active queue with
-// SetQueueByName, which DOES signal the wake channel, and this fixture leaves
-// queue alpha active — only beta goes terminal. So the exit puts a token in the
-// channel by itself, and the assertion passes even when the wake it means to
-// pin (queueStore.Wake() on evaluateGroupAdvanceWithOutcome's
-// not-all-succeeded branch) is deleted. Read a green result here as "a token
-// exists", not as "the dedup path left one". Filed as hk-waketoken-degenerate-06ntc.
+// channel after fixture setup, drives the terminal stamp, waits for the loop to
+// EXIT, and then reads the channel. The loop cannot have consumed the token: the
+// stamp's continue does not sleep, and the tick after it returns at the
+// dispatch-halt check, so no workloopSleep runs at all.
+//
+// Shutdown adds no token either — except that it does, and the assertion is
+// degenerate as a result. The shutdown drain (drainQueuesForRestart) parks every
+// still-active queue with SetQueueByName, which DOES signal the wake channel.
+// This fixture's only queue goes terminal, so nothing is left for the drain to
+// park and the exit adds nothing; but that is a property of the fixture rather
+// than something the assertion states. Read a green result here as "a token
+// exists", not as "the terminal path left one". Filed as
+// hk-waketoken-degenerate-06ntc.
 //
 // The drain before the run is the control. Without it a token left over from the
 // fixture's own SetQueue calls would satisfy the assertion and it would prove
-// nothing about the dedup path.
+// nothing about the terminal path.
 //
 // # What this does NOT test, and why no test can
 //
@@ -1227,26 +1536,24 @@ func TestAdmissionOrder_ReadyPathBoundsAttemptsBeforeHandlerPause(t *testing.T) 
 // test can show that, because there is no code shape in the tree that does it.
 // It is an argument about a change nobody has made, so it belongs in the record
 // rather than in an assertion. See OPEN-DEFECTS.md.
-func TestAdmissionOrder_TerminalDedupLeavesAWakeTokenPending(t *testing.T) {
+func TestAdmissionOrder_TerminalStampLeavesAWakeTokenPending(t *testing.T) {
 	t.Parallel()
 
-	const sharedBead core.BeadID = "hk-a11re-waketoken-bead"
+	const boundBead core.BeadID = "hk-6pspu-waketoken-bead"
 
 	ledger := newAdmissionLedger()
 
-	// Same two-queue shape as the dedup test, with ONE difference: beta holds no
-	// parked filler item. Its group therefore reaches all-terminal when the dedup
-	// guard fails the only item, the queue goes paused-by-failure, and
-	// evaluateGroupAdvanceWithOutcome fires cancelOnQueueExit. That is what stops
-	// the loop before it can sleep and consume the token this test reads.
-	alphaRunID := "alpha-waketoken-run-id"
+	// One item, one attempt short of the bound. The reservation write charges the
+	// last attempt, fails the item, and the group reaches all-terminal at once,
+	// so the queue goes paused-by-failure and evaluateGroupAdvanceWithOutcome
+	// fires cancelOnQueueExit. That is what stops the loop before it can sleep and
+	// consume the token this test reads.
 	qs := daemon.ExportedNewQueueStore()
-	qs.SetQueue(admissionQueue("alpha", queue.Item{
-		BeadID: sharedBead,
-		Status: queue.ItemStatusDispatched,
-		RunID:  &alphaRunID,
+	qs.SetQueue(admissionQueue("main", queue.Item{
+		BeadID:   boundBead,
+		Status:   queue.ItemStatusPending,
+		Attempts: queue.MaxItemAttempts - 1,
 	}))
-	qs.SetQueue(admissionQueue("beta", queue.Item{BeadID: sharedBead, Status: queue.ItemStatusPending}))
 
 	stopCtx, stopDispatch := context.WithCancel(context.Background())
 	defer stopDispatch()
@@ -1273,22 +1580,22 @@ func TestAdmissionOrder_TerminalDedupLeavesAWakeTokenPending(t *testing.T) {
 		daemon.ExportedRunWorkLoopWithTestPorts(ctx, deps, params) //nolint:errcheck,gosec // G104: background loop; error unactionable here
 	}()
 
-	// No wake pump here. The loop must reach the dedup guard on its FIRST tick and
-	// then exit, so it needs no wake to make progress and cannot consume a token.
+	// No wake pump here. The loop must reach the stamp on its FIRST tick and then
+	// exit, so it needs no wake to make progress and cannot consume a token.
 	select {
 	case <-loopDone:
 	case <-time.After(20 * time.Second):
 		cancel()
-		t.Fatal("work loop did not exit after the cross-queue duplicate drove beta's queue terminal")
+		t.Fatal("work loop did not exit after the attempts bound drove the queue terminal")
 	}
 
 	ledger.assertNoRunPathCalls(t)
-	if got := ledger.claimCount(sharedBead); got != 0 {
-		t.Errorf("ClaimBead called %d time(s) for the duplicate bead, want 0 — the fixture did not take "+
-			"the dedup path, so the token below says nothing about it", got)
+	if got := ledger.claimCount(boundBead); got != 0 {
+		t.Errorf("ClaimBead called %d time(s) for a bead the attempts bound refused, want 0 — the fixture did not "+
+			"take the terminal-stamp path, so the token below says nothing about it", got)
 	}
 	if !pendingWake(qs) {
-		t.Error("no wake token pending after the cross-queue duplicate drove the item terminal.\n" +
+		t.Error("no wake token pending after the attempts bound drove the item terminal.\n" +
 			"evaluateGroupAdvanceWithOutcome calls queueStore.Wake() on its not-all-succeeded branch, and " +
 			"workloopSleep selects on that channel. The token is what makes a sleep at this continue return " +
 			"at once, which is why merging the no-sleep sites toward the sleeping variant costs no latency. " +

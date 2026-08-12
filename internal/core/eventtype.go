@@ -891,6 +891,20 @@ const (
 	// Durability class: F — loss could silently re-dispatch a reverted item per EV-016.
 	// Added in QM-002a v0.1.1.
 	EventTypeQueueItemReconciled EventType = "queue_item_reconciled"
+
+	// EventTypeCrossQueueCollision is the cross_queue_collision event type
+	// (queue-model.md §9.8a QM-067a). Durability class: O (ordinary —
+	// observational; the durable record of what happened is the queue item's own
+	// status).
+	//
+	// Emitted by the dispatch reservation when a sibling queue already holds the
+	// same bead. It carries both queue names because the same bead in two queues
+	// is a planning mistake, and neither name alone tells an operator where to
+	// look. Before this event the only signal was a durable failed item, which
+	// the loser no longer takes on the first collision.
+	//
+	// Bead ref: hk-nsion.
+	EventTypeCrossQueueCollision EventType = "cross_queue_collision"
 )
 
 // ---------------------------------------------------------------------------

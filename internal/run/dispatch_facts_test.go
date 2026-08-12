@@ -95,7 +95,7 @@ func runFactIntent(t *testing.T, phase dispatch.Phase) dispatch.Intent {
 	case dispatch.PhasePrepared:
 		return intent
 	case dispatch.PhaseClaimRefused:
-		t.Fatalf("run fact fixture does not support phase %q", phase)
+		intent, err = intent.WithClaimRefused(dispatch.ClaimRefusalDependency)
 	case dispatch.PhaseClaimDurable:
 		intent, err = intent.WithClaimDurable()
 	case dispatch.PhaseRunDurable:
@@ -116,4 +116,115 @@ func runFactIntent(t *testing.T, phase dispatch.Phase) dispatch.Intent {
 		t.Fatal(err)
 	}
 	return intent
+}
+
+func TestClassifySessionStartReceipt(t *testing.T) {
+	intent := runFactIntent(t, dispatch.PhaseHandoffDurable)
+	record := testDispatchRecord()
+	record.Location = &ExecutionLocation{Kind: ExecutionLocalIndependent}
+	record.SessionName = intent.Handoff.SessionName
+	record.WindowName = intent.Handoff.WindowName
+	receipt, err := dispatch.NewSessionStartReceipt(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		receipt *dispatch.SessionStartReceipt
+		want    dispatch.SessionReceiptFact
+	}{
+		{name: "absent", want: dispatch.SessionReceiptAbsent},
+		{name: "exact", receipt: &receipt, want: dispatch.SessionReceiptExact},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ClassifySessionStartReceipt(intent, &record, tc.receipt); got != tc.want {
+				t.Fatalf("fact = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestClassifySessionStartReceiptRejectsEveryAuthorityMismatch(t *testing.T) {
+	intent := runFactIntent(t, dispatch.PhaseHandoffDurable)
+	record := testDispatchRecord()
+	record.Location = &ExecutionLocation{Kind: ExecutionLocalIndependent}
+	record.SessionName = intent.Handoff.SessionName
+	record.WindowName = intent.Handoff.WindowName
+	receipt, err := dispatch.NewSessionStartReceipt(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name   string
+		mutate func(*dispatch.Intent, *DispatchRecord, *dispatch.SessionStartReceipt)
+	}{
+		{name: "invalid intent", mutate: func(i *dispatch.Intent, _ *DispatchRecord, _ *dispatch.SessionStartReceipt) { i.Binding.BeadID = "" }},
+		{name: "missing record", mutate: func(_ *dispatch.Intent, r *DispatchRecord, _ *dispatch.SessionStartReceipt) { *r = DispatchRecord{} }},
+		{name: "record binding", mutate: func(_ *dispatch.Intent, r *DispatchRecord, _ *dispatch.SessionStartReceipt) { r.BeadID = "hk-other" }},
+		{name: "record session", mutate: func(_ *dispatch.Intent, r *DispatchRecord, _ *dispatch.SessionStartReceipt) { r.SessionName = "other" }},
+		{name: "record window", mutate: func(_ *dispatch.Intent, r *DispatchRecord, _ *dispatch.SessionStartReceipt) { r.WindowName = "other" }},
+		{name: "receipt binding", mutate: func(_ *dispatch.Intent, _ *DispatchRecord, r *dispatch.SessionStartReceipt) {
+			r.Binding.BeadID = "hk-other"
+		}},
+		{name: "receipt session", mutate: func(_ *dispatch.Intent, _ *DispatchRecord, r *dispatch.SessionStartReceipt) { r.SessionName = "other" }},
+		{name: "receipt window", mutate: func(_ *dispatch.Intent, _ *DispatchRecord, r *dispatch.SessionStartReceipt) { r.WindowName = "other" }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			candidateIntent, candidateRecord, candidateReceipt := intent, record, receipt
+			tc.mutate(&candidateIntent, &candidateRecord, &candidateReceipt)
+			if got := ClassifySessionStartReceipt(candidateIntent, &candidateRecord, &candidateReceipt); got != dispatch.SessionReceiptConflict {
+				t.Fatalf("fact = %q, want conflict", got)
+			}
+		})
+	}
+}
+
+func TestClassifySessionStartReceiptRejectsReceiptBeforeHandoff(t *testing.T) {
+	handoff := runFactIntent(t, dispatch.PhaseHandoffDurable)
+	receipt, err := dispatch.NewSessionStartReceipt(handoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, phase := range []dispatch.Phase{
+		dispatch.PhasePrepared,
+		dispatch.PhaseClaimDurable,
+		dispatch.PhaseClaimRefused,
+		dispatch.PhaseRunDurable,
+	} {
+		t.Run(string(phase), func(t *testing.T) {
+			intent := runFactIntent(t, phase)
+			if got := ClassifySessionStartReceipt(intent, nil, &receipt); got != dispatch.SessionReceiptConflict {
+				t.Fatalf("present fact = %q, want conflict", got)
+			}
+		})
+	}
+}
+
+func TestClassifySessionStartReceiptAbsenceDoesNotRequireRunRecord(t *testing.T) {
+	for _, phase := range []dispatch.Phase{
+		dispatch.PhasePrepared,
+		dispatch.PhaseClaimDurable,
+		dispatch.PhaseClaimRefused,
+		dispatch.PhaseRunDurable,
+		dispatch.PhaseHandoffDurable,
+	} {
+		t.Run(string(phase), func(t *testing.T) {
+			intent := runFactIntent(t, phase)
+			if got := ClassifySessionStartReceipt(intent, nil, nil); got != dispatch.SessionReceiptAbsent {
+				t.Fatalf("absent fact = %q, want absent", got)
+			}
+		})
+	}
+}
+
+func TestClassifySessionStartReceiptPresentHandoffRequiresRunRecord(t *testing.T) {
+	intent := runFactIntent(t, dispatch.PhaseHandoffDurable)
+	receipt, err := dispatch.NewSessionStartReceipt(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ClassifySessionStartReceipt(intent, nil, &receipt); got != dispatch.SessionReceiptConflict {
+		t.Fatalf("fact = %q, want conflict", got)
+	}
 }

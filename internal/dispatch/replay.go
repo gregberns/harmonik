@@ -81,6 +81,18 @@ const (
 	SessionConflict SessionFact = "conflict"
 )
 
+// SessionReceiptFact is the durable start acknowledgement for one exact target.
+type SessionReceiptFact string
+
+const (
+	// SessionReceiptAbsent means no receipt exists for the run.
+	SessionReceiptAbsent SessionReceiptFact = "absent"
+	// SessionReceiptExact means the receipt matches the intent and run record.
+	SessionReceiptExact SessionReceiptFact = "exact"
+	// SessionReceiptConflict means receipt identity cannot be classified.
+	SessionReceiptConflict SessionReceiptFact = "conflict"
+)
+
 // GitFact is the exact completion evidence for a closed bead.
 type GitFact string
 

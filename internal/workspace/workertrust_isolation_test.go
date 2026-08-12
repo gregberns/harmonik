@@ -175,39 +175,6 @@ func TestEnsureWorktreeTrustVia_RemoteWritesTheConfiguredPath(t *testing.T) {
 	homeConfigUntouched(t, home)
 }
 
-// TestEnsureClaudeThemeVia_RemoteWritesTheConfiguredPath is claim 1 for the
-// theme upsert. It runs immediately after the trust upsert in the launch-spec
-// build and locks the same file, so isolating only the trust program would have
-// moved the block one step down the path rather than removing it.
-func TestEnsureClaudeThemeVia_RemoteWritesTheConfiguredPath(t *testing.T) {
-	// Not parallel: t.Setenv.
-	_, home, cfgPath := isolationFixture(t)
-
-	if err := EnsureClaudeThemeVia(t.Context(), homeRedirectRunner{home: home}); err != nil {
-		t.Fatalf("EnsureClaudeThemeVia: %v", err)
-	}
-
-	homeConfigUntouched(t, home)
-
-	//nolint:gosec // G304: cfgPath is inside this test's t.TempDir fixture.
-	data, err := os.ReadFile(cfgPath)
-	if err != nil {
-		t.Fatalf("the configured config %s was not written: %v", cfgPath, err)
-	}
-	var cfg struct {
-		Theme string `json:"theme"`
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		t.Fatalf("unmarshal %s: %v\nraw: %s", cfgPath, err, data)
-	}
-	if cfg.Theme != claudeDefaultTheme {
-		t.Errorf("theme = %q in the configured config %s, want %q\nraw: %s",
-			cfg.Theme, cfgPath, claudeDefaultTheme, data)
-	}
-
-	homeConfigUntouched(t, home)
-}
-
 // TestWorkerTrustUpsert_BoundedWaitFailsWhenTheLockIsHeld is claim 2. The test
 // process holds the sidecar lock, so the program can never get it. It must give
 // up on its own budget and name the file it was waiting on.
@@ -289,24 +256,6 @@ func TestEnsureWorktreeTrustVia_LockTimeoutIsStructural(t *testing.T) {
 	}
 }
 
-// TestEnsureClaudeThemeVia_LockTimeoutIsStructural is the same claim for the
-// theme leg. It is not redundant with the trust leg: the two calls have separate
-// error paths, and deleting the theme leg's mapping left the whole package green
-// until this test existed. The two programs take the SAME lock on the SAME file
-// one after the other, so whatever starves one starves the other.
-func TestEnsureClaudeThemeVia_LockTimeoutIsStructural(t *testing.T) {
-	t.Parallel()
-
-	runner := fixedResultRunner{script: "echo 'workspace: write-lock acquire timed out' >&2; exit 75"}
-	err := EnsureClaudeThemeVia(t.Context(), runner)
-	if !errors.Is(err, ErrTrustLockTimeout) {
-		t.Errorf("err = %v, want ErrTrustLockTimeout", err)
-	}
-	if !errors.Is(err, handlercontract.ErrStructural) {
-		t.Errorf("err = %v, want it to classify as structural so the launch fails fast and the bead reopens", err)
-	}
-}
-
 // TestWorkerConfigPrograms_RemoteNeverBakesInBoxAsConfigHome is claim 3, and it
 // is the one that keeps a real remote run working.
 //
@@ -346,7 +295,6 @@ func TestWorkerConfigPrograms_RemoteNeverBakesInBoxAsConfigHome(t *testing.T) {
 	}
 	for name, prog := range map[string]string{
 		"trust": workerTrustUpsertProgram(claudeConfigPathForWorker(), defaultTrustLockTimeout),
-		"theme": workerThemeUpsertProgram(claudeConfigPathForWorker(), defaultTrustLockTimeout),
 	} {
 		if strings.Contains(prog, boxAConfigHome) {
 			t.Errorf("the %s program sent to the worker contains box A's directory %s. On a worker that path need not "+
@@ -362,10 +310,6 @@ func TestWorkerConfigPrograms_RemoteNeverBakesInBoxAsConfigHome(t *testing.T) {
 		t.Fatalf("EnsureWorktreeTrustVia against a worker that has no CLAUDE_CONFIG_HOME: %v\n"+
 			"a box-A path baked into the program fails here with FileNotFoundError on the lock file", err)
 	}
-	if err := EnsureClaudeThemeVia(ctx, runner); err != nil {
-		t.Fatalf("EnsureClaudeThemeVia against a worker that has no CLAUDE_CONFIG_HOME: %v", err)
-	}
-
 	if _, err := os.Stat(boxAConfigHome); err == nil {
 		t.Errorf("the worker programs created box A's directory %s, so they used box A's config path", boxAConfigHome)
 	} else if !os.IsNotExist(err) {
@@ -379,7 +323,6 @@ func TestWorkerConfigPrograms_RemoteNeverBakesInBoxAsConfigHome(t *testing.T) {
 		t.Fatalf("the worker's own config %s was not written: %v", workerCfg, err)
 	}
 	var cfg struct {
-		Theme    string `json:"theme"`
 		Projects map[string]struct {
 			HasTrustDialogAccepted bool `json:"hasTrustDialogAccepted"`
 		} `json:"projects"`
@@ -394,10 +337,6 @@ func TestWorkerConfigPrograms_RemoteNeverBakesInBoxAsConfigHome(t *testing.T) {
 	if entry, ok := cfg.Projects[key]; !ok || !entry.HasTrustDialogAccepted {
 		t.Errorf("projects[%q].hasTrustDialogAccepted is not true in the worker's own config %s\nraw: %s",
 			key, workerCfg, data)
-	}
-	if cfg.Theme != claudeDefaultTheme {
-		t.Errorf("theme = %q in the worker's own config %s, want %q\nraw: %s",
-			cfg.Theme, workerCfg, claudeDefaultTheme, data)
 	}
 }
 

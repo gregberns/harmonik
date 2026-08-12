@@ -431,9 +431,22 @@ no persistence or daemon wiring.
 
 **Implementation status:** C21a and C21b are complete. The pure replay
 classifier is complete. Queue namespace recovery now has a separate startup
-seam. Mixed schema run-registry readers protect valid schema-v2 run facts. The
-startup action executor, sweep ownership handoff, resumable
-provisioning, and queue-path producer wiring remain.
+seam. Startup inventories durable intents and gives their bead, run, session,
+and worktree identities to the orphan sweep. Mixed schema run-registry readers
+protect valid schema-v2 run facts. Reviewed pure classifiers now validate the
+exact queue, Beads record, universal run record, and worktree lease facts.
+
+The session fact is the next contract gap. The universal record binds the
+session name before spawn. A missing tmux session does not say whether spawn
+was never attempted or whether the session started and later died. The
+workspace sessions directory can exist before process launch and does not bind
+the top-level tmux session name. C21 must add exact durable start-attempt
+evidence before it classifies `session_absent` versus `session_dead`.
+
+The exact claim, session, git, and run-outcome readers remain. The startup
+action executor, resumable provisioning, queue-path producer wiring, and crash
+matrix also remain. Producer wiring stays disabled until startup can execute
+every reachable replay action.
 
 **Evidence:** `C21-DESIGN.md` defines four review units. It requires a
 fail-closed intent store, a universal run record, an amended startup order, and

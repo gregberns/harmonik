@@ -16,7 +16,10 @@ timing + delivery redesign from xray's research. Landing Track A is what **unfen
 keeper-retirement slice — so it matters beyond its own beads.
 
 ## The work — 10 beads (label `codename:keeper-restart-delivery`)
-`kerf next --only=bead` attaches all 10; `br list --label codename:keeper-restart-delivery` lists them.
+`br list --label codename:keeper-restart-delivery` lists all 10, and `kerf map` shows the work that owns
+them and the context it carries. The order below is the order to work. Check it against
+`br ready --sort priority --limit 0` — not against `kerf next`, which scores graph structure only and never
+reads the `br` priority field, so it cannot tell a P1 root from a P2 test bead.
 **START NOW, in PARALLEL (3 ready P1 roots, no cross-dep):**
 - **T1** `hk-keeper-delivery-agent-input-6nz2j` — keeper as comms producer + presence-reachability read.
 - **T2** `hk-keeper-delivery-config-surface-e1mdc` — config surface: warn_messages leader-defer + crew keys → WatcherConfig.
@@ -46,7 +49,11 @@ stop and tell captain (that's yankee's lane).
 gates) → commit **explicit paths only** (NEVER `git add -A`/`.`, bare commit, reset, amend). **Keep the shared
 tree BUILD-GREEN at every pause.** After each commit **verify `git rev-parse HEAD` == your new SHA** (concurrent-commit
 race, hk-jejte) — if not, your changes are still staged, retry. Reference the bead id in the commit subject.
-Do NOT set in_progress or close — captain owns terminal transitions.
+**Whoever runs the work owns the terminal transitions, and here that is the captain, not you.** Do not set
+`in_progress` and do not close. A pre-set status makes the bead undispatchable, and the run then goes
+nowhere with no error. A close you make by hand leaves the ledger out of step with the run state, so the
+completion event never fires. A crew closes its own beads only when its mission file grants it in
+writing, and this file does not.
 
 ## On boot
 0. `harmonik agent brief`.

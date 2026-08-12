@@ -8,20 +8,20 @@
 - Formatter: **`gofumpt`** (superset of `gofmt`).
 - Imports: **`gci`** with three groups (stdlib, third-party, `github.com/gregberns/harmonik`).
 - Meta-linter: **`golangci-lint` v2.3+** (config uses `version: 2` schema explicitly; migrated March 2025 GA). Config at repo root `.golangci.yml`.
-- Hook manager: **`lefthook`** (Go-native, single binary, no Python/Node dep).
+- Hook manager: **none.** lefthook was the pick and was removed — its `install` step re-wired the hooks on every commit. Validation is agent-driven through `/check` (`make fast`, then `make full`). See `build-practices.md §Fresh-clone bootstrap`.
 - Enforcement: **`agent-reviewer` on every non-trivial commit** (per `build-practices.md`) + **post-push CI status checks**. CI runs on every branch, so it covers the integration branch. Fix a red integration branch forward. The one merge gate is the integration→`main` pull request. Branch model: `build-practices.md` §"Branch model — land on the integration branch".
-- Tests: `go test ./... -race -count=1` required in CI; short subset pre-commit.
+- Tests: `make full` runs `go test -short -count=1 ./...` over every package. `make fast` runs a short subset while you work. The `-race` tier is the nightly lane (`make test-race-nightly`) and the scenario tier.
 - **Local/CI parity:** CI runs `make full`, the same target a developer runs. See §Two gate targets.
 
 ## Formatter
 
-- `gofumpt -l -w .` pre-commit on staged files; CI re-checks `gofumpt -l -d .` (fails on any diff).
+- `gofumpt -l -w .` while you work. `make fast` and `make full` both re-check with `gofumpt -l -d .` and fail closed on any diff.
 - `gofumpt` chosen over `gofmt` because agents emit gofmt-valid-but-noisy code (redundant parens, multi-line literals that fit one line); gofumpt catches this deterministically.
-- Imports: `gci write -s standard -s default -s 'prefix(github.com/gregberns/harmonik)' .` — pre-commit + CI.
+- Imports: `gci write -s standard -s default -s 'prefix(github.com/gregberns/harmonik)' .` — checked by the same format step in both targets.
 
 ## Vet and static analysis
 
-- `go vet ./...` pre-commit and CI.
+- `go vet ./...` in both `make fast` and `make full`.
 - `govet` via golangci-lint with `enable-all: true`, disable `fieldalignment` (noisy) and `shadow` (false positives). Keep `nilness`, `unusedresult`, `structtag`, `copylocks`, `printf`.
 - `staticcheck` via golangci-lint: all `SA*` (correctness), `ST1000`/`ST1005`, all `S1*`. Disable `ST1003` (naming conflicts).
 
@@ -112,7 +112,7 @@ Declaration-line anchoring also grandfathers a function only while its declarati
 
 ⚠ **Known hole in the ratchet:** a function that was already over the ceiling when written never reports at all, and an explicit `//nolint` defeats it entirely. `beadRunOne` was born at 119 lines, is 2,289 today, and has never produced a finding — it also carries `//nolint:funlen,gocognit,cyclop`. Tracked as `hk-csmfe`.
 
-Explicit **NO** on: `wsl`, `lll`, `gocyclo` (superseded by `cyclop`), `godox`, `tagliatelle`, `exhaustruct`, `gochecknoglobals`, `gochecknoinits`, `varnamelen`, `wrapcheck`, `nlreturn`, `goimports` (superseded by `gci`). Style-taste linters; noise without catching real defects.
+**Left off deliberately:** `wsl`, `lll`, `gocyclo` (superseded by `cyclop`), `godox`, `tagliatelle`, `exhaustruct`, `gochecknoglobals`, `gochecknoinits`, `varnamelen`, `wrapcheck`, `nlreturn`, `goimports` (superseded by `gci`). Each was judged style-taste — noise a reader has to filter, with no defect behind it. Enabling one is a one-line `.golangci.yml` edit, so the bar is evidence: name a defect this tree shipped that the linter would have caught, in the rule-change commit body.
 
 **Path-scoped exclusions worth knowing** (`.golangci.yml §exclusions.rules`): `tools/` is excluded from the *whole* `forbidigo` and `noctx` linters; `internal/testhelpers/` from the whole `forbidigo` linter — so both get `panic` **and** `fmt.Print*` for free, not just one of them. `cmd/` gets a narrower third carve-out: only the `fmt.Print*` ban (printing to stdout is what a CLI does), so `panic` stays banned there.
 
@@ -233,47 +233,47 @@ Adding a line to grandfather a NEW finding is the one repair that is not allowed
 
 Framed as tiers, not "pre-commit vs CI":
 
-- **Tier 2-blocking** (every push; required to merge): all formatter/import checks, `go vet`, every enabled golangci-lint linter (including `depguard` component-graph rules), `go build`, `go test -race` unit+property, `go mod tidy` cleanliness, coverage gate, `forbid-import`, `gosec` high-severity.
+- **Tier 2-blocking** (every push; required to merge): all formatter/import checks, `go vet`, every enabled golangci-lint linter judged against the allow list (including the `depguard` component-graph rules), `go build`, the unit and property suites, `go mod tidy` cleanliness, `forbid-import`, `gosec` high-severity.
 - **Tier 3-blocking** (declared-done; required to merge): integration, scenario, fast-crash suites.
+- **Reported, never blocking:** the coverage ratchets (`make coverage-gates`) and the skipped-test list in the `tools/testreport` NOT RUN section. Both are read, not enforced — a number nobody looks at is not a gate, and treating one as a gate is how a green run starts meaning nothing.
 - **Advisory (posts, does not block):** `gosec` medium/low, `prealloc` (`//nolint:prealloc` with justification allowed). `govulncheck` is blocking at Tier 2 for known-high CVEs; weekly deep scan is advisory. Promotion is a one-line `.golangci.yml` edit.
 
 ## Agent-enforceability
 
-Threat model: agent runs `git commit --no-verify` or writes `//nolint:all` to escape local hooks. Counter-pattern:
+Threat model: an agent silences a check instead of satisfying it — `//nolint:all`, a `t.Skip`, a widened allow list, or `git commit --no-verify` (which now skips nothing, since the hooks are gone, and is therefore a stated intent rather than an act — see `build-practices.md §Git hygiene`). Counter-pattern:
 
-1. **GitHub branch protection on `main` with required status checks on pushes.** Pushes that fail CI's `make full` are marked red but (per `build-practices.md`) are not rejected — the agent fixes forward with a corrective commit. Branch protection prevents force-push and admin-bypass. Not a merge gate (no PRs), but the same commands that run locally also run remotely; divergence surfaces as a red main.
+1. **GitHub branch protection with required status checks on pushes.** A push that fails CI's `make full` is marked red but not rejected — the agent fixes forward with a corrective commit. Branch protection prevents force-push and admin-bypass. The one real merge gate is the single human pull request from the integration branch into `main` (`build-practices.md §"Branch model — land on the integration branch"`). Everywhere below that line the same commands run locally and remotely, and divergence surfaces as a red branch.
 2. **`nolintlint` blocks bulk suppression.** Every `//nolint` must name specific linters + carry an explanation + suppress something real. `//nolint:all` fails lint.
 3. **CI posts nolint-density delta on every push** (`git diff HEAD~1 | grep -c //nolint`). Agent-driven spikes are visible without manual diff reading.
 4. **No admin-bypass for branch protection** on `main`. Solo dev is not exempted; rule changes require an explicit config edit.
 5. **Protected rule files.** The files that define the gates themselves are protected; edits MUST trigger dedicated attention:
 
-   - `.golangci.yml`, `.depguard.yml` (if factored out)
+   - `.golangci.yml` — including its `depguard` component matrix. There is no separate `.depguard.yml` — the matrix has always lived inside this file.
    - `tools/forbid-import/main.go` (library allowlist)
+   - `tools/lintreport/allow.txt` (the lint allow list — see §Two gate targets)
    - `scripts/coverage-gate.sh`
    - `.github/workflows/*.yml`
-   - `Makefile` (the `check-*` targets)
-   - `lefthook.yml`
+   - `Makefile` (the `fast` and `full` targets and everything they call)
    - `CONSTITUTION.md` — additionally requires a `Constitution-Edit-Approved-By: <name-or-email>` commit trailer on any edit (per `agent-configuration.md §CONSTITUTION.md`); commits lacking the trailer are rejected by pre-commit hook and flagged red by post-commit CI.
 
-   A commit that touches any of these MUST:
-   1. Cite a kerf-codename in the commit body explaining the rule change (so edit motivation is traceable).
-   2. Trigger a `rule-change` CI check that watches these file paths and surfaces the rule-file diff on the commit summary.
-   3. NOT bundle rule changes with unrelated code changes — one commit = one concern (rule change OR code), so the rule-change diff is reviewable on its own merits by the post-commit agent-reviewer and the async human reader.
+   A commit that touches any of these:
 
-   Prevents "agent relaxes the gate, then passes its own gate." Rule-change commits are distinguishable from ordinary code commits; silent rule weakening becomes impossible.
+   1. Cites a kerf-codename in the commit body and says what the rule change buys, so the motivation survives in `git log`.
+   2. Carries the rule change ALONE. One commit is one concern — rule change or code, never both. This one is not negotiable, and the reason is narrow: a rule edit bundled with the code it lets through is a gate an agent opened for its own work, and the reviewer reading the diff cannot see it. Split the commit.
+   3. Is read as a rule change by the reviewer and by the human reading `git log`, which is the whole enforcement path. **There is no `rule-change` CI check.** An earlier version of this section described one that watches these paths and surfaces the diff on the commit summary. Nothing implements it, and no repository file names it. Building it is open. Until someone does, a single-concern commit with a stated motivation is the only thing making a rule change visible.
 
-**No PR-based gating.** Enforcement relies on: (a) the agent-declared-done ritual running `make full` locally before commit; (b) `agent-reviewer` running on every non-trivial commit (per `build-practices.md §Agent review on every commit`); (c) post-push CI re-running the same gauntlet and surfacing failure as a red main. Fix-forward is the recovery, not a block-on-red.
+**No per-change pull request.** Enforcement relies on: (a) the agent-declared-done ritual running `make full` locally before commit; (b) `agent-reviewer` running on every non-trivial commit (per `build-practices.md §Agent review on every commit`); (c) post-push CI re-running the same gauntlet and surfacing failure as a red branch; (d) one human pull request at the integration→`main` boundary. Fix-forward is the recovery below that boundary, not a block-on-red.
 
-Invariant: **CI mirrors local `make full`; local pass predicts CI pass; rule weakening requires a single-concern commit that trips the rule-change surface.**
+Invariant: **CI mirrors local `make full`. A local pass predicts a CI pass. A rule change arrives as a single-concern commit that a reader can recognize as one.**
 
 ## ⚑ Assumptions worth user's eye
 
 1. **⚑ `gofumpt` over `gofmt`** — Stricter; safe for solo-dev, flag if external contributions open up (PR friction).
 2. **⚑ `depguard` v2 handles component-graph rules natively.** Previously proposed `go-arch-lint`; dropped per reviewer convergence. `.go-arch-lint.yml` removed; component-graph rules live in `.golangci.yml`'s `depguard` settings. Durable only if subsystem package layout is stable; update when the 10-component foundation lands as code.
-3. **⚑ Branch protection without PR-based gating.** Solo-dev: no PRs, no approval requirement. Branch protection prevents force-push + admin-bypass + requires status checks but cannot reject pushes outright. Revisit when PRs return (product has real users or multi-human team).
+3. **⚑ Branch protection plus one pull request at the top.** Solo-dev: no per-change pull request and no approval requirement below the integration branch. Branch protection prevents force-push and admin-bypass and requires status checks, but it cannot reject a push outright. The integration→`main` pull request is the one place a human looks before code reaches `main`. Revisit when per-change pull requests return (the product has real users or a multi-human team).
 4. **⚑ `gosec` advisory, not blocking** — Elevate when the daemon handles secrets or opens network ports.
 5. **⚑ No `wrapcheck`** — Omitted deliberately; forces wrapping at every package boundary, conflicting with "wrap only at subsystem boundaries." `errorlint` + review cover the real cases.
-6. **⚑ Pre-commit 15s budget** — Split to `pre-commit` (format+vet) + `pre-push` (lint+test-short) if it passes 30s.
+6. **⚑ `make fast` has to stay fast enough to run without thinking about it.** This assumption was written as a 15-second pre-commit hook budget, and the hooks are gone. The concern survives them: a target an agent hesitates to run is a target that gets run at the end, in a batch, on work too large to fix cheaply. If `make fast` grows past a minute, move the slow step into `make full` rather than letting the inner loop rot.
 7. **⚑ Go 1.25 assumed.** Access to `log/slog` / `testing/synctest` / `os.Root` / `go.mod tool` depends on it. If bootstrap pins older Go, revise this doc.
 
 ## Deferred / follow-up

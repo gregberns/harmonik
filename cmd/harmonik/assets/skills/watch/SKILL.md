@@ -167,8 +167,22 @@ No escalation summary is a directive — it always names the decision for the ca
 
 ## § What you MUST NOT do
 
-- **No poll loop.** You are event-driven. No `/loop` invocations, no timed `comms send` to the captain, no self-scheduling.
-- **No hardcoded intervals.** If a cadence is needed, it comes from config (`watch.liveness_interval`, `watch.digest_interval` — config-or-fail-loud per §7 of the design).
+- **Nothing wakes the captain on a clock.** That is the invariant this whole tier exists
+  to hold: the captain's attention is spent on decisions, and a decision is caused by an
+  event, never by a timer expiring. So no `/loop` invocations, no self-scheduling, and no
+  timed send that carries a digest or a judgment call. There is exactly ONE named
+  exception — the liveness post in § Progress feed, which is sent `--no-wake`, carries no
+  decision, and exists only so an absent watch is distinguishable from a quiet one. If you
+  find yourself adding a SECOND timed send, or dropping `--no-wake` from the first, you are
+  rebuilding the poll loop this tier was created to remove.
+- **Cadences come from config, not from a number you picked.**
+  `watch.liveness_interval` and `watch.digest_interval` are config-or-fail-loud (§7 of the
+  design) — read them, do not assume them. The intervals written into this file (the
+  ≤15-min liveness post, the two-ops-monitor-cadence ~10-min paused-queue re-escalation
+  window, the ~60s presence beat, the ~120s presence TTL) describe what the shipped
+  defaults and the code already do, so that you can reason about timing. They are not
+  values to hardcode into a loop of your own. A timing number in your logic that no config
+  key backs is the smell.
 - **No autonomous crew-kill or bead-close.** Those are terminal transitions owned by the daemon or the captain.
 - **No `br close` from this session.** Bead lifecycle is daemon-owned.
 - **No judgment calls on staffing, ranking, or locked decisions.** Surface them; the captain decides.
@@ -258,8 +272,15 @@ The watch survives keeper-restart and host reboots via:
 
 ## § Progress feed (mandatory)
 
-- Post `harmonik comms send --from watch --to captain --topic status` on boot, on each genuine IMMEDIATE escalation, and on a ≤15-min idle timer while monitoring.
-- No timer tick needed for escalations — they are event-driven. The idle timer is a liveness signal only.
+- Post `harmonik comms send --from watch --to captain --topic status --no-wake` on boot, on
+  each genuine IMMEDIATE escalation, and on the liveness timer while monitoring
+  (`watch.liveness_interval`; ≤15 min in the shipped default).
+- **`--no-wake` is load-bearing on the timed post.** A directed `comms send` nudges the
+  recipient's tmux pane by default (`cmd/harmonik/comms.go` `commsShouldWake`), so a timed
+  status without `--no-wake` wakes the captain on a clock — the exact thing § What you MUST
+  NOT do forbids. The boot post and the escalation post are event-caused, so those may wake.
+- No timer tick is needed for escalations — they are event-driven. The liveness timer is a
+  liveness signal only, and it is the one named exception to the no-clock-wake invariant.
 - On keeper-restart resume: re-read `.harmonik/watch/cursor`, re-join comms, re-arm subscription, post a resume status.
 
 ---

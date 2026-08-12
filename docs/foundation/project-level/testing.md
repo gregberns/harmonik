@@ -1,17 +1,19 @@
 # Testing Strategy
 
-> Concrete Go practice for the 5-layer methodology in `docs/methodology/TESTING.md`. Scoped to solo-dev, agent-coded. Go 1.25 toolchain (per `quality-checks.md`). Lib picks are not up for debate at PR review; anything outside the sanctioned list needs a note in this doc.
+> Concrete Go practice for the 5-layer methodology in `docs/methodology/TESTING.md`. Scoped to solo-dev, agent-coded. Go 1.25 toolchain (per `quality-checks.md`).
+>
+> **The library list is held by a linter, not by taste.** `tools/forbid-import` fails `make full` on any test import outside the allowlist, so nothing reaches the tree by drifting in. To add a library, edit the allowlist and this doc in the same commit and say in the commit body what the new library does that the current list cannot. That edit is visible and a reviewer reads it — which is the whole mechanism. The list exists so there is one way to do each thing, not because the choices are beyond discussion.
 
 ## Decisions
 
 1. **Test runner:** stdlib `testing`, always. No Ginkgo, no testify/suite.
 2. **Assertions:** `github.com/stretchr/testify/require` only. `require` (not `assert`) so a failed precondition stops the test. Banned: testify/suite, testify/mock.
-3. **Property testing:** `pgregory.net/rapid`. Chosen over `testing/quick` (too thin) and `gopter` (abandoned). Used only where the coverage target below names it.
+3. **Property testing:** `pgregory.net/rapid`. Chosen over `testing/quick` (too thin) and `gopter` (abandoned). Used where an invariant is easier to state than a table of cases.
 4. **Mocking:** hand-written fakes in `internal/<pkg>/faketest/`. No `gomock`, no `mockery`. Rationale: hand-written fakes are ~20 lines and an agent can read them; generated mocks hide behavior.
 5. **Golden files:** `gotest.tools/v3/golden`. Updated with `go test ./... -update`.
 6. **Subprocess orchestration in tests:** stdlib `os/exec` wrapped by a thin `internal/proctest` helper. No external test-harness libraries.
 7. **Coverage tool:** `go test -cover` + `go tool cover`. Thresholds are enforced by `scripts/coverage-gate.sh`, which runs from `make coverage-gates` — **not from CI**, which runs `make full`. The ratchet is a trend measure and does not block a merge.
-8. **Race detector:** `-race` on every CI run of unit + integration + scenario suites.
+8. **Race detector:** `-race` on the scenario and integration tiers, and on the nightly lane (`make test-race-nightly`). `make full` runs the unit tier without it, so the nightly lane is the only place a data race in unit-tested code surfaces. Treat a flake that appears only under load as a reason to run that lane early rather than to retry.
 9. **Build tags:** `//go:build integration` / `scenario` / `crash` / `nightly`. Default `go test ./...` runs unit + property only. CI explicitly selects tiers.
 10. **Naming:** `TestXxx` for unit, `TestIntegration_Xxx` for integration, `TestScenario_Xxx` for scenario, `TestCrash_Xxx` for crash-recovery, `TestProp_Xxx` for rapid properties.
 
@@ -45,29 +47,31 @@ Rapid generators for: edge-selection determinism, DOT cycle-detection, checkpoin
 In: `testing`, `testify/require`, `pgregory.net/rapid`, `gotest.tools/v3/{golden,fs,icmd}`, stdlib `os/exec`, stdlib `testing/fstest`.
 Out: testify/suite, testify/mock/assert, Ginkgo, Gomega, gomock, mockery, gopter, dockertest (we do not need containers; Beads is embedded SQLite).
 
-Rationale for the tight list: one way to do each thing, enforced by `tools/go-linters/forbid-import.go` in CI. Agents cannot introduce a second assertion library without editing the allowlist.
+Rationale for the tight list: one way to do each thing. `tools/forbid-import` holds it — `make full` runs `go run ./tools/forbid-import ./...` and fails on an import outside the list. An agent cannot add a second assertion library by accident, because the allowlist edit is a separate visible change a reviewer sees.
 
 ## Fixture and testdata conventions
 
-- **Location.** `testdata/` lives beside the test file that uses it. Shared fixtures promoted to `test/fixtures/` only when cited by ≥3 packages.
+- **Location.** `testdata/` lives beside the test file that uses it. Lean toward leaving it there: a fixture next to its test is read and changed with the test. Promote one to `test/fixtures/` when a third package needs it, because at that point the copies drift apart faster than the shared file gets in the way.
 - **Formats.** DOT for workflows, YAML for policies + twin scripts, JSONL for expected event streams, `.golden` for blob comparisons.
 - **Refresh.** `go test ./... -update` regenerates golden + expected-JSONL files. Refresh commits must diff the fixture and justify the change in the commit message.
 - **Recorded real-agent fixtures.** `testdata/fixtures/claude-code/<version>/*.jsonl` holds captured wire output. Capture tool: `scripts/record-claude-fixture.sh` (nightly job writes new captures; human reviews before merge).
 - **Determinism seeds.** Any test that uses `rand` reads its seed from `testdata/seed` (committed). Nightly overrides with `HARMONIK_RAPID_SEED=auto`.
 
-## Coverage targets
+## Coverage numbers — a regression alarm, not a target
 
-| Layer / package class | Line coverage | Branch / path requirement |
+**These numbers were endorsed as targets on 2026-04-24 and downgraded to a diagnostic on 2026-07-27. Read them as an alarm level, never as a goal.** Percentage targets reward volume, and volume is what this repo got: 488k lines of test code against 216k of production, including 720 test files named after bead IDs (199,899 lines, 38% of all test code) that largely re-tested the same behavior. That figure is the re-measurement of 2026-07-30 in `plans/2026-07-27-delete-and-rewrite/CHARTER.md`, which corrects an earlier over-count of 885 files and 255,664 lines. Nothing here blocks a merge — `scripts/coverage-gate.sh` is the single authority for these numbers, it runs from `make coverage-gates`, and `make full` does not call it.
+
+The question to answer is **which real behavior is unprotected**, never what percent a package reports. A package at 95% whose tests assert nothing has failed the check that matters. Writing a test to move a number, rather than to catch a bug you can name, is the smell — when you notice it, go find the behavior with no test and cover that instead.
+
+| Layer / package class | Alarm level (line) | Error-path diagnostic |
 |---|---|---|
-| Core subsystem packages (`internal/orchestrator`, `workspace`, `eventbus`, `handler`, `reconciler`) | **95%** | 100% of error returns exercised |
-| Boundary parsers (DOT, YAML policy, JSONL event, commit trailer) | **95%** | 100% of error returns + malformed-input fuzz corpus |
-| Handler adapters (`claude-code`, `claude-twin`) | **90%** real + 100% twin | see handler-divergence below |
-| Utility / glue packages | **85%** | — |
-| Overall repo (floor) | **90%** | 0.3pp regression cap — enforced by `make check`, **not by CI** |
+| Core subsystem packages (`internal/orchestrator`, `workspace`, `eventbus`, `handler`, `reconciler`) | 95% | every error return exercised |
+| Boundary parsers (DOT, YAML policy, JSONL event, commit trailer) | 95% | every error return + malformed-input fuzz corpus |
+| Handler adapters (`claude-code`, `claude-twin`) | 90% real, 100% twin | see handler-divergence below |
+| Utility / glue packages | 85% | — |
+| Overall repo | 90% | 0.3pp regression cap, reported by `make coverage-gates` |
 
-Rule to prevent coverage-gaming: a line marked `// unreachable: <why>` + covered by an assert-panic test counts as covered. This blocks agents from writing bogus assertions to hit a line that can't fire in practice.
-
-CI gate: `scripts/coverage-gate.sh` parses `go tool cover -func` output and fails if any class is below threshold.
+A line marked `// unreachable: <why>` and covered by an assert-panic test counts as covered. That keeps the alarm from pushing anyone toward a bogus assertion on a line that cannot fire in practice.
 
 ## Handler-divergence testing
 
@@ -99,26 +103,28 @@ Fast subset (3 sites, ~1 min) runs every push under the crash test tier (now tag
 
 **User-endorsed invariant (2026-04-24):** every check listed here is ALSO executable locally via the `make full` target; CI and local run IDENTICAL commands. Agent-declared-done requires `make full` to pass locally (see `quality-checks.md §Two gate targets` and `agent-configuration.md`). No CI-only logic is permitted. If CI fails after a local pass, it is environment drift — a bug in setup, not a CI-specific behavior.
 
-A merge to `main` requires (each item is a command equally runnable locally):
+Work is accepted when `make full` passes. Where the work then lands is owned by `build-practices.md §"Branch model — land on the integration branch"`. `make full` covers (each item is a command equally runnable locally):
 
 1. `go vet ./...` clean; `staticcheck ./...` clean (via `golangci-lint`); `gofumpt -l` empty.
-2. `go test -race ./...` (unit + property, default tags) passes in <3 min.
+2. `go test -short ./...` (unit + property, default tags) passes in <3 min. `-race` on this tier moved to the nightly lane — see Decisions §8.
 3. `go test -race -tags=integration ./...` passes in <5 min.
 4. `go test -race -tags=scenario ./test/scenario/...` passes in <10 min.
 5. `go test -tags=crash ./test/crash/...` (fast subset) passes in <2 min.
-6. `scripts/coverage-gate.sh` passes (thresholds above; no >0.3% regression).
-7. `tools/go-linters/forbid-import` passes (enforces library allowlist).
-8. No `t.Skip()` in any committed test (`scripts/no-skips.sh`).
+6. `tools/forbid-import` passes (holds the library allowlist).
+
+Two things people expect to be gates here are not:
+
+- **Coverage does not block.** `scripts/coverage-gate.sh` runs from `make coverage-gates` and reports a trend. See §"Coverage numbers".
+- **A `t.Skip()` does not block either, and 233 of them are in the tree today.** No script rejects one, and no script ever has — an earlier version of this section named `scripts/no-skips.sh`, which does not exist. What does happen: `tools/testreport` lists every skipped test in its NOT RUN section on each `make fast` and `make full` run. Read that section, because a disabled test is an unproven claim wearing a green tick. A skip that is meant to stay should say in its reason string what has to become true before it runs again, and carry a bead. A skip added to turn a red gate green is the smell worth stopping on: it converts a failure into silence, and nothing downstream can tell the difference.
 
 Nightly (not merge-blocking, but opens auto-PR on failure): full crash site set, full property suite with random seed (`HARMONIK_RAPID_SEED=auto`, 10k iters), fixture-refresh job (Tier C), `govulncheck` weekly deep scan.
 
 ## ⚑ Assumptions worth user's eye
 
-1. **⚑ Library allowlist enforced at CI.** Agents cannot introduce a second mocking or assertion library without a human edit to the allowlist. Tight, but prevents stylistic drift.
+1. **⚑ Library allowlist held by a linter.** A second mocking or assertion library cannot arrive without an edit to the allowlist, and that edit is a separate reviewable change. Tight, and it is the reason the list has not drifted.
 2. **⚑ Hand-written fakes are the default; hybrid on the table later.** Start with hand-written fakes in `faketest/`. If interface count exceeds ~10 or fakes show clear rot (copy-paste drift, out-of-sync with the real interface), a hybrid (hand-written fakes + generated mocks for cleanly-typed, high-arity interfaces) becomes acceptable — reviewable as a one-shot decision, not a blocker.
 3. **⚑ Budget cap for real-agent tests is $5/nightly.** Drawn from nowhere; user should confirm acceptable. Hard cap enforced by a wrapper, not a soft convention.
-4. **⚑ 95% line coverage on core subsystems** (user-endorsed 2026-04-24). Matches user's Python-practice preference; forces modularity + error-path discipline. Aggressive by Go standards (industry median 70-80%).
-   ⚠ **Revisited 2026-07-27 and downgraded from goal to diagnostic.** Percentage targets reward volume, and volume is what this repo got: 488k lines of test code against 216k of production, including 885 test files named after bead IDs (255,664 lines, 52% of all test code) that largely re-tested the same behavior. The numeric floors below remain as a *regression alarm* — `scripts/coverage-gate.sh` is their single authority — but the question a reviewer asks is **which real behavior is unprotected**, never what percent. See `plans/2026-07-27-delete-and-rewrite/NEXT_STEPS.md` §2.
+4. **⚑ Coverage percentages are a diagnostic, not a goal** — settled 2026-07-27, and §"Coverage numbers" carries the reasoning. The 95%-on-core figure was endorsed as a target on 2026-04-24 (it matched the user's Python practice and is aggressive by Go standards, where the median is 70-80%), and it produced volume rather than protection. Retained here as the record of the reversal. See `plans/2026-07-27-delete-and-rewrite/NEXT_STEPS.md` §2.
 5. **⚑ Fault injection via runtime env-var, not compile-tagged dead code.** Simpler; runtime check cost is negligible (nanoseconds per site). Prior compile-tag approach was over-engineered for solo-dev. A single binary configuration is used in prod and test alike; `HARMONIK_FAULTPOINT_ARM` arms sites at test launch.
 6. **⚑ `require` (not `assert`) everywhere.** A failed precondition stops the test. Trades readability of multi-assertion tests for fewer cascading failures. Agents get one failure at a time, which is easier to debug.
 
@@ -126,7 +132,7 @@ Nightly (not merge-blocking, but opens auto-PR on failure): full crash site set,
 
 - **Twin-conformance automated diff.** Tier C writes captures; automated real-vs-twin event-stream diff with tolerance spec is deferred.
 - **Continuous fuzz infrastructure.** Seed corpora at `testdata/fuzz/<parser>/` are in scope (see §Property). Long-running continuous fuzzing (scheduled `-fuzz` jobs, OSS-Fuzz integration) is deferred.
-- **AST-level anti-coverage-gaming analyzer.** Custom `go/analysis` pass verifying every `Test*` function reaches an assertion (`require.*`, `testify.*`, or an explicit `t.FailNow` / `t.Fatal` / `t.Error*`) on every return path. Prevents assertion-free table loops from pumping coverage without verifying behavior. Uses the same `go/analysis` vehicle as the four-axis-tag analyzer. Needed because the 95% coverage target is otherwise vulnerable to assertion-free tests; until it ships, reviewer-agents check for the pattern by hand on coverage-sensitive packages.
+- **AST-level anti-coverage-gaming analyzer.** Custom `go/analysis` pass verifying every `Test*` function reaches an assertion (`require.*`, `testify.*`, or an explicit `t.FailNow` / `t.Fatal` / `t.Error*`) on every return path. Prevents assertion-free table loops from pumping coverage without verifying behavior. Uses the same `go/analysis` vehicle as the four-axis-tag analyzer. Needed because any coverage number, target or alarm, reads the same for a test that asserts nothing. Until it ships, reviewer-agents check for the pattern by hand.
 - **Benchmark suite.** No performance regression gate. `testing.B` benchmarks land with the RTO-sensitive paths (reconciliation startup, bead selection) when those specs are written.
 - **Scenario generation from production failures.** S09 improvement loop may emit scenarios (see S07 open question); not yet.
 - **Coverage per-file exemption mechanism.** Current gate is per-package-class; generated code exemptions deferred until the first generated-code file exists.

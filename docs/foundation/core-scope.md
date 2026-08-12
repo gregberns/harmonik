@@ -38,7 +38,7 @@ Before any node executes:
 5. Reachability — every node reachable from start; every node can reach a terminal.
 6. Cycle bound check — every cycle has a declared traversal cap.
 
-Any failure = validation error, workflow does NOT start. Agents generating DOT run validation before submitting.
+Any failure is a validation error and the workflow does not start. This one is absolute for a mechanical reason: a run that starts on an invalid graph writes checkpoints that no later reader can interpret, and the graph cannot be repaired mid-run (see §"Immutability at runtime"). An agent that generates DOT runs validation before submitting it.
 
 ### Sub-workflow lifecycle events
 
@@ -106,7 +106,7 @@ Any failure = validation error, workflow does NOT start. Agents generating DOT r
 **Branching.** Node commits → run's task branch → integration branch (one commit per task) → main. Small-scope changes may collapse integration. Developer owns main-merge style.
 
 **Conventions set:**
-- Worktree root: `<repo>/.harmonik/worktrees/<run_id>/` (default; implementation detail, stop asking).
+- Worktree root: `<repo>/.harmonik/worktrees/<run_id>/`. This is a default and an implementation detail — it was re-litigated several times during the walkthrough without the answer changing. Reopen it only with a reason the path itself causes a problem.
 - Branch name: `run/<run_id>`. Integration branch fixed name (`harmonik/integration` or project-configurable).
 - Merge-conflict resolver: ORIGINAL IMPLEMENTER agent (not a dedicated merge-agent type). Human escalation only as last resort. (This was an open foundation question — "workspace conflict resolution role" — resolved here.)
 - Failed-run worktrees persist until operator cleans up. Beyond startup orphan sweep, no auto-cleanup.
@@ -211,13 +211,13 @@ Full recommendation at `docs/foundation/project-level/subsystem-organization.md`
 - **Subsystems under `internal/`.** Each of S01–S09 plus `handler/{contract,claudecode,pi,twin}`, `adapter/{br,ntm}`, and `daemon` (composition root).
 - **Shared types in `internal/core`** (leaf package, imports no subsystem). Types: `RunID`, `StateID`, `TransitionID`, `BeadID`, event envelope + taxonomy, `Outcome`/`Transition`/`Checkpoint`, four-axis tag types.
 - **`pkg/` deliberately empty.** No public library surface.
-- **Dependency layering enforced by `go-arch-lint`.** Single YAML at repo root declares components + allowed edges; CI fails on violations naming the specific forbidden edge. Chosen over `depguard` (architecture-as-graph is native to go-arch-lint; depguard scatters rules across linter config).
+- **Dependency layering enforced by `depguard`.** The component matrix — one rule per component, `files:` scoping it, `allow:`/`deny:` setting the edges — lives in `.golangci.yml` under `linters-settings.depguard`, and a violation fails the lint step naming the forbidden import. **Corrected 2026-08-12:** this bullet said `go-arch-lint`, chosen over `depguard`. That is backwards. §8 of this same log records the reversal on the day it happened (`go-arch-lint` dropped per reviewer convergence), `.go-arch-lint.yml` does not exist in the repo, and `.golangci.yml` has enabled `depguard` with a populated matrix since. `quality-checks.md` and `subsystem-organization.md` agree.
 
 Conventions set:
 - Module path: `github.com/gregberns/harmonik` (confirm before `go mod init`).
 - Handlers live under `internal/handler/*` (not under `agentrunner`).
 - `internal/daemon` is the composition root; only package allowed to import most subsystems.
-- `go-arch-lint` version pinned; `depguard` is the drop-in fallback if unmaintained.
+- `depguard` ships inside `golangci-lint`, so the pinned linter version pins it. Keep the matrix current as components land — a package with no rule is fenced by nothing, and the lint stays green while it imports anything.
 
 ### Deferred / follow-up
 
@@ -237,7 +237,7 @@ Full recommendation at `docs/foundation/project-level/testing.md`. Key alignment
 
 **Five test layers with build tags:** unit (default) / integration / scenario / crash / property.
 
-**Coverage targets (user-endorsed aggressive numbers, revised upward 2026-04-24):**
+**Coverage numbers (endorsed as targets 2026-04-24, downgraded to a diagnostic 2026-07-27).** The table below is the 2026-04-24 record. Read the numbers as a regression alarm, never as a goal, and read `testing.md §"Coverage numbers"` for why: percentage targets bought volume rather than protection. Nothing here blocks a merge.
 
 | Layer / class | Line coverage | Branch / path |
 |---|---|---|
@@ -256,9 +256,9 @@ Coverage-gaming rule: a line marked `// unreachable: <why>` covered by an assert
 - Tier C (nightly): budget-capped real-agent smoke (hard `$5/night` cap; diffs open auto-PR on fixture drift).
 - Deferred: automated real-vs-twin event-stream diff (twin conformance suite).
 
-**Crash-recovery via `faultpoint` package** behind `//go:build crash`. Named injection sites (`mid-checkpoint-commit`, `after-commit-before-beads-write`, `mid-jsonl-fsync`, etc.). Production builds: faultpoints are no-ops (dead-code-eliminated). Crash builds: `faultpoint.Arm(site, SIGKILL)` causes the next hit to kill the process. Fast 3-site subset per push; full set nightly.
+**Crash-recovery via a `faultpoint` package.** Named injection sites (`mid-checkpoint-commit`, `after-commit-before-beads-write`, `mid-jsonl-fsync`, etc.), a fast 3-site subset per push and the full set nightly. This entry described the package as compile-tagged behind `//go:build crash` and dead-code-eliminated in production. `testing.md §"Crash-recovery testing approach"` reversed that and owns the design: the package is always compiled in, no env-var arms a site in production, and the build tag stays on the tests. Neither shape is in the tree yet — no `internal/faultpoint` package exists — so read `testing.md` before writing one.
 
-**CI gates (all must pass for merge):** `go vet`, `staticcheck`, `gofmt -l` empty, `go test -race` unit+property <3min, integration <5min, scenario <10min, crash fast subset <2min, coverage gate, import-allowlist linter, no `t.Skip()` in committed tests.
+**CI gates (2026-04-24 record):** `go vet`, `staticcheck`, `gofmt -l` empty, unit+property <3min, integration <5min, scenario <10min, crash fast subset <2min, coverage gate, import-allowlist linter, no `t.Skip()` in committed tests. **Two of those never shipped as gates.** The coverage gate reports a trend from `make coverage-gates` and does not block. Nothing has ever rejected a `t.Skip()`, and the tree holds 233 of them — `tools/testreport` lists every skipped test in its NOT RUN section instead. `testing.md §CI gates` carries the current set.
 
 ### Deferred / follow-up
 
@@ -270,7 +270,7 @@ Coverage-gaming rule: a line marked `// unreachable: <why>` covered by an assert
 
 Full recommendation at `docs/foundation/project-level/quality-checks.md` (post-reviewer revision). Key alignments:
 
-**Toolchain.** Go 1.25 via `go.mod toolchain go1.25.x` (enables `log/slog`, `testing/synctest`, `os.Root`, `go.mod tool`). `golangci-lint` v2.3+ explicit (v2 schema). `lefthook` as hook manager. `gofumpt` as formatter; `gci` for imports.
+**Toolchain.** Go 1.25 via `go.mod toolchain go1.25.x` (enables `log/slog`, `testing/synctest`, `os.Root`, `go.mod tool`). `golangci-lint` v2.3+ explicit (v2 schema). `gofumpt` as formatter; `gci` for imports. **Superseded:** this line also named `lefthook` as the hook manager. Git hooks are retired — lefthook re-wired itself on every commit and was removed, and validation is now agent-driven through `/check`.
 
 **Linters: 30 enabled.** Original 25 plus **`testifylint`, `errchkjson`, `exhaustive`, `containedctx`, `fatcontext`** per Go-ecosystem reviewer. Explicit NO list unchanged.
 
@@ -278,7 +278,7 @@ Full recommendation at `docs/foundation/project-level/quality-checks.md` (post-r
 
 **User-endorsed invariant: every check executable locally AND in CI. Same commands both sides.** No CI-only checks.
 
-**Three-tier identical gauntlet:**
+**Three-tier identical gauntlet** — the 2026-04-24 record. **Superseded 2026-08-03: there are two targets, not three.** `make fast` is the inner loop and `make full` is the merge decision. See `quality-checks.md §"Two gate targets"`, which owns them and explains why seven target names collapsed into two.
 - `make check-fast` (<15s) — pre-commit hook. Delta lint + staged format + vet + build + short unit tests.
 - `make check` (~3-5min) — pre-push + WIP verification. Full-tree linters, race tests, coverage gate, govulncheck, go mod tidy diff.
 - `make check-full` (~10-15min) — **agent declared-done MUST pass this.** Everything + integration + scenario + fast crash tests.
@@ -290,7 +290,7 @@ Excluded from agent done-check (CI-nightly or on-demand): real-agent smoke tests
 2. `nolintlint` blocks bulk suppression (`//nolint:all` fails).
 3. CI posts nolint-density delta to PR summary.
 4. No admin-bypass on main.
-5. **Protected rule files** (NEW per Critic): `.golangci.yml`, `.depguard.yml`, `forbid-import.go`, `coverage-gate.sh`, `.github/workflows/*`, `Makefile`, `.lefthook.yml`. Edits trigger automatic `rule-change` PR labeling, require kerf-codename citation in PR description, surface prominently in CI summary. Prevents "agent relaxes gate then passes own gate."
+5. **Protected rule files** (NEW per Critic): `.golangci.yml`, `tools/forbid-import/main.go`, `tools/lintreport/allow.txt`, `scripts/coverage-gate.sh`, `.github/workflows/*`, `Makefile`. A rule change travels as its own commit, citing a kerf codename and saying what it buys, so a reviewer can judge it without the code it would let through. That prevents "agent relaxes gate then passes own gate". **Corrected:** the original list also named `.depguard.yml` and `.lefthook.yml`, neither of which exists — the depguard matrix lives inside `.golangci.yml` and the hooks are retired. The automatic `rule-change` CI labeling described here was never built. `quality-checks.md §Agent-enforceability` owns the live handling.
 
 **Error handling.** `errcheck` blocking. Prefer `%w` wrapping at subsystem boundaries; `errorlint` enforces correctness-when-wrapping but can't detect missing-wraps (deferred to custom `go/analysis` pass). Reviewer-agent flags missing-wraps on subsystem-boundary imports until the analyzer ships.
 
@@ -319,10 +319,10 @@ section used to say "No PRs — now or later" and "Direct commits to `main`".
 - (Unchanged: workspace-model §5.8 three-level branching for WORKFLOW RUNS — that's runtime orchestrator behavior, not build-of-harmonik practice.)
 
 **Agent review on every non-trivial commit (required, not optional).**
-- Before commit: agent runs `make check-full` (full local gauntlet) AND invokes `agent-reviewer` against own diff.
+- Before commit: agent runs the full local gauntlet (`make full` today, written here as `make check-full`) AND invokes `agent-reviewer` against own diff.
 - Reviewer checks: spec alignment, idiom compliance, test adequacy, unwanted-abstraction detection, bead/codename match.
 - Verdict `BLOCK` → agent fixes before committing (never lands). `REQUEST_CHANGES` → agent addresses or commits with rationale in body. `APPROVE` → commit lands.
-- Trivial commits (typo, one-line obvious fix) MAY skip reviewer; still run `make check-full`.
+- Trivial commits (typo, one-line obvious fix) MAY skip reviewer, and still run `make full`.
 - **Human review is asynchronous after commit** — user reads `git log` + diffs. Never a gate.
 
 **Commit conventions: Conventional Commits, closed type set.** `feat` / `fix` / `refactor` / `test` / `docs` / `chore` / `spec` / `build` / `perf`. Scopes preferred (subsystem ID or package). Subject ≤72 chars, imperative.
@@ -339,7 +339,7 @@ section used to say "No PRs — now or later" and "Direct commits to `main`".
 
 **Release: tag-triggered on main.** `git tag -s v0.y.z`. CI runs `goreleaser` for the binary matrix.
 
-**CI model without PRs:**
+**CI model** — the 2026-04-24 record, superseded twice since. The hooks are gone (validation runs through `/check`), the `check-*` targets collapsed into `make fast` and `make full`, and there is now one merge gate: the human pull request from the integration branch into `main`.
 - Pre-commit (local, lefthook): `make check-fast`.
 - Agent done-check (local, agent responsibility): `make check-full` + `agent-reviewer`.
 - Post-commit CI on main (remote): re-runs `make check-full`; failure surfaces as red main; agent fixes forward.
@@ -356,9 +356,13 @@ section used to say "No PRs — now or later" and "Direct commits to `main`".
 
 Full recommendation at `docs/foundation/project-level/agent-configuration.md` (post-user-direction). Key alignments:
 
-**AGENTS.md canonical; CLAUDE.md is a symlink** (per user direction 2026-04-24). Single source of truth. Repo-root `AGENTS.md` under 120 lines. Per-directory AGENTS.md paired with sibling CLAUDE.md symlinks; created lazily when local rules justify it. Claude-specific content lives in `## Claude-specific` section inside AGENTS.md.
+**AGENTS.md canonical; CLAUDE.md is a symlink** (per user direction 2026-04-24). Single source of truth. Repo-root `AGENTS.md` stays short enough to reread at boot — about 120 lines is the router target. When it grows, the fix is to move a section to its owner, not to trim to a number. Per-directory AGENTS.md paired with sibling CLAUDE.md symlinks; created lazily when local rules justify it. Claude-specific content lives in `## Claude-specific` section inside AGENTS.md.
 
-**`CONSTITUTION.md` as non-recursive trust anchor** (per user direction 2026-04-24). Single file listing immutable foundational decisions (three-store model, centralized controller, three-artifact separation, direct-to-main + agent-reviewer-every-commit, deterministic-skeleton + probabilistic-organs, the 10 locked decisions). Edits require `Constitution-Edit-Approved-By: <human>` commit trailer; agents MUST NOT commit edits without it. In Protected rule files; edits surface automatically in CI.
+**`CONSTITUTION.md` as non-recursive trust anchor** (per user direction 2026-04-24). Single file listing immutable foundational decisions (three-store model, centralized controller, three-artifact separation, the branch model + agent-reviewer-every-commit, deterministic-skeleton + probabilistic-organs, the 10 locked decisions). Edits require a `Constitution-Edit-Approved-By: <human>` commit trailer, and agents MUST NOT commit edits without it.
+
+> **This file was planned and never authored.** `CONSTITUTION.md` does not exist anywhere in the tree, so the rule above has never been able to fire, and no CI job watches the path — nothing in `.github/workflows/` names it. The decision is binary: author the file, or delete this entry and the sibling references. It is open, and it is the operator's call, not an agent cleanup. See the tracked decision "Decide the fate of the CONSTITUTION.md governance apparatus".
+
+> **The branch entry in that list was reversed on 2026-08-04.** It read `direct-to-main`. Work now lands on the integration branch, and `main` moves only when a human opens and merges the one pull request. `build-practices.md §"Branch model — land on the integration branch"` owns the current rule. Read it there. Recorded here because the item was carried as an immutable foundation and a foundation that reverses is worth seeing, not worth quietly overwriting. The `agent-reviewer`-every-commit half of the same direction stands unchanged.
 
 **JSON-structured `agent-reviewer` verdict** (per user direction 2026-04-24). Two commit trailers:
 - `Reviewed-By: agent-reviewer` (presence marker)
@@ -368,11 +372,11 @@ Prevents prompt injection; enables audit/metrics. Schema lives in the `agent-rev
 
 **Skills at `.claude/skills/` in repo**: the normative registry is `agent-configuration.md §Skills` — do not restate the list here, it drifts. Load-bearing members (must not rot): `agent-reviewer`, `agent-config-reviewer`, `agent-comms`, `beads-cli`, `orchestrator-rules`, `harmonik-lifecycle`, `keeper`.
 
-**Rule categories**: git ops (land on the integration branch, agent-reviewer-every-commit), Go procedures (`make check-full` before declared-done), commit style (Conventional Commits + required trailers), commit creation (Why/What/Spec/Test/Risk in body), spec adherence, Protected rule files.
+**Rule categories**: git ops (land on the integration branch, agent-reviewer-every-commit), Go procedures (`make full` before declared-done), commit style (Conventional Commits + required trailers), commit creation (Why/What/Spec/Test/Risk in body), spec adherence, Protected rule files.
 
 **Memory system**: `project_/feedback_/user_` prefixes; `MEMORY.md` index; new files for durable content only.
 
-**Cross-session continuity**: `SESSION_HANDOFF.md` on session exit if non-trivial work landed.
+**Cross-session continuity**: a handoff at session exit if non-trivial work landed. The file named here was `SESSION_HANDOFF.md`, which was deleted in 2026-05 and replaced by `HANDOFF.md` plus per-role `HANDOFF-<name>.md` siblings. Do not reinstate the old name.
 
 **Three-tier update cadence**: Tier 1 (session end, self-check + `##Config review` stanza) / Tier 2 (kerf pass advance, `agent-config-reviewer` runs) / Tier 3 (kerf finalize, widest review + new skills registered).
 

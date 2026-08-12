@@ -21,7 +21,7 @@ goal: |
      dispatching / <=15min idle-drain, + boot/drain bookends) per crew contract.
 
   DO NOT:
-  - Pull kerf-next grab-bag beads. This lane is Track A ONLY.
+  - Pull grab-bag beads off the unclaimed backlog. This lane is Track A ONLY.
   - Cleanup / churn beads: allowed ONLY if slots remain free after T9 is actively moving.
 
   ═══ RE-TASK 2026-07-11 ~01:25Z (OPERATOR DIRECTIVE via admiral, event 019f4ec1) — GATE-0 ═══
@@ -63,7 +63,7 @@ hk-hcrvb CLOSED (captain-approved). Chain done: hk-j0p1r (fix) merged 21f03c3d/P
 fleet redeployed SHA 59089968; production canary hk-m7xnb green (commit_landed 63.9s) + closed.
 Close posted to operator + captain; PushNotification sent. Only follow-up: hk-vmxgk (reviewer
 agent_ready_timeout, pi/ornith, 150s budget — non-blocking, distinct from the hang).
-AWAITING captain re-task to top kerf-next lane (captain keeps me OFF hawat's internal/daemon
+AWAITING captain re-task to the next-ranked lane (captain keeps me OFF hawat's internal/daemon
 reversetunnel surface). No pending work on this epic. If re-tasked, re-hydrate {queue, epic} from the
 new handoff. Scratch daemon /tmp/hkg0 still up (idle; can be torn down).
 

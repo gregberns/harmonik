@@ -25,7 +25,11 @@ All in the sessioncapture / sessioncontext area — a disjoint file-set from the
 For each bead: `br show <id>` → reproduce → root-cause → fix in the main working tree → **independent
 review** (spawn a reviewer sub-agent; captain gates) → commit **explicit paths only** (NEVER `git add -A`/`.`,
 bare `git commit`, `git reset`, or `commit --amend` — shared-index race). Reference the bead id in the
-commit subject. Do NOT set in_progress or close — captain/daemon own terminal transitions.
+commit subject. Whoever runs the work owns the terminal transitions, and here that is the captain, not
+you. Do not set `in_progress` and do not close. A pre-set status makes the bead undispatchable, and the
+run then goes nowhere with no error. A close you make by hand leaves the ledger out of step with the run
+state, so the completion event never fires. A crew closes its own beads only when its mission file
+grants it in writing, and this file does not.
 
 ## On boot
 0. `harmonik agent brief`.

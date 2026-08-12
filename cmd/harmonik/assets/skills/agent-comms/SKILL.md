@@ -261,14 +261,31 @@ Call `join` at session start; call `leave` at clean shutdown. An agent that
 crashes without calling `leave` expires naturally when its last presence beat
 ages past the TTL (~120s).
 
-**Presence-refresh:** Presence expires ~120s. An armed `comms recv --follow`
-self-refreshes — it emits its own lightweight `agent_presence{reason:"refresh"}`
+**Presence-refresh (this file is the canonical statement — several role docs
+contradict it and are wrong):** An armed `comms recv --follow` **does**
+self-refresh. It emits its own lightweight `agent_presence{reason:"refresh"}`
 beat every ~60s for as long as the stream is open, so a quiet subscriber stays
-Online in `comms who` even with no traffic (B2, bead hk-qw63o). This beat runs
-on its own timer, independent of message delivery — it does not require
-receiving or sending anything. When `--follow` exits on a signal, it emits a
-`leave` beat immediately so the registry reflects the departure without waiting
-for the TTL (hk-ru45u).
+Online in `comms who` even with no traffic (B2, bead hk-qw63o). The beat runs on
+its own timer and its own connection, independent of message delivery — it does
+not require receiving or sending anything. When `--follow` exits on a signal, it
+emits a `leave` beat immediately so the registry reflects the departure without
+waiting for the TTL (hk-ru45u).
+
+The three durations are compiled constants — cite the symbols, not the numbers:
+`internal/presence` `TTL` (Online window, ~120s) and `StaleCutoff` (Stale until
+this, then Offline, ~10min), and `cmd/harmonik/comms.go`
+`commsFollowPresenceBeatInterval` (the refresh cadence, ~60s — half the TTL by
+design, so one dropped beat does not age you out).
+
+**Two cases where presence still ages out with `--follow` running.** Neither is a
+contradiction of the above, and knowing them stops the wrong conclusion:
+
+1. **The daemon is down.** The beat is delivered over the daemon socket. When the
+   daemon is not there the beat fails, logs, and `--follow` retries the subscribe
+   with backoff. Presence ages out normally in the meantime.
+2. **The session was parked.** `--follow` exits on the daemon's `park` message and
+   stops beating, and it deliberately sends no `leave`. A parked agent therefore
+   reads Stale and then Offline. That is intended — quiesced, not gone.
 
 **Single-emit discipline (hk-ru45u):** Do NOT also run a manual `comms join`
 timer when `--follow` is armed — `--follow` already handles periodic refresh
@@ -374,7 +391,12 @@ cross-reference.)
   Monitor re-invocation delivers a line as an actionable REPL turn (hk-b51bg;
   see § Waking an idle peer).
 - Call `comms join` at startup and `comms leave` at clean shutdown.
-- **Refresh presence** — an armed `comms recv --follow` self-refreshes every ~60s (hk-qw63o); without `--follow` armed, re-run `comms join --reason=refresh` on a ≤90s timer instead (hk-ru45u: use `--reason=refresh` so the heartbeat is not persisted to events.jsonl). Presence expires ~120s.
+- **Refresh presence** — an armed `comms recv --follow` self-refreshes every ~60s
+  (`commsFollowPresenceBeatInterval`, hk-qw63o), so you add nothing. Without `--follow`
+  armed, re-run `comms join --reason=refresh` on a ≤90s timer yourself (hk-ru45u: use
+  `--reason=refresh` so the heartbeat is not persisted to events.jsonl). The Online
+  window is `internal/presence` `TTL`. See the **Presence-refresh** note under `harmonik comms join / leave` for the two cases where a
+  running `--follow` still ages out.
 
 ## What agents MUST NOT do
 

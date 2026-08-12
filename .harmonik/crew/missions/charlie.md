@@ -39,8 +39,11 @@ key discriminator — if the same timeout hits a DIFFERENT node in a DIFFERENT h
   major-issue fan-out (captain orchestrates it, you don't fan out solo).
 - If a fix is warranted AND root-caused: fix in the main working tree, **explicit paths only** (NEVER
   `git add -A`/`.`, bare commit, reset, or `--amend`), reference hk-go6nq in the subject, spawn an
-  independent reviewer, and let the captain gate the merge. Do NOT set bead status or close — the
-  daemon/captain own terminal transitions.
+  independent reviewer, and let the captain gate the merge. Whoever runs the work owns the terminal
+  transitions, and here that is the captain, not you. Do not set `in_progress` and do not close. A
+  pre-set status makes the bead undispatchable, and the run then goes nowhere with no error. A close you
+  make by hand leaves the ledger out of step with the run state, so the completion event never fires. A
+  crew closes its own beads only when its mission file grants it in writing, and this file does not.
 
 ## On boot
 0. `harmonik agent brief`.

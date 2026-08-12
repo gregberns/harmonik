@@ -33,7 +33,8 @@ Do NOT re-open them. This replaces last night's stalled build.
 - **Bucket 3 — 5 code beads** (file these to your OWN queue `leto-q`, normal queue + pre-deploy e2e + docs/daemon-redeploy.md):
   (a) brief-renderer retrieved-refs [follow-up, do NOT block cutover]; (b) handoff CLAIM header;
   (c) shared renderReviewerConstraint(); (d) **harmonik digest parity — THE HARD GATE** (add comms-who + crew-list
-  + tmux-fleet + paused-queue sweep + ready-beads + kerf-next/map, fix br_ready collector exit-2); (e) agents-skills-sync.sh
+  + tmux-fleet + paused-queue sweep + ready-beads (`br ready --sort priority --limit 0`) + kerf map, fix
+  br_ready collector exit-2); (e) agents-skills-sync.sh
   (needs SYNC.md [A] fixes done first).
 
 ## Governing OVERRIDE — PRINCIPLES, NOT RULES (doc 03)
@@ -61,6 +62,10 @@ or below Step 1 you land yourself as reversible small commits.
 
 ## Standing rules
 Follow crew-launch/SKILL.md boot + operating loop. Dispatch ONLY to `leto-q`, never `main`. Post status on
-bead-close + a <=10-min timer while dispatching. Never pre-set in_progress (daemon owns terminal transitions).
+bead-close + a <=10-min timer while dispatching. Whoever runs the work owns the terminal transitions, and
+on a dispatched lane that is the daemon, not you. Never pre-set `in_progress` and never close a bead you
+dispatched to `leto-q`. A pre-set status makes the bead undispatchable,
+and a close you make by hand leaves the ledger out of step with the run state so the completion event never
+fires. A crew closes its own beads only when its mission file grants it in writing, and this file does not.
 Surface — do not decide — a crew-failure/kill, a genuinely-new operator decision, a locked-decision reversal, or
 any destructive/redeploy op. Model: Opus (judgment-heavy recast work).

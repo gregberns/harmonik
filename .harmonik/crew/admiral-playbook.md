@@ -36,7 +36,8 @@ the high-value modes below; when there's nothing in them, make the audit SHORT o
    failure this prevents is real and already happened — codex-on-remote and the codex-vetting crew
    were operator-requested but lived ONLY in comms messages to the captain, never written into any
    durable priority doc, so the priority list the operator was shown was stale and incomplete.
-   → Each audit, reconcile the registry against ground truth (captain-lanes + `kerf next` + comms):
+   → Each audit, reconcile the registry against ground truth (captain-lanes + comms + the
+   ready backlog, `br ready --sort priority --limit 0`):
    add new initiatives, flip status on landed/staffed ones, and if a major initiative is live in
    comms but missing from the captain's durable lane doc, direct the captain to mirror it there.
    When the operator asks "where are we," answer from this one file.
@@ -55,7 +56,7 @@ the high-value modes below; when there's nothing in them, make the audit SHORT o
 
 2. **Verify against ground truth, not the captain's self-report.**
    The biggest systemic weakness: every audit read the captain's HANDOFF + comms (the
-   captain's *own narration*) + `kerf next`, and relayed claims like "fix LIVE fleet-wide"
+   captain's *own narration*) + a backlog ranking, and relayed claims like "fix LIVE fleet-wide"
    and "concurrency back at 4" **on trust**. The captain skill itself says the HANDOFF is
    "a claim, not ground truth."
    → Each audit, spot-check **one** load-bearing captain claim against primary state:
@@ -87,7 +88,7 @@ the high-value modes below; when there's nothing in them, make the audit SHORT o
 
 5. **Surface throughput slack as an operator DIAL — don't manufacture drift.**
    Best non-corrective audit: fleet at 2-of-4 slots with an idle crew while two restart-safe
-   backlog lanes topped `kerf next`. Correctly judged "no P1 starved → NOT drift," and
+   backlog lanes topped the ready list. Correctly judged "no P1 starved → NOT drift," and
    surfaced it to the *operator* as a burn-vs-progress dial rather than directing the captain.
    (It correlated with the captain re-tasking the idle crew next hour.)
    → Idle crew + free slots + ready backlog during the scale-out window = surface to operator
@@ -154,7 +155,13 @@ the high-value modes below; when there's nothing in them, make the audit SHORT o
    (Rule 0): add new, flip landed/staffed status, mirror comms-only items into captain-lanes via directive.
 1. Load: project.yaml (locked/forbidden), captain-lanes (directives), **direction-log.md
    (RETURN-PATH sequencing intent — read before scoring)**, HANDOFF-captain (claim),
-   `kerf next` top ~12, comms log 60m, `queue list`, `comms who`.
+   comms log 60m, `queue list`, `comms who`, and the unclaimed backlog via
+   `br ready --sort priority --limit 0` (`--sort oldest` to see what is starving).
+   **Priority is stated intent first, then the ledger:** the named initiatives outrank the
+   backlog. Pass `--limit 0` — `br ready` shows 20 rows by default and sorts by `hybrid`, so a
+   short listing is not evidence of a short backlog. `kerf` plans work and does not rank it.
+   `kerf map` says which work owns a bead. `kerf next` is not an order: it scores graph
+   structure and never reads the `br` priority field, so a P0 and a P3 come back the same.
 2. **Ground-truth spot-check** ONE captain claim (Rule 2).
 3. **Operator-knob check** against the standing list (Rule 3).
 4. **Say/do-gap scan**: captain claims to operator vs actual `--to operator` messages (Rule 1).

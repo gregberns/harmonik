@@ -8,11 +8,13 @@
 
 ## Precedence
 
-Standing behavioral rules: the **`orchestrator-rules` skill** (`.claude/skills/orchestrator-rules/SKILL.md`) is canonical. On conflict: **orchestrator-rules skill > AGENTS.md prose > per-domain skills own their detail**. Operational state lives in `.harmonik/context/` (captain tiers) and `HANDOFF.md` (this session) — **never in this file**. AGENTS.md is a ROUTER: it points you at the right contract; it does not restate one.
+Standing behavioral rules: the **`orchestrator-rules` skill** (`.claude/skills/orchestrator-rules/SKILL.md`) is canonical. On conflict: **orchestrator-rules skill > AGENTS.md prose > per-domain skills own their detail**. Operational state lives in `.harmonik/context/` (captain tiers) and `HANDOFF.md` (this session) — **never in this file**.
+
+AGENTS.md is a ROUTER. What belongs here is a pointer to the contract that owns a thing, plus the one line of judgment a reader needs to use the pointer. Judge this file by that test, not by a line count: if a paragraph could go and no reader would lose something the pointed-at file does not carry, move it out. Length is the symptom, so when this file grows, find the thing that grew and give it to a skill or a doc. (A hard 120-line cap used to be the test. This file has sat just over it for months, so every session-boundary review raised the same flag against the source of truth, and agents learned to read the check as decorative. `.claude/skills/agent-config-reviewer/SKILL.md` still checks the number.)
 
 ## Per-role load map
 
-Each role loads only its slice. The boot runbook in each role's skill is authoritative; this is the map.
+Each role loads only its slice. **This map is the reading order.** Where any other file states one, it defers here. Each role's skill stays authoritative for that role's own steps; this is the map across roles. The slices genuinely differ, on purpose: a captain does not boot-read `AGENT_INDEX.md` or `STATUS.md`, and an implementer-orchestrator has three steps where the captain has four.
 
 - **Captain — cold boot** (see `.claude/skills/captain/STARTUP.md`):
   1. Step 0 — identity + CWD guard.
@@ -24,11 +26,14 @@ Each role loads only its slice. The boot runbook in each role's skill is authori
 - **Captain — keeper-restart resume (LEAN):** re-drain comms → re-read tier-3/tier-2 + ONE boot digest → trust cached tier state as input → re-arm watchers. No heavy re-derive.
 - **Crew — minimal load** (see `.claude/skills/crew-launch/SKILL.md`): its mission file (`.harmonik/crew/missions/<crew>.md`) + `crew-launch/SKILL.md` + `agent-comms` + `beads-cli` + `harmonik-dispatch` + `PRINCIPLES.md` (crews write the tests, so they need the standard the tests are held to). Does **NOT** load fleet-level state (ROADMAP, captain-lanes, project.yaml, orchestrator standing-rules, STATUS, HANDOFF, knowledge base) — scoped to ONE epic + ONE queue.
 - **Assessor** (see [`roles/assessor/operating.md`](roles/assessor/operating.md) — that file is the contract): `roles/assessor/soul.md` + `operating.md` + `good-enough-principles.md` + `personality.md`, then the gate definition at `plans/2026-07-27-delete-and-rewrite/ASSESSOR-GATE.md` and the severity rubric at `plans/2026-07-06-quality-system/07-assessor-severity-framework.md`. Writes its output to a dated folder under `assessments/`, created before the gate runs, and owns the live failure corpus at [`test/exploratory/cases/`](test/exploratory/cases/) — the cases it re-runs every gate and extends before it terminates. **The assessor's distinctive job is to spin the process up and run real work through it**; a passing suite is not evidence the system does what we want, and other agents own the unit tests. The role is a document, not a process — no command starts one. Wiring only (harness, injected context) lives in `.harmonik/agents/assessor/manifest.yaml`.
-- **Implementer-orchestrator (main `/session-resume`, non-captain):** `AGENT_INDEX → STATUS → HANDOFF` reading order + the **`orchestrator-rules` skill** (standing rules) + `harmonik-dispatch`. **Deliberately three steps, not the captain's four:** `captain-lanes.md` is captain-tier — its own tier header says "LOADED BY: captain @ STARTUP Step 0b; NOT loaded by crews or implementers". Do not "fix" this to match §Start here.
+- **Implementer-orchestrator (main `/session-resume`, non-captain):** `AGENT_INDEX → STATUS → HANDOFF` + the **`orchestrator-rules` skill** (standing rules) + `harmonik-dispatch`. **Three steps, not the captain's four:** `captain-lanes.md` is captain-tier — its own tier header says "LOADED BY: captain @ STARTUP Step 0b; NOT loaded by crews or implementers". Putting it back here is the recurring wrong fix.
+- **Any session with no role:** `PRINCIPLES.md` → the charter → `AGENT_INDEX.md` → `STATUS.md` → `HANDOFF.md`. §Start here describes the same order in prose.
 
 ## Start here
 
-Read [PRINCIPLES.md](PRINCIPLES.md) first — the nine engineering principles this codebase is built to, and the standard any new or rewritten code is held to. Then, while the delete-and-rewrite program is active, [`plans/2026-07-27-delete-and-rewrite/CHARTER.md`](plans/2026-07-27-delete-and-rewrite/CHARTER.md) — the stable statement of what the program is, what the core subsystem set is, and what "done" means; it changes rarely, and it outranks any handoff on intent. It is the shortest description of what good looks like here; `AGENT_INDEX.md` summarizes it, and it is short enough to reread before writing code rather than only at boot. Then [AGENT_INDEX.md](AGENT_INDEX.md) — the master map of the knowledge base (every doc reachable within two hops), [STATUS.md](STATUS.md) for phase + locked decisions, and `HANDOFF.md` for this-session state (untracked/gitignored — present on this machine, absent on a fresh clone). A **captain** additionally reads `.harmonik/context/captain-lanes.md`, the medium-term lane/epic tracker, before `HANDOFF.md`; crews and implementer-orchestrators skip it, per the load map above.
+Every role starts with the same two files. Read [PRINCIPLES.md](PRINCIPLES.md) — the nine engineering principles this codebase is built to, and the standard any new or rewritten code is held to. Then, while the delete-and-rewrite program is active, [`plans/2026-07-27-delete-and-rewrite/CHARTER.md`](plans/2026-07-27-delete-and-rewrite/CHARTER.md) — what the program is, what the core subsystem set is, and what "done" means. It changes rarely, it outranks any handoff on intent, and it is short enough to reread before writing code rather than only at boot.
+
+What you read after those two depends on your role, and the load map above is the statement of it. A session with no role reads [AGENT_INDEX.md](AGENT_INDEX.md) — the curated map of the knowledge base — then [STATUS.md](STATUS.md) for phase and locked decisions, then `HANDOFF.md` for this-session state (untracked and gitignored, so it is present on this machine and absent from a fresh clone). A **captain** boot-reads neither `AGENT_INDEX.md` nor `STATUS.md`, and does read `.harmonik/context/captain-lanes.md`, which is captain-tier and which crews and implementer-orchestrators skip.
 
 **Launching a captain or crew?** Use the native umbrella verb — `harmonik start captain` or `harmonik start crew <name>` (keeper auto-armed; NO env var, NO script path — `--project` defaults to cwd). The old `~/.claude/captain-tools/captain-launch.sh` + `HK_PROJECT` env var are RETIRED in favor of `harmonik start captain`. Positional-XOR-flags rule (D2): the simple form is a bare name only (`start crew paul`); the moment any `--flag` appears the name must move to `--name` (mixing a bare name with flags is a hard error). `harmonik captain` / `harmonik crew start <name>` remain as back-compat aliases.
 
@@ -38,7 +43,7 @@ Read [PRINCIPLES.md](PRINCIPLES.md) first — the nine engineering principles th
 
 ## Standing rules → the `orchestrator-rules` skill
 
-Dispatch discipline (the daily loop, the HARD-RULE exceptions), priority (kerf-first), bead lifecycle (daemon owns terminal transitions; never pre-set in_progress), the review gate, autonomy/flow boundaries, and the major-issue fan-out trigger: all canonical in the **`orchestrator-rules` skill** (`.claude/skills/orchestrator-rules/SKILL.md`). It points to the detail-owner skills; it does not duplicate them.
+Dispatch discipline (the daily loop, the HARD-RULE exceptions), priority (stated intent first, then the ledger), bead lifecycle (daemon owns terminal transitions; never pre-set in_progress), the review gate, autonomy/flow boundaries, and the major-issue fan-out trigger: all canonical in the **`orchestrator-rules` skill** (`.claude/skills/orchestrator-rules/SKILL.md`). It points to the detail-owner skills; it does not duplicate them.
 
 - **Daily loop / daemon / `queue submit` / `append` / `subscribe`:** the **harmonik-dispatch** skill. Full design: `docs/orchestration-protocol-v2.md`.
 - **Monitoring the daemon** (the canonical Monitor pattern, stream-vs-wave, failure triage): the **harmonik-dispatch** skill. Manual hang-recovery: `docs/known-workarounds.md`.
@@ -66,28 +71,23 @@ Non-trivial changes are planned with **kerf** (spec-first; create a kerf work be
 - **Knowledge base docs** (`docs/`) capture problems, goals, concepts, components, subsystems, ideas, and the collaboration log. These are inputs to kerf works; they are not themselves normative specs.
 - **Role instructions live in `roles/`** at the repo root — `assessor`, `captain`, `admiral`, `lane` so far (`lane` is shared by every hand-run delivery lane). **A role is a document, not a process: nothing starts one.** An agent that is already running becomes the assessor by reading `roles/assessor/`. There is no launch command, and assuming there was one has cost real time more than once. Each role's `operating.md` marks the steps that need a live daemon with **[FLEET]**, so the same file works with harmonik running and with nothing running. `.harmonik/agents/<role>/manifest.yaml` names its folder with a `role:` key and keeps only the harmonik-side wiring; a manifest with no `role:` key reads `soul.md` and `operating.md` from its own folder as before (`crew`, `commodore`, `watch` still do). **There is one copy of a role's instructions — the one in `roles/`.** Do not add a "see roles/" stub under `.harmonik/agents/`; a stub is still a file that drifts. See [`roles/README.md`](roles/README.md).
 - **The assessor's output lives in `assessments/`**, one dated folder per assessment (`YYYY-MM-DD-HHMM-<slug>`), in the same spirit as `plans/`. It is created BEFORE the gate runs and written as the work happens — a record assembled afterwards agrees with the verdict because the same mind produced both. Four files, copied from `assessments/_TEMPLATE/`: the mission, the evidence, the findings, the verdict. See [`assessments/README.md`](assessments/README.md).
-- **Ten architectural decisions** are locked in as of 2026-04-19. See [STATUS.md](STATUS.md#10-locked-decisions-2026-04-19) — note that section is a stub pointing at git history for the decision text itself. Reopening one requires strong new evidence.
+- **Ten architectural decisions** are locked in as of 2026-04-19. See [STATUS.md](STATUS.md#10-locked-decisions-2026-04-19) — that section is a stub, and it names the one commit that carries the decision text. **Reopening one is the operator's call, and evidence is what earns the conversation.** They were locked because re-litigating them cost more than living with them. Bring evidence that a decision is now wrong, say what changed, and put it to the operator. That the current task would be easier the other way is not evidence, and finding good evidence is not the same as having the authority to act on it. This is the only statement of that gate in this file.
 - **`.claude/skills/` is GENERATED OUTPUT for every skill that ships in the binary.** The source is `cmd/harmonik/assets/skills/<name>/` (pulled in by `//go:embed` in `cmd/harmonik/init_skill_assets.go`); `harmonik sync-assets` classifies `.claude/skills/*` as *Managed* and overwrites it from the embed, and **there is no reverse sync**. Editing only the `.claude/skills/` copy silently creates embed drift, resurfaces as a `.harmonik-new` conflict on the next sync, and is eventually reverted. **To change a shipped skill: edit the `cmd/harmonik/assets/skills/` copy, then mirror it byte-for-byte into `.claude/skills/` in the same commit** — the two paths must stay byte-identical. The shipped set is: `agent-comms`, `beads-cli`, `captain`, `crew-launch`, `harmonik-dispatch`, `harmonik-lifecycle`, `keeper`, `major-issue-fanout`, `orchestrator-rules`, `watch` (authoritative list: `ls cmd/harmonik/assets/skills/`). Everything else under `.claude/skills/` is project-authored and safe to edit in place. Each embedded skill file carries the same warning in a `<!-- SOURCE OF TRUTH: … -->` banner under its frontmatter.
 - **Cite symbols, not line numbers, in skills and docs.** File-plus-line references (`thresholds.go:72`) rot within days and have repeatedly shipped as stale guidance. Write `internal/keeper/thresholds.go` `HardCeilingAbsTokens` and let the reader grep.
-- **Write prose in Simplified Technical English (ASD-STE100).** This covers all prose you write that is not code. Use short common words and active voice. One instruction per sentence. No semicolons, no marketing adjectives, one name per thing. In scope: `docs/`, `specs/`, `plans/`, skills, commit bodies, PR text, bead descriptions, comms messages, replies to the operator. Exempt: code, identifiers, quoted output, and prose you are not already rewriting for another reason. **The convention is forward-looking. It does not authorize a retrofit pass over files that predate it.** The **`ste-writing` skill** (`.claude/skills/ste-writing/SKILL.md`) owns the rules — the full set, the two modes, and the six-step self-lint. This bullet and the skill registry are mirrors of it. It governs the FORM of a sentence. The `no-jargon` skill governs the AUDIENCE: never make a bead ID, SHA, or codename the handle for a thing. Both apply at once.
+- **Write prose in Simplified Technical English (ASD-STE100).** Short common words, active voice, one instruction per sentence, one name per thing. The **`ste-writing` skill** (`.claude/skills/ste-writing/SKILL.md`) owns the rules — the full set, what is in scope and what is exempt, the two modes, and the self-lint. It is forward-looking and does not authorize a retrofit pass over files that predate it. STE governs the FORM of a sentence. The `no-jargon` skill governs the AUDIENCE: give what a thing is, not a bead ID or a codename as its handle. Both apply at once.
 - **Write guidance as principles, not laws.** An agent treats a rule as a law — it obeys the letter and does goofy things to satisfy it; a principle gives a direction to travel and preserves judgment. When writing skills, AGENTS content, or review criteria, prefer "lean toward X because Y" / "treat Z as a smell worth investigating" over "never X" / "always Y". Reserve hard mechanical constraints for genuine safety or irreversibility.
 - **Codex and Pi implement; Claude is reserved for oversight.** Claude tokens are the constrained resource and the operator is on a Codex subscription, so staff implementer crews on the Codex or Pi harness (`harmonik start crew --name <name> --harness codex` — note the D2 positional-XOR-flags rule above: with any flag present the name must move to `--name`) and keep Claude for the roles where judgment is the product — captain, admiral, reviewer. Nothing selects a harness by default, so choosing Codex is a deliberate act; the reviewer node stays on Claude in code (`cmd/harmonik/substrate_select.go` `reviewerSubstrate`). Operator surface: [`docs/codex-operator-guide.md`](docs/codex-operator-guide.md).
 - **Bead label convention for kerf work codenames:** use the `codename:<name>` prefix (e.g. `codename:handler-pause`, `codename:claude-hook-bridge`). Kerf work `bead_filter` clauses must match the same form. Functional/topical labels (e.g. `queue`, `spec-drift`) remain bare — only labels whose sole purpose is to identify a kerf work codename get the prefix.
 
-## Don't
+## Judgment calls
 
-- Don't reopen locked-in decisions without explicit user request.
-- Don't add abstraction layers the user hasn't asked for.
-- Don't skip your role's reading order when picking up the project: `PRINCIPLES → AGENT_INDEX → STATUS → HANDOFF`, plus `captain-lanes` (Step 0b) if you are the captain. See the per-role load map above.
-
-<!-- bv-agent-instructions-v2 -->
-
----
+- **An abstraction has to name what it buys.** Name the thing and the abstraction is welcome: a second caller that exists today, a test seam the code has no other way to reach, a port a linter requires (neither `internal/runloop` nor `internal/runexec` may touch the wall clock, and `internal/runloop` meets that with an injected clock port, so the port there is not optional — `internal/runexec` meets it by reading no clock at all, so do not give that one a port), or a boundary a spec draws. [PRINCIPLES.md](PRINCIPLES.md) asks for this class of change rather than treating it as scope creep — consumer-owned ports (§4), a constructor that can refuse an invalid value (§2), collapsing two paths that agree in shape (§5). So "the bead body did not ask for it" is not on its own a reason to refuse one. The smell is an abstraction that names nothing: one caller, no test that needed it, no rule that demanded it, and a layer between them. Say what it buys in the commit body, and a reviewer can agree or disagree with a stated claim instead of guessing at intent.
+- **Read your role's slice.** The per-role load map above is the reading order, and the slices differ on purpose. Read less than yours and you boot on a stale claim. Read more than yours — a captain loading the whole knowledge base, say — and you spend on reading the context the role needs for its actual job.
 
 ## Issue tracking → [`docs/beads-workflow.md`](docs/beads-workflow.md)
 
-Issues are beads (`br`); kerf ranks them. The command surface, the workflow loop, commit-message
-validation, and the UBS (Ultimate Bug Scanner) quick reference all live in
+Issues are beads (`br`). The command surface, the workflow loop, commit-message validation, and the
+UBS (Ultimate Bug Scanner) quick reference all live in
 [`docs/beads-workflow.md`](docs/beads-workflow.md) — read it when you need them. The `beads-cli`
 skill owns the read/write discipline. Only the traps you cannot look up stay here:
 
@@ -95,10 +95,21 @@ skill owns the read/write discipline. Only the traps you cannot look up stay her
   `br sync --flush-only` stages nothing. Never "fix" this by tracking `.beads/` — a perpetually dirty
   tree trips the daemon's `implementer_escaped_worktree` detector and false-fails dispatched beads
   (refs `hk-yru`). Anything that must survive goes in a tracked doc or the commit message.
-- **Named initiatives outrank `kerf next`.** Work the operator's and admiral's named initiatives
-  first; `kerf next` ranks the *unclaimed backlog* below that line — it is never an override.
-- **Never run bare `bv`** — it launches an interactive TUI that blocks your session. `--robot-*`
-  flags only, and only for graph metrics; kerf owns prioritization.
+- **Priority comes from stated intent first, then from the ledger.** Work the named initiatives of
+  the operator and the admiral first. They live in the active plan's order, in the dated directives
+  in `captain-lanes.md`, and in the direction-log RETURN-PATH. Below that line, order the unclaimed
+  backlog with `br ready --sort priority --limit 0`. Scope it to one lane with `--parent <epic_id>`,
+  and use `br ready --sort oldest` to surface work that is starving. Pass `--limit 0`: `br ready`
+  returns 20 rows by default and sorts by `hybrid`, so a short default listing is not evidence of a
+  short backlog.
+- **Kerf plans work. It does not rank work.** Use `kerf map` to see which work owns a bead and what
+  context it carries. Do not take an order from `kerf next` — its score comes from graph structure
+  and never reads the `br` priority field, so a P0 bead and a P3 bead come back the same, and it
+  reports empty for a work that has no `bead_filter`. Ranking what matters is judgment, and a graph
+  metric cannot do it for you.
+- **Never run bare `bv`** — it opens an interactive TUI that holds the terminal until a human quits
+  it, so an agent session stops there and nothing reports an error. Use `--robot-*` flags only, and
+  only for graph metrics (`--robot-insights`, `--robot-graph`).
 - **Commit with `git commit -F <file>`, never `-m`.** Non-trivial commits require `Reviewed-By:` and
   `Review-Verdict:` trailers (JSON, `schema_version: 1`); a `BLOCK` verdict is never committed.
   Validation is agent-enforced — git hooks are retired. `--no-verify` is forbidden.
@@ -118,6 +129,20 @@ skill owns the read/write discipline. Only the traps you cannot look up stay her
   every package, it never scopes by what changed, and it never approves on a timeout, an OOM, a
   compile failure or a passing retry.
 
+<!-- bv-agent-instructions-v2 -->
 <!-- end-bv-agent-instructions -->
 
-> **Maintainer note — the block above is machine-regenerable.** `br agents --update` rewrites everything between the `bv-agent-instructions-v2` markers from br's generic upstream template. Four harmonik-specific corrections live inside it and WILL be reverted to upstream's (false) wording if you run that command: (1) the bead ledger is gitignored and machine-local, not "stored in `.beads/` and tracked in git"; (2) `git commit -m "..."` alone omits this repo's required trailers; (3) commit-message validation is agent-enforced via the `/check` flow — git hooks (lefthook) are retired, not "wired via `lefthook.yml`"; (4) the review-trailer rule carries its own escape hatch — an unreachable reviewer is recorded in the trailer and the work is committed, never left uncommitted. Re-apply all four after any `br agents --update`, and diff the block before accepting the result.
+> **Maintainer note — the marker block above is machine-regenerable, and it is empty on purpose.**
+> `br agents --update` rewrites everything between the `bv-agent-instructions-v2` markers from br's
+> generic upstream template. Harmonik's issue-tracking guidance therefore lives ABOVE the markers,
+> where that command cannot reach it. It used to live inside them, and one `br agents --update` would
+> have silently deleted the only statement in this repo of the bare-`bv` rule and of where priority
+> comes from. After any `br agents --update`, read the regenerated block and delete each claim
+> upstream makes that is false here: (1) the bead ledger is gitignored and machine-local, not "stored
+> in `.beads/` and tracked in git"; (2) `git commit -m "..."` alone omits this repo's required review
+> trailers; (3) commit-message validation is agent-enforced through the `/check` flow — git hooks
+> (lefthook) are retired, not "wired via `lefthook.yml`"; (4) an agent never claims a bead with
+> `br update --status=in_progress` and never closes one with `br close` — the daemon owns terminal
+> transitions, and a bead pre-set to `in_progress` stops being dispatchable with nothing reporting an
+> error; (5) `kerf next` is not the entry point for what to work on. Diff the block before you accept
+> the result.

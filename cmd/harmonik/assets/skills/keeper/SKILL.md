@@ -104,26 +104,50 @@ wins, 215k) — preventing a `90%` gate from firing only at ~900k tokens
 act=215K, operator-authorized 2026-06-17 to restart EARLIER and cap cache-read
 token spend.
 
-| gate | abs-token (SUGGESTED — operator-required) | pct (suggested) | source |
+| gate | authoritative symbol (`internal/keeper/thresholds.go`) | pct-ceil symbol | indicative value |
 |---|---|---|---|
-| **WARN** | `warn_abs_tokens = 200000` | `--warn-pct 80` (pct-ceil 0.70) | `keeper config --example` / `DefaultWarnAbsTokens` |
-| **ACT** | `act_abs_tokens = 215000` | `--act-pct 90` (pct-ceil 0.85) | `DefaultActAbsTokens` |
-| **FORCE-ACT** | `force_act_abs_tokens = 240000` (act+25k) | pct 95 (pct-ceil 0.95) | `DefaultForceActAbsOffset` |
-| **HARD-CEILING** | `hard_ceiling.abs_tokens = 280000` (SID-independent trip-wire) | — | `DefaultHardCeilingTokens` / `HardCeilingAbsTokens` |
-| window fallback | `FallbackWindowSize = 200000` | — | `watcher.go` `WatcherConfig.applyDefaults`, `--window-size` |
+| **WARN** | `DefaultWarnAbsTokens` | `DefaultWarnPctCeil` | ~200k abs, ceil ~0.70 |
+| **ACT** | `DefaultActAbsTokens` | `DefaultActPctCeil` | ~215k abs, ceil ~0.85 |
+| **FORCE-ACT** | `DefaultActAbsTokens` + `DefaultForceActAbsOffset` | act ceil + the force-act ceil offset | ~240k abs, ceil ~0.95 |
+| **HARD-CEILING** (SID-independent trip-wire) | `HardCeilingAbsTokens` (alias of `DefaultHardCeilingTokens`) | — | ~280k abs |
+| window fallback | the fallback window size applied by `WatcherConfig.applyDefaults` (`watcher.go`), overridable with `--window-size` | — | ~200k |
 
-- The **pct gates (`--warn-pct`/`--act-pct`) are only used as a fallback** when
-  the gauge does not emit absolute token counts (`CtxFile.Tokens == 0` or
-  `WindowSize == 0`) — i.e. older Claude Code versions (`cycle.go:belowActThreshold`,
-  `watcher.go:belowWarnThreshold`). When absolute tokens ARE present (all current
-  Claude Code versions with [1m] or 200k windows), the abs/pct-ceil `min` formula
-  above governs. (Symbols, not line numbers: `cycle.go` and `watcher.go` move
+> **The Go file is the source of truth, not this table.** Every value above is a compiled
+> constant in `internal/keeper/thresholds.go`, and `thresholds_test.go` pins it. The
+> indicative column exists so you can reason about the shape of the band — it is not a
+> figure to quote. When an exact number matters (writing a runbook, filing a bead, judging
+> how close a session is to a gate), read the symbol. Prose that copies a constant goes
+> stale the first time the constant is retuned, and this band has been retuned more than
+> once already. `harmonik keeper config --example` prints the current values as YAML you
+> can paste.
+
+- **The pct-CEIL and the raw pct GATE are two different things — do not conflate them.**
+  The pct-ceil (`DefaultWarnPctCeil` / `DefaultActPctCeil`) is always live: it is the
+  second half of `min(abs, ceil × window)`, and on a small window it is the half that
+  fires. The raw pct gate (`CyclerConfig.WarnPct` / `ActPct`) is a fallback, reached only
+  when the gauge emits no absolute token count (`CtxFile.Tokens == 0` or
+  `WindowSize == 0`) — an older Claude Code. See `cycle.go` `belowActThreshold` and
+  `watcher.go` `belowWarnThreshold`. (Symbols, not line numbers: those files move
   constantly — grep the symbol name.)
-- **On [1m]-window models (1M token context) the abs thresholds are
-  authoritative**: `min(200k, 0.70×1M)=200k` for warn, `min(215k, 0.85×1M)=215k`
-  for act. `--warn-pct`/`--act-pct` have no effect and the keeper will emit a
-  warning if they are passed explicitly. Use `--warn-abs-tokens`/`--act-abs-tokens`
-  to override thresholds. (Refs: hk-odhh.)
+- **On a [1m]-window model the absolute cap is what fires**, because the abs value is
+  smaller than the ceil applied to a 1M window. That is the whole point of the `min`
+  formula: one band works on a 200k window and on a 1M window without a re-tune.
+- **`--warn-pct` / `--act-pct` are TIGHTEN-ONLY. They are NOT inert.** They were inert
+  once and older text still says so. `cmd/harmonik/resolve_keeper_config.go`
+  `ResolveKeeperConfig` now feeds an explicitly-set pct flag in as the pct-CEIL
+  (pct ÷ 100), so it flows through the same `min(abs, ceil × window)` band as everything
+  else. It may only move a gate EARLIER. A value looser (higher) than the resolved ceil
+  is REJECTED with a `KeeperConfigError` naming the flag, and **the keeper refuses to
+  start**. `internal/keeper/thresholds.go` `EffectiveBandTokens` enforces the same
+  direction at the helper level, and
+  `internal/keeper/live_keeper_present_hkx7s_test.go`
+  `TestEffectiveBandTokens_DefaultsAndTightenOnly` pins it.
+
+  **Know this before you type one:** the resolved default ceils are around 0.70 warn and
+  0.85 act, so `--warn-pct 80` and `--act-pct 90` — the values older runbooks suggest —
+  are both LOOSER than the default and both hard-fail at startup. To move the band, reach
+  for `--warn-abs-tokens` / `--act-abs-tokens`. Reach for a pct flag only when you mean to
+  tighten the gate relative to a particular window size. (Refs: hk-odhh, hk-5da7.)
 - **FORCE-ACT** (240k) fires the cycle **unconditionally, bypassing the
   CrispIdle gate**, so a perpetually-busy session that never goes idle still gets
   cleared before exhaustion (`cycle.go` `CyclerConfig.aboveForceThreshold` /
@@ -137,9 +161,9 @@ token spend.
 - **Every keeper value is OPERATOR-SET** — via a CLI flag OR the
   `.harmonik/config.yaml` `keeper:` block (see § Project config below). CLI flags
   win over config.yaml; an UNSET required value makes the keeper **refuse to start**
-  (no compiled fallback). The pct flags (`--warn-pct`, `--act-pct`) are a legacy
-  fallback — do NOT pass them on modern deployments (they are inert when Claude Code
-  emits absolute token counts). Refs: hk-odhh, hk-lhu2.
+  (no compiled fallback). Set the band with `--warn-abs-tokens` / `--act-abs-tokens`.
+  The pct flags are tighten-only and hard-fail when they would loosen the band — see the
+  bullet above before you use one. Refs: hk-odhh, hk-lhu2, hk-5da7.
 
 ### § Project config — .harmonik/config.yaml `keeper:` block (OPERATOR-REQUIRED)
 
@@ -284,11 +308,11 @@ Flags (`keeper_cmd.go` `runKeeperSubcommand`):
 |---|---|---|
 | `--agent <name>` | — (**required**) | identifies the lockfile + `.managed` marker |
 | `--tmux <target>` | auto-derived | pane to inject warn/handoff into; auto-resolved from `harmonik-<hash12>-<agent>` if omitted (`keeper.ResolveTmuxTarget`) |
-| `--warn-pct N` | `80` | pct fallback warn gate — **inert on [1m] models**; emits a warning if passed explicitly |
-| `--act-pct N` | `90` | pct fallback act gate (`.managed`-gated) — **inert on [1m] models**; emits a warning if passed explicitly |
-| `--warn-abs-tokens N` | `200000` | absolute warn gate (authoritative on [1m] models) |
-| `--act-abs-tokens N` | `215000` | absolute act gate (authoritative on [1m] models) |
-| `--window-size N` | `200000` | assumed window when gauge reports `WindowSize==0` |
+| `--warn-pct N` | `0` = unset | **tighten-only** warn pct-ceil (fed in as pct ÷ 100). A value looser than the resolved ceil is rejected and the keeper refuses to start — see § The two thresholds. NOT inert. |
+| `--act-pct N` | `0` = unset | **tighten-only** act pct-ceil, same rule. Not the raw pct gate. |
+| `--warn-abs-tokens N` | `DefaultWarnAbsTokens` | absolute warn gate — this is the flag to use when you want to move the band |
+| `--act-abs-tokens N` | `DefaultActAbsTokens` | absolute act gate — likewise |
+| `--window-size N` | the fallback window size | assumed window when the gauge reports `WindowSize==0` |
 | `--respawn-cmd <cmd>` | — | supervised respawn: after the gauge goes stale 20s and the pane is at a shell prompt, run `sh -c <cmd>` to relaunch the agent (requires `--tmux`; 90s cooldown). Refs hk-3w2. |
 
 **Behaviour** (`keeper_cmd.go` `runKeeperSubcommand`): acquire the single-keeper lock →
@@ -515,9 +539,12 @@ harmonik keeper doctor --agent <agent> --project $HARMONIK_PROJECT
 # Wire the hooks (GLOBAL settings.json edit; --yes-destructive arms the reset cycle)
 harmonik keeper enable --agent <agent> --tmux <pane> --yes-destructive
 
-# Start the watcher (use ABSOLUTE tokens — pct flags are INERT on a 1M window).
-# The captain's canonical band is warn 200k / act 215k (operator-lowered; M1/hk-039z):
-harmonik keeper --agent <agent> --tmux <pane> --warn-abs-tokens 200000 --act-abs-tokens 215000
+# Start the watcher. Set the band with ABSOLUTE tokens: the pct flags are tighten-only
+# and a loosening value makes the keeper refuse to start (see § The two thresholds).
+# Read the current defaults from `internal/keeper/thresholds.go` or
+# `harmonik keeper config --example` rather than copying numbers out of a runbook.
+harmonik keeper --agent <agent> --tmux <pane> \
+  --warn-abs-tokens <DefaultWarnAbsTokens> --act-abs-tokens <DefaultActAbsTokens>
 
 # Defer the reset while a queue batch is in flight, then release
 harmonik keeper set-dispatching --agent <agent>
@@ -554,9 +581,12 @@ mission (known-workarounds.md §Crew context management).
   `clear-dispatching`, flags, exit codes, `keeperTopUsage`.
 - `cmd/harmonik/keeper_enable_doctor_cmd.go` — `enable` / `doctor`, the
   settings.json wiring, the doctor check table, usage strings.
-- `internal/keeper/thresholds.go` — the single source of truth for the threshold
-  defaults (200k warn/215k act/240k force-act, 280k hard-ceiling) and the
-  `min(abs, pct*window)` formula, shared by both watcher and cycler.
+- `internal/keeper/thresholds.go` — **the single source of truth for the threshold
+  defaults** (`DefaultWarnAbsTokens`, `DefaultActAbsTokens`, `DefaultForceActAbsOffset`,
+  `HardCeilingAbsTokens`, `DefaultWarnPctCeil`, `DefaultActPctCeil`), the
+  `min(abs, pctCeil × window)` formula in `minAbsOrPctCeil`, and the tighten-only
+  guarantee in `EffectiveBandTokens`. Shared by both watcher and cycler. Read the numbers
+  here, not out of prose.
 - `internal/keeper/cycle.go` — CrispIdle / force-act / operator-attached gating
   and the reset-cycle state machine.
 - `internal/keeper/watcher.go` — the poll loop, `FallbackWindowSize`, warn

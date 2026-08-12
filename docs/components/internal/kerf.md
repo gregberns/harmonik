@@ -12,7 +12,7 @@ updated: 2026-04-13
 # kerf
 
 ## Summary
-Kerf is a spec-writing CLI tool for AI agents. Single Go binary. It manages the "thinking before coding" phase -- structured planning that decomposes problems into implementable units before any code is written. Kerf enforces a spec-first workflow where work progresses through defined stages, and its jig system provides process templates that agents follow without improvisation.
+Kerf is a spec-writing CLI tool for AI agents. Single Go binary. It manages the "thinking before coding" phase -- structured planning that decomposes problems into implementable units before implementation starts. Kerf enforces a spec-first workflow where work progresses through defined stages, and its jig system provides process templates that agents follow without improvisation.
 
 ## Key Capabilities
 
@@ -47,7 +47,7 @@ Moves specs from the bench into the repository with pre-flight checks. This is t
 
 Kerf is the **planning and specification layer**. Its role in the system:
 
-- **Upstream of execution**: Kerf produces the specs and bead graphs that the workflow execution layer (Kilroy or equivalent) consumes. No code is written without a kerf-produced plan.
+- **Upstream of execution**: Kerf produces the specs and bead graphs that the workflow execution layer (Kilroy or equivalent) consumes. Non-trivial changes are planned with kerf first — new subsystems, cross-subsystem refactors, and cross-cutting contracts. Trivial changes such as typos and one-liners skip kerf. If you cannot tell which side a change falls on, the cost of a short kerf work is low and the cost of an unplanned cross-cutting change is high.
 - **Agent-Mail native**: Kerf already integrates with Agent Mail for multi-agent coordination. This is the primary communication channel for dispatching beads to workers.
 - **NTM as process substrate**: Kerf spawns worker agents through NTM. The planning layer directly drives the process management layer.
 - **Bead graphs feed parallelization**: The dependency structure in bead graphs maps to fan-out/fan-in execution patterns. Layers of independent beads can execute concurrently.
@@ -62,7 +62,7 @@ Kerf is the **planning and specification layer**. Its role in the system:
 ## Open Questions
 
 1. How should kerf's bead graphs integrate with Kilroy's DOT pipeline format? Is there a natural mapping, or do we need an adapter?
-2. Should kerf own the "what to work on next" decision, or should that be a separate orchestration concern?
+2. ~~Should kerf own the "what to work on next" decision?~~ **Answered: no.** Priority comes from stated intent first — the named initiatives of the operator and the admiral — and then from the ledger, with `br ready --sort priority --limit 0`. Kerf plans work and it does not rank work. See `docs/beads-workflow.md` §"Priority".
 3. How do we handle plan invalidation when implementation feedback contradicts the spec?
 
 ## Commands & Workflow (for planning agents)
@@ -80,9 +80,9 @@ This project is **spec-first**: the spec describes how the system operates; code
     kerf square <codename>           Verify the work is complete
     kerf finalize <codename> --branch <name>  Package for implementation
 
-### Queue + work-attachment surface
+### Work-attachment surface
 
-    kerf next                        Ranked feed of bead IDs ready to dispatch
+    kerf next                        Graph-order feed of attached bead IDs (NOT a priority order — see below)
     kerf triage                      Drift report (suggested bead reattachments, stale links)
     kerf triage --ack                Advance kerf's baseline after acting on the report
     kerf pin <bead> <work>           Attach a bead to a kerf work
@@ -90,9 +90,15 @@ This project is **spec-first**: the spec describes how the system operates; code
     kerf map                         Works grouped by area
     kerf areas                       Manage areas (list/add/edit)
 
+### `kerf next` is not the priority source
+
+`kerf next` exists and it runs, so it is easy to read its first row as an instruction. It is not one. Its score comes from graph structure alone. It never reads the `br` priority field, so a P0 bead and a P3 bead come back the same, and it reports empty for a work that has no `bead_filter`. Two beads at the top of that feed can be the two least important open beads in the project.
+
+Take the order from stated intent first — the named initiatives of the operator and the admiral — and then from the ledger, with `br ready --sort priority --limit 0`. Use `kerf map` to see which work owns a bead and what context that bead carries. Ranking what matters is judgment, and a graph metric cannot do it for you. See `docs/beads-workflow.md` §"Priority" for the full loop.
+
 ### Agent loop pattern (informal)
 
-`kerf next` returns ranked bead IDs → orchestrator dispatches them via harmonik → on completion `br close <id>` is invoked → `kerf triage --ack` advances kerf's baseline. kerf manages the queue and work-attachment; harmonik executes.
+The orchestrator picks the beads → dispatches them via harmonik → on completion `br close <id>` is invoked → `kerf triage --ack` advances kerf's baseline. kerf owns work-attachment and drift detection. harmonik executes. The ledger holds priority.
 
 ### When to use kerf
 
@@ -112,4 +118,4 @@ This project is **spec-first**: the spec describes how the system operates; code
 
 ### Beta-test caveat
 
-kerf is in **beta-test** in this project. Known issues: `kerf next` may report empty for works lacking `bead_filter` clauses; `kerf init` emits stale + duplicated agent-instruction blocks; `kerf triage` mixes good and phantom suggestions. Log issues to `docs/kerf-beta-feedback.md` (convention: `KERF-FEEDBACK.md`).
+kerf is in **beta-test** in this project. Known issues: `kerf next` reports empty for works that have no `bead_filter` clause, which is one of the reasons it is not the priority source; `kerf init` emits stale + duplicated agent-instruction blocks; `kerf triage` mixes good and phantom suggestions. Log issues to `docs/kerf-beta-feedback.md` (convention: `KERF-FEEDBACK.md`).

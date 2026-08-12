@@ -7,7 +7,7 @@ context before real orchestration begins (bead **hk-039z**, captain-economy CE1)
 
 | script | replaces | who runs it |
 |---|---|---|
-| `captain-boot-digest.sh` | STARTUP.md Steps 2a–2g + Step 4 (daemon status, comms who, crew list, tmux fleet, paused queues, recent comms, ready beads, open epics, kerf next, kerf map) | a captain session, at boot AND on every keeper-restart resume |
+| `captain-boot-digest.sh` | STARTUP.md Steps 2a–2g + Step 4 (daemon status, comms who, crew list, tmux fleet, paused queues, recent comms, ready beads, open epics, kerf map) | a captain session, at boot AND on every keeper-restart resume |
 | `crew-boot-digest.sh` | crew-launch SKILL.md Steps 1–2 (mission file, identity check, daemon status, comms who, my-queue status, epic state, ready beads, recent comms) | a crew session, at boot |
 
 ## Why they exist in git
@@ -18,6 +18,24 @@ the non-versioned `~/.claude/captain-tools/...` path, so on any other box the di
 silently did not exist and the captain fell back to the heavy raw-command boot. These
 in-repo copies under `scripts/` are the authoritative, portable versions; the skills
 reference `scripts/captain-boot-digest.sh` / `scripts/crew-boot-digest.sh`.
+
+## What the captain digest deliberately leaves out
+
+**There is no `kerf next` section.** kerf plans work; it does not rank work. Its
+score comes from graph structure and never reads the `br` priority field, so a P0
+bead and a P3 bead come back the same, and a kerf work with no `bead_filter` reports
+empty. Priority in this project is stated intent first — the operator's and the
+admiral's named initiatives, in the active plan's order, in dated directives in
+`captain-lanes.md`, and in the direction-log RETURN-PATH — and then the ledger, via
+`br ready --sort priority --limit 0`. That ledger query IS the "Ready Beads" section.
+
+**`kerf map` stays.** It answers a question nothing else answers: which kerf work
+owns a given bead, and what context that work carries. That is navigation, not
+ranking.
+
+The "Ready Beads" section passes `--sort priority --limit 0` on purpose. `br ready`
+defaults to `hybrid` order and to 20 rows, and both defaults mislead a captain
+reading a digest: a short listing is not evidence of a short backlog.
 
 ## What they do NOT do
 

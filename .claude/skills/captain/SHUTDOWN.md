@@ -33,8 +33,16 @@ Choose one of three postures **before executing any step below**:
 
 > **The daemon almost always keeps running.** The daemon process is supervisor-managed
 > and independent of your session. Only crews need explicit stand-down for complete
-> lanes. A crew on a live/in-flight lane MUST NOT be stopped — that is a
-> surface-and-await judgment (captain SKILL.md §8).
+> lanes.
+>
+> **Do not stop a crew that is ACTIVELY WORKING.** Stopping it throws away the
+> in-flight turn, and killing a crew's work is the SKILL.md §8 case that surfaces to
+> the operator. But "actively working" is a PANE-TRUTH finding, not a lane-status
+> one: capture the pane and look for an advancing spinner or an empty `❯ ` input
+> box. A lane can read live and in-flight on paper while its crew is dead or wedged
+> — that is a ZOMBIE, and reconciling it (`harmonik crew stop <name>`, then
+> re-establish the lane) is routine and autonomous (STARTUP.md Step 3). Look at the
+> pane before you decide which of the two you have.
 
 ---
 
@@ -202,8 +210,9 @@ For each PIN, capture ALL of the following (in HANDOFF.md §Open/next — see St
 ⚠️ OPERATOR ACTION: rank the next phase (standard-bead-dot vs. flywheel smoke vs. pilot)
   Blocks: all lanes after chani/liet complete their current epics
   Unblock steps: captain receives operator decision → re-task crews to new epics
-  Context: standard-bead-dot is the top KNOWN candidate per kerf next, but it is a
-           NEW initiative not yet in the known feed — cannot rank autonomously (§8).
+  Context: standard-bead-dot is the top KNOWN candidate in the backlog, but it is a
+           NEW initiative carried by no durable doc and no ledger row — cannot rank
+           autonomously (SKILL.md §8).
 ```
 
 **Session-keeper arming:**
@@ -426,8 +435,9 @@ comm -23 \
   dead-captain bug. **`restart-now` does not WIDEN the band** — it bypasses only the
   act-pct idle gate. The operator HARD-NO is on WIDENING only; LOWERING the band to
   restart earlier (the current 200k/215k band) is operator-directed (M1/M4-hk-039z).
-  Arm the keeper with `--warn-abs-tokens 200000 --act-abs-tokens 215000` (the pct
-  flags are inert on the 1M window — STARTUP.md Step 6 "Keeper arming").
+  Arm the keeper with `--warn-abs-tokens 200000 --act-abs-tokens 215000` and nothing
+  else. STARTUP.md Step 6 "Keeper arming" is the one place that states the band and
+  what the pct flags actually do; read it there rather than restating a number.
 
 - **`gh auth` workflow scope requires the `workflow` scope specifically** — it is NOT
   included in the default `repo` scope. Beads touching `.github/workflows/` will

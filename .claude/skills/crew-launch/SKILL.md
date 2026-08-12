@@ -74,14 +74,24 @@ harmonik start crew --name paul --queue paul-q --mission /tmp/paul.md   # advanc
 
 ## § Boot sequence (do this first, in order)
 
-> **MINIMAL LOAD (load-bearing).** Do NOT load fleet-level state (`ROADMAP.md`,
-> `.harmonik/context/captain-lanes.md`, `project.yaml`, the orchestrator-rules
-> standing-rules skill) — you are scoped to ONE epic + ONE queue; your mission
-> file is your tier-1 state. Fleet-level state is the captain's concern.
+> **BOOT LOAD BUDGET (load-bearing).** At boot, read your mission file, this skill,
+> and the skills this one composes on. Leave fleet-level state out of the boot
+> context — `ROADMAP.md`, `.harmonik/context/captain-lanes.md`, `project.yaml`, the
+> orchestrator-rules standing-rules skill. You are scoped to ONE epic and ONE queue,
+> your mission file is your tier-1 state, and a crew that boots with the whole fleet
+> in context runs out of room before its epic drains. Fleet-level state is the
+> captain's concern.
 >
-> **One addition: `PRINCIPLES.md` at the repo root.** Your beads produce the code
-> and the tests, and §7 there is the rule that a test name states the claim it
-> defends instead of a ticket ID.
+> **This is a budget, not a wall.** Mid-session, when a bead you are working turns on
+> something in one of those files — a locked decision in `project.yaml`, a guardrail
+> that governs the change — open that file, read the part the bead needs, and go back
+> to work. A targeted read because the work depends on it is correct. The smell is
+> reading a fleet doc to find out what the fleet is doing, or pulling one in "to have
+> context" before any bead asks for it.
+>
+> **One addition at boot: `PRINCIPLES.md` at the repo root.** Your beads produce the
+> code and the tests, and §7 there is the standard that a test name states the claim
+> it defends instead of a ticket ID.
 
 > **One-call discovery shortcut — run the crew boot digest first:**
 > ```bash
@@ -222,16 +232,27 @@ harmonik comms recv --follow --json
 
 ### Idle-crew-wake protocol (keep `--follow` armed)
 
-**A crew does NOT reliably wake the instant a `comms send` arrives.** A
-one-shot / idle Claude session only processes a delivered message when one of
-two things is true:
+**A directed `comms send --to <you>` nudges your tmux pane by default**
+(`cmd/harmonik/comms.go` `commsShouldWake` — directed and not `--no-wake`). `--wake`
+is only the explicit spelling of that default, and `--no-wake` is the opt-out. A
+**broadcast never wakes anyone** — waking needs a `--to`.
+
+So the default path works. What makes it unreliable is that the nudge is
+**best-effort**: `commsWakePaneForAgent` walks a list of candidate panes, and if it
+finds none — no tmux, a renamed session, a pane that will not accept the paste — it
+prints to stderr and returns. Delivery and exit code do not change. The message is
+durable and waiting in your inbox, and nothing told you it arrived.
+
+That is why the armed stream is the load-bearing half. An idle Claude session acts on
+a delivered message when either is true:
 
 1. it has an **armed `harmonik comms recv --follow --json` stream still
    running** (the boot sequence starts this — Step 5 — and you MUST keep it
    running for the whole life of the session), OR
-2. its tmux pane gets a **nudge** — e.g. the sender used
-   `comms send --to <crew> --wake` (see the agent-comms skill, § Waking an idle
-   peer), or the captain pokes the pane manually.
+2. the pane nudge landed.
+
+Treat the nudge as the fast path and `--follow` as the guarantee. Only one of the two
+can fail silently, and it is the nudge.
 
 **Rule (load-bearing):** keep `comms recv --follow --json` running continuously —
 **this obligation does NOT relax when you drain or go idle.** A drained / idle crew
@@ -254,18 +275,16 @@ is the EXACT case the captain re-tasks with an `assign` `comms send`, so the
    has died (disconnect exit with NO `park` line), re-arm it immediately as part of
    your loop — do not wait for the next bead event to notice.
 
-If a crew has gone fully idle WITHOUT an armed `--follow`, it may miss a wake until
-something nudges it — a bare `send` alone is **not** guaranteed to rouse an idle
-Claude pane. (This reflects observed behavior: idle crews do not reliably wake on a
-bare send.)
+A crew that goes fully idle WITHOUT an armed `--follow` is betting the whole re-task on
+the pane nudge, and the nudge is the half that can fail without saying so.
 
-**Captain side (the complement — documented here so both ends are explicit):** when
-the captain re-tasks an IDLE crew, a bare `comms send --to <crew> --topic assign`
-does NOT wake an idle Claude pane on its own. The captain MUST **pane-nudge** the
-crew — use `comms send --to <crew> --wake` (which capture-panes + injects the
-nudge; see the agent-comms skill § Waking an idle peer) or poke the pane manually —
-otherwise the re-task lands in the inbox unread. The crew's armed `--follow` plus
-the captain's `--wake` are the two halves of the same guarantee; both are required.
+**Captain side (the complement — documented here so both ends are explicit):** a
+directed `comms send --to <crew> --topic assign` already carries the nudge, so the
+captain does not need `--wake` to reach an idle crew. What the captain must NOT do is
+re-task a crew by `--broadcast`, or pass `--no-wake`. Neither one touches the pane, and
+the assignment then sits unread until the crew's own `--follow` picks it up. The crew's
+armed `--follow` and the captain's directed send are the two halves of the same
+guarantee. Keep both.
 
 ### Message handling
 
@@ -336,6 +355,31 @@ Spec ref: `specs/park-resume-protocol.md` §3.2 and §4.2.
 
 ---
 
+## § Where you run commands — never `cd` into a worktree
+
+**NEVER `cd` into a run's worktree. Stay at the repo root and reach any other tree
+with `git -C <absolute-path>`.**
+
+The daemon creates one worktree per run and removes it when the run reaches a terminal
+state. It does not check whether a shell is sitting inside that directory first. If your
+working directory was that path, your CWD is now a deleted directory: later commands fail
+with `getcwd` errors, or worse, resolve a relative path against the wrong tree and look
+like they worked. A pane in that state does not recover on its own, and the crew is gone
+until someone notices.
+
+```bash
+# WRONG — the daemon can delete your CWD out from under you at any moment:
+cd <worktree-path> && git status
+
+# RIGHT — absolute path, your CWD never moves:
+git -C <worktree-path> status
+```
+
+This covers every shell call you make, including the throwaway one-liners. `git -C` and
+absolute paths cost nothing. Recovering a wedged pane costs the rest of the session.
+
+---
+
 ## § Operating loop — work YOUR epic on YOUR queue
 
 This loop composes on `harmonik-dispatch`, scoped exclusively to `--queue <queue>`.
@@ -354,11 +398,12 @@ bare `br ready` silently caps at 20 and can make your epic's queue look shorter 
 empty — when it isn't. Never read an empty `br ready` as "fleet drained" without ALSO
 checking in-progress beads + beads blocked-by-an-open-epic + paused/failed queues.
 
-Or use the kerf feed if the work is kerf-attached:
-
-```bash
-kerf next --only=bead
-```
+Order what comes back with `br ready --sort priority --limit 0 --parent <epic_id>`.
+`--parent` scopes the listing to your epic in one call. `--sort oldest` surfaces a child
+that is starving. `kerf` plans work and does not rank it — do not take an order from
+`kerf next`, whose score comes from graph structure and never reads the `br` priority
+field. Use `kerf map` when you need to know which work owns a bead and what context it
+carries.
 
 ### 2. Submit to YOUR named queue — NEVER `main`
 
@@ -368,9 +413,12 @@ harmonik queue submit --queue <queue> --beads <id1>,<id2>,...
 
 Or a `QueueSubmitRequest` JSON with the group's `queue` field set to `<queue>`.
 
-**HARD RULE: the crew MUST NOT submit to the `main` queue.** Routing to your own
-queue keeps crews isolated (success-criterion #2). A crew that submits to `main`
-is a spec violation caught at review and smoke.
+**HARD RULE: the crew MUST NOT submit to the `main` queue.** Routing to your own queue
+keeps crews isolated (success-criterion #2). `main` is shared, so a bead you put there
+becomes indistinguishable from every other agent's: your monitor sees runs you did not
+submit, a pause on `main` stops your epic for a reason that has nothing to do with it, and
+the captain can no longer tell whose failure it is looking at. A crew that submits to
+`main` is a spec violation caught at review and smoke.
 
 ### 3. Arm a monitor
 
@@ -436,9 +484,10 @@ harmonik comms send --to "$STATUS_TARGET" --topic status \
   -- "crew <crew_name>: epic <epic_id> has no ready beads; idling"
 ```
 
-Wait on the comms inbox. Do NOT spin-poll `br ready` more frequently than every
-10 minutes. Do NOT try to unblock beads yourself — that is captain/dependency
-judgment.
+Wait on the comms inbox. Keep `br ready` polling at 10 minutes or slower while you idle:
+every poll wakes a turn and spends tokens, and the state it reads only changes on daemon
+events your subscribe stream already delivers. Leave blocked beads blocked — unblocking
+one is captain and dependency judgment, not yours.
 
 ---
 
@@ -599,8 +648,8 @@ before leaving.
   `assignee`; prefer beads if they disagree).
 - Keep `comms recv --follow --json` armed for the whole life of the session,
   **including while drained/idle**, and **RE-ARM it on every keeper-restart/resume
-  and on any mid-session stream death** — idle crews do not reliably wake on a bare
-  `send` without it, and a dropped `--follow` strands a captain re-task
+  and on any mid-session stream death**. The directed-send pane nudge is best-effort
+  and fails silently. The armed stream is the half that does not
   (§ Idle-crew-wake protocol — load-bearing).
 - Use `--json` output for all `comms recv` and `br` parsing.
 
@@ -608,11 +657,9 @@ before leaving.
 
 - Submit to the `main` queue (HARD RULE — any crew that submits to `main` is in
   spec violation).
-- **Pre-assign a dispatchable bead.** The daemon claims dispatchable beads via
-  `br claim`, which **REFUSES an already-assigned bead** → `max_attempts_exceeded`,
-  `run_id=null`, and the bead **never dispatches**. `--assignee` goes on the
-  **EPIC only** (Step 4 — the captain's attribution mirror); every child /
-  dispatchable bead you submit **stays UNASSIGNED**. (Refs hk-kr791, hk-amed0.)
+- **Pre-assign a dispatchable bead.** `--assignee` goes on the EPIC only; every child
+  you submit stays UNASSIGNED. Step 4 states the rule and the mechanism that makes it
+  absolute — read it there.
 - `br close`, `br claim`, or `br reopen` any bead (daemon-only terminal writes).
 - Spawn Agent-tool sub-agents for the epic's work (use the daemon queue — see
   harmonik-dispatch).

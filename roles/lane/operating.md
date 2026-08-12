@@ -57,10 +57,13 @@ that gives you the current text. Refs `hk-jlb13`.
 
 ## Working
 
-- **Delegate. This is the rule, not a preference.** Work that splits — several
-  files, a sweep of the tree, an investigation, a second opinion on your own
-  patch — goes to sub-agents, and independent pieces go out in one batch so they
-  run at the same time. Keep your own context for judgment. Doing that reading
+- **Delegate by default, and keep your own context for judgment.** Work that
+  splits — several files, a sweep of the tree, an investigation, a second
+  opinion on your own patch — goes to sub-agents, and independent pieces go out
+  in one batch so they run at the same time. The question is whether the reading
+  would eat the context you need for judgment, not whether a sub-agent could
+  theoretically have done it: reading one file to check one symbol is cheaper
+  than briefing somebody, and a tree sweep is not. Doing the large reading
   inline is the single largest cause of a lane filling its context and handing
   off half-finished. An independent review is a sub-agent too, and the review
   gate wants one.

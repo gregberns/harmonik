@@ -33,7 +33,10 @@ SENTENCES
 - No contractions. Use articles: a, an, the, this, these.
 
 PUNCTUATION
-- No semicolons. Write two sentences. STE does not ban the em dash. This project keeps it.
+- **Default to no semicolons.** A semicolon joins two independent clauses, and one instruction per sentence is the whole point of STE. So nearly every semicolon you write is two sentences that have not been split yet. Split it.
+- This is **absolute in strict mode** — numbered procedures, safety text, error strings. There the reader is executing a step, and a compound sentence hides the second half of it.
+- In **STE-flavored** prose it is a strong default, not a law. A semicolon that carries a real contrast, where a period would break a sentence that is doing one job, is a judgment call and is allowed. The test: say what the semicolon is doing. If you cannot, it is an unsplit sentence.
+- STE does not ban the em dash. This project keeps it.
 
 STRUCTURE
 - One topic per paragraph, max six sentences. For steps, use a numbered vertical list, one action per item, imperative form. Put a condition before its command.
@@ -61,7 +64,7 @@ Two project rules sit next to this one. This skill overrides neither.
 ## Self-lint (run before returning text)
 
 1. Any instruction over 20 words, or any descriptive sentence over 25? Split it.
-2. Any semicolon? Replace with a period.
+2. Any semicolon? In strict mode, replace it with a period. In STE-flavored prose, split it unless you can say what contrast it carries.
 3. Any contraction? Expand it.
 4. Any passive voice with a known actor? Make it active.
 5. Any "-ing" main verb, nominalization ("perform an analysis"), or phrasal verb ("spin up")? Replace with a plain verb.

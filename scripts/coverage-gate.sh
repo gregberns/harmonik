@@ -17,7 +17,7 @@ fi
 # RULES (all locked, per STATUS.md "Decisions in force"):
 #   1. Spec-named core subsystems (internal/orchestrator, workspace, eventbus,
 #      handler, reconciler, core): must reach ≥ 95.0% line coverage.
-#      See testing.md §Coverage targets for the authoritative list; the
+#      See testing.md §Coverage numbers for the authoritative list; the
 #      HIGH_THRESHOLD_PACKAGES array below is the implementation.
 #   2. All other internal/** packages: must reach ≥ 90.0% floor.
 #   3. No package may regress more than 0.3 percentage points below its
@@ -179,7 +179,7 @@ MODULE_PREFIX="github.com/gregberns/harmonik"
 
 INTERNAL_PATTERN="${MODULE_PREFIX}/internal"
 
-# Packages requiring 95% coverage per testing.md §Coverage targets:
+# Packages requiring 95% coverage per testing.md §Coverage numbers:
 #   "Core subsystem packages (internal/orchestrator, workspace, eventbus, handler, reconciler)"
 #   internal/core is retained for historical alignment and any future core utilities.
 HIGH_THRESHOLD_PACKAGES=(

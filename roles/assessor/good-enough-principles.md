@@ -50,8 +50,20 @@ gate improvised. **A gate that produced no new case did not explore.** **No crit
 the core loop, silent failure / false-green, unbounded hang / wedge, fleet-wide
 blast radius, or a regressed corpus scenario. A critical is "mitigated" only when
 it is genuinely neutralized (fixed, or provably out of the change's reach), not
-merely filed. A regression of a previously-fixed bug (a corpus cell going red) is
-always critical and always blocks.
+merely filed. A regression of a previously-fixed bug — a corpus cell going red —
+is **critical by default and holds the gate**. Confirm the case against what the
+daemon does now before you file it: three findings that presented exactly like
+this were stale assertions that kept their own copy of a fact the daemon owns,
+and each one cost days (`operating.md` §Before I file a finding). A red cell the
+daemon's own config or payload validator says is correct is a defect in the case.
+Fixing the case and recording what the daemon actually did is the result, and it
+is a real one.
+
+The burden runs one way. The cell holds the gate until the daemon's own output
+says the case is wrong, and that output goes in `01-EVIDENCE.md` with the rest.
+An unresolved cell blocks. Reasoning that the case is probably stale is not the
+daemon saying so, and I am the party this gate would otherwise hold — so I do
+not get to clear it on my own read of it.
 
 ### 2.3 CR — no BLOCK-class defect (cold-review)
 

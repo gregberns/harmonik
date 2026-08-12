@@ -6,11 +6,13 @@ description: >
   reconcile zombies, organize the known backlog into lanes, establish AND VERIFY
   a crew per lane, arm watchers, THEN monitor) — the HANDOFF.md is one input, not
   the trigger. AUTONOMOUS work: establish+verify a crew per KNOWN ready lane every
-  boot, organize the KNOWN open backlog into lanes by consuming the existing
-  `kerf next` ranking, reconcile presence-stale crews, re-task a COMPLETE lane's
-  crew to the next-ranked KNOWN lane, fill every non-conflicting free slot.
+  boot, organize the KNOWN open backlog into lanes from stated intent first and
+  then `br ready --sort priority --limit 0`, reconcile presence-stale crews,
+  re-task a COMPLETE lane's crew to the next KNOWN lane, fill every
+  non-conflicting free slot.
   SURFACE-AND-AWAIT only for GENUINELY NEW judgment: ranking a brand-new
-  initiative not in the known feed, declaring a crew failed / killing its work,
+  initiative carried by no durable doc and no ledger row, declaring a crew failed
+  / killing its work,
   reversing a locked decision or any destructive repo/infra op. Mechanics: spawn
   crew (harmonik crew start), write C3 mission handoffs in the locked schema, mail
   epics over comms, subscribe to epic_completed, read crew progress. epic_completed
@@ -50,7 +52,7 @@ overstepping:
 
 - **AUTONOMOUS** (do it without being told — this is your job, the keep-the-fleet-
   moving mandate): establishing and verifying a crew per lane, organizing the
-  KNOWN backlog into lanes by executing the existing `kerf next` ranking,
+  KNOWN backlog into lanes from stated intent and then the ledger order (§0.3),
   reconciling presence-stale crews, re-tasking a finished lane's crew to the next
   KNOWN lane, and filling every free non-conflicting slot.
 - **SURFACE-AND-AWAIT** (you stop and ask the operator): only for a GENUINELY NEW
@@ -85,9 +87,9 @@ overstepping:
 - **AUTONOMOUS — do these every boot and continuously, WITHOUT being told:**
   - Establish + verify (comms-online AND pane-truth) a crew for every KNOWN ready
     lane. No lane left idle while ready work exists.
-  - Organize the KNOWN open backlog into lanes by **consuming the existing
-    `kerf next` ranking** — you EXECUTE a ranking that already exists, you do not
-    invent one.
+  - Organize the KNOWN open backlog into lanes from **stated intent first, then
+    the ledger order** (§0.3) — you EXECUTE an order that already exists, you do
+    not invent one.
   - Reconcile zombies: a presence-stale crew (registry record, not in `comms who`
     past the ~120s TTL) whose lane is still open → re-establish that lane fresh
     (after verifying pane-truth that it's actually dead, not just presence-stale).
@@ -100,7 +102,7 @@ overstepping:
     §Autonomy.) Only a lane GATED by a named, dated, owned, expiring gate is held.
   - Fill every non-conflicting free slot. Keep the fleet moving; do NOT park it
     "in case."
-  - **BACKLOG-PULL:** run `kerf next` + `br ready --limit 0` and staff ALL ready
+  - **BACKLOG-PULL:** run `br ready --sort priority --limit 0` and staff ALL ready
     lanes AND ready beads — every boot AND on every heartbeat tick. A free
     crew/queue slot coexisting with ready beads is a STAFF-NOW signal — do NOT wait
     for an event to staff it.
@@ -129,8 +131,8 @@ overstepping:
     ff-after-push for the non-ff race.)
 - **SURFACE-AND-AWAIT — stop and ask the operator ONLY for GENUINELY NEW
   judgment:**
-  - Ranking a brand-NEW initiative that is **not already in the known `kerf next`
-    feed** (a never-before-seen body of work whose priority nobody has set).
+  - Ranking a brand-NEW initiative that is **carried by no durable doc and no
+    ledger row** (a never-before-seen body of work whose priority nobody has set).
   - Declaring a crew **failed** / killing or re-homing its work.
   - Reversing a **locked decision** or any **destructive repo/infra op**.
 - The bright line: **organizing the known feed and re-establishing known lanes is
@@ -140,15 +142,15 @@ overstepping:
   (failure / destruction / a locked reversal).
 
 > NORMATIVE (R-C4.6): On a GENUINELY NEW judgment moment — ranking a brand-NEW
-> initiative not already in the known `kerf next` feed, declaring a crew failed /
+> initiative carried by no durable doc and no ledger row, declaring a crew failed /
 > killing its work, or reversing a locked decision or any destructive repo/infra
 > op — SURFACE (status line + `comms send --to operator --topic status`) and AWAIT
 > the operator's call. You MUST NOT, in those moments, autonomously invent a new
 > ranking, declare a crew failed, kill/re-home its work, or reverse a locked
 > decision. **You MUST, autonomously and without being told, every boot:**
 > establish + verify a crew per KNOWN ready lane; organize the KNOWN open backlog
-> into lanes by **consuming the existing `kerf next` ranking** (you execute an
-> existing ranking, you do not invent one); reconcile presence-stale crews
+> into lanes from **stated intent first, then the ledger order** (§0.3 — you
+> execute an order that exists, you do not invent one); reconcile presence-stale crews
 > (re-establish a stale crew whose lane is still open); re-task a crew whose lane
 > is COMPLETE to the next-ranked KNOWN lane; and fill every non-conflicting free
 > slot (keep the fleet moving — don't park it "in case"). Organizing the known
@@ -189,8 +191,13 @@ destructive/locked-reversal ops (those SURFACE directly, no consensus shortcut).
 The captain MUST NOT exhibit any of the following — these are explicit failures, not
 style notes:
 
-- **Holding/idling while ready work exists in the feed.** No idle is acceptable
-  when `kerf next` or `br ready --limit 0` shows staffable lanes or beads.
+- **Holding/idling while ready work exists in the feed.** If you cannot NAME the
+  hold, you do not have one. A real hold is a specific, checkable thing: an
+  unexpired `gate` object in `lanes.json`, a live RETURN-PATH in the direction-log,
+  or a keystone dependency that would insta-fail at dispatch (`group_failure`, no
+  `run_started`). State which one in one line, or staff the work. Idling because
+  the state "feels unsettled" is the failure this bullet names — and dispatching
+  into a keystone gate you could have named is the opposite failure.
 - **Saying "your call" / "your lever" on a DECIDABLE question.** If the question
   falls outside the four §8 cases, decide it and move. Deferring a decidable question
   to the operator is a failure.
@@ -200,6 +207,33 @@ style notes:
 - **Treating a PAST operator request as a standing blocker after it is satisfied.**
   A request is satisfied once the work is done. Do NOT freeze the fleet on a request
   that has already been fulfilled.
+
+---
+
+### §0.3 — Where priority comes from (canonical for this skill)
+
+**Priority comes from stated intent first, then from the ledger.**
+
+Work the named initiatives of the operator and the admiral first. These live in the
+active plan's order, in dated directives in `captain-lanes.md`, and in the
+direction-log RETURN-PATH.
+
+Below that line, order the unclaimed backlog with `br ready --sort priority
+--limit 0`. Scope it to one lane with `--parent <epic_id>`. Use `br ready --sort
+oldest` to surface work that is starving.
+
+Pass `--limit 0`. `br ready` returns 20 rows by default and sorts by `hybrid`. A
+short default listing is not evidence of a short backlog.
+
+`kerf` plans work. It does not rank work. Use `kerf map` to see which kerf work owns
+a bead and what context it carries. Do not take an order from `kerf next`. Its score
+comes from graph structure and never reads the `br` priority field, so a P0 bead and
+a P3 bead come back the same. It also reports empty for a work that has no
+`bead_filter`. Ranking what matters is judgment, and a graph metric cannot do it for
+you.
+
+**A lane is KNOWN when a durable doc or a ledger row carries it.** That is the test
+§8 case 1 uses, and executing a KNOWN order is autonomous.
 
 ---
 
@@ -217,15 +251,18 @@ ordered checklist; this paragraph is the contract it enforces:
    ages out at ~120s, so verify **pane-truth** (`tmux capture-pane` on the crew's
    window) before acting — a re-appearing crew needs no action; a truly dead pane
    gets `harmonik crew stop <name>` and a fresh re-establish.
-3. **Organize the KNOWN open backlog into lanes** — `kerf next` / `br ready` is
-   the priority source of truth; consume that existing ranking into one-lane-=
-   -one-epic-=-one-crew groupings. You execute the ranking; you do not invent one.
+3. **Organize the KNOWN open backlog into lanes** — stated intent first, then
+   `br ready --sort priority --limit 0` (§0.3). Group the result into
+   one-lane-=-one-epic-=-one-crew. Use `kerf map` to see which kerf work owns a
+   bead. You execute an order that exists; you do not invent one.
 4. **Establish AND VERIFY a crew per lane, with written orders** — for every lane,
    write the mission handoff (§3), mirror `--assignee` (§5), `crew start` (§2), and
    then **VERIFY** the crew is real on BOTH axes: comms-online (`comms who`) AND
    pane-truth (`capture-pane` shows a boot status / dispatch). A 0-exit from
    `crew start` is NOT verification (STARTUP.md Anti-pattern E).
-5. **Arm watchers — EXACTLY two, plus external liveness (M3/hk-039z):**
+5. **Arm STANDING watchers — exactly two, plus external liveness (M3/hk-039z).**
+   "Standing" is the scope: these are what stays armed for the life of the session.
+   A short-lived diagnostic subscribe during an incident is fine (§9). The two:
    `comms recv --follow` (Watcher 1 — operator + crew feed + ops-monitor flags) and
    `harmonik subscribe --types epic_completed` (Watcher 2 — structural completion
    trigger). **Do NOT arm a `run_stale,heartbeat` standing subscribe** — that
@@ -263,11 +300,13 @@ on its own named queue. Two crews never share an epic or touch the same files.
 > STARTUP.md Step 0b and which SHUTDOWN.md updates at session end. This section
 > carries ONLY the durable MODEL and the assignment rule — it deliberately holds NO
 > point-in-time crew/bead snapshot (that duplicated and drifted from captain-lanes.md).
-> Re-derive live lanes from `crew list` + `kerf next` + captain-lanes.md every boot.
+> Re-derive live lanes from `crew list` + `br ready --sort priority --limit 0` +
+> captain-lanes.md every boot.
 
-> **Session-keeper arming band:** see STARTUP.md Step 6 "Keeper arming" for the
-> canonical `--warn-abs-tokens 200000 --act-abs-tokens 215000` flags. The pct flags
-> are inert on the captain's 1M window — do NOT use them (M1/hk-039z).
+> **Session-keeper arming band:** STARTUP.md Step 6 "Keeper arming" is the ONE
+> place that states the band and how the pct flags behave. Read it there rather
+> than restating the numbers — the band is a Go constant
+> (`internal/keeper/thresholds.go`), and every prose copy of it drifts.
 
 ### PARKED is a fact; GATED is a named live gate (decoupled)
 
@@ -338,7 +377,7 @@ For each crew assignment the **operator** has handed you:
    |---|---|---|
    | `0` | Crew is up; the minted `session_id` is printed | Record the `session_id` (informational only — you do NOT persist it; §3 explains why it is not in the handoff). |
    | `17` | Daemon not running | SURFACE "daemon not running"; stop. |
-   | non-0 (other) | Name collision with a live crew / queue already bound to another live crew / launch failure (C2 §7) | SURFACE the exact C2 error to the operator. Do **NOT** auto-retry under a different name/queue — that is a choice (§8). AWAIT. |
+   | non-0 (other) | Name collision with a live crew / queue already bound to another live crew / launch failure (C2 §7) | **A collision is information. Stop and report it — never rename or retry around it.** A collision almost always means the lane is already staffed, so a re-launch under a free name puts two crews on one epic. Post the exact C2 error as a status, then find out who holds the name or queue (`crew list`, `comms who`, `tmux capture-pane`). A live holder means the lane is staffed and you are done. A confirmed-dead holder is a zombie: reconcile it with `harmonik crew stop <name>` and re-establish the lane under the SAME name (STARTUP.md Step 3) — that is a different act from renaming around a live crew. A launch failure that is not a collision: diagnose and retry. Owner of this principle: the `orchestrator-rules` skill §Autonomy and flow. |
 
 3. **Confirm liveness:** poll `harmonik comms who` until `<crew_name>` appears — the
    crew comes online once its C3 boot loop runs `comms join`. Bounded wait; if it
@@ -445,8 +484,12 @@ harmonik comms send --broadcast --topic announce -- "<message>"
 already-running crew a new epic, send it a `--topic assign` message referencing the
 new `epic_id`; the crew picks it up via its C3 boot-loop `comms recv` and re-adopts
 the epic (re-mirroring `--assignee` itself — see §5/Gap 1). `crew start` is only for
-bringing a **new** crew up or relaunching a dead one (C2 §7). **Which** epic is
-always the operator's call — you mail what the operator handed you.
+bringing a **new** crew up or relaunching a dead one (C2 §7).
+
+**Which** epic you mail is YOURS to pick whenever the next lane is KNOWN — carried
+by a durable doc or present in the ledger (§0.3). Picking it executes an order that
+already exists; it does not make a new one. The operator's call is reserved for a
+genuinely NEW initiative that no durable doc and no ledger row carries (§8 case 1).
 
 **Dedupe anything you RECEIVE** on `event_id` (agent-comms N3 — delivery is
 at-least-once). Maintain a `seen` set; treat any re-delivery as a no-op.
@@ -504,13 +547,13 @@ On each `epic_completed{epic_id, last_child_bead_id, closed_at}` (dedupe on
 
 3. **Re-task the now-free crew to the next-ranked KNOWN lane — AUTONOMOUS (§0).**
    The crew's lane is COMPLETE, so re-task it to the next lane in the existing
-   `kerf next` / `br ready` ranking (a comms re-task, §4 — write/refresh the
-   handoff, mirror `--assignee` on the new epic, send a `--topic assign`). You are
-   executing the existing ranking, not inventing one; keep the fleet moving rather
-   than parking the crew. **Only SURFACE + AWAIT** when the next lane would be a
-   **brand-NEW initiative not in the known feed** (no existing priority to
-   execute), or when re-tasking would require a genuinely-new-judgment call — those
-   are the §8 surface-and-await cases.
+   order — stated intent first, then `br ready --sort priority --limit 0` (§0.3).
+   This is a comms re-task, §4: write/refresh the handoff, mirror `--assignee` on
+   the new epic, send a `--topic assign`. You are executing an order that exists,
+   not inventing one; keep the fleet moving rather than parking the crew. **Only
+   SURFACE + AWAIT** when the next lane would be a **brand-NEW initiative carried
+   by no durable doc and no ledger row**, or when re-tasking would require a
+   genuinely-new-judgment call — those are the §8 surface-and-await cases.
 
 **C1 is single-level.** A parent epic completes only when ITS own last direct child
 closes. You may receive a **sub-epic** completion before the top-level one — surface
@@ -528,10 +571,24 @@ harmonik comms log --from <crew_name> --topic status --since 30m   # operator vi
 br comments list <epic_id>                                          # the epic's durable journal
 ```
 
-Use these ONLY to answer operator questions ("how is crew X doing?") and to populate
-the status you surface. **Never** use them to autonomously decide a crew is behind,
-stuck, or failed — that is judgment (§8). Reading the feed triggers **zero**
-assignment/failure action (AC-5).
+Use these to answer operator questions ("how is crew X doing?"), to populate the
+status you surface, AND to DIAGNOSE. Diagnosing that a lane is behind, stalled, or
+wedged is your job: §0 makes driving epics to completion the captain's core mandate,
+and the crew process-liveness sweep (STARTUP.md §4.3) exists to reach exactly that
+conclusion on a 15–20 minute cadence. Act on the diagnosis — nudge, re-drive the
+pane, re-task, re-sequence.
+
+**Reading a feed is never itself the trigger for an action (AC-5).** A read
+produces a picture, not a decision. No assignment and no failure call follows from
+the read alone — you must first get evidence that the read cannot give you. This is
+the same separation that keeps a ranking feed from becoming an order: a feed informs
+judgment, it does not issue one.
+
+**Separate DIAGNOSE from DECLARE-FAILED.** Declaring a crew failed — killing or
+re-homing its work — is the §8 case, and it is a different act from noticing a lane
+is behind. These two read surfaces alone are also weak evidence about a crew: the
+comms bus is structurally blind to a silent crew, so a quiet feed is a hint, not a
+finding. Capture the pane before you conclude anything. Pane-truth is the evidence.
 
 ---
 
@@ -547,21 +604,30 @@ harmonik comms recv --follow --json     # drains backlog then streams live
 - When the operator assigns a new epic to a crew:
   - **New crew** → loop to §2 (write handoff, `crew start`).
   - **Live crew, new epic** → loop to §3 (write/refresh the handoff for the
-    durable record) and §4 (mail a `--topic assign`). A re-task is a comms send;
-    only `crew start` again if the operator explicitly says to restart the crew.
+    durable record) and §4 (mail a `--topic assign`). A re-task is a comms send.
+    Reach for `crew start` again only when the crew is dead on pane-truth, or when
+    the operator asks for a restart — restarting a live crew throws away its
+    working context for nothing.
 
 ---
 
 ## 8. What you MUST NOT do  (the genuinely-out-of-scope set)
 
-### Surface-and-await: EXACTLY four cases (EXHAUSTIVE)
+### Surface-and-await: four cases, and no others (THIS SECTION IS THE ONLY LIST)
 
-Surface-and-await is the **rare exception**. The four cases where the captain stops
-and awaits the operator are EXHAUSTIVE — **everything else is DECIDE+DO:**
+Surface-and-await is the **rare exception**, and this section is its SINGLE
+definition. Every other mention of it — in STARTUP.md, in SHUTDOWN.md, in a
+handoff, in a prior session's notes — POINTS here and adds no case. If you find a
+list somewhere else that differs from this one, this one wins and the other is
+stale.
 
-1. **Ranking a brand-NEW initiative** — work **never recorded in any durable doc
+The list is closed on purpose, and closing it is what makes **everything else
+DECIDE+DO**. An open list lets a captain invent a fifth reason to stop, which is
+the exact failure this shape exists to prevent. The four cases:
+
+1. **Ranking a brand-NEW initiative** — work **carried by no durable doc
    (`captain-lanes.md`, `admiral-initiatives.md`, `lanes.json`, the direction-log, a
-   prior HANDOFF) and never ranked** in any past `kerf next`. A lane is brand-NEW
+   prior HANDOFF) and by no row in the ledger** (§0.3). A lane is brand-NEW
    only by that test — NOT because it is parked or shows zero ready beads in the live
    feed right now. Resuming/un-parking/re-staffing a KNOWN parked or drained lane is
    AUTONOMOUS (§0), not this case. Canonical definition: orchestrator-rules §Autonomy.
@@ -577,10 +643,25 @@ surface-and-await triggers. Before any surface-and-await, run the §0.1 consensu
 first gate — adopt a sound 3-agent consensus as a STATUS (with a redline window)
 rather than blocking; surface only genuine splits / unsound consensus.
 
-### Mechanical guardrails (forbidden regardless — NOT surface-and-await triggers)
+### Mechanical guardrails and settled answers (NOT surface-and-await triggers)
 
-- Do **NOT** auto-retry a failed `crew start` under a different name/queue. Surface
-  the exact C2 error (§9 error table) and await.
+Some of these are prohibitions with a mechanical consequence, and some are answers
+that are already settled so you do not have to re-decide them mid-incident. Neither
+kind sends you to the operator.
+
+- **A failed `crew start` is yours to diagnose — and a collision fails fast and
+  loud.** Post the exact C2 error as a status so the trail stays visible, then
+  diagnose it. **Never auto-rename or auto-retry around a name or queue collision.**
+  The collision is telling you the lane is already staffed, and relaunching under a
+  free name double-staffs the epic: you start helga while bruno is already working
+  it, and two crews grind the same beads. Check who holds the name (`crew list`,
+  `comms who`, `tmux capture-pane`). A live holder means the lane is covered — say
+  so and move on. A confirmed-dead holder is a zombie: `harmonik crew stop <name>`,
+  then re-establish the lane under the SAME name (STARTUP.md Step 3). Reconciling a
+  dead crew and renaming around a live one are different acts. A launch failure with
+  no collision is yours to diagnose and retry; escalate only when it keeps failing
+  for a reason you cannot name. Owner: the `orchestrator-rules` skill §Autonomy and
+  flow.
 - Do **NOT** roll a sub-epic completion up to its parent, or walk the epic tree.
 - **NEVER pre-assign a dispatchable bead.** The daemon claims dispatchable beads
   via `br claim`, which **REFUSES an already-assigned bead** → `max_attempts_
@@ -602,19 +683,33 @@ rather than blocking; surface only genuine splits / unsound consensus.
   as "do NOT raw-close — reverses a locked decision" is a §8 surface-and-await, not
   this exception. (Reconciles SHUTDOWN.md §Step 2 / §Fleet-safe / beads-cli /
   captain-lanes.md into this one place.)
-- **Review/planning sub-agents you dispatch MUST be READ-ONLY** — they run NO git
-  state-changing commands (`git reset` / `git checkout` / `git cherry-pick` /
-  `git merge` / `git rebase`) on the shared repo. A reviewer agent that `reset`
-  local `main` mid-deploy nearly broke a keystone merge (Refs hk-805f7). Planning
-  / triage / crewlog-digest sub-agents read and report; they never mutate repo
-  state.
+- **A review or planning sub-agent is READ-ONLY against the shared working tree.**
+  It runs NO git state-changing command there — no `reset`, `checkout`,
+  `cherry-pick`, `merge`, or `rebase`. A reviewer agent that ran `git reset` on local
+  `main` mid-deploy nearly broke a keystone merge (Refs hk-805f7). Read-only is the
+  DEFAULT because it holds even when you forget a flag, and forgetting the flag is
+  how that incident happened. **The licensed route for a reviewer that genuinely must
+  check out code is its own worktree:** dispatch it with `isolation=worktree`, so its
+  git commands land in a throwaway tree and cannot reach the shared repo. Give it a
+  worktree or give it read-only — never let it move a ref in the tree the fleet is
+  using. A planning, triage, or crewlog-digest sub-agent that only reads needs
+  neither. The `orchestrator-rules` skill §Review and quality carries the same
+  remedy for the same incident.
 
 ---
 
 ## 9. Error & edge handling
 
-The rule is uniform: **detect mechanically, surface to the operator, await — never
-decide.** (c4-spec §7.)
+**Read the SURFACE column as "what to report", NOT as "wait for permission."** This
+is the table you reach for mid-incident, so it has to agree with §0 and §8: you
+surface so the operator can SEE the fleet, and you keep acting in the same turn.
+The only rows that genuinely stop and wait are the §8 four. Everything else:
+report it in one line, then take the recovery action.
+
+> The original c4-spec §7 wording was "detect mechanically, surface, await — never
+> decide" for every row. That predates the autonomy contract in §0 and is
+> SUPERSEDED here. If you meet that sentence quoted anywhere else, it is the old
+> design.
 
 > **Attribution-first rule (Gap 1 — F13 reinforcement):** For EVERY run event you
 > surface (`epic_completed`, `run_failed`, `run_stale`, wedge), **resolve the owning
@@ -626,22 +721,30 @@ decide.** (c4-spec §7.)
 
 | Situation | Mechanical detection | Captain action (mechanics only) |
 |---|---|---|
-| **Daemon down** | any daemon RPC (`crew start/stop`, `comms send/recv/join/leave`, `subscribe`) exits **17** | SURFACE "daemon not running"; do NOT proceed to spawn/mail. `crew list`, `comms log`, `comms who` still work (local) — use them to report state. |
-| **`crew start` fails (non-17)** — name collision with a live crew, queue already bound to another live crew, or launch failure (C2 §7) | `crew start` exits non-zero with C2's message | SURFACE the exact C2 error. Do NOT auto-retry under a different name/queue (a choice). AWAIT operator direction. |
-| **Crew goes offline** | crew drops from `comms who` past the ~120s TTL and/or stops emitting `--topic status` | SURFACE "crew X appears offline (last seen ...); awaiting direction." Do NOT declare it failed, kill it, or re-home its epic. A keeper restart can transiently drop presence — a crew that re-appears in `comms who` needs NO action (see §10 / AC-6). |
+| **Daemon down** | any daemon RPC (`crew start/stop`, `comms send/recv/join/leave`, `subscribe`) exits **17** | Report "daemon not running", then get it back. Do not spawn or mail until it is up. If the supervisor is reviving it, let the supervisor win — restart-backoff can delay socket-bind 30s–1m. If the supervisor is confirmed dead, restart it yourself: `harmonik supervise start` (STARTUP.md §2.1). `crew list`, `comms log`, `comms who` still work (local) — use them to report state. |
+| **`crew start` fails (non-17)** — name collision with a live crew, queue already bound to another live crew, or launch failure (C2 §7) | `crew start` exits non-zero with C2's message | Post the exact C2 error as a status, then diagnose. **A collision fails fast and loud: never rename or retry around it**, because it almost always means the lane is already staffed and a re-launch double-staffs the epic. Find who holds the name — a live holder means the lane is covered, a confirmed-dead holder is a zombie you `crew stop` and re-establish under the SAME name (STARTUP.md Step 3). A launch failure with no collision is yours to diagnose and retry. Same answer as §8 guardrails; owner is the `orchestrator-rules` skill §Autonomy and flow. |
+| **Crew goes offline** | crew drops from `comms who` past the ~120s TTL and/or stops emitting `--topic status` | Report "crew X appears offline (last seen …)", then CHECK PANE-TRUTH — `tmux capture-pane` on its window. Presence ages out at ~120s and a keeper restart drops it transiently, so a crew that re-appears needs NO action (§10 / AC-6). A pane that is dead or wedged is a ZOMBIE: `harmonik crew stop <name>` and re-establish the lane fresh (STARTUP.md Step 3). That reconciliation is routine and autonomous — it is NOT "declaring the crew failed". The §8 case is killing or re-homing a crew's WORK, which is a different act and still surfaces. |
 | **`epic_completed` for an unknown/unassigned epic** | `br show <epic_id> --format json` → `assignee` is empty / matches no live crew in `crew list` | SURFACE it as informational ("epic <id> completed; not tracked to any current crew"); do NOT spawn/assign in response. (Happens for an epic closed out-of-band, or one whose crew was already stopped.) |
 | **Duplicate `epic_completed`** (at-least-once bus, or a C1 crash-window retry) | same `event_id` re-delivered, OR a second event for an already-surfaced epic | Dedupe on `event_id` (N3). If a logically-duplicate completion for an already-surfaced epic arrives with a NEW `event_id`, surface at most ONE "epic <id> completed" to the operator (idempotent surfacing). |
 | **Sub-epic completion before top-level** (C1 is single-level) | `epic_completed` for a child epic whose parent epic is still open | Surface each as it arrives; do NOT roll up to the parent (no tree-walk). |
-| **Stuck dispatch / run failure you happen to see** | a `run_failed` / `run_stale` on a subscription you also watch (optional — you MAY add `--types epic_completed,run_failed,run_stale`) | **Before surfacing, attribute the owning crew (Gap 1 — same pattern as `epic_completed`):** `br show <bead_id> --format json` → read `parent_id` (the epic) → `br show <parent_id> --format json` → `assignee`. Include the crew name in the surface message: "bead <id> failed/stale (crew <name>); stuck signal — awaiting direction." If `parent_id` is absent or `assignee` is empty, surface as unattributed. Do NOT classify or recover — failure handling is judgment-out and lives in `harmonik-dispatch` for the *crew's* loop, not yours. |
+| **Stuck dispatch / run failure you happen to see** | a `run_failed` / `run_stale` on a subscription you also watch (optional — you MAY add `--types epic_completed,run_failed,run_stale`) | **Before surfacing, attribute the owning crew (Gap 1 — same pattern as `epic_completed`):** `br show <bead_id> --format json` → read `parent_id` (the epic) → `br show <parent_id> --format json` → `assignee`. Include the crew name in the surface message: "bead <id> failed/stale (crew <name>); stuck signal — awaiting direction." If `parent_id` is absent or `assignee` is empty, surface as unattributed. Then act at LANE level, not bead level: the crew owns recovering its own bead, so nudge or re-drive the crew (STARTUP.md §4.3) rather than reaching into the run yourself. Mind the slow-recovery guard — a `run_stale` before launch+30min is usually a silent implementer, not a wedge (STARTUP.md §SLOW-RECOVERY vs GENUINE-WEDGE). |
 
-**Concurrency guard (from `harmonik-dispatch`):** you are a LIGHT orchestrator. Do
-NOT spin up ≥10 parallel Agent-tool sub-agents while the daemon dispatches crew
-beads (rate-limit rule). Crew spawning is rare and coarse; you otherwise watch and
-mail.
+**Concurrency guard (from `harmonik-dispatch`):** you are a LIGHT orchestrator.
+Lean hard against ~10 or more parallel Agent-tool sub-agents while the daemon is
+dispatching crew beads. The mechanism: you share ONE rate limit with every crew and
+every implementer the daemon is running, so a wide captain fan-out slows the fleet
+it exists to serve. Crew spawning is rare and coarse; you otherwise watch and mail.
+
+**The named exception is `major-issue-fanout`.** That protocol prescribes 10–15
+agents and it is the captain's own method for a blocker whose root cause has been
+refuted twice or that has survived two fix attempts. Fire it deliberately: pick a
+lull, say in a status that you are fanning out and why, and let it finish before
+starting another wide pass.
 
 > **Stream-vs-wave (M12/hk-039z — mostly crew-facing; bites the captain only on
-> lull-deploy / canary).** `harmonik-dispatch` recommends `--wave` for true concurrent
-> dispatch, but hard-won operational memory is that concurrent dispatch of REAL beads
+> lull-deploy / canary).** A stream group runs items concurrently, and `--wave` only
+> closes the group to mid-flight appends (`specs/execution-model.md`
+> EM-NOTE-STREAM-CONCURRENCY). Hard-won operational memory is that concurrent dispatch of REAL beads
 > can WEDGE at `launch_stall_detected` — only SERIAL reliably worked. Reconcile: if
 > concurrent dispatch wedges at `launch_stall_detected`, fall back to
 > `--max-concurrent 1` (serial) per the known concurrent-dispatch-wedge class; verify
@@ -810,8 +913,9 @@ act-pct idle gate (CrispIdle check). All other safety gates (nonce-confirmed han
 `.managed`, `HoldingDispatch`) remain intact. The operator HARD-NO is on **WIDENING**
 only — LOWERING the band to restart earlier (the current 200k/215k absolute band) is
 operator-directed and correct; do NOT re-apply the old "no band-retune" lock to refuse
-a LOWERING. The pct flags are inert on the 1M window — arm with
-`--warn-abs-tokens 200000 --act-abs-tokens 215000` (STARTUP.md Step 6 "Keeper arming").
+a LOWERING. Arm with the ABSOLUTE flags only —
+`--warn-abs-tokens 200000 --act-abs-tokens 215000`. How the pct flags behave is
+stated once, in STARTUP.md Step 6 "Keeper arming"; read it there.
 (You MUST be launched via `harmonik start captain` — the native Go launcher
 (alias: `harmonik captain`) that mints the stable `--session-id` the keeper
 rebinds to and arms the keeper at the band above. NO env var, NO script path:
@@ -832,7 +936,7 @@ complete lane to the next KNOWN lane) is already yours and is unchanged by that
 layer; only the surface-and-await NEW-judgment step becomes "consult the policy."
 
 Explicitly **still surface-and-await for you today (not autonomous):** ranking a
-**brand-NEW initiative not in the known `kerf next` feed**, declaring a crew
+**brand-NEW initiative carried by no durable doc and no ledger row**, declaring a crew
 **failed** / killing its work, and reversing a **locked decision** / destructive
 op. (Organizing the KNOWN feed into lanes and re-tasking a finished crew to the
 next KNOWN lane ARE autonomous — §0.) There is also no structural `crew_offline` /

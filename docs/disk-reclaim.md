@@ -787,7 +787,7 @@ see.
 
 Remove with `git worktree remove <path>` — **without `--force`**, so anything
 dirty refuses on its own. Then `git worktree prune`. Never `cd` into a worktree
-to do this (see orchestrator-rules §CWD discipline); operate from repo root.
+to do this (see orchestrator-rules §CWD and commit discipline); operate from repo root.
 
 ## 5. `.harmonik/events/events.jsonl` — append-only, unrotated
 

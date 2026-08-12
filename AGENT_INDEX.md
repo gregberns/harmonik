@@ -11,7 +11,12 @@
 >
 > **New to harmonik?** See [README.md](README.md) for what it is and how to install it.
 >
-> **Reading order on boot:** [PRINCIPLES.md](PRINCIPLES.md) (the standard code is held to) → [plans/2026-07-27-delete-and-rewrite/CHARTER.md](plans/2026-07-27-delete-and-rewrite/CHARTER.md) (the active program) → AGENT_INDEX (this map) → [STATUS.md](STATUS.md) (phase + locked decisions) → `HANDOFF.md` (this-session state, gitignored and machine-local).
+> **Reading order on boot:** every role starts with [PRINCIPLES.md](PRINCIPLES.md) (the standard code
+> is held to) and then [plans/2026-07-27-delete-and-rewrite/CHARTER.md](plans/2026-07-27-delete-and-rewrite/CHARTER.md)
+> (the active program). What comes after those two depends on the role, and `AGENTS.md`
+> §"Per-role load map" is the statement of it — a captain boot-reads neither this index nor
+> `STATUS.md`. A session with no role continues: AGENT_INDEX (this map) → [STATUS.md](STATUS.md)
+> (phase + locked decisions) → `HANDOFF.md` (this-session state, gitignored and machine-local).
 >
 > **Corrected 2026-07-30:** the boot order above used to include `.harmonik/context/captain-lanes.md`
 > for every role. That file is captain-tier — its own header says a captain loads it at STARTUP
@@ -187,7 +192,7 @@ Most recent entries:
 
 ## Agent Skills (operating contracts)
 Booting into a specific role? Load its skill for the operating contract:
-- `.claude/skills/orchestrator-rules` -- **LOAD-BEARING standing-rules contract** for any orchestrator (captain, implementer-orchestrator, solo): the single canonical statement of dispatch discipline, kerf-first priority, bead lifecycle (daemon owns terminal transitions; never pre-set in_progress), the review gate, the monitor pattern, CWD discipline (never `cd` into a worktree), autonomy/flow boundaries, and the major-issue fan-out trigger. Loaded as a CONTRACT at captain STARTUP and by the implementer-orchestrator on `/session-resume`. Points to the detail-owner skills; does not duplicate them.
+- `.claude/skills/orchestrator-rules` -- **LOAD-BEARING standing-rules contract** for any orchestrator (captain, implementer-orchestrator, solo): the single canonical statement of dispatch discipline, priority (stated intent first, then the ledger), bead lifecycle (daemon owns terminal transitions; never pre-set in_progress), the review gate, the monitor pattern, CWD discipline (never `cd` into a worktree), autonomy/flow boundaries, and the major-issue fan-out trigger. Loaded as a CONTRACT at captain STARTUP and by the implementer-orchestrator on `/session-resume`. Points to the detail-owner skills; does not duplicate them.
 - `.claude/skills/captain` -- captain session: boot runbook, lane organization, crew spawn/verify, surfaces
 - `.claude/skills/crew-launch` -- crew session: boot sequence, OWN-queue loop, progress feed, keeper re-hydration
 - `.claude/skills/keeper` -- per-session context-fill watcher (warn / handoff-clear-resume thresholds)

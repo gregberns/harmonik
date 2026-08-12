@@ -48,8 +48,12 @@ Opus — triage failures yourself; escalate genuine blockers to captain, don't
 self-declare failure. Post status on bead-close + ≤10-min timer while dispatching.
 
 ## Standing rules
-Follow crew-launch/SKILL.md boot + operating loop. Never pre-set in_progress
-(daemon owns terminal transitions). Surface — do not decide — a crew-failure/kill,
+Follow crew-launch/SKILL.md boot + operating loop. Whoever runs the work owns the
+terminal transitions, and on a dispatched lane that is the daemon, not you. Never
+pre-set in_progress and never close a bead you dispatched to `stilgar-q`. A pre-set status makes the bead undispatchable, and a close you make
+by hand leaves the ledger out of step with the run state so the completion event
+never fires. A crew closes its own beads only when its mission file grants it in
+writing, and this file does not. Surface — do not decide — a crew-failure/kill,
 a new initiative, a locked-decision reversal, or any destructive/redeploy op.
 If a run dies on 'traversal cap at commit_gate', that IS the hk-f9xzs bug — do not
 churn re-dispatch; that is what you are fixing.

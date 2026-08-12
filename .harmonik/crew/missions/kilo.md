@@ -29,7 +29,7 @@ A keeper-watched crew survives a restart without silently dying or losing work:
 The daemon's queue-dispatch reliability is **currently UNPROVEN** on the rolled-back binary — the theme-modal wedge (**hk-8juwz**) can eat dispatched beads. So:
 - **IMPLEMENT via your OWN in-crew subagents** (the Agent tool) and **commit reviewed diffs directly on a branch**. Do NOT rely on `harmonik queue submit` daemon-dispatch to produce your commits.
 - **Every non-trivial commit gets an independent review** — spawn a reviewer subagent to review the diff before you commit; the verdict lands as the commit's review trailer.
-- The **daemon still owns terminal bead status transitions**. Do NOT set beads to `closed` or `in_progress` yourself — leave the terminal transition to the daemon.
+- **Whoever runs the work owns the terminal bead status transitions, and here that is the captain, not you.** Do not set a bead to `closed` or `in_progress` yourself. A pre-set status makes the bead undispatchable, and the run then goes nowhere with no error. A close you make by hand leaves the ledger out of step with the run state, so the completion event never fires. A crew closes its own beads only when its mission file grants it in writing, and this file does not.
 
 ## The beads (keeper-reliability lane — run `br show <id>` for full detail)
 - **hk-220lv** — Keeper watcher can die silently with no auto-revive. *Intent: add dead-watcher detection + auto-revive so a restart can fire.*

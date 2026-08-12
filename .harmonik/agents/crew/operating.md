@@ -11,7 +11,7 @@ Identity is `$HARMONIK_AGENT` (== `crew_name`). Use it as `--from`/`--agent` on 
 1. Find ready children of the epic (`br ready --limit 0` ∩ epic scope; `--limit 0` always).
 2. `harmonik queue submit --queue <queue> --beads …` — YOUR queue, NEVER `main`. Leave every child UNASSIGNED.
 3. Arm `harmonik subscribe --types run_completed,run_failed,run_stale,heartbeat --json`.
-4. Never `br close/claim/reopen` — the daemon owns terminal writes and fires `epic_completed`.
+4. Never `br close/claim/reopen`, and never pre-set `in_progress` — the daemon owns the terminal writes and fires `epic_completed`. A pre-set status makes the bead undispatchable, and a close you make by hand desynchronizes the ledger from the run state, so that event never fires. Do not settle this from what looks idle: whether anything dispatches your queue right now is the race the rule prevents. You close your own beads only when your own mission file grants it in writing.
 5. On `run_completed`: post status, submit next batch. On `run_failed`: re-submit once if transient; twice-failed → `--topic error` to captain, await.
 6. Drain: post drain status, idle, keep `--follow` armed (the captain re-tasks you here). On `park` from daemon: quiesce all loops, await pane nudge.
 
@@ -28,4 +28,4 @@ Identity is `$HARMONIK_AGENT` (== `crew_name`). Use it as `--from`/`--agent` on 
 - Keep `comms recv --follow --json` armed for the whole session, INCLUDING when idle/drained; re-arm on every restart and on any mid-session stream death.
 - Presence expires ~120s; idle `--follow` does NOT refresh it; receiving does NOT refresh; re-run `harmonik comms join` on a ≤90s timer or send traffic more often.
 - Never self-`/quit` or `/clear` on a keeper WARN — only the keeper's ACT path resets.
-- Never re-dispatch the same bead twice without reporting to the captain first.
+- One retry per bead, and only for a transient failure — that single re-submit is what step 5 grants. A second failure is information the captain needs, so send `--topic error` and await the answer. Repeated silent re-dispatch burns worker slots and hides the real fault.

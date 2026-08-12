@@ -24,7 +24,7 @@ place before it will run.
 | **tmux** | Every Claude session (and the daemon itself) runs inside a tmux session so you can attach and watch. | **Required** | `brew install tmux` (macOS) / `apt install tmux` (Linux). | `tmux -V` → e.g. `tmux 3.6a` |
 | **Claude Code** (`claude`) | The agent runtime. Harmonik spawns a `claude` session to implement and review each bead. | **Required** | Install from <https://claude.ai/code> and sign in. | `claude --version` → e.g. `2.1.177 (Claude Code)` |
 | **`br`** (Beads) | The task ledger. Each unit of work is a "bead" stored in a local database; harmonik reads and writes bead state through `br`. | **Required** | See **"Installing `br` (Beads)"** below — this one needs care. | `br --version` → e.g. `br 0.2.10` |
-| **`kerf`** (planning) | Optional planning and prioritization layer. Gives you ranked work feeds (`kerf next`) and structured planning passes. The core daemon runs fine without it — you can submit beads directly. | *Optional* | See **"Installing `kerf`"** below. | `kerf --help` (kerf has **no** `version` command — see notes) |
+| **`kerf`** (planning) | Optional spec-first planning layer. Gives you structured planning passes and `kerf map`. It plans work; it does not rank work. The core daemon runs fine without it — you can submit beads directly. | *Optional* | See **"Installing `kerf`"** below. | `kerf --help` (kerf has **no** `version` command — see notes) |
 
 The four **required** non-Go tools are: **git, tmux, Claude Code, and `br`**.
 **`kerf` is optional** — skip it if you just want to run beads.
@@ -66,7 +66,7 @@ br --help          # should list subcommands including 'init'
 
 ### Installing `kerf` (optional)
 
-`kerf` is the planning/prioritization layer. It lives in its **own separate
+`kerf` is the spec-first planning layer. It lives in its **own separate
 repository** ([github.com/gregberns/kerf](https://github.com/gregberns/kerf)), not
 inside the harmonik repo. It's a Go program, so you install it with `go install`
 from a checkout of the kerf source:
@@ -82,7 +82,7 @@ see the next section), which must be on your `PATH`.
 
 > **Note:** `kerf` does **not** have a `version` subcommand or a `--version` flag.
 > To confirm it installed, run `kerf --help` and check that the command list appears
-> (`next`, `triage`, `new`, `show`, etc.).
+> (`new`, `show`, `map`, etc.).
 
 You can always add `kerf` later. Nothing below requires it.
 

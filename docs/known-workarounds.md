@@ -110,9 +110,19 @@ Crew keepers are auto-armed by the daemon on `crew start`: `HandleCrewStart → 
 
 ## Harness issues
 
-**HARNESS BLOCKS `.md` WRITES FOR SUB-AGENTS (first seen v47).**
-Symptom: sub-agent Write tool calls on `.md` files are blocked by the harness.
-Resolution: Orchestrator must persist markdown files via its own Write tool; do not delegate `.md` writes to sub-agents.
+**RETRACTED — SUB-AGENTS CAN WRITE `.md` FILES (filed at v47, disproved 2026-08-12).**
+The entry claimed the harness blocks sub-agent `Write` calls on `.md` files, and told the
+orchestrator to persist markdown itself. Both halves are wrong. `.claude/settings.json` and
+`.claude/settings.local.json` deny no write tool, and the user-global deny list names none
+either. The check is one read of those two files, and it was never run before the entry was
+written.
+
+Do the opposite: have the sub-agent write its own files. Pulling a document back through the
+main thread spends the one context an orchestrator exists to protect. The `orchestrator-rules`
+skill states this under §Environment facts.
+
+The entry stays here as a retraction, not as guidance. A workaround that is deleted outright
+gets re-derived by the next agent who sees a write fail for some other reason.
 
 ---
 

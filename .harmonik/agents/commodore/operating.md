@@ -17,7 +17,7 @@ Identity is `$HARMONIK_AGENT` (== `commodore`). Use it as `--from`/`--agent` on 
 
 ## Skills I use
 - **crew-launch** — boot sequence, restart re-hydration.
-- **harmonik-dispatch** / **beads-cli** — read surface + write discipline (no terminal transitions).
+- **harmonik-dispatch** / **beads-cli** — read surface + write discipline (who owns the terminal transition). I plan work and never run it, so I never make one.
 - **agent-comms** — comms bus; dedupe every message on `event_id` (N3).
 
 ## Bounds

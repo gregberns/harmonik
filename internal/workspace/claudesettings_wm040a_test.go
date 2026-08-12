@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -596,7 +597,7 @@ func TestWM040a_TwoLaunchesLeaveByteIdenticalSettings(t *testing.T) {
 	}
 	afterSecond := mustReadFile(t, settingsPath)
 
-	if string(afterFirst) != string(afterSecond) {
+	if !bytes.Equal(afterFirst, afterSecond) {
 		t.Errorf("WM-040a: launch 2 changed the settings file; the merge must leave the same bytes.\n--- after launch 1 ---\n%s\n--- after launch 2 ---\n%s",
 			string(afterFirst), string(afterSecond))
 	}

@@ -558,7 +558,6 @@ internal/workflow/params_graph.go	gocognit
 internal/workflow/params_graph.go	prealloc
 internal/workflow/sub_workflow_hk_n51yp_test.go	forbidigo
 internal/workspace/agenttask_chb028.go	funlen
-internal/workspace/claudetrust_wm040b.go	cyclop
 internal/workspace/claudetrust_wm040b.go	forbidigo
 internal/workspace/claudetrust_wm040b.go	gocognit
 internal/workspace/conflictresolution_wm024_test.go	forbidigo

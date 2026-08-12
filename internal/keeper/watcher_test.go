@@ -14,22 +14,10 @@ import (
 	"github.com/gregberns/harmonik/internal/substrate"
 )
 
-// driveWatcherFakeClock runs a Watcher under a substrate.FakeClock and advances
-// virtual time exactly `ticks` poll intervals in deterministic lockstep with the
-// loop (via the TEST-ONLY OnPollTickFn hook), then cancels and waits for Run to
-// return. It replaces the wall-clock-margin pattern where a fixed real-time
-// window (runWatcherFor) yields a nondeterministic number of poll iterations
-// under -race starvation — the hk-3dn16 flake. Each processed tick advances
-// virtual time by PollInterval, so cooldown/staleness windows are honored in
-// virtual time exactly as they would be in production.
-func driveWatcherFakeClock(t *testing.T, cfg keeper.WatcherConfig, em keeper.Emitter, ticks int) {
-	t.Helper()
-	driveWatcherLockstep(t, substrate.NewFakeClock(time.Unix(1_700_000_000, 0)), cfg, em, ticks)
-}
-
-// driveWatcherFakeClockFrom is driveWatcherFakeClock for a test that seeds a
-// GAUGE FILE and cares about its age. The caller passes the virtual start time,
-// which must be derived from the seeded file's stat'd mod-time.
+// driveWatcherFakeClockFrom runs a Watcher under a substrate.FakeClock from a
+// caller-supplied virtual start time. Use it for a test that seeds a GAUGE FILE
+// and cares about its age: the start time must be derived from the seeded
+// file's stat'd mod-time.
 //
 // WHY THE START TIME MATTERS. The watcher reads gauge age as
 // Clock.Since(modTime): an INJECTED clock against a REAL filesystem mod-time. A
@@ -54,7 +42,15 @@ func driveWatcherFakeClockFrom(t *testing.T, start time.Time, cfg keeper.Watcher
 	driveWatcherLockstep(t, substrate.NewFakeClock(start), cfg, em, ticks)
 }
 
-// driveWatcherLockstep is the shared lockstep driver.
+// driveWatcherLockstep advances virtual time exactly `ticks` poll intervals in
+// deterministic lockstep with the loop (through the TEST-ONLY OnPollTickFn
+// hook), then cancels and waits for Run to return. It replaces the
+// wall-clock-margin pattern of runWatcherFor, where a fixed real-time window
+// yielded a
+// nondeterministic number of poll iterations under -race starvation — the
+// hk-3dn16 flake. Each processed tick advances virtual time by PollInterval, so
+// cooldown and staleness windows are honoured in virtual time exactly as they
+// are in production.
 func driveWatcherLockstep(t *testing.T, fake *substrate.FakeClock, cfg keeper.WatcherConfig, em keeper.Emitter, ticks int) {
 	t.Helper()
 

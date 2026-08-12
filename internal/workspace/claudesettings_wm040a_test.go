@@ -63,6 +63,101 @@ func claudeSettingsFixtureHookEntries(t *testing.T, hooksMap map[string]interfac
 	return arr
 }
 
+// claudeSettingsFixtureCountBridgeHooks counts, in one event-type array, the
+// hook ENTRIES that invoke harmonik's hook-relay verb and the matcher GROUPS
+// that hold at least one such entry.
+//
+// It walks the decoded JSON itself and spells the verb literally instead of
+// calling the product predicate or its constant. A test that used the function
+// under test as its own oracle would report "one group" while the file held
+// two, because the same false negative would hide the duplicate from both the
+// filter and the count.
+func claudeSettingsFixtureCountBridgeHooks(arr []interface{}) (groups, entries int) {
+	for _, elem := range arr {
+		groupMap, ok := elem.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		hooks, ok := groupMap["hooks"].([]interface{})
+		if !ok {
+			continue
+		}
+		found := 0
+		for _, entry := range hooks {
+			entryMap, ok := entry.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			args, ok := entryMap["args"].([]interface{})
+			if !ok || len(args) == 0 {
+				continue
+			}
+			if verb, ok := args[0].(string); ok && verb == "hook-relay" {
+				found++
+			}
+		}
+		if found > 0 {
+			groups++
+			entries += found
+		}
+	}
+	return groups, entries
+}
+
+// claudeSettingsFixtureHookEntryPresent reports whether any group in arr holds
+// a hook entry whose "command" field is wantCommand. Used to prove a foreign
+// entry survived a launch.
+func claudeSettingsFixtureHookEntryPresent(arr []interface{}, wantCommand string) bool {
+	for _, elem := range arr {
+		groupMap, ok := elem.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		hooks, ok := groupMap["hooks"].([]interface{})
+		if !ok {
+			continue
+		}
+		for _, entry := range hooks {
+			entryMap, ok := entry.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if cmd, ok := entryMap["command"].(string); ok && cmd == wantCommand {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// claudeSettingsFixtureMarkerPresent reports whether any hook entry in any
+// group of arr carries marker somewhere in its encoded form. It re-encodes each
+// entry instead of reading a named field, so it works for an entry of any
+// shape — including one that is not an object at all.
+func claudeSettingsFixtureMarkerPresent(t *testing.T, arr []interface{}, marker string) bool {
+	t.Helper()
+	for _, elem := range arr {
+		groupMap, ok := elem.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		hooks, ok := groupMap["hooks"].([]interface{})
+		if !ok {
+			continue
+		}
+		for _, entry := range hooks {
+			raw, err := json.Marshal(entry)
+			if err != nil {
+				t.Fatalf("claudeSettingsFixtureMarkerPresent: marshal hook entry: %v", err)
+			}
+			if strings.Contains(string(raw), marker) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // claudeSettingsFixtureBridgeGroupPresent reports whether arr contains
 // the bridge matcher-group for eventKind per CHB-003, checking that the hook
 // "command" field matches wantCommand (hk-kqdpf.6: must be an absolute path).
@@ -302,15 +397,10 @@ func TestWM040a_RepeatedLaunchesLeaveOneBridgeGroup(t *testing.T) {
 
 	for _, kind := range bridgeEventKinds {
 		arr := claudeSettingsFixtureHookEntries(t, hooks, kind)
-		bridges := 0
-		for _, group := range arr {
-			if isBridgeGroup(group) {
-				bridges++
-			}
-		}
-		if bridges != 1 {
-			t.Errorf("WM-040a: %q holds %d bridge groups after %d launches; want exactly 1 — Claude fires a hook once per copy",
-				kind, bridges, launches)
+		bridges, bridgeEntries := claudeSettingsFixtureCountBridgeHooks(arr)
+		if bridges != 1 || bridgeEntries != 1 {
+			t.Errorf("WM-040a: %q holds %d bridge groups / %d bridge entries after %d launches; want exactly 1 of each — Claude fires a hook once per copy",
+				kind, bridges, bridgeEntries, launches)
 		}
 	}
 
@@ -319,14 +409,8 @@ func TestWM040a_RepeatedLaunchesLeaveOneBridgeGroup(t *testing.T) {
 	if len(stopArr) != 2 {
 		t.Errorf("WM-040a: Stop array len = %d after %d launches; want exactly 2 (user + one bridge)", len(stopArr), launches)
 	}
-	userHookSurvived := false
-	for _, group := range stopArr {
-		if !isBridgeGroup(group) {
-			userHookSurvived = true
-		}
-	}
-	if !userHookSurvived {
-		t.Errorf("WM-040a: the user's own Stop hook was removed; de-duplication must only touch harmonik's groups")
+	if !claudeSettingsFixtureHookEntryPresent(stopArr, "user-stop-hook") {
+		t.Errorf("WM-040a: the user's own Stop hook was removed; de-duplication must only touch harmonik's own entries")
 	}
 }
 
@@ -381,6 +465,288 @@ func TestWM040a_StaleBridgeGroupIsReplacedNotKept(t *testing.T) {
 	}
 	if !claudeSettingsFixtureBridgeGroupPresent(stopArr, "Stop", testDaemonBinaryPath) {
 		t.Errorf("WM-040a: the surviving Stop group does not name the current binary")
+	}
+}
+
+// TestWM040a_ForeignEntryInsideBridgeGroupSurvives pins the filter to the hook
+// ENTRY and not to the matcher GROUP.
+//
+// Harmonik writes one entry per group, so nothing on disk needs the distinction
+// today. But the bridge group carries the default matcher "", which is the most
+// collided-with value there is, and a group-level drop would take any entry a
+// later writer put beside harmonik's — with no warning and no log line. This
+// test puts a foreign entry inside harmonik's own group and requires it to
+// survive a launch.
+func TestWM040a_ForeignEntryInsideBridgeGroupSurvives(t *testing.T) {
+	t.Parallel()
+
+	const foreignCommand = "third-party-stop-hook"
+
+	workspacePath := t.TempDir()
+	settingsPath := claudeSettingsFixturePath(workspacePath)
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
+		t.Fatalf("WM-040a: MkdirAll: %v", err)
+	}
+
+	// One default-matcher group holding TWO entries: harmonik's, and a foreign
+	// one that another writer added beside it.
+	shared := map[string]interface{}{
+		"hooks": map[string]interface{}{
+			"Stop": []interface{}{
+				map[string]interface{}{
+					"matcher": "",
+					"hooks": []interface{}{
+						map[string]interface{}{
+							"type":    "command",
+							"command": "/old/path/to/harmonik",
+							"args":    []interface{}{"hook-relay", "Stop"},
+							"timeout": 30,
+						},
+						map[string]interface{}{
+							"type":    "command",
+							"command": foreignCommand,
+							"args":    []interface{}{"--notify"},
+							"timeout": 5,
+						},
+					},
+				},
+			},
+		},
+	}
+	raw, err := json.Marshal(shared)
+	if err != nil {
+		t.Fatalf("WM-040a: marshal shared-group settings: %v", err)
+	}
+	if err := os.WriteFile(settingsPath, raw, 0o600); err != nil {
+		t.Fatalf("WM-040a: WriteFile shared-group settings: %v", err)
+	}
+
+	if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
+		t.Fatalf("WM-040a: MaterializeClaudeSettings: %v", err)
+	}
+
+	hooks := claudeSettingsFixtureHooksMap(t, claudeSettingsFixtureReadJSON(t, settingsPath))
+	stopArr := claudeSettingsFixtureHookEntries(t, hooks, "Stop")
+
+	if !claudeSettingsFixtureHookEntryPresent(stopArr, foreignCommand) {
+		t.Errorf("WM-040a: the foreign entry %q was removed with harmonik's own entry; the filter must drop ENTRIES, not the whole group", foreignCommand)
+	}
+	bridges, bridgeEntries := claudeSettingsFixtureCountBridgeHooks(stopArr)
+	if bridges != 1 || bridgeEntries != 1 {
+		t.Errorf("WM-040a: Stop holds %d bridge groups / %d bridge entries; want exactly 1 of each — the stale entry must be replaced, not joined",
+			bridges, bridgeEntries)
+	}
+	if !claudeSettingsFixtureBridgeGroupPresent(stopArr, "Stop", testDaemonBinaryPath) {
+		t.Errorf("WM-040a: no Stop bridge group names the current binary")
+	}
+}
+
+// TestWM040a_TwoLaunchesLeaveByteIdenticalSettings asserts the property the fix
+// actually claims: launch N and launch N+1 leave the same file.
+//
+// The encoder is canonical — Go sorts map keys and both write sites go through
+// marshalSettings — so comparing the bytes is a direct proof of the claim, not
+// a proxy for it. The duplicate count that follows is taken from the parsed
+// file with a helper that spells the hook-relay verb literally, so it stays an
+// independent oracle: a false negative in the product predicate cannot report
+// one group while the file holds two.
+func TestWM040a_TwoLaunchesLeaveByteIdenticalSettings(t *testing.T) {
+	t.Parallel()
+
+	workspacePath := t.TempDir()
+	settingsPath := claudeSettingsFixturePath(workspacePath)
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
+		t.Fatalf("WM-040a: MkdirAll: %v", err)
+	}
+
+	// Start from a file the user owns, so the merge path runs on both launches.
+	userSettings := map[string]interface{}{
+		"theme": "dark",
+		"hooks": map[string]interface{}{
+			"Stop": []interface{}{
+				map[string]interface{}{
+					"matcher": "",
+					"hooks": []interface{}{
+						map[string]interface{}{
+							"type":    "command",
+							"command": "user-stop-hook",
+							"args":    []interface{}{},
+							"timeout": 5,
+						},
+					},
+				},
+			},
+		},
+	}
+	raw, err := json.Marshal(userSettings)
+	if err != nil {
+		t.Fatalf("WM-040a: marshal user settings: %v", err)
+	}
+	if err := os.WriteFile(settingsPath, raw, 0o600); err != nil {
+		t.Fatalf("WM-040a: WriteFile user settings: %v", err)
+	}
+
+	if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
+		t.Fatalf("WM-040a: MaterializeClaudeSettings (launch 1): %v", err)
+	}
+	afterFirst := mustReadFile(t, settingsPath)
+
+	if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
+		t.Fatalf("WM-040a: MaterializeClaudeSettings (launch 2): %v", err)
+	}
+	afterSecond := mustReadFile(t, settingsPath)
+
+	if string(afterFirst) != string(afterSecond) {
+		t.Errorf("WM-040a: launch 2 changed the settings file; the merge must leave the same bytes.\n--- after launch 1 ---\n%s\n--- after launch 2 ---\n%s",
+			string(afterFirst), string(afterSecond))
+	}
+
+	// Independent duplicate count, straight off the parsed file.
+	hooks := claudeSettingsFixtureHooksMap(t, claudeSettingsFixtureReadJSON(t, settingsPath))
+	for _, kind := range bridgeEventKinds {
+		arr := claudeSettingsFixtureHookEntries(t, hooks, kind)
+		groups, entries := claudeSettingsFixtureCountBridgeHooks(arr)
+		if groups != 1 || entries != 1 {
+			t.Errorf("WM-040a: %q holds %d bridge groups / %d bridge entries after 2 launches; want exactly 1 of each",
+				kind, groups, entries)
+		}
+	}
+}
+
+// TestWM040a_UnrecognisedHookEntryShapesSurvive pins the predicate to
+// FAIL-CLOSED. It is the sensor for the safety property this whole filter rests
+// on: harmonik must never delete a hook it did not write.
+//
+// `isBridgeHookEntry` decides that question, and it has four shape checks that
+// each fall through to KEEP — the entry is not an object, `args` is absent or
+// is not an array, `args` is empty, `args[0]` is not a string. Nothing asserted
+// any of them. Flipping all four to return true left the whole package green,
+// so the safety property had no sensor at all. That is the same shape as the
+// defect this bead descends from: an assertion that cannot fail on the thing it
+// exists to prevent.
+//
+// Each case puts the odd entry INSIDE harmonik's own default-matcher group,
+// beside harmonik's entry. That is the placement that hurts: if the predicate
+// claims the odd entry as ours, the group empties, the group is dropped, and
+// the entry is gone with no warning and no log line.
+func TestWM040a_UnrecognisedHookEntryShapesSurvive(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		marker string
+		entry  interface{}
+	}{
+		{
+			// The `group.(map[string]interface{})` fall-through.
+			name:   "entry is not an object",
+			marker: "not-an-object-survivor",
+			entry:  "not-an-object-survivor",
+		},
+		{
+			// The `entryMap["args"].([]interface{})` fall-through, absent key.
+			name:   "args key absent",
+			marker: "args-absent-survivor",
+			entry: map[string]interface{}{
+				"type":    "command",
+				"command": "args-absent-survivor",
+				"timeout": 5,
+			},
+		},
+		{
+			// The same fall-through, wrong type.
+			name:   "args is not an array",
+			marker: "args-not-array-survivor",
+			entry: map[string]interface{}{
+				"type":    "command",
+				"command": "args-not-array-survivor",
+				"args":    "hook-relay",
+				"timeout": 5,
+			},
+		},
+		{
+			// The `len(args) == 0` fall-through.
+			name:   "args is empty",
+			marker: "args-empty-survivor",
+			entry: map[string]interface{}{
+				"type":    "command",
+				"command": "args-empty-survivor",
+				"args":    []interface{}{},
+				"timeout": 5,
+			},
+		},
+		{
+			// The `args[0].(string)` fall-through. The verb is present at
+			// args[1], so a predicate that scanned the whole list instead of
+			// the first element would also fail this case.
+			name:   "args[0] is not a string",
+			marker: "args-first-not-string-survivor",
+			entry: map[string]interface{}{
+				"type":    "command",
+				"command": "args-first-not-string-survivor",
+				"args":    []interface{}{42, "hook-relay"},
+				"timeout": 5,
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			workspacePath := t.TempDir()
+			settingsPath := claudeSettingsFixturePath(workspacePath)
+			if err := os.MkdirAll(filepath.Dir(settingsPath), 0o700); err != nil {
+				t.Fatalf("WM-040a: MkdirAll: %v", err)
+			}
+
+			seed := map[string]interface{}{
+				"hooks": map[string]interface{}{
+					"Stop": []interface{}{
+						map[string]interface{}{
+							"matcher": "",
+							"hooks": []interface{}{
+								// Harmonik's own entry, which MUST be removed.
+								map[string]interface{}{
+									"type":    "command",
+									"command": "/old/path/to/harmonik",
+									"args":    []interface{}{"hook-relay", "Stop"},
+									"timeout": 30,
+								},
+								// The odd entry, which MUST survive.
+								tc.entry,
+							},
+						},
+					},
+				},
+			}
+			raw, err := json.Marshal(seed)
+			if err != nil {
+				t.Fatalf("WM-040a: marshal seed settings: %v", err)
+			}
+			if err := os.WriteFile(settingsPath, raw, 0o600); err != nil {
+				t.Fatalf("WM-040a: WriteFile seed settings: %v", err)
+			}
+
+			if err := MaterializeClaudeSettings(workspacePath, testDaemonBinaryPath, ""); err != nil {
+				t.Fatalf("WM-040a: MaterializeClaudeSettings: %v", err)
+			}
+
+			hooks := claudeSettingsFixtureHooksMap(t, claudeSettingsFixtureReadJSON(t, settingsPath))
+			stopArr := claudeSettingsFixtureHookEntries(t, hooks, "Stop")
+
+			if !claudeSettingsFixtureMarkerPresent(t, stopArr, tc.marker) {
+				t.Errorf("WM-040a: the entry harmonik cannot recognise (%s) was deleted; the predicate MUST fail closed and keep every shape it does not recognise", tc.name)
+			}
+			// Harmonik's own entry still went, and only one came back.
+			if claudeSettingsFixtureMarkerPresent(t, stopArr, "/old/path/to/harmonik") {
+				t.Errorf("WM-040a: harmonik's own stale entry survived; keeping the odd entry must not stop the removal of ours")
+			}
+			bridges, bridgeEntries := claudeSettingsFixtureCountBridgeHooks(stopArr)
+			if bridges != 1 || bridgeEntries != 1 {
+				t.Errorf("WM-040a: Stop holds %d bridge groups / %d bridge entries; want exactly 1 of each", bridges, bridgeEntries)
+			}
+		})
 	}
 }
 

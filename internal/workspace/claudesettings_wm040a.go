@@ -48,8 +48,8 @@ var bridgeEventKinds = []string{
 }
 
 // hookRelayVerb is the harmonik subcommand every bridge hook invokes. It is the
-// one part of a bridge group that does not change between binaries or versions,
-// so it is what identifies a group as ours.
+// one part of a bridge hook entry that does not change between binaries or
+// versions, so it is what identifies an entry as ours.
 const hookRelayVerb = "hook-relay"
 
 // bridgeMatcherGroupFor returns the single bridge matcher-group for eventKind.
@@ -82,7 +82,9 @@ func bridgeMatcherGroupFor(eventKind, daemonBinaryPath string) bridgeMatcherGrou
 // # Merge semantics (CHB-004)
 //
 // If ${workspace_path}/.claude/settings.json already exists:
-//   - Valid JSON → append bridge matcher-group to each event-type's hooks array.
+//   - Valid JSON → remove harmonik's own hook entries from each event-type's
+//     hooks array, then add the current bridge matcher-group. Hook entries
+//     harmonik did not write stay where they are and continue to fire.
 //   - Malformed JSON → overwrite with bridge-only content; log a warning line
 //     to sessionLogPath so the operator knows the file was displaced.
 //
@@ -242,8 +244,12 @@ func buildBridgeOnlySettings(daemonBinaryPath string) map[string]interface{} {
 	}
 }
 
-// mergeSettingsWithBridge appends bridge matcher-groups to each event-type
-// array in existing, per CHB-004: user hooks continue to fire alongside.
+// mergeSettingsWithBridge replaces harmonik's own hook entries in each
+// event-type array of existing and adds the current bridge matcher-group, per
+// CHB-004. It does not append to what is already there: this runs once per
+// agent launch and one worktree hosts many launches, so an append added one
+// more copy of every bridge entry on each launch (hk-dknb2). User hooks are
+// untouched and continue to fire alongside.
 // daemonBinaryPath is used as the hook "command" field per hk-kqdpf.6.
 func mergeSettingsWithBridge(existing map[string]interface{}, daemonBinaryPath string) map[string]interface{} {
 	// Clone top-level so we don't mutate the caller's map.
@@ -263,7 +269,7 @@ func mergeSettingsWithBridge(existing map[string]interface{}, daemonBinaryPath s
 		hooksMap = make(map[string]interface{})
 	}
 
-	// Append the bridge matcher-group to each event-type array.
+	// Put exactly one current bridge matcher-group in each event-type array.
 	for _, kind := range bridgeEventKinds {
 		bridgeGroup := groupToInterface(bridgeMatcherGroupFor(kind, daemonBinaryPath))
 		existing, exists := hooksMap[kind]
@@ -277,19 +283,20 @@ func mergeSettingsWithBridge(existing map[string]interface{}, daemonBinaryPath s
 			hooksMap[kind] = []interface{}{bridgeGroup}
 			continue
 		}
-		// Replace any bridge group already here, do not add a second one. One
+		// Remove the bridge entries already here, do not add a second copy. One
 		// worktree hosts several launches — implementer, resume, reviewer, each
 		// retry — and this merge runs on every one of them. Appending gave a
 		// worktree four byte-identical copies of every group, and Claude fires a
 		// hook once per copy, so that session reported every Stop four times.
-		// Dropping the old copy also retires a stale daemon binary path, which
+		// Dropping the old entry also retires a stale daemon binary path, which
 		// an append would have left behind pointing at a binary that has moved.
 		kept := make([]interface{}, 0, len(arr)+1)
 		for _, group := range arr {
-			if isBridgeGroup(group) {
+			stripped, dropGroup := stripBridgeHookEntries(group)
+			if dropGroup {
 				continue
 			}
-			kept = append(kept, group)
+			kept = append(kept, stripped)
 		}
 		hooksMap[kind] = append(kept, bridgeGroup)
 	}
@@ -323,35 +330,74 @@ func mergeSettingsWithBridge(existing map[string]interface{}, daemonBinaryPath s
 	return merged
 }
 
-// isBridgeGroup reports whether a decoded matcher-group is one harmonik wrote.
-// It matches on the hook-relay verb rather than on the whole group, so a group
-// written by an older binary — a different path, a different timeout — is still
-// recognised as ours and replaced instead of accumulating beside the new one. A
-// group the user wrote is left alone, because nothing the user writes invokes
-// hook-relay.
-func isBridgeGroup(group interface{}) bool {
+// stripBridgeHookEntries removes harmonik's own hook entries from one decoded
+// matcher-group. It returns the group to keep and reports whether the whole
+// group must be dropped.
+//
+// The filter works on ENTRIES, not on whole groups. Harmonik writes one entry
+// per group today, so nothing on disk needs the distinction yet. But the bridge
+// group carries the default matcher "", which is the value another writer is
+// most likely to pick as well, and a group-level drop would take that writer's
+// entry with it silently. A group is dropped only when every entry in it was
+// ours and the list is now empty. Anything this function does not recognise is
+// kept unchanged.
+//
+// This function does not mutate the group it is given. A group that loses an
+// entry is returned as a shallow copy, so the decoded value still in the input
+// array is left as it arrived. That is a property of this function only: the
+// caller does write its rebuilt arrays back into the hooks map it was handed,
+// so the merge as a whole is not free of side effects on its input. Harmless
+// today, because that map is decoded from the file inside
+// MaterializeClaudeSettings and is discarded once the file is written.
+func stripBridgeHookEntries(group interface{}) (interface{}, bool) {
 	groupMap, ok := group.(map[string]interface{})
 	if !ok {
-		return false
+		return group, false
 	}
 	entries, ok := groupMap["hooks"].([]interface{})
 	if !ok {
+		return group, false
+	}
+	kept := make([]interface{}, 0, len(entries))
+	for _, entry := range entries {
+		if isBridgeHookEntry(entry) {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	if len(kept) == len(entries) {
+		// Nothing of ours in this group. Return it exactly as it arrived.
+		return group, false
+	}
+	if len(kept) == 0 {
+		return nil, true
+	}
+	copied := make(map[string]interface{}, len(groupMap))
+	for k, v := range groupMap {
+		copied[k] = v
+	}
+	copied["hooks"] = kept
+	return copied, false
+}
+
+// isBridgeHookEntry reports whether a decoded hook entry is one harmonik wrote.
+// It matches on the hook-relay verb rather than on the whole entry, so an entry
+// written by an older binary — a different path, a different timeout — is still
+// recognised as ours and replaced instead of accumulating beside the new one.
+// An entry the user wrote is left alone, because nothing the user writes
+// invokes hook-relay. Every case this predicate does not recognise falls
+// through to keep.
+func isBridgeHookEntry(entry interface{}) bool {
+	entryMap, ok := entry.(map[string]interface{})
+	if !ok {
 		return false
 	}
-	for _, entry := range entries {
-		entryMap, ok := entry.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		args, ok := entryMap["args"].([]interface{})
-		if !ok || len(args) == 0 {
-			continue
-		}
-		if verb, ok := args[0].(string); ok && verb == hookRelayVerb {
-			return true
-		}
+	args, ok := entryMap["args"].([]interface{})
+	if !ok || len(args) == 0 {
+		return false
 	}
-	return false
+	verb, ok := args[0].(string)
+	return ok && verb == hookRelayVerb
 }
 
 // groupToInterface converts a bridgeMatcherGroup to the interface{} shape

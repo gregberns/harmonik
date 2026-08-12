@@ -24,6 +24,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -57,6 +58,14 @@ func commsShortProjectWithEvents(t *testing.T, lines ...string) string {
 //
 // Shared by the daemon-down, wake and send tests in this package: all three
 // need a daemon that answers, and none of them needs a real one.
+//
+// A reply is written only after the request has been read to EOF. The clients
+// in this package write their request, half-close, and only then read. A server
+// that answers and closes before the request arrives tears the connection down
+// under a client that has not written yet, and the client reports "broken pipe"
+// or "socket is not connected" instead of the answer. That ordering is decided
+// by the scheduler, so it inverts under load and it is what made the merge
+// decision red at 0d50b2d45. Reading first is also what the real daemon does.
 func serveCannedUnixSocket(t *testing.T, sockPath string, reply []byte) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(sockPath), 0o700); err != nil {
@@ -78,6 +87,7 @@ func serveCannedUnixSocket(t *testing.T, sockPath string, reply []byte) {
 				return
 			}
 			if len(reply) > 0 {
+				drainCannedRequest(c)
 				if _, werr := c.Write(reply); werr != nil {
 					closeConn(c)
 					return
@@ -86,6 +96,23 @@ func serveCannedUnixSocket(t *testing.T, sockPath string, reply []byte) {
 			closeConn(c)
 		}
 	}()
+}
+
+// drainCannedRequest reads one client request to EOF, so the reply cannot be
+// written and the connection cannot be closed before the client has finished
+// writing. The deadline is a backstop: a client that dies mid-request must not
+// park this goroutine for the rest of the run. A read fault needs no report --
+// the write that follows fails on its own and the caller sees that instead.
+func drainCannedRequest(c net.Conn) {
+	if err := c.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return
+	}
+	if _, err := io.Copy(io.Discard, c); err != nil {
+		return
+	}
+	if err := c.SetReadDeadline(time.Time{}); err != nil {
+		return
+	}
 }
 
 // closeConn closes one accepted connection. The test is already finished with

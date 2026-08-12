@@ -473,8 +473,8 @@ EXAMPLES
 	// This is the fleet-stall human escape hatch when automatic wake triggers miss.
 	//
 	// Exit-code contract:
-	//   0  — sessions nudged
-	//   1  — argument error
+	//   0  — the daemon accepted the wake request
+	//   1  — argument error, or no session by that name (hk-o3mz8)
 	//   2  — daemon rejected the request or protocol error
 	//  17  — daemon not running
 	//

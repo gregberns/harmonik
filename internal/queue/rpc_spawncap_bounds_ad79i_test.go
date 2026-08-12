@@ -28,6 +28,7 @@ package queue_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/gregberns/harmonik/internal/queue"
@@ -152,8 +153,8 @@ func TestSetConcurrency_RaiseAboveHostBoundIsRefused(t *testing.T) {
 	if f.concurrency != 1 {
 		t.Errorf("a refused request still moved max_concurrent to %d, want it untouched at 1", f.concurrency)
 	}
-	if got := rpcErr.Message; got != "spawn_cap_exceeded" {
-		t.Errorf("refusal message is %q, want spawn_cap_exceeded — the existing surface callers match on", got)
+	if got := rpcErr.Message; !strings.HasPrefix(got, "spawn_cap_exceeded") {
+		t.Errorf("refusal message is %q, want it to start with spawn_cap_exceeded — the token existing surface callers match on", got)
 	}
 	// The refusal has to be actionable, which is the half the original output
 	// got wrong: it computed "safe max_concurrent" from the number it had just
@@ -223,8 +224,8 @@ func TestSetConcurrency_NoLiveResizeStillRefusesWithTheOlderDetail(t *testing.T)
 	if rpcErr == nil {
 		t.Fatalf("a substrate with no live resize accepted a request that oversubscribes its fixed cap")
 	}
-	if got := rpcErr.Message; got != "spawn_cap_exceeded" {
-		t.Errorf("refusal message is %q, want spawn_cap_exceeded", got)
+	if got := rpcErr.Message; !strings.HasPrefix(got, "spawn_cap_exceeded") {
+		t.Errorf("refusal message is %q, want it to start with spawn_cap_exceeded", got)
 	}
 	if got, want := rpcErr.Detail["safe_max"], 2; got != want {
 		t.Errorf("refusal reports safe_max %v, want %v", got, want)

@@ -24,9 +24,41 @@ import (
 // virtual time exactly as they would be in production.
 func driveWatcherFakeClock(t *testing.T, cfg keeper.WatcherConfig, em keeper.Emitter, ticks int) {
 	t.Helper()
+	driveWatcherLockstep(t, substrate.NewFakeClock(time.Unix(1_700_000_000, 0)), cfg, em, ticks)
+}
 
-	clock := substrate.NewFakeClock(time.Unix(1_700_000_000, 0))
-	cfg.Clock = clock
+// driveWatcherFakeClockFrom is driveWatcherFakeClock for a test that seeds a
+// GAUGE FILE and cares about its age. The caller passes the virtual start time,
+// which must be derived from the seeded file's stat'd mod-time.
+//
+// WHY THE START TIME MATTERS. The watcher reads gauge age as
+// Clock.Since(modTime): an INJECTED clock against a REAL filesystem mod-time. A
+// fake clock that starts at an arbitrary epoch is not commensurate with that
+// mod-time. Start it in 2023 against a 2026 file and every age is large and
+// NEGATIVE, so no threshold reads true and the test passes without asserting
+// anything. Starting from the stat'd mod-time makes the boot-time age EXACTLY
+// the age the test seeded, with no real-time term at all. Refs: hk-nvqy7,
+// hk-vp02y.
+//
+// WHAT THE ANCHOR DOES NOT FIX, so a reader does not expect more of it than it
+// gives. A file mod-time is real time and cannot record virtual time, so a
+// gauge the watcher WRITES during the run lands at the real clock while virtual
+// time keeps running ahead of it by a whole PollInterval per tick. From then on
+// the gauge age is, in effect, the virtual time since the run began. A test
+// that wants a live gauge to stay out of the stale branch does not get that
+// from the clock — it gets it from the watcher refreshing the gauge on the same
+// pass (the `refreshed` short-circuit in Watcher.Run, hk-oduuc). Say which of
+// the two is doing the work when a test leans on it.
+func driveWatcherFakeClockFrom(t *testing.T, start time.Time, cfg keeper.WatcherConfig, em keeper.Emitter, ticks int) {
+	t.Helper()
+	driveWatcherLockstep(t, substrate.NewFakeClock(start), cfg, em, ticks)
+}
+
+// driveWatcherLockstep is the shared lockstep driver.
+func driveWatcherLockstep(t *testing.T, fake *substrate.FakeClock, cfg keeper.WatcherConfig, em keeper.Emitter, ticks int) {
+	t.Helper()
+
+	cfg.Clock = fake
 	interval := cfg.PollInterval
 	if interval <= 0 {
 		interval = 5 * time.Millisecond
@@ -54,10 +86,10 @@ func driveWatcherFakeClock(t *testing.T, cfg keeper.WatcherConfig, em keeper.Emi
 	}()
 
 	// Wait for the loop to register its poll ticker before advancing.
-	clock.BlockUntil(1)
+	fake.BlockUntil(1)
 	// ticks+1 signals guarantee `ticks` fully-processed iterations.
 	for i := 0; i <= ticks; i++ {
-		clock.Advance(interval)
+		fake.Advance(interval)
 		<-tickCh
 	}
 	cancel()

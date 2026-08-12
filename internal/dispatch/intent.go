@@ -377,36 +377,11 @@ type handoffBindingWire struct {
 }
 
 func (w intentWire) intent() (Intent, error) {
-	if w.Binding.GroupIndex == nil || w.Binding.ItemIndex == nil {
-		return Intent{}, errors.New("dispatch: group_index and item_index are required")
+	binding, err := w.Binding.binding()
+	if err != nil {
+		return Intent{}, err
 	}
-	for _, field := range []struct {
-		name  string
-		value string
-	}{
-		{name: "queue_id", value: w.Binding.QueueID},
-		{name: "run_id", value: w.Binding.RunID},
-		{name: "claim_transition_id", value: w.Binding.ClaimTransitionID},
-	} {
-		if err := validateUUIDv7(field.value); err != nil {
-			return Intent{}, fmt.Errorf("dispatch: %s: %w", field.name, err)
-		}
-	}
-	runUUID := uuid.MustParse(w.Binding.RunID)
-	claimUUID := uuid.MustParse(w.Binding.ClaimTransitionID)
-	value := Intent{
-		SchemaVersion: w.SchemaVersion,
-		Phase:         w.Phase,
-		Binding: Binding{
-			QueueID:           w.Binding.QueueID,
-			QueueName:         w.Binding.QueueName,
-			GroupIndex:        *w.Binding.GroupIndex,
-			ItemIndex:         *w.Binding.ItemIndex,
-			BeadID:            core.BeadID(w.Binding.BeadID),
-			RunID:             core.RunID(runUUID),
-			ClaimTransitionID: core.TransitionID(claimUUID),
-		},
-	}
+	value := Intent{SchemaVersion: w.SchemaVersion, Phase: w.Phase, Binding: binding}
 	if w.Run != nil {
 		if err := validateUUIDv7(w.Run.RecordRunID); err != nil {
 			return Intent{}, fmt.Errorf("dispatch: record_run_id: %w", err)
@@ -429,6 +404,29 @@ func (w intentWire) intent() (Intent, error) {
 		}
 	}
 	return value, nil
+}
+
+func (w bindingWire) binding() (Binding, error) {
+	if w.GroupIndex == nil || w.ItemIndex == nil {
+		return Binding{}, errors.New("dispatch: group_index and item_index are required")
+	}
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{name: "queue_id", value: w.QueueID},
+		{name: "run_id", value: w.RunID},
+		{name: "claim_transition_id", value: w.ClaimTransitionID},
+	} {
+		if err := validateUUIDv7(field.value); err != nil {
+			return Binding{}, fmt.Errorf("dispatch: %s: %w", field.name, err)
+		}
+	}
+	return Binding{
+		QueueID: w.QueueID, QueueName: w.QueueName, GroupIndex: *w.GroupIndex, ItemIndex: *w.ItemIndex,
+		BeadID: core.BeadID(w.BeadID), RunID: core.RunID(uuid.MustParse(w.RunID)),
+		ClaimTransitionID: core.TransitionID(uuid.MustParse(w.ClaimTransitionID)),
+	}, nil
 }
 
 func requireJSONEOF(decoder *json.Decoder) error {

@@ -28,6 +28,8 @@ type Store struct {
 
 type storeOps struct {
 	createTemp func(string, string) (*os.File, error)
+	openFile   func(string, int, os.FileMode) (*os.File, error)
+	newUUID    func() (uuid.UUID, error)
 	link       func(string, string) error
 	rename     func(string, string) error
 	remove     func(string) error
@@ -49,6 +51,8 @@ func (e *AmbiguousError) Unwrap() error { return e.Err }
 func New(projectDir string) *Store {
 	return &Store{projectDir: projectDir, ops: storeOps{
 		createTemp: os.CreateTemp,
+		openFile:   os.OpenFile,
+		newUUID:    uuid.NewV7,
 		link:       os.Link,
 		rename:     os.Rename,
 		remove:     os.Remove,

@@ -1,0 +1,27 @@
+codename: dispatch-intent
+title: Dispatch intent contract
+type: implementation
+project:
+    id: gregberns-harmonik
+jig: implementation
+jig_version: 1
+status: breakdown
+status_values:
+    - breakdown
+    - dispatch
+    - implementing
+    - verify
+    - complete
+created: 2026-08-11T08:15:51Z
+updated: 2026-08-11T08:15:51Z
+sessions:
+    - id: null
+      started: 2026-08-11T08:15:51Z
+active_session: anonymous
+depends_on: []
+bead_filter:
+pinned_beads: []
+implementation:
+    branch: null
+    pr: null
+    commits: []

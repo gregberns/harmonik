@@ -1,0 +1,29 @@
+codename: queue-execution-graphs
+type: plan
+project:
+    id: gregberns-harmonik
+jig: plan
+jig_version: 1
+status: problem-space
+status_values:
+    - problem-space
+    - analyze
+    - decompose
+    - research
+    - change-spec
+    - integration
+    - tasks
+    - ready
+created: 2026-08-11T00:45:39Z
+updated: 2026-08-11T00:45:39Z
+sessions:
+    - id: null
+      started: 2026-08-11T00:45:39Z
+active_session: anonymous
+depends_on: []
+bead_filter:
+pinned_beads: []
+implementation:
+    branch: null
+    pr: null
+    commits: []

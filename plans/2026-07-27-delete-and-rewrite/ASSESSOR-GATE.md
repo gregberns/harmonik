@@ -362,8 +362,13 @@ These matter more than usual because lanes run beside the assessor on one box.
 
 ### A5. Cheap safety, do them while you are in there
 
-- **`hk-ifj6p`** — an unknown first token falls through and **boots a daemon against the current
-  directory** instead of being refused.
+- ~~**`hk-ifj6p`** — an unknown first token falls through and **boots a daemon against the current
+  directory** instead of being refused.~~ **FIXED at `0a8ad3674`.** `unknownSubcommand` in
+  `cmd/harmonik/usage.go` refuses any unrecognised positional verb with `exitUnknownSubcommand`,
+  and `run()` in `cmd/harmonik/main.go` calls it ABOVE the daemon composition root, so a refused
+  verb never reaches the disk. The remaining hole — a leading flag, which skipped the guard
+  entirely — was closed separately at `2b17e7111`. See the struck-through
+  `hk-cli-flag-first-starts-daemon-gjhiy` entry below. Left struck through rather than deleted.
 - **`hk-brl9q`** — a missing branching config silently empties the protected-branch list *and*
   disables the guard that would report it. Pairs with `hk-uwhrb`.
 - **`hk-6c85b`** — six daemon functions survive deletion, including the gate that stops an agent
@@ -391,11 +396,11 @@ These matter more than usual because lanes run beside the assessor on one box.
 
 - ~~**`hk-cli-flag-first-starts-daemon-gjhiy`** (P1) — a leading flag turns off the
   unknown-subcommand guard, so `harmonik --project DIR queue list` boots a daemon instead of
-  listing.~~ **FIXED at `5dd157cb9`, verified 2026-08-11.** The repair was structural rather than
+  listing.~~ **FIXED at `2b17e7111`, verified 2026-08-11.** The repair was structural rather than
   another patch to the guard: starting a daemon was simply what `run()` did when no verb claimed
   the arguments, so the guard could never have caught it. `harmonik start daemon` is now the only
-  spelling that starts one; the other four exit 2 and write nothing. Left struck through rather
-  than deleted because this entry was quoted into other documents while it was live.
+  spelling that starts one. Every other spelling exits 2 and writes nothing. Left struck
+  through rather than deleted because this entry was quoted into other documents while it was live.
 
 ---
 
@@ -434,7 +439,7 @@ reporting).
 `hk-6lt60` (P0 by label, but it is a kerf-process defect, not a runtime one) · `hk-f1wb0`,
 `hk-99szy`, `hk-gxy67`, `hk-7yd1u` (disk and cache) · `hk-7zzk7` (a bare `br` in a worktree forks the
 ledger — real, and the working rule is already written down) · `hk-4pulw` (comms sender is
-unauthenticated) · `hk-rlvhi`, `hk-xbrc2`, `hk-j7yo0` (stale binary and wrong-verb messages) ·
+unauthenticated) · `hk-rlvhi`, `hk-xbrc2` (stale binary and wrong-verb messages) ·
 `hk-qbsha` (the review-loop vocabulary; the code pass landed, specs remain).
 
 **Placed 2026-08-07 — real, and not between a local scratch run and an honest verdict:**

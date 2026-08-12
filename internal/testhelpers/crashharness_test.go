@@ -329,20 +329,47 @@ func TestB87254_MockBr_SleepMs(t *testing.T) {
 		ExitCode: 0,
 	})
 
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	// Runaway guard, not a budget under test. The assertion is the minElapsed
+	// floor below. This deadline only stops a broken mock from hanging the
+	// package, and it covers both runs.
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
+
+	// Run the mock once and discard the result, so that the timed run below
+	// does not pay the first-exec cost. macOS validates the FIRST execution of
+	// a newly written executable through a machine-wide serialized gate of
+	// about 6 execs per second. Measured on a 10-CPU arm64 box: a novel exec
+	// costs about 390ms on an idle box, and up to 5s while a `go test ./...`
+	// sweep first-execs its own 110 freshly linked test binaries. The SECOND
+	// exec of the same path costs about 20-35ms and the gate does not touch it.
+	//
+	// This warm-up is load-bearing twice over. It is what lets the floor below
+	// measure the mock instead of the operating system: the novel-exec cost by
+	// itself cleared the old 150ms floor, so the test passed even with the
+	// sleep deleted from B87254WriteMockBr. It is also what keeps the timed
+	// run off the gate, which is where the 5s deadline this test used to carry
+	// died during a full-tree sweep.
+	//
+	//nolint:gosec // G204: mockBrPath is within a test temp dir, not user input
+	if err := exec.CommandContext(ctx, mockBrPath).Run(); err != nil {
+		t.Fatalf("mock br warm-up run: %v", err)
+	}
 
 	start := time.Now()
 	//nolint:gosec // G204: mockBrPath is within a test temp dir, not user input
 	cmd := exec.CommandContext(ctx, mockBrPath)
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("mock br run: %v", err)
+		t.Fatalf("mock br timed run failed after %v: %v", time.Since(start), err)
 	}
 	elapsed := time.Since(start)
 
-	const minElapsed = 150 * time.Millisecond
+	// The mock must sleep for at least as long as it was told to. Every other
+	// term in elapsed - fork/exec, /bin/sh start-up, printf, exit, wait - is
+	// positive, and sleep(1) never returns early, so this floor holds by
+	// construction once the exec is warm. Load can only push elapsed up.
+	const minElapsed = sleepMs * time.Millisecond
 	if elapsed < minElapsed {
-		t.Errorf("mock br finished too fast: want ≥%v, got %v", minElapsed, elapsed)
+		t.Errorf("mock br did not sleep for its full SleepMs: want ≥%v, got %v", minElapsed, elapsed)
 	}
 }
 

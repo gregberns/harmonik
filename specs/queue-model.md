@@ -8,10 +8,10 @@ requirement-prefix: QM
 status: draft
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.1.10
+version: 0.1.11
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-08-05
+last-updated: 2026-08-11
 depends-on:
   - architecture
   - execution-model
@@ -479,6 +479,10 @@ corresponding Beads status write failed), the daemon MUST:
 
 This check MUST run before the daemon reaches `ready` state and before any dispatch-loop tick that could re-dispatch an item. The reconciliation action maps to Cat 3 per [/Users/gb/github/harmonik/specs/reconciliation/spec.md §8] (claim-write-lost store disagreement). In v0.1 the daemon executes the revert directly rather than routing through the reconciliation investigator, because the correction is fully deterministic (ledger says `open` → item reverts to `pending`).
 
+**A `dispatched` item whose bead reads `in_progress` MUST NOT be reverted by this check.** Only a confirmed `open` bead causes a revert. Before this check runs, at PL-005 step 3, the daemon MUST complete the dispatched-bead reconcile of [/Users/gb/github/harmonik/specs/process-lifecycle.md §4.2 PL-006h]. That reconcile resets to `open` every dispatched bead that no live run owns. A bead that still reads `in_progress` here is therefore one of two cases. Either a live run owns the bead and the item is correctly dispatched, or the reset write failed and the reconcile retries it on the next start. In both cases a revert here would re-dispatch work that a live agent still holds.
+
+**This order is a precondition of the rule above. It is not an implementation detail.** A startup that runs this check before the PL-006h reconcile leaves such an item `dispatched` in an active queue. The dispatch loop never selects a `dispatched` item again, so the work strands. No later pass repairs it. The scheduled Class B repair of [/Users/gb/github/harmonik/specs/reconciliation/spec.md §4.3 RC-020a] skips every bead that a queue records as `dispatched`, so it is not a second chance. In the shipped daemon this order is the call order of `daemon.runStartupReconcile` before `daemon.loadStartupQueues`, and `lifecycle.LoadQueueAtStartup` MUST stay after it.
+
 ### 3.2b QM-002b — Three-way reconciliation on startup
 
 After QM-002a completes, the daemon MUST run a full three-way reconciliation pass that covers mismatch classes not reachable by the `dispatched`-items-only scan. Four mismatch classes are defined:
@@ -489,7 +493,7 @@ After QM-002a completes, the daemon MUST run a full three-way reconciliation pas
 2. Persist the corrected queue envelope via QM-001 atomic write (per QM-063 — persist BEFORE emit).
 3. Emit `reconciliation_mismatch_observed` per [/Users/gb/github/harmonik/specs/event-model.md §8.6.15] with `mismatch_class: "bead_closed_queue_pending"`.
 
-**Class B — `bead_inprogress_queue_absent`:** The Beads ledger reports a bead as `in_progress` but no queue item references that bead. The daemon MUST emit `reconciliation_mismatch_observed` with `mismatch_class: "bead_inprogress_queue_absent"` and log a structured warning for operator visibility. No queue mutation is applied — the orphan-sweep (hk-2ty0g) handles queue-owned remediation.
+**Class B — `bead_inprogress_queue_absent`:** The Beads ledger reports a bead as `in_progress` but no queue item references that bead. The daemon MUST emit `reconciliation_mismatch_observed` with `mismatch_class: "bead_inprogress_queue_absent"` and log a structured warning for operator visibility. No queue mutation is applied — the orphan-sweep (hk-2ty0g) handles queue-owned remediation. The daemon MUST, however, reset the bead `in_progress → open` through the BI adapter of [/Users/gb/github/harmonik/specs/beads-integration.md §4.8 BI-010d] when the startup call supplies a resetter, and MUST log the reset. Production wiring always supplies one. On a successful reset the daemon MUST also try to remove the bead's worktree from the cancelled and failed queue archives. A failure there is not fatal, because the bead is already open and can go to a new worktree. On a failed reset the daemon MUST leave the worktree in place, so an operator can inspect it. The no-queue-mutation rule above covers the queue item alone. It does not cover the ledger write or the worktree removal.
 
 **Class C — `bead_closed_queue_inprogress`:** A queue item has `status=completed` or `status=failed` but the Beads ledger still shows the bead as `in_progress`. The queue-side terminal is already set; no queue mutation is applied. The daemon MUST emit `reconciliation_mismatch_observed` with `mismatch_class: "bead_closed_queue_inprogress"` and log a structured warning for operator visibility.
 
@@ -1376,6 +1380,17 @@ The following operations are explicitly out of scope for v0.1 and reserved for v
 - Write coalescing across QM-001 mutations.
 
 ### A.4 Changelog
+
+v0.1.11 — 2026-08-11 — QM-002a states the order it depends on. The check
+reverts a `dispatched` item only on an `open` bead, and it said nothing about a
+bead that reads `in_progress`. The shipped rule is correct, because an earlier
+boot pass resets such a bead to `open` before this check runs, but that order
+lived in call order and code comments alone. QM-002a now says that a bead
+reading `in_progress` is not reverted here, why a revert would race a live
+agent, and that the reconcile of [process-lifecycle.md PL-006h] MUST run first.
+QM-002b Class B also gains the ledger reset it always performed and never stated.
+No requirement IDs were added or renumbered. Refs: hk-k0a9w,
+hk-qm002b-silent-ledger-write-q7enh.
 
 v0.1.10 — 2026-08-11 — Failed dependency propagation. QM-025 now moves a
 dependent directly from dependency-deferred to failed when its in-group blocker

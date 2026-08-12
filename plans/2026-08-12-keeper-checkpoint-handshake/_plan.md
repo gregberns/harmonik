@@ -177,6 +177,102 @@ to act. ACT is a direct slash command and can wait behind active tmux work befor
 No current signal directly reports independent subagent completion. The parent agent must settle
 those subagents before it requests a restart.
 
+## Stop as a first-class decision point
+
+The keeper should watch every Stop event. A Stop is significant because the agent can receive a
+new instruction at that boundary. It also shows that the current model turn is no longer active.
+
+Stop must not mean `clear`. Stop should cause the keeper to re-evaluate durable facts and choose a
+non-destructive action.
+
+The minimum Stop decision table is:
+
+| State at Stop | Keeper decision |
+|---|---|
+| Below the advisory band | Record the Stop. Take no context action. |
+| In the advisory band | Deliver or repeat the optional self-restart message, subject to cooldown. |
+| In the settle band | Deliver the stronger settle message, subject to operator and delivery guards. |
+| In the hard band, no confirmed handoff | Deliver the emergency handoff request. Do not clear. |
+| Confirmed handoff, no explicit restart | Record that the handoff is ready. Apply the agreed restart policy. |
+| Explicit `restart-now` | Validate the handoff, then clear and resume. |
+| Recent operator interaction | Suppress autonomous prompts that can interrupt the exchange. Record why. |
+| Active `.dispatching` | Defer restart. Record why. |
+
+Repeated Stop events are useful. They let the keeper retry a deferred message without polling the
+pane or using a short deadline. A cooldown prevents a message on every short turn.
+
+The keeper should keep the last processed Stop identity. A duplicate Stop must not repeat an
+effect. The best identity depends on the harness:
+
+- Claude can use the session ID plus a hook event identity or marker timestamp.
+- Codex can use the session ID and turn ID.
+- A transcript observation can remain a backstop when a hook is unavailable.
+
+## Operator interaction at Stop
+
+The current five-minute `operator_turn_lookback` is a reasonable safety default. It detects a real
+operator transcript turn and excludes Harmonik automation messages.
+
+The current `post_answer_grace` adds a second guard after the agent answers. The repository sets it
+to 30 seconds. Together, these guards reduce the chance that the keeper inserts a message into an
+active exchange.
+
+The new design should keep these guards but narrow what they control:
+
+- Recent operator interaction suppresses keeper message delivery and automatic restart decisions.
+- It does not suppress safe observation of Stop, transcript, gauge, or handoff state.
+- It does not discard a pending context request.
+- The keeper re-evaluates the request after the lookback expires or after a later Stop.
+- An explicit agent `restart-now` remains authoritative because the agent chose that moment.
+
+Five minutes is a policy value, not a proof that the conversation ended. Configuration should keep
+the value adjustable. Tests should cover an exchange that lasts longer than the lookback and an
+operator who returns after the keeper message.
+
+An improved rule can later combine recent operator input with conversation shape. For example, the
+keeper can treat a recent operator question followed by an agent answer as an active exchange until
+the post-answer grace expires. The first implementation should not infer intent from transcript
+text.
+
+## Codex continuation history and reuse
+
+The Codex continuation design exists in
+`plans/2026-07-27-delete-and-rewrite/research/03-codex-and-multi-harness.md`.
+
+It proposed a Codex Stop hook that can return a continuation prompt. It also required durable work
+state with four values:
+
+- `remaining`
+- `blocked`
+- `awaiting_assignment`
+- `terminal`
+
+The planned rule was `Stop + remaining -> one bounded continuation`. Other durable states stop and
+report. The design correctly states that a completed turn is evidence, not completion authority.
+
+The production continuation vertical is not present today. The codebase has a structured Codex
+driver and `turn/completed` events, but it does not have the proposed durable work-state owner or
+the Codex Stop-hook decision policy.
+
+The shared concept is still useful:
+
+~~~text
+Stop signal + durable work state + operator guard + context state -> decision
+~~~
+
+The decisions differ by purpose:
+
+| Harness and condition | Decision |
+|---|---|
+| Claude, context pressure, work remains | Ask the agent to settle and self-restart later. |
+| Claude, confirmed handoff and explicit restart | Clear and resume. |
+| Codex, assigned work remains | Send one bounded continuation. |
+| Codex, blocked or awaiting operator | Stop and report. |
+| Either harness, recent operator exchange | Do not inject an autonomous continuation or restart message. |
+
+This suggests a shared pure Stop policy with harness-specific effects. It does not suggest one
+large watcher with Claude and Codex branches.
+
 ## Current `keeper restart-now` behavior
 
 `keeper restart-now` is synchronous. It does not wait for the automatic cycle.
@@ -257,6 +353,34 @@ The likely safe minimum is to force the handoff request, not the clear. The keep
 request active until it sees a marked handoff or an explicit `restart-now`. It can report the delay
 as an urgent state without calling useful work a failure.
 
+### Refined normal handshake
+
+The normal handshake needs no acknowledgement round trip.
+
+1. A context band crossing records a pending request.
+2. A Stop event gives the keeper a safe chance to deliver the correct message.
+3. The agent can continue work after the advisory message.
+4. At a good stopping point, the agent runs `/session-handoff` with the request marker.
+5. After the handoff is complete, the agent runs the supplied `keeper restart-now` command.
+6. `restart-now` validates the handoff, clears the session, and sends the restart brief.
+
+The keeper can observe handoff edits during this sequence. It must not infer completion from an
+mtime change. The explicit `restart-now` command is the normal restart permission.
+
+The optional receipt command remains telemetry only. It can help distinguish queued tmux input
+from agent receipt, but it must not become a required handshake step.
+
+### Separate policy axes
+
+The design must not overload WARN and ACT names. Three independent questions exist:
+
+1. **Urgency:** advisory, settle, or emergency.
+2. **Opportunity:** active turn, Stop boundary, recent operator exchange, or quiet session.
+3. **Authority:** no handoff, marked handoff, or explicit restart request.
+
+A context band sets urgency. A Stop provides an opportunity. A handoff and `restart-now` provide
+authority. No one signal should stand in for all three.
+
 ## Required spec changes
 
 The next normative change should amend `specs/session-keeper.md` before code changes.
@@ -273,6 +397,10 @@ The next normative change should amend `specs/session-keeper.md` before code cha
    `.dispatching`.
 9. Define the hard-stop contract separately from the normal path.
 10. Define receipt acknowledgement as optional telemetry, not restart permission.
+11. Define Stop as a first-class event that re-evaluates pending requests.
+12. Define duplicate Stop handling and per-message cooldowns.
+13. Define operator interaction as a delivery guard, not an observation guard.
+14. Define a harness-neutral Stop decision vocabulary with separate Claude and Codex effects.
 
 The July 18 SK-022 through SK-037 draft must be reconciled into this change. It must not enter the
 normative spec unchanged because it preserves the fixed timeout workaround.
@@ -288,6 +416,10 @@ Required scenarios include:
 - Settle message queued behind a long tool command.
 - Stop while subagents remain active, with no handoff and no clear.
 - Several Stop events before the agent reaches a checkpoint.
+- Duplicate delivery of the same Stop event.
+- Stop during a recent operator exchange, followed by retry after the guard expires.
+- Stop after an operator answer but inside `post_answer_grace`.
+- Stop after the operator guard expires while the context request remains pending.
 - Handoff written in several edits, with the marker added last.
 - Fresh handoff without a marker.
 - Marked handoff without `restart-now`.
@@ -300,6 +432,8 @@ Required scenarios include:
 - PreCompact while tools or subagents remain active.
 - Hard-stop behavior at the final configured band.
 - Restart confirmation through a new session ID and a delivered brief.
+- Codex Stop with durable work state `remaining` and one bounded continuation.
+- Codex Stop with `blocked`, `awaiting_assignment`, or `terminal` and no continuation.
 
 Existing tests that require `handoff_timeout -> Aborted` defend the old contract. Change them only
 after the normative spec changes.
@@ -315,6 +449,9 @@ after the normative spec changes.
 6. Can the current comms follow path prove agent receipt, or does it prove only bus delivery?
 7. Should independent subagent state become an observable signal, or should the parent agent remain
    its sole owner?
+8. Should a confirmed marked handoff without `restart-now` remain passive, or start a delayed
+   automatic restart?
+9. Which durable store should own the Codex work-state value?
 
 ## Work sequence
 

@@ -439,8 +439,9 @@ exact queue, Beads record, universal run record, and worktree lease facts.
 The session-start acknowledgement now has a daemon control operation. The
 operation accepts the exact receipt only after the durable intent, durable run
 record, and live target agree. It installs the receipt before it returns an
-explicit success response. The bootstrap client and startup replay executor
-remain.
+explicit success response. The in-target bootstrap uses the local socket or
+the remote reverse-tunnel endpoint. It starts the handler only after that
+response. The startup replay executor remains.
 
 The exact claim, session, git, and run-outcome readers remain. The startup
 action executor, resumable provisioning, queue-path producer wiring, and crash

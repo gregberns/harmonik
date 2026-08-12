@@ -209,6 +209,12 @@ the intent and run record again, installs the receipt, and returns an explicit
 success response. The bootstrap starts the handler only after that response.
 It stops if the request, receipt write, or response fails.
 
+The `harmonik session-bootstrap` internal command reads the strict receipt from
+`HARMONIK_SESSION_START_RECEIPT`. It uses `HARMONIK_DAEMON_SOCKET` for the local
+Unix socket or the remote reverse-tunnel endpoint. It removes the receipt from
+the handler environment. It replaces itself with the handler only after an
+explicit positive response.
+
 For a remote run, the bootstrap runs inside the exact worker session and
 window. SSH transport startup alone is not a receipt. The worker sends the
 acknowledgement after it enters the bound target. For a local shared or

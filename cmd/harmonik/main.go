@@ -168,6 +168,10 @@ func run() int {
 		return 0
 	}
 
+	if len(os.Args) >= 2 && os.Args[1] == "session-bootstrap" {
+		return runSessionBootstrap(os.Args[2:], os.Getenv, os.Environ, resolveSessionBootstrapExecutable, sessionBootstrapDial, sessionBootstrapExec, os.Stderr)
+	}
+
 	// harmonik version  (or --version / -version): print semver + commit and exit 0.
 	//
 	// Output format (normative, specs/release-pipeline.md §2.3):

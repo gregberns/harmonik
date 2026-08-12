@@ -40,7 +40,8 @@ package main
 // Exit-code contract:
 //
 //	0  — all beads reached SUCCESS terminal
-//	1  — at least one bead failed, or argument/validation/daemon error
+//	1  — at least one bead failed, the operator cancelled the run, or an
+//	     argument/validation/daemon error
 //	2  — unexpected queue state after daemon exit (diagnostic; inline-daemon path only)
 //	5  — pidfile locked (inline-daemon path only; submit-to-daemon path avoids this)
 //
@@ -774,42 +775,80 @@ func runBeadSubcommandIO(subArgs []string, stdout io.Writer) int {
 		return 1
 	}
 
-	// Fix 2: map final queue status to exit code (hk-8jh26).
-	// After daemon.Start returns, qs reflects the terminal queue state:
-	//
-	//   nil + no signal    → CompleteAndUnlink ran → all-success → exit 0
-	//   nil + signal       → drainCancelledQueue archived queue → operator cancel → exit 1
-	//   paused-by-failure  → bead failed → exit 1
-	//   other non-nil      → unexpected state → exit 2 with diagnostic
+	// Fix 2: map final queue status to exit code (hk-8jh26). classifyRunExit
+	// owns the mapping; the failed-queue archive stays here because it writes
+	// to disk.
 	//
 	// hk-ppt32: ctx is the signal.NotifyContext (not runCtx). Its Err() is non-nil
 	// only when a real SIGINT/SIGTERM was received; it stays nil when
 	// cancelOnQueueDrain/cancelOnQueueExit fired (those cancel runCtx, not ctx).
 	finalQueue := qs.Queue()
-	if finalQueue == nil {
-		if ctx.Err() != nil {
-			// Operator cancelled via SIGINT/SIGTERM; drainCancelledQueue already
-			// archived the queue file so the next run can start cleanly.
-			fmt.Fprintf(os.Stderr, "harmonik run: cancelled by operator (signal)\n")
-			return 1
-		}
-		// Queue was cleared via CompleteAndUnlink → all-success.
-		return 0
+	decision := classifyRunExit(finalQueue, ctx.Err() != nil)
+	if decision.message != "" {
+		fmt.Fprint(os.Stderr, decision.message)
 	}
-	if finalQueue.Status == queue.QueueStatusPausedByFailure {
-		fmt.Fprintf(os.Stderr, "harmonik run: one or more beads failed (queue paused-by-failure)\n")
+	if finalQueue != nil && finalQueue.Status == queue.QueueStatusPausedByFailure {
 		archivePath, archiveErr := queue.ArchiveFailedQueue(context.Background(), projectDir, queue.NormaliseQueueName(finalQueue.Name), time.Now())
 		if archiveErr != nil {
 			fmt.Fprintf(os.Stderr, "harmonik run: warning: could not archive queue file: %v\n", archiveErr)
 		} else if archivePath != "" {
 			fmt.Fprintf(os.Stderr, "harmonik run: archived failed queue → %s\n", archivePath)
 		}
-		return 1
+	}
+	return decision.code
+}
+
+// runExitDecision is the terminal outcome of one inline-daemon run: the process
+// exit code plus the operator-facing line that explains it. An empty message
+// means print nothing.
+type runExitDecision struct {
+	code    int
+	message string
+}
+
+// classifyRunExit maps the queue state that daemon.Start left behind to the
+// `harmonik run` exit code. signalled is true only when a real SIGINT/SIGTERM
+// reached the process.
+//
+// The shutdown drain no longer archives the queue. drainQueuesForRestart calls
+// PauseQueueForRestart, persists in place and puts the queue back in the store,
+// so a plain Ctrl-C leaves a populated store, not an empty one (hk-3plak).
+//
+//	nil + no signal                     → CompleteAndUnlink ran → all-success → exit 0
+//	nil + signal                        → operator cancel → exit 1
+//	paused-by-drain + restart intent    → shutdown drain parked the queue → exit 1
+//	paused-by-failure                   → bead failed → exit 1
+//	other non-nil                       → unexpected state → exit 2 with diagnostic
+//
+// paused-by-drain WITHOUT the restart intent is an explicit operator drain, not
+// a shutdown, and keeps the exit-2 diagnostic.
+func classifyRunExit(finalQueue *queue.Queue, signalled bool) runExitDecision {
+	if finalQueue == nil {
+		if signalled {
+			return runExitDecision{code: 1, message: "harmonik run: cancelled by operator (signal)\n"}
+		}
+		// Queue was cleared via CompleteAndUnlink → all-success.
+		return runExitDecision{code: 0}
+	}
+	if finalQueue.Status == queue.QueueStatusPausedByFailure {
+		return runExitDecision{code: 1, message: "harmonik run: one or more beads failed (queue paused-by-failure)\n"}
+	}
+	if finalQueue.Status == queue.QueueStatusPausedByDrain && finalQueue.ResumeOnStart {
+		// The shutdown drain parked an active queue. Only PauseQueueForRestart
+		// sets the restart intent, so this is a clean shutdown, not a fault.
+		if signalled {
+			return runExitDecision{code: 1, message: "harmonik run: cancelled by operator (signal)\n"}
+		}
+		// No signal reached the process, so naming the operator would be false.
+		// The work is still unfinished, so the code stays 1.
+		return runExitDecision{code: 1, message: "harmonik run: run ended before the queue finished (queue parked for restart)\n"}
 	}
 	// Unexpected terminal state — surface for debugging.
-	fmt.Fprintf(os.Stderr, "harmonik run: unexpected queue state after exit: %s (queue_id=%s)\n",
-		finalQueue.Status, finalQueue.QueueID)
-	return 2
+	return runExitDecision{
+		code: 2,
+		message: fmt.Sprintf("harmonik run: unexpected queue state after exit: %s (queue_id=%s)\n",
+			finalQueue.Status, finalQueue.QueueID),
+	}
 }
 
 // printDryRunPlan writes the intended spawn plan to out and returns.
@@ -903,7 +942,8 @@ FLAGS
 
 EXIT CODES
   0   All beads succeeded (or --dry-run plan printed)
-  1   At least one bead failed, or argument/validation error
+  1   At least one bead failed, the operator cancelled the run (Ctrl-C), or
+      an argument/validation error
   2   Unexpected queue state (diagnostic; inline-daemon path only)
   5   Another harmonik instance is already running (inline-daemon path only;
       when a daemon is detected via daemon.sock, beads are submitted to it

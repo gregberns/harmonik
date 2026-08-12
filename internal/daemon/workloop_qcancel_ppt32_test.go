@@ -59,17 +59,6 @@ func queueCancelFixturePendingQueue(t *testing.T, beadIDs ...core.BeadID) *queue
 	}
 }
 
-// queueCancelFixtureQueuePath returns the canonical per-queue file path for the
-// "main" queue under projectDir: .harmonik/queues/main.json. This is the
-// post-NQ-A2 canonical path that production's CancelQueueOnShutdown archives
-// (queuePath(projectDir, "main") in internal/queue/persistence.go), NOT the
-// legacy top-level .harmonik/queue.json (used only by MigrateFromLegacy).
-//
-// Spec ref: specs/queue-model.md §2.9 (".harmonik/queues/<name>.json", NQ-A2).
-func queueCancelFixtureQueuePath(projectDir string) string {
-	return filepath.Join(projectDir, ".harmonik", "queues", queue.QueueNameMain+".json")
-}
-
 // queueCancelFixtureHasActiveQueue returns true when queue.json exists and
 // contains status=active. Used to assert the file is absent / non-active after cancel.
 func queueCancelFixtureHasActiveQueue(t *testing.T, projectDir string) bool {

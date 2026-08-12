@@ -20,8 +20,15 @@
 # What this file does NOT prove is that golangci-lint finds real findings in
 # real Go code. That is the linter's job and a stub cannot speak for it. The
 # case that covers it is the acceptance run recorded in the commit message: a
-# deliberate violation added to the tree, `make full` observed going red, the
+# deliberate violation added to the tree, the gate observed going red, the
 # violation removed.
+#
+# That acceptance run was repeated when the judge moved into `make fast`, and it
+# is the evidence that the two lint steps see different things. Twenty branches
+# were added INSIDE the body of `Config.window` in internal/sentinel/governor.go,
+# leaving the declaration line untouched. The changed-line step printed
+# "0 issues". This step named it at governor.go:141, at the declaration, which
+# is outside the changed hunk. `make fast` then went red at that step.
 
 set -uo pipefail
 
@@ -226,7 +233,7 @@ fi
 # ---------------------------------------------------------------------------
 assertions=$((assertions + 1))
 steps=$(HARMONIK_GATE_SELFTEST=1 make -n full 2>/dev/null)
-if printf '%s\n' "$steps" | grep -q 'lint-allow'; then
+if printf '%s\n' "$steps" | grep -q 'scripts/lint-allow\.sh'; then
     pass "make full runs the lint allow-list step"
 else
     fail "make full does NOT run lint-allow, so nothing above is enforced"
@@ -265,6 +272,23 @@ if grep -q 'IGNORED' "$work/out"; then
 else
     fail "a passing run did not report the tolerated findings"
     cat "$work/out" >&2
+fi
+
+# ---------------------------------------------------------------------------
+# CASE 12 — the inner loop runs this step too.
+#
+# The judge used to run in `make full` alone. A finding that a whole-function
+# linter reports at a declaration outside the changed hunk is invisible to the
+# --new-from-rev step, so the whole-tree judge is the ONLY step that can see it,
+# and running it only at the merge decision handed every such finding to the
+# next person to run the gate (hk-dp69a, five occurrences). Deleting it from
+# `make fast` restores that hole silently, so it is asserted here.
+# ---------------------------------------------------------------------------
+assertions=$((assertions + 1))
+if printf '%s\n' "$fast_steps" | grep -q 'scripts/lint-allow\.sh'; then
+    pass "make fast runs the whole-tree allow-list judge"
+else
+    fail "make fast does NOT run lint-allow, so a finding outside a changed hunk waits for the next merge decision"
 fi
 
 # ---------------------------------------------------------------------------

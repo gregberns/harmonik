@@ -175,6 +175,8 @@ const (
 	AdvanceHandoffPhase ReplayAction = "advance-handoff-phase"
 	// ReplaySessionStart starts the exact durable handoff.
 	ReplaySessionStart ReplayAction = "replay-session-start"
+	// RemoveDeadUnstartedTarget removes an exact dead target that has no receipt.
+	RemoveDeadUnstartedTarget ReplayAction = "remove-dead-unstarted-target"
 	// AdoptLive adopts the exact live session.
 	AdoptLive ReplayAction = "adopt-live"
 	// ResumeDead resumes a stopped run with no durable outcome.
@@ -201,6 +203,7 @@ type ReplayFacts struct {
 	RunRecord         RunRecordFact
 	Worktree          WorktreeFact
 	Session           SessionFact
+	SessionReceipt    SessionReceiptFact
 	Git               GitFact
 	Claim             ClaimFact
 	RefusalCause      ClaimRefusalCause
@@ -214,6 +217,9 @@ func DecideReplay(f ReplayFacts) (ReplayAction, error) {
 		return "", err
 	}
 	if f.hasConflict() {
+		return ReplayRepairRequired, nil
+	}
+	if !f.receiptPhaseCoherent() {
 		return ReplayRepairRequired, nil
 	}
 	if action, handled := decidePreclaimReplay(f); handled {
@@ -299,20 +305,30 @@ func (f ReplayFacts) coherent() bool {
 
 func (f ReplayFacts) claimFactsCoherent() bool {
 	return f.Claim == ClaimNone && f.Worktree == WorktreeAbsent && f.Session == SessionAbsent &&
-		!f.RunOutcomeDurable && (f.RunRecord == RunRecordAbsent || f.RunRecord == RunRecordBase)
+		f.SessionReceipt == SessionReceiptAbsent && !f.RunOutcomeDurable &&
+		(f.RunRecord == RunRecordAbsent || f.RunRecord == RunRecordBase)
 }
 
 func (f ReplayFacts) runFactsCoherent() bool {
-	return f.Claim == ClaimNone && f.Session == SessionAbsent && !f.RunOutcomeDurable && f.Git == GitAbsent
+	return f.Claim == ClaimNone && f.Session == SessionAbsent && f.SessionReceipt == SessionReceiptAbsent &&
+		!f.RunOutcomeDurable && f.Git == GitAbsent
 }
 
 func (f ReplayFacts) handoffFactsCoherent() bool {
-	return f.Claim == ClaimNone && f.RunRecord == RunRecordSession && f.Worktree == WorktreeLeased &&
-		(!f.RunOutcomeDurable || f.Session == SessionDead)
+	if f.Claim != ClaimNone || f.RunRecord != RunRecordSession || f.Worktree != WorktreeLeased {
+		return false
+	}
+	return !f.RunOutcomeDurable ||
+		(f.SessionReceipt == SessionReceiptExact && (f.Session == SessionAbsent || f.Session == SessionDead))
+}
+
+func (f ReplayFacts) receiptPhaseCoherent() bool {
+	return f.IntentPhase == PhaseHandoffDurable || f.SessionReceipt == SessionReceiptAbsent
 }
 
 func (f ReplayFacts) preparedFactsCoherent() bool {
-	if f.RunRecord != RunRecordAbsent || f.Worktree != WorktreeAbsent || f.Session != SessionAbsent || f.RunOutcomeDurable {
+	if f.RunRecord != RunRecordAbsent || f.Worktree != WorktreeAbsent || f.Session != SessionAbsent ||
+		f.SessionReceipt != SessionReceiptAbsent || f.RunOutcomeDurable {
 		return false
 	}
 	switch f.Claim {
@@ -378,12 +394,14 @@ func decideHandoffReplay(f ReplayFacts) ReplayAction {
 	if f.Queue != QueueReserved || f.Bead != BeadInProgress || f.RunRecord != RunRecordSession || f.Worktree != WorktreeLeased {
 		return ReplayRepairRequired
 	}
-	switch f.Session {
-	case SessionAbsent:
+	switch {
+	case f.SessionReceipt == SessionReceiptAbsent && f.Session == SessionAbsent:
 		return ReplaySessionStart
-	case SessionLive:
+	case f.SessionReceipt == SessionReceiptAbsent && f.Session == SessionDead:
+		return RemoveDeadUnstartedTarget
+	case f.SessionReceipt == SessionReceiptExact && f.Session == SessionLive:
 		return AdoptLive
-	case SessionDead:
+	case f.SessionReceipt == SessionReceiptExact && (f.Session == SessionAbsent || f.Session == SessionDead):
 		if f.RunOutcomeDurable {
 			return AdvanceRunOutcome
 		}
@@ -395,7 +413,8 @@ func decideHandoffReplay(f ReplayFacts) ReplayAction {
 
 func (f ReplayFacts) hasConflict() bool {
 	return f.Queue == QueueConflict || f.Bead == BeadConflict || f.RunRecord == RunRecordConflict ||
-		f.Worktree == WorktreeConflict || f.Session == SessionConflict || f.Git == GitConflict ||
+		f.Worktree == WorktreeConflict || f.Session == SessionConflict ||
+		f.SessionReceipt == SessionReceiptConflict || f.Git == GitConflict ||
 		f.Claim == ClaimConflict || f.Preclaim == PreclaimConflict
 }
 
@@ -404,7 +423,8 @@ func (f ReplayFacts) validate() error {
 		return fmt.Errorf("dispatch: invalid replay phase %q", f.IntentPhase)
 	}
 	if !validQueueFact(f.Queue) || !validBeadFact(f.Bead) || !validRunRecordFact(f.RunRecord) ||
-		!validWorktreeFact(f.Worktree) || !validSessionFact(f.Session) || !validGitFact(f.Git) ||
+		!validWorktreeFact(f.Worktree) || !validSessionFact(f.Session) ||
+		!validSessionReceiptFact(f.SessionReceipt) || !validGitFact(f.Git) ||
 		!validClaimFact(f.Claim) || !validPreclaimFact(f.Preclaim) {
 		return fmt.Errorf("dispatch: invalid replay facts")
 	}
@@ -540,6 +560,10 @@ func validWorktreeFact(v WorktreeFact) bool {
 
 func validSessionFact(v SessionFact) bool {
 	return v == SessionAbsent || v == SessionLive || v == SessionDead || v == SessionConflict
+}
+
+func validSessionReceiptFact(v SessionReceiptFact) bool {
+	return v == SessionReceiptAbsent || v == SessionReceiptExact || v == SessionReceiptConflict
 }
 
 func validGitFact(v GitFact) bool { return v == GitAbsent || v == GitMatching || v == GitConflict }

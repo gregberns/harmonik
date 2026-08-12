@@ -17,9 +17,10 @@ func TestDecideReplayProcessDeathCuts(t *testing.T) {
 		{name: "D7 worktree before handoff", facts: replayFacts(PhaseRunDurable, QueueReserved, BeadInProgress, RunRecordLocated, WorktreeLeased, SessionAbsent), want: PrepareHandoff},
 		{name: "D8 identity before phase", facts: replayFacts(PhaseRunDurable, QueueReserved, BeadInProgress, RunRecordSession, WorktreeLeased, SessionAbsent), want: AdvanceHandoffPhase},
 		{name: "D8a phase before spawn", facts: replayFacts(PhaseHandoffDurable, QueueReserved, BeadInProgress, RunRecordSession, WorktreeLeased, SessionAbsent), want: ReplaySessionStart},
-		{name: "D9 live session", facts: replayFacts(PhaseHandoffDurable, QueueReserved, BeadInProgress, RunRecordSession, WorktreeLeased, SessionLive), want: AdoptLive},
-		{name: "dead without outcome", facts: replayFacts(PhaseHandoffDurable, QueueReserved, BeadInProgress, RunRecordSession, WorktreeLeased, SessionDead), want: ResumeDead},
-		{name: "dead with outcome", facts: withOutcome(replayFacts(PhaseHandoffDurable, QueueReserved, BeadInProgress, RunRecordSession, WorktreeLeased, SessionDead)), want: AdvanceRunOutcome},
+		{name: "D9 live session", facts: withReceipt(replayFacts(PhaseHandoffDurable, QueueReserved, BeadInProgress, RunRecordSession, WorktreeLeased, SessionLive)), want: AdoptLive},
+		{name: "dead before receipt", facts: replayFacts(PhaseHandoffDurable, QueueReserved, BeadInProgress, RunRecordSession, WorktreeLeased, SessionDead), want: RemoveDeadUnstartedTarget},
+		{name: "dead without outcome", facts: withReceipt(replayFacts(PhaseHandoffDurable, QueueReserved, BeadInProgress, RunRecordSession, WorktreeLeased, SessionDead)), want: ResumeDead},
+		{name: "dead with outcome", facts: withOutcome(withReceipt(replayFacts(PhaseHandoffDurable, QueueReserved, BeadInProgress, RunRecordSession, WorktreeLeased, SessionDead))), want: AdvanceRunOutcome},
 		{name: "closed bead", facts: withMatchingGit(replayFacts(PhasePrepared, QueueReserved, BeadClosed, RunRecordAbsent, WorktreeAbsent, SessionAbsent)), want: AdvanceClose},
 		{name: "terminal success", facts: withMatchingGit(replayFacts(PhaseHandoffDurable, QueueTerminalSuccess, BeadClosed, RunRecordSession, WorktreeLeased, SessionDead)), want: ReplayCleanupOnly},
 		{name: "terminal retryable", facts: replayFacts(PhaseHandoffDurable, QueueTerminalRetryable, BeadOpen, RunRecordSession, WorktreeLeased, SessionDead), want: ReplayCleanupOnly},
@@ -43,6 +44,7 @@ func TestDecideReplayConflictsFailClosed(t *testing.T) {
 		func(f *ReplayFacts) { f.RunRecord = RunRecordConflict },
 		func(f *ReplayFacts) { f.Worktree = WorktreeConflict },
 		func(f *ReplayFacts) { f.Session = SessionConflict },
+		func(f *ReplayFacts) { f.SessionReceipt = SessionReceiptConflict },
 	}
 	for index, mutate := range mutations {
 		facts := base
@@ -50,6 +52,76 @@ func TestDecideReplayConflictsFailClosed(t *testing.T) {
 		got, err := DecideReplay(facts)
 		if err != nil || got != ReplayRepairRequired {
 			t.Fatalf("conflict %d = (%q, %v)", index, got, err)
+		}
+	}
+}
+
+func TestDecideReplaySessionReceiptTargetMatrix(t *testing.T) {
+	base := replayFacts(PhaseHandoffDurable, QueueReserved, BeadInProgress, RunRecordSession, WorktreeLeased, SessionAbsent)
+	for _, tc := range []struct {
+		name    string
+		receipt SessionReceiptFact
+		target  SessionFact
+		want    ReplayAction
+	}{
+		{name: "absent receipt absent target", receipt: SessionReceiptAbsent, target: SessionAbsent, want: ReplaySessionStart},
+		{name: "exact receipt live target", receipt: SessionReceiptExact, target: SessionLive, want: AdoptLive},
+		{name: "exact receipt absent target", receipt: SessionReceiptExact, target: SessionAbsent, want: ResumeDead},
+		{name: "exact receipt dead target", receipt: SessionReceiptExact, target: SessionDead, want: ResumeDead},
+		{name: "absent receipt live target", receipt: SessionReceiptAbsent, target: SessionLive, want: ReplayRepairRequired},
+		{name: "absent receipt dead target", receipt: SessionReceiptAbsent, target: SessionDead, want: RemoveDeadUnstartedTarget},
+		{name: "conflicting receipt", receipt: SessionReceiptConflict, target: SessionAbsent, want: ReplayRepairRequired},
+		{name: "conflicting target", receipt: SessionReceiptAbsent, target: SessionConflict, want: ReplayRepairRequired},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			facts := base
+			facts.SessionReceipt, facts.Session = tc.receipt, tc.target
+			got, err := DecideReplay(facts)
+			if err != nil || got != tc.want {
+				t.Fatalf("DecideReplay() = (%q, %v), want %q", got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestDecideReplaySessionReceiptTargetOutcomeMatrix(t *testing.T) {
+	base := withOutcome(replayFacts(
+		PhaseHandoffDurable, QueueReserved, BeadInProgress, RunRecordSession, WorktreeLeased, SessionAbsent,
+	))
+	for _, tc := range []struct {
+		name    string
+		receipt SessionReceiptFact
+		target  SessionFact
+		want    ReplayAction
+	}{
+		{name: "absent receipt absent target", receipt: SessionReceiptAbsent, target: SessionAbsent, want: ReplayRepairRequired},
+		{name: "absent receipt live target", receipt: SessionReceiptAbsent, target: SessionLive, want: ReplayRepairRequired},
+		{name: "absent receipt dead target", receipt: SessionReceiptAbsent, target: SessionDead, want: ReplayRepairRequired},
+		{name: "exact receipt absent target", receipt: SessionReceiptExact, target: SessionAbsent, want: AdvanceRunOutcome},
+		{name: "exact receipt live target", receipt: SessionReceiptExact, target: SessionLive, want: ReplayRepairRequired},
+		{name: "exact receipt dead target", receipt: SessionReceiptExact, target: SessionDead, want: AdvanceRunOutcome},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			facts := base
+			facts.SessionReceipt, facts.Session = tc.receipt, tc.target
+			got, err := DecideReplay(facts)
+			if err != nil || got != tc.want {
+				t.Fatalf("DecideReplay() = (%q, %v), want %q", got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestDecideReplayRejectsReceiptBeforeHandoffOnEarlyBranches(t *testing.T) {
+	for _, facts := range []ReplayFacts{
+		withReceipt(replayFacts(PhasePrepared, QueueReserved, BeadClosed, RunRecordAbsent, WorktreeAbsent, SessionAbsent)),
+		withReceipt(withRefusal(replayFacts(PhaseClaimRefused, QueueReserved, BeadOpen, RunRecordAbsent, WorktreeAbsent, SessionAbsent), ClaimRefusalDependency)),
+		withReceipt(replayFacts(PhaseClaimDurable, QueueReserved, BeadInProgress, RunRecordBase, WorktreeAbsent, SessionAbsent)),
+		withReceipt(replayFacts(PhaseRunDurable, QueueReserved, BeadInProgress, RunRecordSession, WorktreeLeased, SessionAbsent)),
+	} {
+		got, err := DecideReplay(facts)
+		if err != nil || got != ReplayRepairRequired {
+			t.Fatalf("DecideReplay() = (%q, %v), want repair", got, err)
 		}
 	}
 }
@@ -204,6 +276,45 @@ func TestDecideReplayAcceptsPartialTerminalResidue(t *testing.T) {
 	}
 }
 
+func TestDecideReplayTerminalCleanupAcceptsReceiptResidue(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		facts ReplayFacts
+	}{
+		{
+			name: "success receipt absent",
+			facts: withMatchingGit(replayFacts(
+				PhaseHandoffDurable, QueueTerminalSuccess, BeadClosed, RunRecordSession, WorktreeAbsent, SessionDead,
+			)),
+		},
+		{
+			name: "success receipt exact",
+			facts: withReceipt(withMatchingGit(replayFacts(
+				PhaseHandoffDurable, QueueTerminalSuccess, BeadClosed, RunRecordSession, WorktreeAbsent, SessionDead,
+			))),
+		},
+		{
+			name: "retryable receipt absent",
+			facts: replayFacts(
+				PhaseHandoffDurable, QueueTerminalRetryable, BeadOpen, RunRecordSession, WorktreeAbsent, SessionDead,
+			),
+		},
+		{
+			name: "retryable receipt exact",
+			facts: withReceipt(replayFacts(
+				PhaseHandoffDurable, QueueTerminalRetryable, BeadOpen, RunRecordSession, WorktreeAbsent, SessionDead,
+			)),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := DecideReplay(tc.facts)
+			if err != nil || got != ReplayCleanupOnly {
+				t.Fatalf("DecideReplay() = (%q, %v), want cleanup", got, err)
+			}
+		})
+	}
+}
+
 func TestDecideReplayRequiresGitEvidenceForClosedAndTerminalSuccess(t *testing.T) {
 	for _, facts := range []ReplayFacts{
 		replayFacts(PhasePrepared, QueueReserved, BeadClosed, RunRecordAbsent, WorktreeAbsent, SessionAbsent),
@@ -222,6 +333,7 @@ func TestDecideReplayRejectsCrossPhaseFacts(t *testing.T) {
 		func(f *ReplayFacts) { f.RunRecord = RunRecordBase },
 		func(f *ReplayFacts) { f.Worktree = WorktreeLeased },
 		func(f *ReplayFacts) { f.Session = SessionLive },
+		func(f *ReplayFacts) { f.SessionReceipt = SessionReceiptExact },
 		func(f *ReplayFacts) { f.Git = GitMatching },
 		func(f *ReplayFacts) { f.RunOutcomeDurable = true },
 	}
@@ -236,6 +348,7 @@ func TestDecideReplayRejectsCrossPhaseFacts(t *testing.T) {
 		func(f *ReplayFacts) { f.Claim = ClaimDependencyRefusal },
 		func(f *ReplayFacts) { f.Worktree = WorktreeLeased },
 		func(f *ReplayFacts) { f.Session = SessionLive },
+		func(f *ReplayFacts) { f.SessionReceipt = SessionReceiptExact },
 		func(f *ReplayFacts) { f.RunOutcomeDurable = true },
 	}
 	for index, mutate := range claimMutations {
@@ -264,18 +377,29 @@ func assertRepair(t *testing.T, index int, facts ReplayFacts) {
 }
 
 func TestDecideReplayRejectsUnknownFacts(t *testing.T) {
-	facts := replayFacts(PhasePrepared, QueueOfferable, BeadOpen, RunRecordAbsent, WorktreeAbsent, SessionAbsent)
-	facts.Session = "unknown"
-	if _, err := DecideReplay(facts); err == nil {
-		t.Fatal("DecideReplay() = nil error")
+	for _, mutate := range []func(*ReplayFacts){
+		func(f *ReplayFacts) { f.Session = "unknown" },
+		func(f *ReplayFacts) { f.SessionReceipt = "unknown" },
+	} {
+		facts := replayFacts(PhasePrepared, QueueOfferable, BeadOpen, RunRecordAbsent, WorktreeAbsent, SessionAbsent)
+		mutate(&facts)
+		if _, err := DecideReplay(facts); err == nil {
+			t.Fatal("DecideReplay() = nil error")
+		}
 	}
 }
 
 func replayFacts(phase Phase, queue QueueFact, bead BeadFact, record RunRecordFact, worktree WorktreeFact, session SessionFact) ReplayFacts {
 	return ReplayFacts{
 		IntentPhase: phase, Queue: queue, Bead: bead, RunRecord: record,
-		Worktree: worktree, Session: session, Git: GitAbsent, Claim: ClaimNone, Preclaim: PreclaimAbsent,
+		Worktree: worktree, Session: session, SessionReceipt: SessionReceiptAbsent,
+		Git: GitAbsent, Claim: ClaimNone, Preclaim: PreclaimAbsent,
 	}
+}
+
+func withReceipt(facts ReplayFacts) ReplayFacts {
+	facts.SessionReceipt = SessionReceiptExact
+	return facts
 }
 
 func withMatchingGit(facts ReplayFacts) ReplayFacts {

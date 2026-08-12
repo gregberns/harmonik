@@ -15,22 +15,24 @@ package daemon_test
 // It is not cosmetic, and the method matters as much as the number, so both are
 // here rather than only on a bead the ledger keeps machine-local. Measured on
 // the development machine 2026-08-12: the file held 9,280 project entries, of
-// which 9,150 named directories that no longer exist — 98.6% by entry count,
-// and about 85% of the 1.8 MB file by BYTES, because the dead weight is mostly the
+// which 9,150 named directories that no longer exist — 98.6% by entry count and
+// 95% of the 1.8 MB file by BYTES, because the dead weight is mostly the
 // pathnames used as keys (a 32-byte value under a key averaging 137
 // characters).
+//
+// The byte share was measured rather than estimated: re-serialize the parsed
+// file with the two-space indent it already uses, then re-serialize it without
+// the dead entries and take the difference. An earlier estimate summed key and
+// value lengths and gave 85%, because it dropped the indentation and per-entry
+// framing — which fall almost entirely on the dead entries, those being almost
+// the whole file.
 //
 // The cost was taken over 20 iterations of the real writer cycle — ReadFile,
 // Unmarshal, set the key, MarshalIndent, temp write, Sync, Rename, then fsync
 // the parent directory — against the live file and against a small 101 KB
-// config: 46.5 ms versus 6.9 ms, a factor of 6.7.
-//
-// Read those two as bloated against small, NOT as the before and after of one
-// pruning. They do not close as a pair: 85% dead by bytes would leave about
-// 278 KB, and deleting the whole projects map still leaves about 270 KB, so a
-// 101 KB file is not this file with its dead entries removed. What else
-// differed was not recorded. The RATIO is the finding here; the provenance of
-// the small file is not, and nobody should quote 101 KB as a prune target.
+// config: 46.5 ms versus 6.9 ms, a factor of 6.7. Pruning the dead entries
+// leaves about 87 KB, so the small file is about the size a pruned copy of this
+// one would be and the pair reads as a before and after.
 //
 // All of that runs inside the exclusive lock, with a four-attempt retry budget
 // above it, and the bounded acquire ahead of it is what times out when the lock
@@ -39,12 +41,14 @@ package daemon_test
 //
 // Several places in this tree quote a measurement of this one file:
 // internal/testhelpers/hermetic, internal/harness/claude/trustisolation_test.go,
-// internal/workspace/claudetrust_wm040b.go, and the 2026-06-09 postmortem. DO
-// NOT reconcile them by assuming the file grew. The two test files count only
-// dead paths under the Go test temp directory — 4,459 of 6,426 — while this
+// internal/workspace/claudetrust_wm040b.go, and the 2026-06-09 postmortem. Do
+// not reconcile their PERCENTAGES by assuming the file grew. The first two count
+// only dead paths under the Go test temp directory — 4,459 of 6,426 — while this
 // comment counts every directory that no longer exists, 9,150 of 9,280. On this
 // same date the temp-only count was 6,291 of 9,280. So the distance between 69%
-// and 98.6% is the definition changing, not the file growing.
+// and 98.6% is the definition changing, not the file growing. The SIZES are a
+// different matter: the postmortem's 8.6 MB and 36.6k keys are this file before
+// somebody pruned it to 1.9 MB, and that one is a real change in the file.
 //
 // # Why a test and not a comment
 //

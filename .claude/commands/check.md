@@ -14,7 +14,9 @@ There are two targets. There is no third.
 make fast
 ```
 
-`make fast` runs the format check, `go build ./...`, `go vet ./...`, the tagged vet, the subsystem freeze greps, the changed-line lint (`golangci-lint --new-from-rev=HEAD~1`), a compile of every `_test.go` file in the repo, and `go test -short` over the major packages — `internal/core`, `internal/daemon`, `internal/queue`, `internal/queuewiring`, `internal/brcli`, `internal/eventbus`, `internal/runloop`, `internal/workflow` and `cmd/harmonik`. The package list is in the Makefile as `FAST_PKGS`, with the reason for each one.
+`make fast` runs the format check, `go build ./...`, `go vet ./...`, the tagged vet, the subsystem freeze greps, the changed-line lint (`golangci-lint --new-from-rev=HEAD~1`), a compile of every `_test.go` file in the repo, `go test -short` over the major packages — `internal/core`, `internal/daemon`, `internal/queue`, `internal/queuewiring`, `internal/brcli`, `internal/eventbus`, `internal/runloop`, `internal/workflow` and `cmd/harmonik`. The package list is in the Makefile as `FAST_PKGS`, with the reason for each one. Last, it runs the whole-tree lint allow list (`make lint-allow`).
+
+The whole-tree lint runs here because the changed-line lint cannot see everything. It matches a finding's line against the lines you changed, and a whole-function linter — gocognit, cyclop, funlen — reports at the function's declaration, which is usually outside the hunk. Those findings used to surface one cycle late, to whoever ran `make full` next.
 
 It is not a merge verdict. It tests a chosen subset, so it can be green while the tree is red.
 
@@ -27,6 +29,8 @@ make full
 `make full` is the merge decision, and it is what CI runs. Everything `make fast` does, over EVERY package, plus the whole-tree lint allow list, the tagged scenario tier, the crash tier and the module hygiene checks (`go mod tidy`, forbidden imports, `govulncheck`).
 
 The allow list is `tools/lintreport/allow.txt`. Each line names one tolerated pair of file and linter. A finding whose pair is on the list is grandfathered. A finding whose pair is not on the list fails the build. Clean a file and delete its line, and that file cannot regress.
+
+`scripts/lint-allow-ratchet.sh` runs in both targets and fails when a pair appears that the list did not hold before, so a red lint step cannot be repaired by tolerating the finding. It catches the edit in your working tree and the commit that makes it — its base is one commit back, so it is a per-commit ratchet, not a history-wide invariant.
 
 No package scoping. No retry. No fail-open. A timeout, an out-of-memory kill, a compile failure or an exit code nothing recognises all BLOCK. `scripts/gate-fails-closed-test.sh` holds that property and runs inside both targets.
 

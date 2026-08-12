@@ -890,6 +890,7 @@ script-tests:  ## Self-tests for the shell the gate depends on
 	scripts/scratch-daemon-toolchain-test.sh
 	scripts/scratch-daemon-provenance-test.sh
 	scripts/lint-allow-test.sh
+	scripts/lint-allow-ratchet-test.sh
 	scripts/scenario-pkgs-test.sh
 	scripts/lint-changed-test.sh
 	scripts/changed-func-coverage-test.sh
@@ -916,6 +917,7 @@ freeze-gates:  ## Subsystem freeze / ratchet greps (structural, sub-second each)
 	scripts/runloop-emitter-gate.sh
 	scripts/workloop-scheduler-freeze-gate.sh
 	scripts/queue-status-writer-ratchet.sh
+	scripts/lint-allow-ratchet.sh
 
 # gate-static — everything fast and full share that runs no test.
 #
@@ -1026,12 +1028,49 @@ endef
 
 # ---------------------------------------------------------------------------
 # make fast — the inner loop.
+#
+# WHY THE WHOLE-TREE LINT JUDGE ENDS THIS TARGET (hk-dp69a). The changed-line
+# step inside gate-static matches a finding's LINE against the lines the commit
+# changed. Whole-function linters — gocognit, cyclop, funlen — report at a
+# function's DECLARATION, which is usually outside the hunk that changed its
+# body. Those findings are invisible AT the commit that caused them, and no
+# choice of base revision fixes that. The whole-tree judge is the only step
+# that can see them, and it used to run in `make full` alone, so a finding sat
+# in the tree until the next person ran the merge decision. That happened five
+# times, and twice the finding was a real defect rather than a style point.
+#
+# The two lint steps are complements and neither can go. The changed-line step
+# is the only one that can see an EXTRA finding in a file-and-linter pair the
+# allow list already carries, because the list holds no count.
+#
+# LAST, and NOT inside gate-static. The assessor's gate calls gate-static too,
+# and a lint red there would block every test before it ran.
+#
+# THE COST OF RUNNING IT LAST, and why it is still the right place. make stops
+# at the first failing step, so a red TEST step hides this one. The finding is
+# delayed, not lost: the work has to reach a green test run before it lands, and
+# this step runs there. Moving it ahead of the tests would remove that delay and
+# charge for it — every whole-tree finding, including one another lane wrote,
+# would then block all test feedback. The delayed case ends inside one session.
+# The case this target was changed to fix lasted a whole cycle.
+#
+# THE COST, measured on 2026-08-11 on a box with no other gate running: the
+# three steps this target used to have took 333 s, and `make lint-allow` right
+# after them took 5 s, 3 s and 4 s on three runs. The whole target then measured
+# 338 s. So the step adds about 1 percent.
+#
+# It is that cheap because --new-from-rev does not scope the ANALYSIS. The
+# changed-line step already analysed every package and only filtered what it
+# printed, so the whole-tree run reads the linter's cache and re-prints. Do not
+# quote these numbers without re-measuring: they came off one machine on one day,
+# and a run taken while another lane holds the box measures that lane.
 # ---------------------------------------------------------------------------
 .PHONY: fast
-fast:  ## THE inner loop: format, build, vet, compile every test, unit-test the major packages, lint changed lines
+fast:  ## THE inner loop: format, build, vet, compile every test, unit-test the major packages, lint changed lines, judge the whole tree
 	$(MAKE) gate-static
 	$(MAKE) gate-test-compile
 	$(call RUN_TESTS_AND_REPORT,make fast,$(FAST_PKGS),-short)
+	$(MAKE) lint-allow
 
 # ---------------------------------------------------------------------------
 # make core — is the thing this tool exists to do working?
@@ -1143,8 +1182,16 @@ full:  ## THE merge decision: everything in fast over EVERY package, plus the li
 # "this tree is clean". The tree carries 1,187 findings today and 615 of them
 # are in internal/daemon.
 #
-# `make fast` lints CHANGED LINES only (the --new-from-rev step in gate-static).
-# The whole-tree pass belongs to the merge decision alone.
+# WHERE THIS RUNS. Both `make fast` and `make full`, and `fast` does not call
+# `full`, so each pays for one whole-tree run. It was the merge decision alone
+# until hk-dp69a measured the cost of that: a finding a whole-function linter
+# reports at a declaration outside the changed hunk is invisible to the
+# changed-line step in gate-static, so it reached the tree and waited for the
+# next person to run the merge decision. Five times. The rule this step applies
+# already caught every one of them — only the timing was wrong.
+#
+# The changed-line step stays. It is the only one that can see an EXTRA finding
+# in a pair the list already carries, because the list holds no count.
 #
 # scripts/lint-allow-test.sh holds this target's assertions. It runs inside
 # script-tests, so it runs in both fast and full.

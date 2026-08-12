@@ -19,10 +19,21 @@ package daemon_test
 //
 // The test backlog recorded this as three unreleased early returns and marked
 // it RED TODAY. Driven against the tree, two of the three are not defects:
-// both reachable exits leave through exitClean, which calls drainCancelledQueue
-// and archives the whole active queue, so the item goes away with the queue
-// rather than stranding. Those two paths are pinned below so the protection
-// stays honest — it is load-bearing, and nothing was asserting it.
+// both reachable exits leave through exitClean, which calls
+// drainQueuesForRestart and parks the whole active queue as paused-by-drain
+// with a one-shot restart intent, so the item goes with the queue into a state
+// the next start owns rather than stranding. Those two paths are pinned below
+// so the protection stays honest — it is load-bearing, and nothing was
+// asserting it.
+//
+// Shutdown used to ARCHIVE the queue instead — CancelQueueOnShutdown renamed
+// the canonical file to a .cancelled-<ts> suffix and the item went away with
+// it. That is gone. Parking keeps the file where it is, so "the item is safe"
+// is now a claim about two programs, not one: the exit parks it and the next
+// start takes it back. Every assertion in this file is written to span both,
+// because a park that no start can consume is the same strand under a new
+// name. Spec: queue-model.md §8.5 QM-054 (park with resume_on_start) and §8.6
+// QM-055 (the next start recovers dispatched items, then resumes).
 //
 // The third exit WAS real: the claim TransitionID generation failure returned
 // an error directly instead of draining, so it skipped the drain and left
@@ -35,16 +46,21 @@ package daemon_test
 // through exitFatal, which drains on the way out and still returns the error.
 // The third test below drives it.
 //
-// Mutation that must turn these red: delete the drainCancelledQueue call from
+// Mutation that must turn these red: delete the drainQueuesForRestart call from
 // exitClean in scheduler.go. All three tests below fail; that call is the only
-// thing keeping any of these exits safe. For the third alone, the narrower
-// mutation is to put back the bare `return fmt.Errorf(...)` at the claim-TID
-// failure in scheduler.go.
+// thing keeping any of these exits safe. Two narrower mutations also work, and
+// each kills a different half of the contract: drop the `q.ResumeOnStart = true`
+// line from queue.PauseQueueForRestart, and the queue parks with no restart
+// intent, so the next start leaves it paused for ever and the name never frees;
+// or drop the ResumeOnStart branch from loadOneQueueAtStartup in
+// internal/lifecycle, and the intent is written but never consumed. For the
+// third test alone, the narrower mutation is to put back the bare
+// `return fmt.Errorf(...)` at the claim-TID failure in scheduler.go.
 
 import (
 	"context"
 	"errors"
-	"os"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -54,6 +70,7 @@ import (
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
+	"github.com/gregberns/harmonik/internal/lifecycle"
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
@@ -101,14 +118,53 @@ func reservationWindowQueue(t *testing.T, beadID core.BeadID) *queue.Queue {
 	}
 }
 
-// assertNoStrandedDispatchedItem is the whole point of this file. It reads the
-// canonical queue file back from disk — not the in-memory store, which is
-// cleared on exit and would report success for a queue that is still on disk
-// holding a dispatched item — and fails if a live queue still claims an item is
-// out with a run.
+// openBeadLedger answers the two questions the next daemon start asks the Beads
+// ledger while it recovers a queue: what is this bead, and what is in flight. It
+// reports every bead open and nothing in flight, which is the truth for a bead
+// the loop reserved but never claimed — the exact case this file is about.
+type openBeadLedger struct{}
+
+func (openBeadLedger) ShowBead(_ context.Context, id core.BeadID) (core.BeadRecord, error) {
+	return core.BeadRecord{BeadID: id, Status: core.CoarseStatusOpen}, nil
+}
+
+func (openBeadLedger) ListInFlightBeads(_ context.Context) ([]core.BeadRecord, error) {
+	return nil, nil
+}
+
+// runNextDaemonStart drives the real startup queue-recovery path against
+// whatever this exit left on disk, and returns what that start would carry into
+// its dispatch loop. It is the second half of every claim in this file: the exit
+// no longer disposes of the queue itself, it hands it to the next start, so an
+// assertion that stops at the file on disk stops one program too early.
 //
-// An archived or absent queue passes: the item went away with its queue, which
-// is the designed shutdown behaviour and leaves the bead free to be resubmitted.
+// A start that returns an error is itself a failure of the property. That is the
+// literal shape of "the parked queue blocks the next start".
+func runNextDaemonStart(t *testing.T, projectDir string) []*queue.Queue {
+	t.Helper()
+	loaded, err := lifecycle.LoadQueueAtStartup(
+		context.Background(), projectDir, openBeadLedger{}, nil, slog.New(slog.DiscardHandler),
+	)
+	if err != nil {
+		t.Fatalf("the next daemon start refused the queue this exit left behind, so the exit wedged the daemon: %v", err)
+	}
+	return loaded
+}
+
+// assertNoStrandedDispatchedItem is the whole point of this file. It reads the
+// canonical queue file back from disk — not the in-memory store, which would
+// report success for a queue that is still on disk holding a dispatched item —
+// and fails if a live queue still claims an item is out with a run.
+//
+// An absent queue passes: the item went away with its queue and the bead is free
+// to be resubmitted.
+//
+// A queue PARKED for restart does not get to pass on its status alone, and this
+// is the part that shutdown-by-parking changed. The parked file is put back to
+// active by the next start, so a dispatched item sitting in it is harmless only
+// if that start's recovery pass takes it back first. Reading the status and
+// returning would accept the strand and call it a pause. So the parked case runs
+// the real start and judges the queue that start produces.
 func assertNoStrandedDispatchedItem(t *testing.T, projectDir string) {
 	t.Helper()
 
@@ -117,10 +173,22 @@ func assertNoStrandedDispatchedItem(t *testing.T, projectDir string) {
 		t.Fatalf("load main queue after shutdown: %v", err)
 	}
 	if q == nil {
-		return // archived — nothing stranded
+		return // absent — nothing stranded
+	}
+	if q.Status == queue.QueueStatusPausedByDrain && q.ResumeOnStart {
+		// Parked with restart intent: the next start owns the repair. Run it and
+		// judge what it leaves, not what the exit left.
+		runNextDaemonStart(t, projectDir)
+		q, err = queue.Load(context.Background(), projectDir, queue.QueueNameMain)
+		if err != nil {
+			t.Fatalf("load main queue after the next start recovered it: %v", err)
+		}
+		if q == nil {
+			return // the start finished the queue off and unlinked it
+		}
 	}
 	if q.Status != queue.QueueStatusActive {
-		return // terminal — the next boot will not dispatch from it
+		return // terminal or held for an operator — the next boot will not dispatch from it
 	}
 	for gi := range q.Groups {
 		for ii := range q.Groups[gi].Items {
@@ -337,6 +405,24 @@ func TestWorkLoop_AClaimTransitionIDFailureDoesNotStrandTheReservedItem(t *testi
 //
 // This is the cheaper, broader version — no reservation, just an active queue
 // and an immediate halt.
+//
+// "Never left LIVE" is the whole claim, and it is not the same as "never left
+// on disk". A clean exit parks the queue exactly where it is (QM-054). What it
+// must never leave is a queue the next start reads as ACTIVE with nobody
+// driving it: that queue owns its name against QM-027 for ever, so every later
+// submit to "main" is refused with queue_already_active and the daemon can
+// never be given work again. Parking is only the first half of avoiding that.
+// The second half is the durable one-shot restart intent, and an intent nobody
+// consumes is the same wedge as a queue nobody parked. So the exit is judged
+// here on three things, and each of them alone is enough to break the daemon:
+//
+//   - the queue is still on disk at its canonical path — losing the file loses
+//     the submitted work, silently and with no receipt;
+//   - it is parked, not active, and it carries the restart intent — without the
+//     intent the next start reads an explicit operator pause and holds it for
+//     ever, waiting for a resume nobody knows to give;
+//   - the real next start consumes that intent, puts the queue back to active
+//     with the bit cleared, and still holds the work.
 func TestWorkLoop_AnActiveQueueIsNeverLeftLiveOnDiskAfterExit(t *testing.T) {
 	skipRealDaemonE2EInShort(t)
 	t.Parallel()
@@ -366,14 +452,65 @@ func TestWorkLoop_AnActiveQueueIsNeverLeftLiveOnDiskAfterExit(t *testing.T) {
 	cancel()
 	runLoopToExit(t, func() error { return daemon.ExportedRunWorkLoop(ctx, deps) })
 
-	// The canonical file must be gone: CancelQueueOnShutdown archives it under a
-	// .cancelled-<ts> suffix. A queue left active here blocks the next start on
-	// the QM-027 guard as well as stranding whatever it holds.
-	if _, statErr := os.Stat(filepath.Join(projectDir, ".harmonik", "queues", queue.QueueNameMain+".json")); statErr == nil {
-		t.Error("the active queue is still at its canonical path after exit; it was never drained")
-	} else if !os.IsNotExist(statErr) {
-		t.Errorf("stat canonical queue path: %v", statErr)
+	// Half one — what the exit left on disk.
+	parked, err := queue.Load(context.Background(), projectDir, queue.QueueNameMain)
+	if err != nil {
+		t.Fatalf("load the canonical queue after exit: %v", err)
+	}
+	if parked == nil {
+		t.Fatal("the canonical queue file is gone after exit; a clean shutdown parks the queue in place so the next start can carry on with it, and a queue that disappears takes the operator's submitted work with it")
+	}
+	if parked.Status == queue.QueueStatusActive {
+		t.Fatal("the queue is still ACTIVE on disk after exit; nothing is driving it, and it owns the name \"main\" against QM-027 until somebody edits the file by hand, so every later submit is refused")
+	}
+	if parked.Status != queue.QueueStatusPausedByDrain {
+		t.Fatalf("the queue is %q on disk after exit; a clean shutdown parks an active queue as paused-by-drain (QM-054)", parked.Status)
+	}
+	if !parked.ResumeOnStart {
+		t.Fatal("the queue is parked with no restart intent; that is the shape of an explicit operator pause, so the next start will hold it paused for ever waiting on a resume nobody knows to give")
+	}
+	if len(parked.Groups) != 1 || len(parked.Groups[0].Items) != 1 {
+		t.Fatalf("the parked queue holds %d group(s) and no longer carries its single item intact; the park must not edit the work", len(parked.Groups))
+	}
+
+	// Half two — what the next start makes of it. This is the part that decides
+	// whether the park was a handoff or a wedge.
+	resumed := runNextDaemonStart(t, projectDir)
+	if len(resumed) != 1 {
+		t.Fatalf("the next start carried %d queue(s) into its dispatch loop; want the one this exit parked", len(resumed))
+	}
+	if resumed[0].Status != queue.QueueStatusActive {
+		t.Errorf("the next start left the parked queue %q instead of putting it back to active; the restart intent was written and never consumed, so the work never resumes (QM-055)", resumed[0].Status)
+	}
+	if resumed[0].ResumeOnStart {
+		t.Error("the next start resumed the queue but did not clear the restart intent; the intent is one-shot, so a queue the operator pauses later would be resumed out from under them")
+	}
+	if resumed[0].QueueID != parked.QueueID {
+		t.Errorf("the next start carried queue_id %s; the parked queue was %s, so this is not the same queue continuing", resumed[0].QueueID, parked.QueueID)
+	}
+	if got := countQueueItems(resumed[0]); got != 1 {
+		t.Errorf("the resumed queue holds %d item(s); the one bead this queue was submitted with must survive the round trip", got)
+	}
+
+	// And the durable file agrees with what the start is holding. A start that
+	// resumes only in memory re-parks nothing and repeats the whole recovery on
+	// every boot.
+	durable, err := queue.Load(context.Background(), projectDir, queue.QueueNameMain)
+	if err != nil {
+		t.Fatalf("load the canonical queue after the next start resumed it: %v", err)
+	}
+	if durable == nil || durable.Status != queue.QueueStatusActive || durable.ResumeOnStart {
+		t.Errorf("the canonical file after the next start = %+v; want active with the restart intent cleared, so the resume is durable and not repeated", durable)
 	}
 
 	assertNoStrandedDispatchedItem(t, projectDir)
+}
+
+// countQueueItems totals the items a queue still carries across all its groups.
+func countQueueItems(q *queue.Queue) int {
+	n := 0
+	for gi := range q.Groups {
+		n += len(q.Groups[gi].Items)
+	}
+	return n
 }

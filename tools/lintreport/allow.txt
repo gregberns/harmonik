@@ -488,7 +488,6 @@ internal/queue/cli/cancel.go	gocognit
 internal/queue/cli/dryrun.go	cyclop
 internal/queue/cli/helpers.go	cyclop
 internal/queue/cli/submit.go	cyclop
-internal/queue/persistence_test.go	gosec
 internal/queue/persistence.go	unused
 internal/queue/rpc.go	gocognit
 internal/queue/rpc.go	revive

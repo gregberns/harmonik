@@ -136,9 +136,10 @@ func TestL5saf_LocalOnlyItemNotStrandedByCapGuard(t *testing.T) {
 	// Observe for several poll ticks, then snapshot the queue WHILE THE LOOP IS
 	// STILL ALIVE. In the buggy code the FIRST tick stamps the item Dispatched +
 	// placeholder RunID and persists; the fixed code defers it pre-stamp so it
-	// stays Pending. We must read before cancelling: the shutdown-drain
-	// (drainCancelledQueue) transitions active queues to cancelled and clears the
-	// in-memory store on ctx-cancel, which would erase the state under test.
+	// stays Pending. We must read before cancelling: the shutdown drain
+	// (drainQueuesForRestart) parks active queues as paused-by-drain and writes
+	// them back to the in-memory store on ctx-cancel, which would overwrite the
+	// state under test.
 	time.Sleep(600 * time.Millisecond)
 	got := qs.Queue()
 

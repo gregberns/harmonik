@@ -456,9 +456,11 @@ func admissionDeps(t *testing.T, ledger *admissionLedger, qs *queuewiring.QueueS
 // runAdmissionLoop drives real ticks of the work loop, then calls inspect while
 // the loop is STILL ALIVE, then shuts the loop down.
 //
-// inspect must run before the cancel. The shutdown drain (drainCancelledQueue)
-// moves active queues to cancelled and clears the in-memory store, which erases
-// exactly the state these tests read.
+// inspect must run before the cancel. The shutdown drain
+// (drainQueuesForRestart) parks every active queue as paused-by-drain and
+// writes it back to the in-memory store, which overwrites exactly the state
+// these tests read. The queue is not erased any more, but its status and item
+// state are no longer what the loop left there.
 //
 // runLoop is a closure rather than a deps argument because testRuntime is
 // unexported, so no helper outside package daemon can name it in a signature.
@@ -1202,7 +1204,16 @@ func TestAdmissionOrder_ReadyPathBoundsAttemptsBeforeHandlerPause(t *testing.T) 
 // loop to EXIT, and then reads the channel. The loop cannot have consumed the
 // token: the dedup continue does not sleep, and the tick after it returns at the
 // dispatch-halt check, so no workloopSleep runs at all. Shutdown adds no token
-// either — drainCancelledQueue uses ClearQueueByName, which does not wake.
+// either. That was true while shutdown archived the queue through
+// ClearQueueByName, which does not wake. It is true no longer, and the
+// assertion below is degenerate as a result. The shutdown drain
+// (drainQueuesForRestart) now parks every still-active queue with
+// SetQueueByName, which DOES signal the wake channel, and this fixture leaves
+// queue alpha active — only beta goes terminal. So the exit puts a token in the
+// channel by itself, and the assertion passes even when the wake it means to
+// pin (queueStore.Wake() on evaluateGroupAdvanceWithOutcome's
+// not-all-succeeded branch) is deleted. Read a green result here as "a token
+// exists", not as "the dedup path left one". Filed as hk-waketoken-degenerate-06ntc.
 //
 // The drain before the run is the control. Without it a token left over from the
 // fixture's own SetQueue calls would satisfy the assertion and it would prove

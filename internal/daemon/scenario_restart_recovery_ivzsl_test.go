@@ -424,9 +424,9 @@ func rrRecovReadGroupItemStatuses(t *testing.T, projectDir string) []string {
 //     reconcile advances the group to complete-with-failures and demotes the
 //     queue to paused-by-failure (reconcileQueueTerminalState, the F5 pass).
 //
-//  3. The queue is no longer active at context-cancel time, so
-//     drainCancelledQueue is a no-op and main.json survives with its failure
-//     record.  Do not expect an unlink here — an unlink is the
+//  3. The queue is no longer active at context-cancel time, so the shutdown
+//     drain (drainQueuesForRestart) is a no-op and main.json survives with its
+//     failure record.  Do not expect an unlink here — an unlink is the
 //     all-complete-success path, and this queue has a failed item.
 //
 //  4. QM-027 exempts paused-by-failure, so the next submit to the same name is
@@ -559,10 +559,12 @@ func TestScenario_RestartRecovery_QM002bDeadlock(t *testing.T) {
 
 	// ── Phase 4: cancel daemon and wait for clean exit ────────────────────────
 	//
-	// Cancelling loopCtx causes runWorkLoop to call exitClean → drainCancelledQueue.
-	// drainCancelledQueue sees the queue is still active (the work loop did not
-	// advance the group — no run goroutine fired evaluateGroupAdvanceWithOutcome)
-	// and renames main.json → main.json.cancelled-<ts>.
+	// Cancelling loopCtx causes runWorkLoop to call exitClean →
+	// drainQueuesForRestart. The drain no longer archives anything: it parks an
+	// active queue as paused-by-drain with the restart intent, persists it in
+	// place, and puts it back in the store. main.json is never renamed. Here the
+	// queue is already paused-by-failure from the startup reconcile, so the drain
+	// skips it entirely.
 	loopCancel()
 
 	scenariotest.MustCompleteWithin(t, jsonlPath, "", nil, 10*time.Second, func() {
@@ -577,7 +579,7 @@ func TestScenario_RestartRecovery_QM002bDeadlock(t *testing.T) {
 	// terminal it advances the group to complete-with-failures and demotes the
 	// queue to paused-by-failure (reconcileQueueTerminalState, the F5 pass).
 	// The queue is therefore NOT active by the time the context is cancelled,
-	// and drainCancelledQueue archives only an ACTIVE queue — see
+	// and the shutdown drain touches only an ACTIVE queue — see
 	// TestQueueCancel_AlreadyTerminal_NoOp, which defends that no-op directly.
 	// So main.json stays on disk and keeps the failure record.  The name is
 	// unblocked by the demotion, not by an unlink.

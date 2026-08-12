@@ -60,7 +60,7 @@ func CreateDispatchRecord(projectDir string, record DispatchRecord) error {
 func createDispatchRecord(projectDir string, record DispatchRecord, ops dispatchRegistryOps) error {
 	runNamespaceMu.Lock()
 	defer runNamespaceMu.Unlock()
-	if record.Location != nil || record.SessionName != "" {
+	if record.Location != nil || record.SessionName != "" || record.WindowName != "" {
 		return errors.New("run: base dispatch record cannot contain placement or session")
 	}
 	data, err := dispatchRecordBytes(record)
@@ -323,13 +323,15 @@ func validDispatchAdvance(prior, next DispatchRecord) error {
 	priorBase, nextBase := prior, next
 	priorBase.Location, nextBase.Location = nil, nil
 	priorBase.SessionName, nextBase.SessionName = "", ""
+	priorBase.WindowName, nextBase.WindowName = "", ""
 	if priorBase != nextBase {
 		return &DispatchConflictError{Detail: "base identity changed"}
 	}
-	if prior.Location == nil && next.Location != nil && next.SessionName == "" {
+	if prior.Location == nil && next.Location != nil && next.SessionName == "" && next.WindowName == "" {
 		return nil
 	}
-	if prior.Location != nil && next.Location != nil && *prior.Location == *next.Location && prior.SessionName == "" && next.SessionName != "" {
+	if prior.Location != nil && next.Location != nil && *prior.Location == *next.Location &&
+		prior.SessionName == "" && prior.WindowName == "" && next.SessionName != "" && next.WindowName != "" {
 		return nil
 	}
 	return &DispatchConflictError{Detail: "record did not advance by one binding"}

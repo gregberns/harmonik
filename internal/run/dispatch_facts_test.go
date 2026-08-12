@@ -15,6 +15,7 @@ func TestClassifyDispatchRecordPhases(t *testing.T) {
 	located.Location = &ExecutionLocation{Kind: ExecutionLocalIndependent}
 	session := located
 	session.SessionName = "harmonik-run-test"
+	session.WindowName = "run-test"
 	for _, tc := range []struct {
 		name   string
 		intent dispatch.Intent
@@ -64,8 +65,14 @@ func TestClassifyDispatchRecordRejectsInvalidAndMismatchedSession(t *testing.T) 
 	record := testDispatchRecord()
 	record.Location = &ExecutionLocation{Kind: ExecutionLocalIndependent}
 	record.SessionName = "other-session"
+	record.WindowName = "run-test"
 	if got := ClassifyDispatchRecord(intent, &record); got != dispatch.RunRecordConflict {
 		t.Fatalf("mismatched session = %q", got)
+	}
+	record.SessionName = "harmonik-run-test"
+	record.WindowName = "other-window"
+	if got := ClassifyDispatchRecord(intent, &record); got != dispatch.RunRecordConflict {
+		t.Fatalf("mismatched window = %q", got)
 	}
 	record = testDispatchRecord()
 	record.SchemaVersion = 1

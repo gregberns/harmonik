@@ -14,7 +14,8 @@ func ClassifyDispatchRecord(intent dispatch.Intent, record *DispatchRecord) disp
 		return dispatch.RunRecordConflict
 	}
 	if record.SessionName != "" {
-		if intent.Phase == dispatch.PhaseHandoffDurable && record.SessionName != intent.Handoff.SessionName {
+		if intent.Phase == dispatch.PhaseHandoffDurable &&
+			(record.SessionName != intent.Handoff.SessionName || record.WindowName != intent.Handoff.WindowName) {
 			return dispatch.RunRecordConflict
 		}
 		return dispatch.RunRecordSession

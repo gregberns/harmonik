@@ -81,6 +81,7 @@ func TestDispatchRecordValidLocalRemoteAndHandoffShapes(t *testing.T) {
 	}
 	handoff := remote
 	handoff.SessionName = "harmonik-run-0197d200"
+	handoff.WindowName = "run-0197d200"
 	for _, record := range []DispatchRecord{base, localIndependent, localShared, remote, handoff} {
 		if err := record.Validate(); err != nil {
 			t.Fatal(err)
@@ -107,6 +108,15 @@ func TestDispatchRecordRejectsInvalidShapes(t *testing.T) {
 		}},
 		{name: "remote worker", mutate: func(r *DispatchRecord) { r.Location = &ExecutionLocation{Kind: ExecutionRemote} }},
 		{name: "session before location", mutate: func(r *DispatchRecord) { r.SessionName = "session" }},
+		{name: "window before location", mutate: func(r *DispatchRecord) { r.WindowName = "window" }},
+		{name: "session without window", mutate: func(r *DispatchRecord) {
+			r.Location = &ExecutionLocation{Kind: ExecutionLocalIndependent}
+			r.SessionName = "session"
+		}},
+		{name: "window without session", mutate: func(r *DispatchRecord) {
+			r.Location = &ExecutionLocation{Kind: ExecutionLocalIndependent}
+			r.WindowName = "window"
+		}},
 		{name: "zero time", mutate: func(r *DispatchRecord) { r.StartedAt = time.Time{} }},
 		{name: "offset time", mutate: func(r *DispatchRecord) { r.StartedAt = r.StartedAt.In(time.FixedZone("offset", 3600)) }},
 		{name: "submillisecond time", mutate: func(r *DispatchRecord) { r.StartedAt = r.StartedAt.Add(time.Nanosecond) }},
@@ -153,18 +163,19 @@ func TestDispatchRecordStrictCanonicalJSON(t *testing.T) {
 	}
 }
 
-func TestDispatchRecordHandoffAddsOnlySessionName(t *testing.T) {
+func TestDispatchRecordHandoffAddsExactTarget(t *testing.T) {
 	base := testDispatchRecord()
 	located, err := base.BindLocation(ExecutionLocation{Kind: ExecutionLocalIndependent})
 	if err != nil {
 		t.Fatal(err)
 	}
-	handoff, err := located.BindSession("harmonik-run-0197d200")
+	handoff, err := located.BindSession("harmonik-run-0197d200", "run-0197d200")
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := located
 	want.SessionName = "harmonik-run-0197d200"
+	want.WindowName = "run-0197d200"
 	if !reflect.DeepEqual(handoff, want) {
 		t.Fatalf("handoff = %+v, want %+v", handoff, want)
 	}
@@ -173,12 +184,27 @@ func TestDispatchRecordHandoffAddsOnlySessionName(t *testing.T) {
 		t.Fatal("BindSession candidate aliases the prior location")
 	}
 	handoff = want
-	replayed, err := handoff.BindSession(want.SessionName)
+	replayed, err := handoff.BindSession(want.SessionName, want.WindowName)
 	if err != nil || !reflect.DeepEqual(replayed, want) {
 		t.Fatalf("same-session replay = (%+v, %v)", replayed, err)
 	}
-	if _, err := handoff.BindSession("other"); err == nil {
+	if _, err := handoff.BindSession("other", want.WindowName); err == nil {
 		t.Fatal("changed session BindSession() = nil")
+	}
+	if _, err := handoff.BindSession(want.SessionName, "other"); err == nil {
+		t.Fatal("changed window BindSession() = nil")
+	}
+	data, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"session_name":"harmonik-run-0197d200","window_name":"run-0197d200"`) {
+		t.Fatalf("handoff bytes = %s", data)
+	}
+	withoutWindow := strings.Replace(string(data), `,"window_name":"run-0197d200"`, "", 1)
+	var decoded DispatchRecord
+	if err := json.Unmarshal([]byte(withoutWindow), &decoded); err == nil {
+		t.Fatal("handoff without window_name decode = nil")
 	}
 }
 

@@ -69,7 +69,7 @@ func writeUniversalRunRecord(t *testing.T, projectDir string, beadID core.BeadID
 	if err := runpkg.AdvanceDispatchRecord(projectDir, record, located); err != nil {
 		t.Fatal(err)
 	}
-	bound, err := located.BindSession(sessionName)
+	bound, err := located.BindSession(sessionName, "run-replay-session")
 	if err != nil {
 		t.Fatal(err)
 	}

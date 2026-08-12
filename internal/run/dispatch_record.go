@@ -45,6 +45,7 @@ type DispatchRecord struct {
 	ClaimTransitionID core.TransitionID  `json:"claim_transition_id"`
 	Location          *ExecutionLocation `json:"execution_location,omitempty"`
 	SessionName       string             `json:"session_name,omitempty"`
+	WindowName        string             `json:"window_name,omitempty"`
 	StartedAt         time.Time          `json:"started_at"`
 }
 
@@ -96,11 +97,20 @@ func (r DispatchRecord) Validate() error {
 			return err
 		}
 	}
-	if r.SessionName != "" && r.Location == nil {
-		return errors.New("run: dispatch record cannot bind a session before execution location")
+	if (r.SessionName != "" || r.WindowName != "") && r.Location == nil {
+		return errors.New("run: dispatch record cannot bind a target before execution location")
 	}
-	if r.SessionName != "" && (strings.TrimSpace(r.SessionName) != r.SessionName || strings.ContainsAny(r.SessionName, "\x00\r\n")) {
-		return errors.New("run: dispatch record session_name is invalid")
+	if (r.SessionName == "") != (r.WindowName == "") {
+		return errors.New("run: dispatch record session_name and window_name must be bound together")
+	}
+	for _, target := range []struct{ field, value string }{
+		{field: "session_name", value: r.SessionName},
+		{field: "window_name", value: r.WindowName},
+	} {
+		if target.value != "" &&
+			(strings.TrimSpace(target.value) != target.value || strings.ContainsAny(target.value, "\x00\r\n")) {
+			return fmt.Errorf("run: dispatch record %s is invalid", target.field)
+		}
 	}
 	return validateStartedAt(r.StartedAt)
 }
@@ -121,22 +131,26 @@ func (r DispatchRecord) BindLocation(location ExecutionLocation) (DispatchRecord
 }
 
 // BindSession returns the exact handoff candidate without changing base facts.
-func (r DispatchRecord) BindSession(sessionName string) (DispatchRecord, error) {
+func (r DispatchRecord) BindSession(sessionName, windowName string) (DispatchRecord, error) {
 	if err := r.Validate(); err != nil {
 		return DispatchRecord{}, err
 	}
 	if sessionName == "" {
 		return DispatchRecord{}, errors.New("run: session_name is required for handoff")
 	}
+	if windowName == "" {
+		return DispatchRecord{}, errors.New("run: window_name is required for handoff")
+	}
 	if r.Location == nil {
 		return DispatchRecord{}, errors.New("run: execution location is required before handoff")
 	}
-	if r.SessionName != "" && r.SessionName != sessionName {
-		return DispatchRecord{}, errors.New("run: durable session identity cannot change")
+	if r.SessionName != "" && (r.SessionName != sessionName || r.WindowName != windowName) {
+		return DispatchRecord{}, errors.New("run: durable target identity cannot change")
 	}
 	location := *r.Location
 	r.Location = &location
 	r.SessionName = sessionName
+	r.WindowName = windowName
 	if err := r.Validate(); err != nil {
 		return DispatchRecord{}, err
 	}
@@ -185,6 +199,7 @@ func (r DispatchRecord) MarshalJSON() ([]byte, error) {
 		ClaimTransitionID: r.ClaimTransitionID.String(),
 		Location:          r.Location,
 		SessionName:       r.SessionName,
+		WindowName:        r.WindowName,
 		StartedAt:         r.StartedAt.Format(time.RFC3339Nano),
 	}
 	return json.Marshal(wire)
@@ -224,6 +239,7 @@ type dispatchRecordWire struct {
 	ClaimTransitionID string             `json:"claim_transition_id"`
 	Location          *ExecutionLocation `json:"execution_location,omitempty"`
 	SessionName       string             `json:"session_name,omitempty"`
+	WindowName        string             `json:"window_name,omitempty"`
 	StartedAt         string             `json:"started_at"`
 }
 
@@ -254,6 +270,7 @@ func (w dispatchRecordWire) record() (DispatchRecord, error) {
 		ClaimTransitionID: core.TransitionID(transitionID),
 		Location:          w.Location,
 		SessionName:       w.SessionName,
+		WindowName:        w.WindowName,
 		StartedAt:         startedAt,
 	}
 	if err := value.Validate(); err != nil {

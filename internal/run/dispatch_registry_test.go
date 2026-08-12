@@ -26,7 +26,7 @@ func TestDispatchRegistryCreateAdvanceScanRemove(t *testing.T) {
 	if err := AdvanceDispatchRecord(projectDir, base, located); err != nil {
 		t.Fatal(err)
 	}
-	handoff, err := located.BindSession("harmonik-run-0197d200")
+	handoff, err := located.BindSession("harmonik-run-0197d200", "run-0197d200")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestDispatchRegistryRejectsInvalidAdvanceMatrix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handoff, err := located.BindSession("session")
+	handoff, err := located.BindSession("session", "window")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestDispatchRegistryConvergesSideEffectThenError(t *testing.T) {
 		t.Fatalf("advance did not converge: %v", err)
 	}
 	ops.rename = realRename
-	handoff, err := located.BindSession("session")
+	handoff, err := located.BindSession("session", "window")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +275,7 @@ func TestDispatchRegistryConvergenceSyncFailuresStayTyped(t *testing.T) {
 	}
 	assertAmbiguous("already next", advanceDispatchRecord(projectDir, base, located, ops))
 	ops.syncDir = realSync
-	handoff, err := located.BindSession("session")
+	handoff, err := located.BindSession("session", "window")
 	if err != nil {
 		t.Fatal(err)
 	}

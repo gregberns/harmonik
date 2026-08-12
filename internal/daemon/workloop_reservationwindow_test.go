@@ -48,13 +48,18 @@ package daemon_test
 //
 // Mutation that must turn these red: delete the drainQueuesForRestart call from
 // exitClean in scheduler.go. All three tests below fail; that call is the only
-// thing keeping any of these exits safe. Two narrower mutations also work, and
-// each kills a different half of the contract: drop the `q.ResumeOnStart = true`
-// line from queue.PauseQueueForRestart, and the queue parks with no restart
-// intent, so the next start leaves it paused for ever and the name never frees;
-// or drop the ResumeOnStart branch from loadOneQueueAtStartup in
-// internal/lifecycle, and the intent is written but never consumed. For the
-// third test alone, the narrower mutation is to put back the bare
+// thing keeping any of these exits safe. Two narrower mutations attack a
+// different half of the contract each: drop the `q.ResumeOnStart = true` line
+// from queue.PauseQueueForRestart, and the queue parks with no restart intent,
+// so the next start leaves it paused for ever and the name never frees; or drop
+// the ResumeOnStart branch from loadOneQueueAtStartup in internal/lifecycle, and
+// the intent is written but never consumed. Neither of those two leaves a
+// dispatched item behind — the queue is simply left parked — so the only thing
+// that catches them outside the clean-exit test is
+// assertNoStrandedDispatchedItem failing a queue left in ANY non-active state
+// instead of reading the status and returning. That test asserts both halves
+// directly; the two sibling tests inherit the check through the helper. For the
+// claim-TransitionID test alone, the narrower mutation is to put back the bare
 // `return fmt.Errorf(...)` at the claim-TID failure in scheduler.go.
 
 import (
@@ -154,17 +159,32 @@ func runNextDaemonStart(t *testing.T, projectDir string) []*queue.Queue {
 // assertNoStrandedDispatchedItem is the whole point of this file. It reads the
 // canonical queue file back from disk — not the in-memory store, which would
 // report success for a queue that is still on disk holding a dispatched item —
-// and fails if a live queue still claims an item is out with a run.
+// and fails unless the item is left somewhere a later program can still pick it
+// up.
 //
-// An absent queue passes: the item went away with its queue and the bead is free
-// to be resubmitted.
+// Three states fail, and for the same reason each time: the bead was reserved
+// and never claimed, so nothing except this queue is holding it.
 //
-// A queue PARKED for restart does not get to pass on its status alone, and this
-// is the part that shutdown-by-parking changed. The parked file is put back to
-// active by the next start, so a dispatched item sitting in it is harmless only
-// if that start's recovery pass takes it back first. Reading the status and
-// returning would accept the strand and call it a pause. So the parked case runs
-// the real start and judges the queue that start produces.
+//   - The file is ABSENT. That is not a release, it is the operator's submitted
+//     work deleted with no receipt, and the clean-exit test below calls the same
+//     disk state lost work. Passing it here would let this file contradict
+//     itself.
+//   - The queue is left NOT ACTIVE. Only an active queue is dispatched from, and
+//     a queue parked at paused-by-drain holds its name against QM-027 exactly as
+//     an active one does — internal/queue/validation.go releases the name for
+//     completed and paused-by-failure, and otherwise only for the zero-value
+//     status a corrupt file carries. So a park nobody
+//     consumes strands the item AND refuses every later submit to that name.
+//     Active-versus-parked is not the discriminator; whether the restart intent
+//     is written and then consumed is.
+//   - The queue is ACTIVE and still records the item as dispatched. A dispatched
+//     item is never re-selected.
+//
+// A queue parked WITH the restart intent is the one state that is not judged on
+// what the exit left, because the next start owns the repair: that start puts
+// the parked file back to active, so a dispatched item sitting in it is harmless
+// only if the start's recovery pass takes it back first. That case runs the real
+// start and then judges the queue the start produced, by the same three rules.
 func assertNoStrandedDispatchedItem(t *testing.T, projectDir string) {
 	t.Helper()
 
@@ -173,7 +193,7 @@ func assertNoStrandedDispatchedItem(t *testing.T, projectDir string) {
 		t.Fatalf("load main queue after shutdown: %v", err)
 	}
 	if q == nil {
-		return // absent — nothing stranded
+		t.Fatal("the canonical main queue file is gone after the exit; a clean shutdown parks the queue in place (QM-054), so an absent file is the submitted work deleted without a receipt, not an item released")
 	}
 	if q.Status == queue.QueueStatusPausedByDrain && q.ResumeOnStart {
 		// Parked with restart intent: the next start owns the repair. Run it and
@@ -184,11 +204,15 @@ func assertNoStrandedDispatchedItem(t *testing.T, projectDir string) {
 			t.Fatalf("load main queue after the next start recovered it: %v", err)
 		}
 		if q == nil {
-			return // the start finished the queue off and unlinked it
+			t.Fatal("the next start unlinked the main queue file while it still held an item that never completed; the file is unlinked only when every group is complete-success, so this is the work disappearing rather than finishing")
 		}
 	}
 	if q.Status != queue.QueueStatusActive {
-		return // terminal or held for an operator — the next boot will not dispatch from it
+		t.Fatalf(
+			"the main queue is %q (resume_on_start=%v) after the exit and any recovery the next start ran; nothing is ever dispatched from a queue that is not active, "+
+				"and a paused-by-drain queue whose restart intent was never written or never consumed holds the name \"main\" against QM-027 for ever, "+
+				"so the item is stranded and every later submit to that name is refused",
+			q.Status, q.ResumeOnStart)
 	}
 	for gi := range q.Groups {
 		for ii := range q.Groups[gi].Items {
@@ -398,23 +422,26 @@ func TestWorkLoop_AClaimTransitionIDFailureDoesNotStrandTheReservedItem(t *testi
 	assertNoStrandedDispatchedItem(t, projectDir)
 }
 
-// TestWorkLoop_AnActiveQueueIsNeverLeftLiveOnDiskAfterExit states the property
-// the case above depends on, on its own: the drain is what makes a halt in the
-// reservation window survivable, so it is worth pinning where a reader will
-// find it rather than only as a side effect.
+// TestWorkLoop_ACleanExitParksTheActiveQueueAndTheNextStartResumesIt states the
+// property the case above depends on, on its own: the drain is what makes a halt
+// in the reservation window survivable, so it is worth pinning where a reader
+// will find it rather than only as a side effect.
 //
 // This is the cheaper, broader version — no reservation, just an active queue
 // and an immediate halt.
 //
-// "Never left LIVE" is the whole claim, and it is not the same as "never left
-// on disk". A clean exit parks the queue exactly where it is (QM-054). What it
-// must never leave is a queue the next start reads as ACTIVE with nobody
-// driving it: that queue owns its name against QM-027 for ever, so every later
-// submit to "main" is refused with queue_already_active and the daemon can
-// never be given work again. Parking is only the first half of avoiding that.
-// The second half is the durable one-shot restart intent, and an intent nobody
-// consumes is the same wedge as a queue nobody parked. So the exit is judged
-// here on three things, and each of them alone is enough to break the daemon:
+// The claim spans two programs and neither half is worth anything alone. A clean
+// exit parks the queue exactly where it is (QM-054) and writes a durable
+// one-shot restart intent; the next start consumes that intent and puts the
+// queue back to active (QM-055). Parking is not what makes the name safe: a
+// queue parked at paused-by-drain owns the name "main" against QM-027 exactly as
+// an active one does — internal/queue/validation.go releases the name for a
+// completed or paused-by-failure queue, and otherwise only for the zero-value
+// status a corrupt file carries — so a park nobody
+// consumes refuses every later submit with queue_already_active just as surely
+// as a queue nobody parked. The restart intent, written and then consumed, is
+// the whole difference. So the exit and the start are judged here on three
+// things, and each of them alone is enough to break the daemon:
 //
 //   - the queue is still on disk at its canonical path — losing the file loses
 //     the submitted work, silently and with no receipt;
@@ -423,7 +450,7 @@ func TestWorkLoop_AClaimTransitionIDFailureDoesNotStrandTheReservedItem(t *testi
 //     ever, waiting for a resume nobody knows to give;
 //   - the real next start consumes that intent, puts the queue back to active
 //     with the bit cleared, and still holds the work.
-func TestWorkLoop_AnActiveQueueIsNeverLeftLiveOnDiskAfterExit(t *testing.T) {
+func TestWorkLoop_ACleanExitParksTheActiveQueueAndTheNextStartResumesIt(t *testing.T) {
 	skipRealDaemonE2EInShort(t)
 	t.Parallel()
 

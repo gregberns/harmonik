@@ -15,6 +15,7 @@ import (
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/crew"
+	"github.com/gregberns/harmonik/internal/dispatch"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	runpkg "github.com/gregberns/harmonik/internal/run"
@@ -340,6 +341,7 @@ type DispatchReplayOwnership struct {
 	Runs      map[core.RunID]struct{}
 	Sessions  map[string]struct{}
 	Worktrees map[core.RunID]struct{}
+	Receipts  map[core.RunID]dispatch.SessionStartReceipt
 }
 
 // coordinatorSentinelDir returns the path to .harmonik/cognition/ for projectDir.

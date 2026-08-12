@@ -378,6 +378,86 @@ func TestStartupReconcileFailsClosedOnCorruptDispatchIntent(t *testing.T) {
 	}
 }
 
+func TestLoadDispatchReplayOwnershipJoinsExactSessionReceipt(t *testing.T) {
+	projectDir := t.TempDir()
+	intent := replayOwnershipIntent(t, dispatch.PhaseHandoffDurable)
+	store := dispatchstore.New(projectDir)
+	if err := store.Create(replayOwnershipIntent(t, dispatch.PhasePrepared)); err != nil {
+		t.Fatal(err)
+	}
+	if err := advanceReplayOwnershipIntent(t, projectDir, intent); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := dispatch.NewSessionStartReceipt(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.InstallSessionStartReceipt(receipt); err != nil {
+		t.Fatal(err)
+	}
+	ownership, err := loadDispatchReplayOwnership(projectDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := ownership.Receipts[intent.Binding.RunID]; !ok || got != receipt {
+		t.Fatalf("receipt = (%+v, %v), want exact", got, ok)
+	}
+}
+
+func TestLoadDispatchReplayOwnershipRejectsReceiptWithoutExactIntent(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		intent dispatch.Intent
+		mutate func(*dispatch.SessionStartReceipt)
+	}{
+		{name: "no intent", intent: dispatch.Intent{}},
+		{name: "early intent", intent: replayOwnershipIntent(t, dispatch.PhaseRunDurable)},
+		{name: "binding mismatch", intent: replayOwnershipIntent(t, dispatch.PhaseHandoffDurable), mutate: func(r *dispatch.SessionStartReceipt) {
+			r.Binding.BeadID = "hk-other"
+		}},
+		{name: "session mismatch", intent: replayOwnershipIntent(t, dispatch.PhaseHandoffDurable), mutate: func(r *dispatch.SessionStartReceipt) {
+			r.SessionName = "other"
+		}},
+		{name: "window mismatch", intent: replayOwnershipIntent(t, dispatch.PhaseHandoffDurable), mutate: func(r *dispatch.SessionStartReceipt) {
+			r.WindowName = "other"
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handoff := replayOwnershipIntent(t, dispatch.PhaseHandoffDurable)
+			receipt, err := dispatch.NewSessionStartReceipt(handoff)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.mutate != nil {
+				tc.mutate(&receipt)
+			}
+			intents := []dispatch.Intent(nil)
+			if tc.intent.SchemaVersion != 0 {
+				intents = append(intents, tc.intent)
+			}
+			if _, err := dispatchReplayOwnership(intents, []dispatch.SessionStartReceipt{receipt}); err == nil {
+				t.Fatal("dispatchReplayOwnership() = nil error")
+			}
+		})
+	}
+}
+
+func TestStartupReconcileFailsClosedOnCorruptSessionReceipt(t *testing.T) {
+	projectDir := t.TempDir()
+	root := filepath.Join(projectDir, ".harmonik", "dispatch-session-starts")
+	if err := os.MkdirAll(root, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "0197d100-0000-7000-8000-000000000031.json"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bs := &bootState{cfg: Config{ProjectDir: projectDir}}
+	err := bs.runStartupReconcile(t.Context(), time.Now(), "main")
+	if err == nil || !strings.Contains(err.Error(), "read dispatch replay authority") {
+		t.Fatalf("runStartupReconcile() error = %v", err)
+	}
+}
+
 func TestDispatchReplayOwnershipRejectsCrossIntentConflicts(t *testing.T) {
 	first := replayOwnershipIntent(t, dispatch.PhaseHandoffDurable)
 	second := first
@@ -396,6 +476,7 @@ func TestDispatchReplayOwnershipRejectsCrossIntentConflicts(t *testing.T) {
 		{name: "session", mutate: func(intent *dispatch.Intent) {
 			intent.Binding.ItemIndex = 1
 			intent.Binding.BeadID = "hk-other"
+			intent.Handoff.WindowName = first.Handoff.WindowName
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -406,10 +487,48 @@ func TestDispatchReplayOwnershipRejectsCrossIntentConflicts(t *testing.T) {
 				WorktreeLeaseRunID: second.Handoff.WorktreeLeaseRunID,
 			}
 			tc.mutate(&candidate)
-			if _, err := dispatchReplayOwnership([]dispatch.Intent{first, candidate}); err == nil {
+			if _, err := dispatchReplayOwnership([]dispatch.Intent{first, candidate}, nil); err == nil {
 				t.Fatal("dispatchReplayOwnership() accepted conflicting authority")
 			}
 		})
+	}
+}
+
+func TestDispatchReplayOwnershipAllowsDistinctWindowsInSharedSession(t *testing.T) {
+	first := replayOwnershipIntent(t, dispatch.PhaseHandoffDurable)
+	second := first
+	second.Binding.ItemIndex++
+	second.Binding.BeadID = "hk-other"
+	second.Binding.RunID = core.RunID(uuid.MustParse("0197d100-0000-7000-8000-000000000034"))
+	second.Binding.ClaimTransitionID = core.TransitionID(uuid.MustParse("0197d100-0000-7000-8000-000000000035"))
+	second.Run = &dispatch.RunBinding{RecordRunID: second.Binding.RunID}
+	second.Handoff = &dispatch.HandoffBinding{
+		SessionName: first.Handoff.SessionName, WindowName: "run-other", WorktreeLeaseRunID: second.Binding.RunID,
+	}
+	ownership, err := dispatchReplayOwnership([]dispatch.Intent{first, second}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ownership.Runs) != 2 || len(ownership.Sessions) != 1 {
+		t.Fatalf("ownership = %+v", ownership)
+	}
+}
+
+func TestDispatchReplayOwnershipTargetPairHasNoDelimiterAmbiguity(t *testing.T) {
+	first := replayOwnershipIntent(t, dispatch.PhaseHandoffDurable)
+	first.Handoff.SessionName = "a"
+	first.Handoff.WindowName = "b\x00c"
+	second := first
+	second.Binding.ItemIndex++
+	second.Binding.BeadID = "hk-other"
+	second.Binding.RunID = core.RunID(uuid.MustParse("0197d100-0000-7000-8000-000000000034"))
+	second.Binding.ClaimTransitionID = core.TransitionID(uuid.MustParse("0197d100-0000-7000-8000-000000000035"))
+	second.Run = &dispatch.RunBinding{RecordRunID: second.Binding.RunID}
+	second.Handoff = &dispatch.HandoffBinding{
+		SessionName: "a\x00b", WindowName: "c", WorktreeLeaseRunID: second.Binding.RunID,
+	}
+	if _, err := dispatchReplayOwnership([]dispatch.Intent{first, second}, nil); err != nil {
+		t.Fatalf("distinct target pairs collided: %v", err)
 	}
 }
 

@@ -71,21 +71,32 @@ func (bs *bootState) runStartupReconcile(ctx context.Context, daemonStartTime ti
 }
 
 func loadDispatchReplayOwnership(projectDir string) (DispatchReplayOwnership, error) {
-	intents, err := dispatchstore.New(projectDir).List()
+	store := dispatchstore.New(projectDir)
+	intents, err := store.List()
 	if err != nil {
 		return DispatchReplayOwnership{}, err
 	}
-	return dispatchReplayOwnership(intents)
+	receipts, err := store.ListSessionStartReceipts()
+	if err != nil {
+		return DispatchReplayOwnership{}, err
+	}
+	return dispatchReplayOwnership(intents, receipts)
 }
 
-func dispatchReplayOwnership(intents []dispatch.Intent) (DispatchReplayOwnership, error) {
+func dispatchReplayOwnership(
+	intents []dispatch.Intent,
+	receipts []dispatch.SessionStartReceipt,
+) (DispatchReplayOwnership, error) {
 	ownership := DispatchReplayOwnership{
 		Beads:     make(map[core.BeadID]struct{}, len(intents)),
 		Runs:      make(map[core.RunID]struct{}, len(intents)),
 		Sessions:  make(map[string]struct{}),
 		Worktrees: make(map[core.RunID]struct{}),
+		Receipts:  make(map[core.RunID]dispatch.SessionStartReceipt, len(receipts)),
 	}
 	queueItems := make(map[string]core.RunID, len(intents))
+	type dispatchTarget struct{ session, window string }
+	targets := make(map[dispatchTarget]core.RunID, len(intents))
 	for _, intent := range intents {
 		if err := intent.Validate(); err != nil {
 			return DispatchReplayOwnership{}, err
@@ -106,13 +117,52 @@ func dispatchReplayOwnership(intents []dispatch.Intent) (DispatchReplayOwnership
 		case dispatch.PhasePrepared, dispatch.PhaseClaimRefused, dispatch.PhaseClaimDurable:
 		}
 		if intent.Handoff != nil {
-			if _, exists := ownership.Sessions[intent.Handoff.SessionName]; exists {
-				return DispatchReplayOwnership{}, fmt.Errorf("more than one dispatch intent claims session %q", intent.Handoff.SessionName)
+			targetKey := dispatchTarget{session: intent.Handoff.SessionName, window: intent.Handoff.WindowName}
+			if prior, exists := targets[targetKey]; exists && prior != intent.Binding.RunID {
+				return DispatchReplayOwnership{}, fmt.Errorf(
+					"dispatch intents %s and %s claim target %s:%s",
+					prior, intent.Binding.RunID, intent.Handoff.SessionName, intent.Handoff.WindowName,
+				)
 			}
+			targets[targetKey] = intent.Binding.RunID
 			ownership.Sessions[intent.Handoff.SessionName] = struct{}{}
 		}
 	}
+	if err := joinDispatchReceipts(&ownership, intents, receipts); err != nil {
+		return DispatchReplayOwnership{}, err
+	}
 	return ownership, nil
+}
+
+func joinDispatchReceipts(
+	ownership *DispatchReplayOwnership,
+	intents []dispatch.Intent,
+	receipts []dispatch.SessionStartReceipt,
+) error {
+	for _, receipt := range receipts {
+		if err := receipt.Validate(); err != nil {
+			return err
+		}
+		intent, exists := intentForRun(intents, receipt.Binding.RunID)
+		if !exists || intent.Phase != dispatch.PhaseHandoffDurable || receipt.Binding != intent.Binding ||
+			receipt.SessionName != intent.Handoff.SessionName || receipt.WindowName != intent.Handoff.WindowName {
+			return fmt.Errorf("session receipt %s has no exact handoff intent", receipt.Binding.RunID)
+		}
+		if _, exists := ownership.Receipts[receipt.Binding.RunID]; exists {
+			return fmt.Errorf("more than one session receipt claims run %s", receipt.Binding.RunID)
+		}
+		ownership.Receipts[receipt.Binding.RunID] = receipt
+	}
+	return nil
+}
+
+func intentForRun(intents []dispatch.Intent, runID core.RunID) (dispatch.Intent, bool) {
+	for _, intent := range intents {
+		if intent.Binding.RunID == runID {
+			return intent, true
+		}
+	}
+	return dispatch.Intent{}, false
 }
 
 // buildReconcileAdapters constructs the BI bead adapter (with the BI-024a `br`

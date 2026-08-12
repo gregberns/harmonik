@@ -41,7 +41,7 @@ package daemon_test
 //       terminal event) and the daemon is cancelled, the spawn semaphore returns
 //       to baseline: SpawnSlotsInUse()==0 against a cap of N. Every run's
 //       teardown (forceTeardownSession → tmuxSubstrateSession.Kill →
-//       releaseSpawnSlot, inside killOnce.Do) must have returned its slot, so a
+//       releaseSpawnSlotFor, inside killOnce.Do) must have returned its slot, so a
 //       subsequent dispatch is NOT starved. A single leaked slot leaves
 //       SpawnSlotsInUse() > 0 here — the regression signal.
 //
@@ -115,7 +115,7 @@ import (
 // its slot) in seconds, instead of polling until the daemon ctx is cancelled.
 //
 // KillWindow is a no-op success, which (combined with the substrate session's
-// killOnce) drives releaseSpawnSlot on teardown.
+// killOnce) drives releaseSpawnSlotFor on teardown.
 //
 // All methods are safe for concurrent use under MaxConcurrent>1 wave dispatch.
 type llslFixtureAdapter struct {

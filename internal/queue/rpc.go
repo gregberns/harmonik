@@ -1623,9 +1623,17 @@ func (a *HandlerAdapter) resolveSpawnCap(n, currentCap int) (int, *RPCError) {
 	}
 	if want <= currentCap {
 		// Lowering, or no change. Nothing to refuse: giving back slots is always
-		// safe. resizableSemaphore.SetCapacity moves a field, in-flight holders
-		// keep the slots they already have, and new acquires block until the
-		// cap drains. Nothing in flight is killed.
+		// safe. Resizing moves a field, in-flight holders keep the slots they
+		// already have, and new acquires block until the cap drains. Nothing in
+		// flight is killed.
+		//
+		// The reassuring half of that is not the whole of it, and reading it as
+		// "a shrink is free" cost a P1 (hk-6yrs9). A shrink narrows the pool
+		// that a finished run's merge node draws on, and that node waits with
+		// no timeout at all. The substrate keeps one slot free through the
+		// shrink and gives the excess back as the over-cap sessions drain
+		// (SetCapacityKeepingOneFree in internal/daemon), so the merge still
+		// starts — but the guarantee lives there, not here.
 		return want, nil
 	}
 	// A raise from here on.

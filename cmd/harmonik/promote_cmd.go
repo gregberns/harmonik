@@ -23,7 +23,7 @@ package main
 // Exit codes:
 //
 //	0   success
-//	1   argument / flag / config error
+//	1   argument / flag / config error, and a --dry-run input that does not exist
 //	2   conflict during cherry-pick
 //	3   build gate failed
 //	4   push failed (all retries exhausted)
@@ -34,6 +34,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -74,7 +75,9 @@ FLAGS
   --from <branch>     PR-mode: head branch for the PR (default: "integration")
   --title <text>      PR-mode: PR title (passthrough to gh pr create)
   --body <text>       PR-mode: PR body  (passthrough to gh pr create)
-  --dry-run           Print planned actions without mutating anything
+  --dry-run           Check the inputs, then print the planned actions. Changes nothing.
+                      Push-mode exits 1 when a SHA does not resolve here or the target
+                      branch is missing on origin.
 
 PROTECTION GATE
   If the resolved target is in the project's protect_branches list, push-mode
@@ -82,7 +85,7 @@ PROTECTION GATE
 
 EXIT CODES
   0   Success
-  1   Argument / flag / config error
+  1   Argument / flag / config error, or a --dry-run input that does not exist
   2   Cherry-pick conflict
   3   Build gate failed
   4   Push failed (all retries exhausted)
@@ -98,6 +101,10 @@ EXAMPLES
 `
 
 const maxPromotePushAttempts = 3
+
+// noMatchingRemoteRefExitCode is the exit code `git ls-remote --exit-code`
+// returns when the remote has no ref that matches the pattern.
+const noMatchingRemoteRefExitCode = 2
 
 // runPromoteSubcommand dispatches `harmonik promote [flags] [sha...]`.
 // subArgs is os.Args[2:].
@@ -260,21 +267,107 @@ func parsePromoteFlags(args []string) (promoteConfig, error) {
 	return cfg, nil
 }
 
+// promoteDryRunPreflight checks the inputs that push-mode needs, and it changes
+// nothing. It answers one question: with these arguments, does the real run get
+// past its own setup?
+//
+// Every command here only reads. `git rev-parse` and `git remote` read the local
+// repository. `git ls-remote` asks origin for its branch list and writes no ref.
+// A dry run must not fetch, lock, or move a ref, so this function runs no
+// command that writes.
+//
+// It returns the FIRST problem that stops the promotion, or nil when all the
+// inputs resolve. A problem here always means an input does not exist. A
+// promotion that policy refuses is a different answer with a different message
+// and a different exit code. The protection gate in runPromoteSubcommand reports
+// that one, and it runs before this function.
+func promoteDryRunPreflight(ctx context.Context, projectDir, target string, shas []string) error {
+	// The project directory must be a git work tree. Every later step runs git
+	// in it.
+	gitDirCmd := exec.CommandContext(ctx, "git", "rev-parse", "--git-dir")
+	gitDirCmd.Dir = projectDir
+	if _, gitDirErr := gitDirCmd.Output(); gitDirErr != nil {
+		return fmt.Errorf("project %s is not a git repository", projectDir)
+	}
+
+	// Each SHA must name a commit that this repository holds. The real run
+	// cherry-picks in a temp worktree that shares this object database, so a
+	// commit that does not resolve here does not resolve there.
+	for _, sha := range shas {
+		// #nosec G204 -- sha is passed as a discrete git revision argument, never through a shell.
+		revCmd := exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--quiet", sha+"^{commit}")
+		revCmd.Dir = projectDir
+		if _, revErr := revCmd.Output(); revErr != nil {
+			return fmt.Errorf("commit %q does not resolve to a commit in %s", sha, projectDir)
+		}
+	}
+
+	// The real run fetches from origin and pushes to it.
+	remoteCmd := exec.CommandContext(ctx, "git", "remote", "get-url", "origin")
+	remoteCmd.Dir = projectDir
+	if _, remoteErr := remoteCmd.Output(); remoteErr != nil {
+		return errors.New(`this repository has no remote named "origin" to promote to`)
+	}
+
+	// The target branch must exist on origin. The real run starts the temp
+	// worktree from the tip of that branch.
+	// #nosec G204 -- the ref is a discrete git argument built from the target branch, never a shell string.
+	lsCmd := exec.CommandContext(ctx, "git", "ls-remote", "--exit-code", "--heads", "origin", "refs/heads/"+target)
+	lsCmd.Dir = projectDir
+	if lsOut, lsErr := lsCmd.CombinedOutput(); lsErr != nil {
+		var exitErr *exec.ExitError
+		// git ls-remote --exit-code answers "no such branch" with exit code 2.
+		// Any other failure means the command could not ask origin at all.
+		if errors.As(lsErr, &exitErr) && exitErr.ExitCode() == noMatchingRemoteRefExitCode {
+			return fmt.Errorf("branch %q does not exist on origin", target)
+		}
+		return fmt.Errorf("cannot read the branch list on origin: %w\n%s", lsErr, strings.TrimSpace(string(lsOut)))
+	}
+
+	return nil
+}
+
+// runPromotePushDryRun checks the inputs of a push-mode promotion and then
+// prints the plan. It returns 1 and prints one reason when an input does not
+// exist, and 0 with the plan when the promotion could start.
+//
+// The check comes first on purpose. A plan that prints for inputs that do not
+// exist tells the operator nothing, which was the defect this function fixes
+// (hk-promote-dryrun-validates-nothing-975nt).
+func runPromotePushDryRun(ctx context.Context, projectDir, target string, cfg promoteConfig) int {
+	if preflightErr := promoteDryRunPreflight(ctx, projectDir, target, cfg.shas); preflightErr != nil {
+		fmt.Fprintf(os.Stderr, "harmonik promote (dry-run): %v\n", preflightErr)
+		return 1
+	}
+
+	fmt.Printf("harmonik promote (dry-run): checked %d commit(s) here and branch %q on origin\n",
+		len(cfg.shas), target)
+	fmt.Printf("harmonik promote (dry-run): would cherry-pick %s onto %q in a temp worktree\n",
+		strings.Join(cfg.shas, " "), target)
+	if cfg.beadID != "" {
+		fmt.Printf("harmonik promote (dry-run): would stamp Harmonik-Bead-ID: %s trailer on cherry-picked commit(s)\n", cfg.beadID)
+	} else {
+		fmt.Printf("harmonik promote (dry-run): would auto-detect bead ID from commit subject (hk-xxx) and stamp Harmonik-Bead-ID trailer if found\n")
+	}
+	// The real build gate runs in a temp worktree taken from the tip of
+	// origin/<target>, and it only runs when that tree holds a go.mod. The dry
+	// run makes no worktree, so it reads the project tree. Both trees come from
+	// one repository, so the project tree is a good guide to the gate that runs.
+	if _, goModErr := os.Stat(filepath.Join(projectDir, "go.mod")); goModErr == nil {
+		fmt.Printf("harmonik promote (dry-run): would run: go build ./... && go vet ./...\n")
+	} else {
+		fmt.Printf("harmonik promote (dry-run): would skip the build gate because this project has no go.mod\n")
+	}
+	fmt.Printf("harmonik promote (dry-run): would push: git push origin HEAD:%s (with up to %d non-ff retries)\n",
+		target, maxPromotePushAttempts)
+	return 0
+}
+
 // runPromotePush implements push-mode: cherry-pick SHA(s) into a temp worktree
 // at origin/<target>, run build gate, race-safe push (up to 3 retries on non-ff).
 func runPromotePush(ctx context.Context, projectDir, target string, cfg promoteConfig) int {
 	if cfg.dryRun {
-		fmt.Printf("harmonik promote (dry-run): would cherry-pick %s onto %q in a temp worktree\n",
-			strings.Join(cfg.shas, " "), target)
-		if cfg.beadID != "" {
-			fmt.Printf("harmonik promote (dry-run): would stamp Harmonik-Bead-ID: %s trailer on cherry-picked commit(s)\n", cfg.beadID)
-		} else {
-			fmt.Printf("harmonik promote (dry-run): would auto-detect bead ID from commit subject (hk-xxx) and stamp Harmonik-Bead-ID trailer if found\n")
-		}
-		fmt.Printf("harmonik promote (dry-run): would run: go build ./... && go vet ./...\n")
-		fmt.Printf("harmonik promote (dry-run): would push: git push origin HEAD:%s (with up to %d non-ff retries)\n",
-			target, maxPromotePushAttempts)
-		return 0
+		return runPromotePushDryRun(ctx, projectDir, target, cfg)
 	}
 
 	// Step 1: fetch origin/<target> to get the latest remote tip.

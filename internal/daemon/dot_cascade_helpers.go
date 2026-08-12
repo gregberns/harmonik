@@ -411,7 +411,11 @@ func readAutoStatusMarkerVia(ctx context.Context, runner tmux.CommandRunner, wtP
 //   - exit 0              → SUCCESS (kind=default, no payload)
 //   - exit 1..255         → FAIL + failure_class=deterministic
 //   - timeout kill        → FAIL + failure_class=transient
-//   - signal-kill / ctx   → FAIL + failure_class=canceled
+//   - parent ctx cancel   → FAIL + failure_class=canceled
+//   - outside signal kill → FAIL + failure_class=canceled (the gate reached no
+//     verdict, so the run stops for triage and is never reported as a test
+//     failure — hk-killed-gate-read-as-red-0hi5z)
+//   - gate could not RUN  → FAIL + failure_class=structural (hk-2f3v4)
 //
 // Default axis_tags for shell: io-determinism=non-deterministic, replay-safety=unsafe.
 // No RETRY or PARTIAL outcomes are produced; the author routes on FAIL sub-classes
@@ -572,11 +576,34 @@ func dispatchDotToolNode(ctx context.Context, bus handlercontract.EventEmitter, 
 
 	outputTail := tailString(string(combined), dotGateOutputTailBytes)
 
+	// Every reason a gate FAILs is decided by classifyDotToolNodeFailure, which
+	// returns the class and the one-line description this path logs for it. An
+	// empty description is a class that is logged nowhere.
+	fc, logDesc := classifyDotToolNodeFailure(err, execCtx.Err(), ctx.Err(), combined, node.ID, timeoutSecs)
+	if logDesc != "" {
+		fmt.Fprintf(os.Stderr, "daemon: %s; gate log: %s\n", logDesc, gateLogPath)
+	}
+	return core.Outcome{Status: core.OutcomeStatusFail, FailureClass: &fc, Notes: outputTail}, nil
+}
+
+// classifyDotToolNodeFailure maps a commit-gate command that did not exit 0 to
+// its failure class, and to the description dispatchDotToolNode logs for it. The
+// description is the part of the log line between "daemon: " and the
+// "; gate log: <path>" suffix the caller appends; "" means log nothing.
+//
+// execCtxErr is the per-node timeout context's error and runCtxErr is the parent
+// run context's error, both read after the command returned. combined is the
+// gate's combined stdout+stderr.
+//
+// THE ORDER OF THE CHECKS BELOW IS LOAD-BEARING. The two kills the daemon issues
+// itself — the node's own timeout, and a run teardown / re-dispatch — must be
+// caught before the outside-signal branch, because that branch means "something
+// other than the daemon signalled the gate" and is only true once these two are
+// ruled out.
+func classifyDotToolNodeFailure(err, execCtxErr, runCtxErr error, combined []byte, nodeID string, timeoutSecs int) (class core.FailureClass, logDesc string) {
 	// Timeout-killed: parent deadline exceeded first.
-	if execCtx.Err() == context.DeadlineExceeded {
-		fc := core.FailureClassTransient
-		fmt.Fprintf(os.Stderr, "daemon: dot tool node %q timed out after %ds; gate log: %s\n", node.ID, timeoutSecs, gateLogPath)
-		return core.Outcome{Status: core.OutcomeStatusFail, FailureClass: &fc, Notes: outputTail}, nil
+	if errors.Is(execCtxErr, context.DeadlineExceeded) {
+		return core.FailureClassTransient, fmt.Sprintf("dot tool node %q timed out after %ds", nodeID, timeoutSecs)
 	}
 
 	// Parent context cancelled (operator stop / SIGKILL / ctx-cancel).
@@ -601,9 +628,40 @@ func dispatchDotToolNode(ctx context.Context, bus handlercontract.EventEmitter, 
 	//   kill -TERM -<pgid>` on ctx-cancel. Threading this needs the same
 	//   runner/worker-session plumbing dispatchDotGateNode's cognition path is
 	//   already missing (see TODO(hk-538l) in dot_gate.go); do it once for both.
-	if ctx.Err() != nil {
-		fc := core.FailureClassCanceled
-		return core.Outcome{Status: core.OutcomeStatusFail, FailureClass: &fc, Notes: outputTail}, nil
+	if runCtxErr != nil {
+		return core.FailureClassCanceled, ""
+	}
+
+	// Killed by a signal from OUTSIDE the daemon's own deadline. The two branches
+	// above cover every kill the daemon itself issues — the node's own timeout and
+	// a run teardown / re-dispatch — so reaching here means something else
+	// signalled the gate mid-flight.
+	//
+	// A killed gate has said NOTHING about the code. It never reached a verdict,
+	// so reading it as a deterministic test failure invents one: the run drives the
+	// commit_gate→implement back-edge and the implementer is resumed to fix a fault
+	// nobody observed, on a tree that may be perfectly healthy. That is a whole
+	// extra agent pass spent for nothing, and whatever it changes is changed for no
+	// reason.
+	//
+	// canceled is the class the contract already names for a gate that a signal
+	// stopped (handler-contract.md §4.1 HC-063 exit-state table, and the
+	// shell-handler failure_class note in §III.1). standard-bead.dot conditions its
+	// commit_gate out-edges on SUCCESS, deterministic and transient only, so
+	// canceled matches none of them and takes the unconditional fallback to
+	// close-needs-attention: the run STOPS and says why, which is what a gate that
+	// reached no verdict has earned. Retrying on the transient self-loop is the
+	// wrong answer here — nobody has identified what killed the gate, so a retry
+	// runs straight back into the same kill and spends another full `make full`
+	// before stopping anyway. No path here approves anything.
+	// (hk-killed-gate-read-as-red-0hi5z)
+	//
+	// Measured live 2026-08-11: `make full` ran ~19 minutes of a 3600s budget,
+	// passed build, lint and the subprocess tier, and was SIGTERM'd in the scenario
+	// tier ("make: *** [full] Terminated: 15"). It reported "the build/test gate
+	// did not pass. Fix the failure and re-commit".
+	if sigDesc, killed := gateKilledBySignal(err, combined); killed {
+		return core.FailureClassCanceled, fmt.Sprintf("dot tool node %q was KILLED mid-flight (%s) — it reached no verdict, so this is NOT a test failure; canceled, routed to close-needs-attention for triage", nodeID, sigDesc)
 	}
 
 	// Infra-signature check: go build-cache TOCTOU failures emit a distinctive
@@ -612,9 +670,7 @@ func dispatchDotToolNode(ctx context.Context, bus handlercontract.EventEmitter, 
 	// same tree succeeds — so classify as transient (self-loop) rather than
 	// deterministic (fix-loop back to implement). (hk-7xgu4 / hk-1veco FIX2)
 	if isGateBuildCacheInfraError(combined) {
-		fc := core.FailureClassTransient
-		fmt.Fprintf(os.Stderr, "daemon: dot tool node %q failed (%v) with build-cache infra signature (transient); gate log: %s\n", node.ID, err, gateLogPath)
-		return core.Outcome{Status: core.OutcomeStatusFail, FailureClass: &fc, Notes: outputTail}, nil
+		return core.FailureClassTransient, fmt.Sprintf("dot tool node %q failed (%v) with build-cache infra signature (transient)", nodeID, err)
 	}
 
 	// The gate could not RUN — a command it names does not exist. No amount of
@@ -630,16 +686,12 @@ func dispatchDotToolNode(ctx context.Context, bus handlercontract.EventEmitter, 
 	// passes and about 60 minutes of real agent time on a fault no pass could
 	// reach. It reported only "incomplete".
 	if isGateCannotRunError(combined) {
-		fc := core.FailureClassStructural
-		fmt.Fprintf(os.Stderr, "daemon: dot tool node %q could not RUN — a command it names does not exist (%v); structural, NOT routed back to the implementer; gate log: %s\n", node.ID, err, gateLogPath)
-		return core.Outcome{Status: core.OutcomeStatusFail, FailureClass: &fc, Notes: outputTail}, nil
+		return core.FailureClassStructural, fmt.Sprintf("dot tool node %q could not RUN — a command it names does not exist (%v); structural, NOT routed back to the implementer", nodeID, err)
 	}
 
 	// Non-zero exit code (1..255) → deterministic failure. This is the gate-FAIL
 	// case that drives the commit_gate→implement back-edge; surface the diagnostic.
-	fc := core.FailureClassDeterministic
-	fmt.Fprintf(os.Stderr, "daemon: dot tool node %q failed (%v); gate log: %s\n", node.ID, err, gateLogPath)
-	return core.Outcome{Status: core.OutcomeStatusFail, FailureClass: &fc, Notes: outputTail}, nil
+	return core.FailureClassDeterministic, fmt.Sprintf("dot tool node %q failed (%v)", nodeID, err)
 }
 
 // dotGateOutputTailBytes bounds how much of a failed tool node's combined output
@@ -716,6 +768,90 @@ func isGateBuildCacheInfraError(output []byte) bool {
 func isGateCannotRunError(output []byte) bool {
 	s := string(output)
 	return strings.Contains(s, "] Error 127") || strings.Contains(s, ": command not found")
+}
+
+// gateBackEdgeMessage builds the note delivered to an implementer that a failed
+// commit gate has routed back to. It must never assert a failure the gate did not
+// observe. (hk-killed-gate-read-as-red-0hi5z)
+//
+// Only a DETERMINISTIC gate FAIL means the gate ran and found a fault. Every other
+// class means the gate stopped before it reached a verdict — it was killed, the
+// run was torn down, or the toolchain glitched — and the tree may be perfectly
+// healthy. The old message said "the build/test gate did not pass, fix the failure
+// and re-commit" in all of those cases. Measured live 2026-08-11, an implementer
+// received exactly that after a 19-minute gate was SIGTERM'd in the scenario tier
+// with nothing failing, and was sent to fix a fault that did not exist.
+//
+// The classifier now routes a killed gate to canceled, which the graph's
+// unconditional fallback carries to close-needs-attention, so this branch should
+// no longer see one. This is the second line: whatever class arrives here, the
+// wording matches it, and a future class needs no second fix.
+func gateBackEdgeMessage(class core.FailureClass, notes string) string {
+	if class == core.FailureClassDeterministic {
+		return "The commit gate failed — your commit was recorded but the build/test gate did not pass. " +
+			"Fix the failure and re-commit:\n\n" + notes
+	}
+	return "The commit gate did not finish — your commit was recorded, but the gate stopped before it " +
+		"reached a verdict, so NOTHING is known to be wrong with your change. Do not invent a fix and do " +
+		"not rewrite working code. Re-read .harmonik/agent-task.md, confirm your work is complete and " +
+		"committed, and change something only if it is genuinely missing. The last output the gate " +
+		"produced follows, for context only — it is a partial log, not a failure report:\n\n" + notes
+}
+
+// gateKilledBySignal reports whether the gate was killed by a signal rather than
+// exiting on its own, and returns a short description for the log. A killed gate
+// produced NO verdict — it says nothing about the code — so it must never be
+// classified deterministic, which is the class that sends the implementer back to
+// fix a failure. It is classified canceled instead, and the graph stops the run
+// for triage. (hk-killed-gate-read-as-red-0hi5z)
+//
+// Two independent detectors, because neither one covers both cases:
+//
+//   - Exit state. The LOCAL gate is a direct child of the daemon, so a signal that
+//     reaches it lands in syscall.WaitStatus and this reading is exact. It is the
+//     detector that catches the live 2026-08-11 case, where the process group was
+//     signalled and make re-raised the signal to itself.
+//   - Output signature. Two cases leave the exit state clean. A signal that reaches
+//     only a DESCENDANT lets the top-level make report its recipe's death and then
+//     exit 2 on its own. And on a REMOTE run the exit state belongs to the local
+//     `ssh` client, not to the gate on the worker. In both, make's recipe-failure
+//     line is the only evidence, and it is the shape the live run produced:
+//     `make[1]: *** [test-scenario] Terminated: 15`.
+//
+// The match is anchored on make's `*** [` recipe-failure prefix on the SAME line
+// as the signal word, so ordinary test output that happens to contain the word
+// "Terminated" does not trip it. A false positive costs a run that stops at
+// close-needs-attention instead of looping back to the implementer; it can never
+// approve anything. NOT covered by the output detector: a shell that reports its
+// signalled child as exit 128+N without naming the signal — make then prints
+// `Error 143` and only the exit-state detector can see through it, which it does
+// on every local run.
+func gateKilledBySignal(err error, output []byte) (string, bool) {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ProcessState != nil {
+		if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+			return "killed by signal " + ws.Signal().String(), true
+		}
+	}
+	if line, ok := gateSignalKillOutputLine(output); ok {
+		return "gate output reports a signal kill: " + line, true
+	}
+	return "", false
+}
+
+// gateSignalKillOutputLine finds make's recipe-failure line for a command that
+// died from a signal, and returns it for the log.
+func gateSignalKillOutputLine(output []byte) (string, bool) {
+	for _, line := range strings.Split(string(output), "\n") {
+		if !strings.Contains(line, "*** [") {
+			continue
+		}
+		if strings.Contains(line, "Terminated") || strings.Contains(line, "Killed") ||
+			strings.Contains(line, "Interrupt") || strings.Contains(line, "Hangup") {
+			return strings.TrimSpace(line), true
+		}
+	}
+	return "", false
 }
 
 // nodeIsReviewer reports whether an agentic node is a reviewer-class node. The

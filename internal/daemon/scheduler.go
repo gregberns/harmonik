@@ -2296,6 +2296,28 @@ func markQueueItemFailureReason(_ context.Context, queueStore *queuewiring.Queue
 // evaluateGroupAdvance — EM-015f group-advance gate (hk-45ude)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// propagateFailedDependents fails the deferred dependents of the bead that just
+// failed, in the group that holds it. It reports false when propagation itself
+// failed, in which case the caller must abandon this completion rather than
+// advance a group whose dependents are in an unknown state.
+//
+// This is split out of evaluateGroupAdvanceWithOutcome to hold that function
+// under the cognitive-complexity ceiling, the same way adoptLiveRunSession was
+// split rather than given a lint directive.
+func propagateFailedDependents(ctx context.Context, port reapSeamPort, completionQueue *queue.Queue, queueID string, groupIndex int, itemIdx int) bool {
+	for i := range completionQueue.Groups {
+		if completionQueue.Groups[i].GroupIndex != groupIndex || itemIdx >= len(completionQueue.Groups[i].Items) {
+			continue
+		}
+		failedBead := completionQueue.Groups[i].Items[itemIdx].BeadID
+		if _, propagateErr := queue.FailDeferredDependents(ctx, &completionQueue.Groups[i], failedBead, port.queueLedger); propagateErr != nil {
+			fmt.Fprintf(os.Stderr, "daemon: workloop: propagate failed dependency queueID=%s groupIndex=%d: %v\n", queueID, groupIndex, propagateErr)
+			return false
+		}
+	}
+	return true
+}
+
 // evaluateGroupAdvanceWithOutcome is called from the per-run goroutine after a run that
 // the run's success outcome from the goroutine wrapper in runWorkLoop.
 //
@@ -2336,16 +2358,9 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, port reapSeamPort, que
 	}
 	completionQueue := queue.CloneQueue(snapshot.Queue)
 	if !success && port.queueLedger != nil {
-		for i := range completionQueue.Groups {
-			if completionQueue.Groups[i].GroupIndex != groupIndex || itemIdx >= len(completionQueue.Groups[i].Items) {
-				continue
-			}
-			failedBead := completionQueue.Groups[i].Items[itemIdx].BeadID
-			if _, propagateErr := queue.FailDeferredDependents(ctx, &completionQueue.Groups[i], failedBead, port.queueLedger); propagateErr != nil {
-				fmt.Fprintf(os.Stderr, "daemon: workloop: propagate failed dependency queueID=%s groupIndex=%d: %v\n", queueID, groupIndex, propagateErr)
-				eagerRefillEval(ctx, port)
-				return
-			}
+		if !propagateFailedDependents(ctx, port, completionQueue, queueID, groupIndex, itemIdx) {
+			eagerRefillEval(ctx, port)
+			return
 		}
 	}
 	decision, err := queue.DecideGroupCompletion(*completionQueue, input) //nolint:contextcheck // The value-only decision checks cancellation inside queue.AdvanceGroup.

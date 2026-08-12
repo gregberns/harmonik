@@ -11,7 +11,7 @@ remain the behavior evidence for each job.
 |---|---|---|
 | Boot gauge check | `gaugeUnavailable`, `maybeEmitNoGauge` | `TestWatcher_EmitsNoGaugeWhenFileAbsent` |
 | Warn text reload | `seedConfigMtime`, `maybeReloadWarnMessages` | `TestMaybeReloadWarnMessages_MtimeGatedAndScoped_223zs` |
-| Poll and cancellation | `Clock.NewTicker` and `ctx.Done` | `driveWatcherFakeClock` |
+| Poll and cancellation | `Clock.NewTicker` and `ctx.Done` | `driveWatcherFakeClockFrom` |
 | Cycle suppression | `Cycler.InCycle` | New structural characterization test |
 | Decision reaping | `maybeReapOrphanedDecisions` | `TestScenario_DecisionsOrphanReap_S7` |
 | Dashboard nag | `maybeNagDashboardStale` | `TestMaybeNagDashboardStale_ApproachingNags` |

@@ -6,7 +6,8 @@
 > `AGENTS.md` — that is the file `br agents` reads and writes, so the guard only works there.
 
 This project uses [beads_rust](https://github.com/Dicklesworthstone/beads_rust) (`br`) for issue
-tracking and [kerf](components/internal/kerf.md) for prioritization and triage.
+tracking and [kerf](components/internal/kerf.md) for spec-first planning and drift triage. Priority
+does not come from kerf — see §"Priority" below.
 
 ## The ledger is machine-local
 
@@ -25,31 +26,51 @@ Two consequences to plan around:
   DB and JSONL consistent), but do not expect it to stage anything, and do not go hunting for the
   "missing" beads diff before a commit.
 
-## Prioritization: kerf, not bv
+## Priority: stated intent first, then the ledger
 
-Work the operator's and admiral's named initiatives first; `kerf next` ranks everything below that
-line. It returns a ranked feed of beads with work-context, cleanup tasks, and warnings — the
-priority source for the *unclaimed backlog*, never an override of a named initiative. `kerf triage`
-handles drift detection.
+Work the named initiatives of the operator and the admiral first. They live in the active plan's
+order, in the dated directives in `.harmonik/context/captain-lanes.md`, and in the direction-log
+RETURN-PATH. Nothing in the ledger outranks them.
+
+Below that line, order the unclaimed backlog from the ledger itself:
 
 ```bash
-kerf next                        # Ranked feed: top item is what to do next
-kerf next --format=json          # Machine-readable output
-kerf next --only=bead            # Only bead items (skip cleanup/warnings)
+br ready --sort priority --limit 0            # The whole unclaimed backlog, highest priority first
+br ready --sort priority --parent <epic_id>   # The same, scoped to one lane
+br ready --sort oldest                        # Surface the work that is starving
+```
+
+Pass `--limit 0`. `br ready` returns 20 rows by default and sorts by `hybrid`. A short default
+listing is not evidence of a short backlog, and reading it as one has hidden real work.
+
+`kerf` plans work. It does not rank work. Use `kerf map` to see which work owns a bead and what
+context that bead carries. Do not take an order from `kerf next`. Its score comes from graph
+structure and never reads the `br` priority field, so a P0 bead and a P3 bead come back the same.
+It also reports empty for a work that has no `bead_filter`. Ranking what matters is judgment, and a
+graph metric cannot do it for you.
+
+`kerf triage` still earns its place. It reports drift — untriaged beads, multi-matched beads, and
+beads that moved out from under a work:
+
+```bash
 kerf triage                      # Drift report: untriaged, multi-matched, external drift
-kerf triage --ack                # Advance baseline after acting on the report
+kerf triage --ack                # Advance the baseline after you act on the report
 kerf map                         # Works grouped by area
 ```
 
-`bv` (beads_viewer) is installed but **not used for prioritization** — kerf owns that. `bv` is only
-useful for graph-metric analysis (`--robot-insights` for PageRank/betweenness) or dependency-graph
-export (`--robot-graph`), which kerf does not cover. **Use ONLY `--robot-*` flags with `bv`. Bare
-`bv` launches an interactive TUI that blocks your session.**
+`bv` (beads_viewer) is installed, and it is not a priority source either. It is useful for
+graph-metric analysis (`--robot-insights` for PageRank and betweenness) and for dependency-graph
+export (`--robot-graph`), which kerf does not cover. **Use only the `--robot-*` flags with `bv`. A
+bare `bv` launches an interactive TUI that takes over the terminal and blocks your session until
+someone kills it.**
 
 ## br command surface
 
 ```bash
-br ready              # Show issues ready to work (no blockers)
+br ready              # Show issues ready to work (no blockers) — 20 rows, hybrid sort
+br ready --sort priority --limit 0   # The whole ready backlog, highest priority first
+br ready --sort oldest               # Ready work, oldest first — finds starving beads
+br ready --parent <epic_id>          # Ready work inside one epic
 br list --status=open # All open issues
 br show <id>          # Full issue details with dependencies
 br create --title="..." --type=task --priority=2
@@ -66,8 +87,11 @@ br sync --flush-only  # Export DB to JSONL
 - **Write discipline:** agents MUST NOT issue terminal-transition writes — the daemon owns those.
   See the `beads-cli` skill and `beads-integration.md` §4.4.
 
-Loop: `kerf next` to find the work → `br update <id> --status=in_progress` to claim → implement →
-`br close <id>` → `br sync --flush-only` at session end.
+Loop for hand-run work: `br ready --sort priority --limit 0` to find the work →
+`br update <id> --status=in_progress` to claim → implement → `br close <id>` →
+`br sync --flush-only` at session end. This loop is for a lane whose mission file grants it the
+claim and the close in writing. Everywhere else the daemon owns both, and you must not race it by
+reading live state to decide.
 
 ## Session protocol
 
@@ -143,7 +167,7 @@ Parse: `file:line:col` → location | 💡 → how to fix | Exit 0/1 → pass/fa
 5. Re-run `ubs <file>` → exit 0
 6. Commit
 
-**Speed Critical:** Scope to changed files. `ubs src/file.ts` (< 1s) vs `ubs .` (30s). Never full scan for small edits.
+**Speed:** Scope to the changed files. `ubs src/file.ts` takes under a second and `ubs .` takes about 30 seconds, so a whole-project scan is a checkpoint you run on purpose, not the move for each edit.
 
 **Bug Severity:**
 - **Critical** (always fix): Null safety, XSS/injection, async/await, memory leaks

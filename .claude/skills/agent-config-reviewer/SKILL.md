@@ -75,7 +75,15 @@ The invoker provides (all in the invocation prompt):
 8. **`.golangci.yml`** — the enforced lint config, plus `agent-reviewer/SKILL.md §2`
    (the idiom list that claims to describe it). Required for check 5.
 
-You do not call tools yourself; the invoker provides all artifacts in the prompt.
+**What the invoker pastes, and what you run yourself.** The artifacts above arrive in the
+prompt so you do not have to hunt for them, and you review the pasted copy rather than a
+version you went and fetched. Two of the five checks cannot be answered from a paste, and
+for those you DO run commands. Check 3 re-derives the live skill set with
+`ls .claude/skills/*/SKILL.md`, because a stale table is exactly what it is hunting.
+Check 5 runs the pinned `.tools/golangci-lint` over a throwaway fixture, because a claim
+about what the linter does is settled only by the linter. Read-only commands and a
+throwaway fixture are the whole of your tool use — you edit no file in the repo. Your
+output is a proposed diff, and the main agent decides whether to apply it.
 
 ---
 
@@ -106,7 +114,20 @@ Compare the current `CLAUDE.md` / `AGENTS.md` content against the normative
   was deleted (`5b5193110`) after being superseded by `HANDOFF.md` (`b82b2affb`).
 - Are the hard don'ts present?
 - Are pointers current — do the named docs still exist at the cited paths?
-- Is the file under 120 lines (per §Repo-root AGENTS.md)?
+- **Is `AGENTS.md` still a router?** `agent-configuration.md §Repo-root AGENTS.md` sets a
+  length target of about 120 lines, and the file currently sits a little over it. Do NOT
+  emit a finding on the line count by itself — a standing flag against the source of truth
+  teaches every reader to skip this check, which is worse than not running it.
+
+  Flag what the file has ABSORBED. Look for: a rule stated here in full that a skill or a
+  foundation doc already owns; a runbook or procedure inlined instead of linked;
+  operational or session state, which belongs in `.harmonik/context/` or `HANDOFF.md` and
+  never here; a pointer kept after the thing it pointed at moved. When you find one, the
+  proposed diff replaces the absorbed passage with a pointer to its owner, and the line
+  count comes down as a consequence rather than as the goal.
+
+  When the file is over the target and every line in it is a router line that no other
+  file owns, that is not drift. Say so and move on.
 - Is `CLAUDE.md` a symlink to `AGENTS.md` (not a regular file)?
 - For per-directory `AGENTS.md` files: does each have a sibling `CLAUDE.md` symlink?
 
@@ -251,7 +272,7 @@ tags with `x-` to distinguish them from v1 vocabulary.
 | `skill-missing` | A normatively required skill is absent from `.claude/skills/`. |
 | `skill-undocumented` | A skill exists in `.claude/skills/` but is not in the normative table. |
 | `agent-reviewer-stale` | `agent-reviewer/SKILL.md` check list does not match current `build-practices.md`, **or its §2 idiom list contradicts `.golangci.yml`**. |
-| `over-length-claude-md` | `CLAUDE.md` / `AGENTS.md` exceeds 120-line limit. |
+| `over-length-claude-md` | `AGENTS.md` has absorbed content a skill or foundation doc owns, or has inlined a procedure or session state, and sits over the ~120-line router target as a result. Never for line count alone. |
 
 ---
 

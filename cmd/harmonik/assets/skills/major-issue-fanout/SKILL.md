@@ -115,6 +115,14 @@ Pick angles from this taxonomy (don't repeat angles across agents):
 
 **Spawn all in parallel, `run_in_background=True`.**
 
+**A fan-out is a sub-agent phase — quiesce the queue before you start one.** Ten to
+fifteen parallel agents is far above the ≤3-concurrent ceiling the **harmonik-dispatch**
+skill sets for a daemon phase, and that is fine, because the two are alternating modes and
+not simultaneous ones. Stop submitting beads and let the in-flight work drain first. A
+fan-out layered on a live dispatching queue puts the daemon's claude processes behind your
+agents in the API rate-limiter — the 56-minute silent stall documented in
+harmonik-dispatch §API rate-limit concurrency rule.
+
 ---
 
 ### run_id lifecycle check (mandatory precondition for `context_cancel`)
@@ -142,19 +150,42 @@ After agents report, draft ONE candidate root cause. Then spawn ≥2 adversarial
 Your job: REFUTE the synthesis below if you can.
 Look for code evidence that contradicts it, events that don't fit,
 or a simpler explanation for the same symptoms.
-Default to REFUTED if uncertain — you have veto power.
+You have veto power. Never CONFIRM to be agreeable.
 
 Synthesis: [paste candidate root cause + evidence]
 
-Report: CONFIRMED or REFUTED, with concrete file:line or event evidence.
+Report exactly one of three verdicts, with concrete evidence — a file plus the
+symbol you read, a structured event, or a reproducing case:
+
+  REFUTED  — you found evidence that contradicts the synthesis. Name it.
+  CONFIRMED — you found evidence that supports it and none that contradicts it.
+  UNCERTAIN — you could not settle it either way. Say what specific evidence
+              WOULD settle it, and where you would look for that evidence.
+
+Reasoning alone is not evidence for any of the three.
 ```
 
-If either verifier REFUTES → discard synthesis, return to step 3 with the refutation as a new angle.
+**Three answers, not two.** A verifier told to "default to REFUTED when uncertain" can
+never contribute a CONFIRM, so the convergence gate below becomes unreachable and the
+fan-out loops forever on a synthesis that may well be right. UNCERTAIN is the honest third
+answer, and it is productive: the missing evidence it names becomes the next angle.
+
+Route each verdict:
+
+- **Any REFUTED** → discard the synthesis. Return to step 3 with the refutation as a new
+  angle.
+- **All UNCERTAIN, or not enough CONFIRMs to clear the gate** → the synthesis is not wrong,
+  it is unproven. Return to step 3 with each verifier's named missing evidence as a new
+  angle, and re-verify. Do not re-run the same verifiers on the same synthesis with no new
+  evidence.
+- **≥2 CONFIRMED and no REFUTED** → step 5.
 
 ### Step 5 — Convergence gate
 
-Exit when: ≥2 verifiers CONFIRM the same root cause AND you have a concrete artifact
-(file:line, structured event, or reproducing test). Reasoning alone is not sufficient.
+Exit when: ≥2 verifiers CONFIRM the same root cause, no verifier REFUTES it, AND you hold a
+concrete artifact (a file plus the symbol, a structured event, or a reproducing test).
+Reasoning alone is not sufficient. An UNCERTAIN is not a CONFIRM and does not count toward
+the two.
 
 ### Step 6 — Fix + validate correctly
 

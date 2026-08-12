@@ -74,6 +74,14 @@ const workloopPollInterval = 2 * time.Second
 // Bead ref: hk-vlkh4.
 const shutdownDrainTimeout = 10 * time.Second
 
+// groupCompletionDrainTimeout bounds the completion write a run makes when it
+// succeeds after the daemon context is already cancelled. It is deliberately
+// smaller than shutdownDrainTimeout: exitClean stops waiting for this goroutine
+// at that ceiling, every concurrent run spends from the same window, and one
+// slow disk must not starve its siblings of the write this bound exists to
+// allow.
+const groupCompletionDrainTimeout = 3 * time.Second
+
 // claimSkipInProgressCooldown is the minimum interval between ShowBead calls
 // for a bead that is in_progress with an active run. After the first
 // bead_claim_skipped detection, subsequent selection attempts for the same
@@ -202,7 +210,12 @@ const maxItemAttempts = queue.MaxItemAttempts
 // bead is re-appended to a group, and beadID alone would conflate two entries
 // for the same bead in one stream group (the hk-wifef re-append case).
 //
-// Bead ref: hk-pina9.
+// The cross-queue collision counter (hk-nsion) keys on the same type. It is a
+// different budget for a different failure, but it identifies an item by exactly
+// the same four facts and for exactly the reasons above, so a second identical
+// key type would be a copy that can drift.
+//
+// Bead ref: hk-pina9, hk-nsion.
 type queuePreClaimAttemptKey struct {
 	queueID    string
 	groupIndex int
@@ -610,6 +623,21 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 	//
 	// Bead ref: hk-pina9.
 	queuePreClaimShowAttempts := make(map[queuePreClaimAttemptKey]int)
+
+	// crossQueueCollisions tracks consecutive cross-queue collisions per QUEUE
+	// ITEM: the times a sibling queue was found holding this item's bead. It is
+	// the bound that keeps a refusal from becoming a permanent one, and it is the
+	// dedup that keeps the collision report to one event per collision.
+	//
+	// Same shape and same reasons as queuePreClaimShowAttempts above: the same
+	// per-item key, in memory only, cleared as soon as the item makes progress,
+	// and forgiven by a daemon restart. It is a SEPARATE budget from the item's
+	// persisted Attempts, which the hk-6pspu dispatch-stamp bound owns — a queue
+	// item that never reached the stamp has spent no dispatch attempt, and
+	// sharing the budget would fail an item for a race it never took part in.
+	//
+	// Bead ref: hk-nsion.
+	crossQueueCollisions := make(map[queuePreClaimAttemptKey]crossQueueCollisionState)
 
 	// dispatchCtx is the context checked by the outer poll loop to decide
 	// whether to halt dispatch. It is separate from ctx (the main daemon context)
@@ -1190,13 +1218,35 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 						if raw, mErr := json.Marshal(skipPayload); mErr == nil {
 							_ = basePorts.Emitter.Emit(ctx, core.EventTypeBeadClaimSkipped, raw) //nolint:errcheck // pre-existing: Seam A moved this code out of workloop.go unchanged
 						}
-						// BI-013c terminal path: closed/tombstone beads are done — fail the
-						// queue item directly via evaluateGroupAdvanceWithOutcome so the group
-						// can reach allItemsTerminal. Non-terminal statuses (in_progress, draft,
-						// deferred, pinned) remain deferred-for-ledger-dep to be re-evaluated
-						// on the next poll cycle (hk-3kq05).
+						// BI-013c terminal path: the bead is closed or tombstoned, so it is
+						// DONE. The item is advanced to COMPLETED, which takes its group to
+						// allItemsTerminal without parking the queue. Non-terminal statuses
+						// (in_progress, draft, deferred, pinned) remain deferred-for-ledger-dep
+						// to be re-evaluated on the next poll cycle (hk-3kq05).
+						//
+						// hk-rern1: this used to pass success=false, which failed the item and
+						// took its group to complete-with-failures — so one already-finished
+						// bead parked the whole queue and stopped every unrelated item behind
+						// it. §3.2b QM-002b Class A says the opposite for exactly this state:
+						// "The item is waiting for a bead that has already finished... Advance
+						// the item's status to completed." The startup reconciliation pass has
+						// always done that to the same item, so the old dispatch-time answer
+						// also meant a daemon restart silently flipped failed to completed.
+						//
+						// Tombstone advances too, and deliberately. QM-002b Class A names
+						// closed AND tombstone in one breath, IsTerminal() admits exactly those
+						// two, and maybeEmitEpicCompleted already counts a tombstoned child as
+						// finished. A tombstoned bead is withdrawn rather than delivered, so
+						// "completed" reads generously — but the queue item's status says
+						// whether this queue still has work to do, and it does not. Splitting
+						// the two here would make dispatch disagree with startup on the same
+						// item and buy nothing.
 						if preClaimRecord.Status.IsTerminal() {
-							evaluateGroupAdvanceWithOutcome(ctx, reapPort, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, false, time.Now())
+							fmt.Fprintf(os.Stderr,
+								"daemon: workloop: bead %s is %s — advancing its queue item to completed rather than failing it "+
+									"(§3.2b QM-002b Class A, hk-rern1)\n",
+								snapItemBeadID, preClaimRecord.Status)
+							evaluateGroupAdvanceWithOutcome(ctx, reapPort, snapQueueName, snapQueueID, snapGroupIndex, snapItemIdx, true, time.Now())
 						} else {
 							// hk-l2xd1: in_progress with no active run → auto-reset to break
 							// the bead_claim_skipped live-lock that starves sibling queue items.
@@ -1395,15 +1445,54 @@ func runWorkLoop(ctx context.Context, baseEnv runloop.RunEnv, basePorts runloop.
 						ClaimTransitionID: claimTID,
 					})
 
+					collisionSite := crossQueueCollisionSite{
+						QueueName:         snapQueueName,
+						QueueID:           snapQueueID,
+						GroupIndex:        snapGroupIndex,
+						ItemIndex:         snapItemIdx,
+						BeadID:            snapItemBeadID,
+						RunID:             reservedRunID,
+						ClaimTransitionID: claimTID,
+						Now:               time.Now(),
+					}
+
 					switch reservation.Verdict {
 					case reservationReserved:
-						// Durably dispatched. The launch may proceed.
+						// Durably dispatched. The launch may proceed. Progress
+						// clears the collision counter: only a CONSECUTIVE run of
+						// collisions may reach the terminal backstop.
+						delete(crossQueueCollisions, queuePreClaimAttemptKey{
+							queueID:    snapQueueID,
+							groupIndex: snapGroupIndex,
+							itemIdx:    snapItemIdx,
+							beadID:     snapItemBeadID,
+						})
+
+					case reservationCrossQueueCollision:
+						// hk-nsion: a sibling queue holds this bead. The loser's
+						// item is refused for this tick, advanced to completed, or
+						// — only past the bound — failed. It is NOT failed on the
+						// first collision: §9.8 QM-067 says a refusal belongs to
+						// the tick, and a durable failure here parks the loser's
+						// whole queue behind an item that did nothing wrong.
+						if resolveCrossQueueCollision(ctx, crossQueueCollisionPorts{
+							emitter:      basePorts.Emitter,
+							queueStore:   queueStore,
+							projectDir:   baseEnv.ProjectDir,
+							reap:         reapPort,
+							collisions:   crossQueueCollisions,
+							tickRefusals: tickRefusals,
+							refusedUntil: itemRefusedUntil,
+						}, collisionSite, reservation.Collision) {
+							// Refused, not failed. Re-select at once so a sibling
+							// item dispatches on this tick, exactly as the
+							// greenlight refusal does.
+							walkingThisTick = true
+						}
+						continue
 
 					case reservationItemFailed:
 						switch reservation.FailureReason {
-						case "cross_queue_duplicate":
-							fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s already dispatched/completed from queue %q — failing cross-queue duplicate item (hk-a11re, hk-dorz9)\n",
-								snapItemBeadID, reservation.ConflictingQueue)
 						case "max_attempts_exceeded":
 							fmt.Fprintf(os.Stderr, "daemon: workloop: bead %s exceeded maxItemAttempts=%d — failing queue item (hk-6pspu)\n",
 								snapItemBeadID, maxItemAttempts)
@@ -1848,8 +1937,44 @@ func runDispatchedBead(runCtx, daemonCtx context.Context, env runloop.RunEnv, rp
 	defer completion.runRegistry.Unregister(env.RunID)
 
 	runOK := beadRunOne(runCtx, env, rp, handles, extraContext, preSelectedWorker, localSlotHeld)
-	if env.QueueItemIndex >= 0 && completion.queueStore != nil && env.QueueID != nil && env.QueueGroupIndex != nil && daemonCtx.Err() == nil {
-		evaluateGroupAdvanceWithOutcome(daemonCtx, completion.reapSeamPort, env.QueueName,
+	// A run that SUCCEEDED still owns its outcome when the daemon is already
+	// shutting down. Its merge, its bead close and its terminal event all detach
+	// from the cancelled context already, and exitClean waits on this goroutine
+	// -- up to shutdownDrainTimeout, not unconditionally -- before it parks the
+	// queue. Only the queue write was left behind. Without this the item stays
+	// dispatched with nothing that re-selects it, and the queue does not advance
+	// again until the next startup reconciles it.
+	//
+	// Two known limits, both filed rather than fixed here.
+	//
+	// The daemon context is read here and again at the write guard below, so a
+	// cancel that lands between the two still skips the write. That window is
+	// far narrower than the defect this closes and it heals on the next start,
+	// which reconciles a dispatched item whose bead is closed. See hk-5vriz.
+	//
+	// Letting this call through on a cancelled context also re-enables the whole
+	// group-completion effects tail during the drain, not just the durable
+	// write: applyGroupCompletionEffects can Wake the loop and can fire
+	// eagerRefillEval, which shells out to kerf and appends fresh items. That is
+	// in tension with operator-nfr.md ON-027 step (1), which says pending groups
+	// do not advance during a drain. The end state is benign -- exitClean parks
+	// the queue with resume-on-start and the appended items are pending -- but
+	// separating the write from the advance effects is a design change, not a
+	// line in this fix. See hk-31dag.
+	//
+	// A run that did NOT succeed keeps the old skip. A shutdown PARKS such a run
+	// rather than failing it: the bead is reopened, and writing the item failed
+	// here would pause the whole queue for work that is going back into the
+	// pool. The next startup reverts that item to pending instead.
+	completionCtx := daemonCtx
+	if runOK && daemonCtx.Err() != nil {
+		var cancelCompletion context.CancelFunc
+		completionCtx, cancelCompletion = context.WithTimeout(
+			context.WithoutCancel(daemonCtx), groupCompletionDrainTimeout)
+		defer cancelCompletion()
+	}
+	if env.QueueItemIndex >= 0 && completion.queueStore != nil && env.QueueID != nil && env.QueueGroupIndex != nil && completionCtx.Err() == nil {
+		evaluateGroupAdvanceWithOutcome(completionCtx, completion.reapSeamPort, env.QueueName,
 			*env.QueueID, *env.QueueGroupIndex, env.QueueItemIndex, runOK, time.Now())
 	}
 	if runOK && daemonCtx.Err() == nil {
@@ -2318,49 +2443,157 @@ func propagateFailedDependents(ctx context.Context, port reapSeamPort, completio
 	return true
 }
 
-// evaluateGroupAdvanceWithOutcome is called from the per-run goroutine after a run that
-// the run's success outcome from the goroutine wrapper in runWorkLoop.
+// groupCompletionRetryBudget bounds the completion's re-snapshot loop.
+//
+// The write is optimistic: it refuses a transaction whose snapshot moved, and
+// the generation on one queue is bumped by five ordinary writers — the dispatch
+// loop stamping items, the failure-reason writer, the eager refill, the
+// per-queue spend meter and the review-loop counter — including an eager refill
+// fired by a SIBLING completion's own effects. Two runs in one wave group
+// finishing together is the normal case whenever more than one may run at once.
+//
+// A completion MUST NOT simply give up on that refusal. Nothing else marks the
+// item terminal: the run is unregistered by the dispatch goroutine's own
+// deferred call as this returns, so the stale watcher cannot re-drive it, and
+// nothing re-selects a dispatched item. The group never reaches all-terminal
+// and the queue never advances again. One lost race is a permanent stall.
+//
+// The code this replaced held one lock across the whole read-modify-write, so
+// it could not lose the race. Holding the lock is not available here: the write
+// path takes that lock itself and Go locks are not reentrant. Re-reading and
+// retrying buys the durability back without giving it up.
+//
+// Three is a judgement, not a measurement: each attempt re-reads the live queue,
+// and losing three times means sustained contention rather than one unlucky
+// interleave. It matches releaseRetryBudget, which solved this same problem on
+// the other half of the reservation pair. The two tests below it pin the value
+// to two or three and no tighter — the retry test goes red at a budget of one
+// and the give-up test goes red at four, so lowering it to two breaks neither.
+//
+// Bead ref: hk-nw6on.
+const groupCompletionRetryBudget = 3
+
+// groupCompletionVerdict says whether one optimistic pass finished the job.
+type groupCompletionVerdict string
+
+const (
+	// groupCompletionSettled — this pass reached a decision the caller must not
+	// repeat. It committed, or it refused for a reason a re-read would give
+	// again, and its effects have already been applied.
+	groupCompletionSettled groupCompletionVerdict = "settled"
+
+	// groupCompletionContended — the write was refused because the snapshot
+	// moved. Nothing was written and nothing was applied. The item is still
+	// this completion's to record, so the caller re-reads and tries again.
+	groupCompletionContended groupCompletionVerdict = "contended"
+)
+
+// groupCompletion names the one item outcome a completion records. It mirrors
+// queueReservation on the reservation path: the coordinates travel as one value
+// so the retry loop and the attempt agree on what is being written.
+type groupCompletion struct {
+	// QueueName is the NORMALISED name of the queue the run was dispatched
+	// from (NQ-B1), captured at dispatch time. The completion path MUST resolve
+	// the queue by name — the main-only lq.Queue() shim would, for a non-"main"
+	// queue, return the wrong queue (or nil), trip the QueueID guard, and return
+	// early WITHOUT marking the item terminal, stalling that queue's group
+	// forever (hk-tigaf.4).
+	QueueName   string
+	QueueID     string
+	GroupIndex  int
+	ItemIndex   int
+	Success     bool
+	CompletedAt time.Time
+}
+
+// evaluateGroupAdvanceWithOutcome is called from the per-run goroutine after a run
+// reaches a terminal outcome, and from the force-reap path.
 //
 // It marks the queue item terminal (completed/failed), calls AdvanceGroup, and
 // emits the resulting group events. If the group transitions to complete-success,
-// it also activates the next group (pending → active). If complete-with-failures,
-// it marks the queue status as paused-by-failure.
-//
-// queueName identifies the queue the run was dispatched from (NQ-B1). It is
-// the normalised name captured at dispatch time (capturedQueueName). The
-// completion path MUST resolve the queue by name — using the main-only
-// lq.Queue() shim instead would, for a non-"main" queue, return the wrong
-// queue (or nil), trip the QueueID guard, and return early WITHOUT marking the
-// item terminal, stalling that queue's group forever (hk-tigaf.4).
+// it also activates the next group (pending → active) — unless the queue is
+// paused, in which case the successor is held. If complete-with-failures, it
+// marks the queue status as paused-by-failure.
 //
 // Spec ref: specs/execution-model.md §4.3.EM-015f.
-// Bead ref: hk-45ude, hk-tigaf.4.
-//
-//nolint:gocritic // pre-existing: Seam A moved this code out of workloop.go unchanged
+// Bead ref: hk-45ude, hk-tigaf.4, hk-nw6on.
 func evaluateGroupAdvanceWithOutcome(ctx context.Context, port reapSeamPort, queueName string, queueID string, groupIndex int, itemIdx int, success bool, completedAt time.Time) {
 	if port.queueStore == nil {
 		return
 	}
-	snapshot := port.queueStore.Snapshot(queue.NormaliseQueueName(queueName))
+	completion := groupCompletion{
+		QueueName:   queue.NormaliseQueueName(queueName),
+		QueueID:     queueID,
+		GroupIndex:  groupIndex,
+		ItemIndex:   itemIdx,
+		Success:     success,
+		CompletedAt: completedAt,
+	}
+	evaluateGroupAdvanceFrom(ctx, port, port.queueStore.Snapshot(completion.QueueName), completion)
+}
+
+// evaluateGroupAdvanceFrom records the outcome from a caller-supplied first
+// snapshot, re-reading the queue after every attempt that lost the snapshot
+// race, and saying so on stderr when the budget runs out.
+//
+// Seeding the first snapshot is what makes the retry testable: a test can hand
+// this a snapshot it has already invalidated and watch the second attempt heal
+// it. Racing a real writer for the window between the read and the write does
+// not reliably reproduce a lost attempt, so a test built that way passes
+// whether the loop retries or not. releaseFrom exists for the same reason.
+func evaluateGroupAdvanceFrom(ctx context.Context, port reapSeamPort, snapshot queuewiring.Snapshot, completion groupCompletion) {
+	for attempt := 0; attempt < groupCompletionRetryBudget; attempt++ {
+		if groupCompletionAttempt(ctx, port, snapshot, completion) == groupCompletionSettled {
+			return
+		}
+		snapshot = port.queueStore.Snapshot(completion.QueueName)
+	}
+
+	// Every attempt lost. Say what that costs, because the symptom is a queue
+	// that looks slow rather than an error: the item is still dispatched in
+	// memory and on disk, nothing re-selects a dispatched item, and its group
+	// cannot reach all-terminal, so this queue does not advance again.
+	fmt.Fprintf(os.Stderr,
+		"daemon: workloop: GROUP COMPLETION STRANDED — queue %q group %d item %d lost the snapshot race on all %d "+
+			"attempts, so its outcome was never recorded. The item is still dispatched, its group cannot reach "+
+			"all-terminal, and nothing re-selects a dispatched item, so this queue does not advance until the next "+
+			"daemon start reconciles it.\n",
+		completion.QueueName, completion.GroupIndex, completion.ItemIndex, groupCompletionRetryBudget)
+	eagerRefillEval(ctx, port)
+}
+
+// groupCompletionAttempt is one optimistic pass of the completion against one
+// snapshot. It is separate from the loop so a test can hand it a snapshot that
+// is already stale and pin the contended classification without racing for the
+// window.
+//
+// groupCompletionContended is the ONLY verdict the caller may retry, and it is
+// classified positively off queuewiring.ErrStaleSnapshot rather than as
+// "rejected and not quarantined". The two read the same today and diverge on
+// the final-completion path, which returns its quarantine reason unwrapped: a
+// negative test there would spend the budget re-reading a queue that is shut
+// until an operator repairs it, and report a strand instead of the write error
+// that caused it.
+func groupCompletionAttempt(ctx context.Context, port reapSeamPort, snapshot queuewiring.Snapshot, completion groupCompletion) groupCompletionVerdict {
 	if snapshot.Queue == nil {
 		eagerRefillEval(ctx, port)
-		return
+		return groupCompletionSettled
 	}
 	outcome := queue.GroupCompletionOutcomeFailed
-	if success {
+	if completion.Success {
 		outcome = queue.GroupCompletionOutcomeCompleted
 	}
 	input := queue.GroupCompletionInput{
-		ExpectedQueueID: queueID,
-		Location:        queue.GroupCompletionLocation{GroupIndex: groupIndex, ItemIndex: itemIdx},
+		ExpectedQueueID: completion.QueueID,
+		Location:        queue.GroupCompletionLocation{GroupIndex: completion.GroupIndex, ItemIndex: completion.ItemIndex},
 		Outcome:         outcome,
-		CompletedAt:     completedAt,
+		CompletedAt:     completion.CompletedAt,
 	}
 	completionQueue := queue.CloneQueue(snapshot.Queue)
-	if !success && port.queueLedger != nil {
-		if !propagateFailedDependents(ctx, port, completionQueue, queueID, groupIndex, itemIdx) {
+	if !completion.Success && port.queueLedger != nil {
+		if !propagateFailedDependents(ctx, port, completionQueue, completion.QueueID, completion.GroupIndex, completion.ItemIndex) {
 			eagerRefillEval(ctx, port)
-			return
+			return groupCompletionSettled
 		}
 	}
 	decision, err := queue.DecideGroupCompletion(*completionQueue, input) //nolint:contextcheck // The value-only decision checks cancellation inside queue.AdvanceGroup.
@@ -2377,18 +2610,36 @@ func evaluateGroupAdvanceWithOutcome(ctx context.Context, port reapSeamPort, que
 		err = decision.Validate()
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "daemon: workloop: decide group completion queueID=%s groupIndex=%d: %v\n", queueID, groupIndex, err)
+		fmt.Fprintf(os.Stderr, "daemon: workloop: decide group completion queueID=%s groupIndex=%d: %v\n", completion.QueueID, completion.GroupIndex, err)
 		eagerRefillEval(ctx, port)
-		return
+		return groupCompletionSettled
 	}
 	execution := executeGroupCompletion(ctx, port, snapshot, decision, input)
+	if lostGroupCompletionSnapshotRace(execution) {
+		// Nothing was written, so nothing is applied. Applying the effects here
+		// would log a failure and fire a refill on every losing pass, which is
+		// noise the operator reads as three failures rather than one retry.
+		return groupCompletionContended
+	}
 	effects, policyErr := decideGroupCompletionEffects(execution.durability)
 	if policyErr != nil {
-		fmt.Fprintf(os.Stderr, "daemon: workloop: group completion policy queueID=%s groupIndex=%d: %v\n", queueID, groupIndex, policyErr)
+		fmt.Fprintf(os.Stderr, "daemon: workloop: group completion policy queueID=%s groupIndex=%d: %v\n", completion.QueueID, completion.GroupIndex, policyErr)
 		eagerRefillEval(ctx, port)
-		return
+		return groupCompletionSettled
 	}
 	applyGroupCompletionEffects(ctx, port, decision.Intents, effects, execution.err)
+	return groupCompletionSettled
+}
+
+// lostGroupCompletionSnapshotRace reports whether the write was refused ONLY
+// because the caller's snapshot moved. A quarantine refusal, a cancelled
+// context and a failed write all reach the same OutcomeRejected or a worse
+// outcome, and none of them is healed by re-reading — a quarantine in
+// particular is sticky, so retrying it would turn a queue that will never
+// accept another write into three silent passes.
+func lostGroupCompletionSnapshotRace(execution groupCompletionExecution) bool {
+	return execution.durability.Outcome == queue.OutcomeRejected &&
+		errors.Is(execution.err, queuewiring.ErrStaleSnapshot)
 }
 
 // ── hk-o85ye: run-session adoption helpers ───────────────────────────────────

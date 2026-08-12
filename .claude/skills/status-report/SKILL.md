@@ -46,9 +46,17 @@ Run these read-only commands (skip any that error, note it):
 - `git log --oneline -30` (or scoped to the plan's branch) — **ground truth for what actually
   landed.** A phase is only ✅ if its commits are really in the log, not because a doc claims it.
 - `kerf map` — kerf works grouped by area (which subsystems have active works).
-- `kerf next --format=json` — ranked backlog; what's next below the named initiatives.
 - `kerf show <codename>` — status of a specific work when a phase maps to one.
-- `br ready` and `br list --status=open` — open/actionable beads.
+- `br ready --sort priority --limit 0` and `br list --status=open` — open/actionable beads,
+  ordered. Pass `--limit 0`: `br ready` returns 20 rows by default and sorts by `hybrid`, so a
+  short default listing is not evidence of a short backlog. `--sort oldest` surfaces work that is
+  starving. Scope to one lane with `--parent <epic_id>`.
+
+Ordering below the named initiatives comes from `br ready`, not from `kerf next`. Kerf plans work
+and does not rank it: the `kerf next` score comes from graph structure and never reads the `br`
+priority field, so a P0 bead and a P3 bead come back the same, and a work with no `bead_filter`
+reports empty. Keep `kerf map` and `kerf show` — they answer which work owns a bead and what
+context it carries.
 
 ## Step 3 — Reconcile (the important part)
 

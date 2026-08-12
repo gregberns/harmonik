@@ -8,10 +8,10 @@ requirement-prefix: QM
 status: draft
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.1.11
+version: 0.1.12
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-08-11
+last-updated: 2026-08-12
 depends-on:
   - architecture
   - execution-model
@@ -506,6 +506,16 @@ After QM-002a completes, the daemon MUST run a full three-way reconciliation pas
 
 This pass MUST complete before the daemon reaches `ready` state and before any dispatch-loop tick. In v0.1 corrections are applied directly (no reconciliation-investigator routing) because all four classes are fully deterministic given the observed store state.
 
+**Class A is not limited to startup, and it SUPERSEDES BI-013c for a bead that has finished.** The dispatcher meets the same mismatch: the pre-claim ledger re-read of [/Users/gb/github/harmonik/specs/beads-integration.md §4.5a BI-013c] reads `closed` or `tombstone` for the bead of the item it is about to dispatch. That is Class A's condition, observed earlier. The daemon MUST apply Class A's correction there too — advance the item to `completed` — and MUST NOT drive it to `failed`.
+
+This is a CONFLICT resolved, not a refinement. BI-013c named `closed` and `tombstone` in its own MUST and prescribed `deferred-for-ledger-dep` for them; it did not leave the disposition open. Two rules gave two answers for one observation, and this one wins for reasons on the merits:
+
+- **`failed` is unrecoverable here.** A `failed` item takes its group to complete-with-failures and parks its queue (§8.3 QM-052), so one already-finished bead stops every unrelated item behind it — and §8.3b QM-052b refuses to recover a queue whose bead is not `open`, so a closed bead makes that park permanent rather than temporary.
+- **`deferred-for-ledger-dep` only postpones the answer.** A deferred item waits for a bead that will never move again, and the next daemon start runs Class A over it and advances it to `completed` anyway. Holding it until then buys nothing and reads as a stalled queue.
+- **One item, one answer.** The startup pass has always advanced this item. Any other dispatch-time disposition means a restart silently rewrites the item's status.
+
+`deferred` (the non-terminal ledger status) is NOT affected: it can still change, so BI-013c's `deferred-for-ledger-dep` answer remains right for it. Only `closed` and `tombstone` move. BI-013c is amended to match. Bead ref: hk-rern1.
+
 ### 3.3 QM-003 — Removal on completion
 
 Final canonical removal is governed only by QM-053. The QueueStore/startup
@@ -680,6 +690,7 @@ Envelope for the queue-model subsystem per [/Users/gb/github/harmonik/specs/arch
   - `queue_appended` — emission rule §7.3; payload schema in [/Users/gb/github/harmonik/specs/event-model.md §8.10.5]. Class O.
   - `queue_item_deferred_for_ledger_dep` — emission rule §2.8, §6.5 QM-025; payload schema in [/Users/gb/github/harmonik/specs/event-model.md §8.10.6]. Class O.
   - `queue_item_reconciled` — emission rule §3.2a QM-002a; payload schema in [/Users/gb/github/harmonik/specs/event-model.md §8.10.7]. Class F.
+  - `cross_queue_collision` — emission rule §9.8a QM-067a; payload schema in [/Users/gb/github/harmonik/specs/event-model.md §8.10.9]. Class O.
   - `reconciliation_mismatch_observed` — emission rule §3.2b QM-002b; payload schema in [/Users/gb/github/harmonik/specs/event-model.md §8.6.15]. Class O.
   - `infrastructure_unavailable{failed_prerequisite: queue_write_error}` — emission rule §3.1 QM-001 (I/O error path); payload schema in [/Users/gb/github/harmonik/specs/event-model.md §8.7.15] (the event type itself is event-model-owned; queue is one of several emitters).
 
@@ -1326,6 +1337,26 @@ Without this rule a queue blocks on the first item it refuses until the refusal 
 
 This is plain round-robin — every candidate queue is treated equally. **Weighted fairness** (dispatch shares proportional to `workers`, or priority tiers across queues) is explicitly OUT OF SCOPE for v0.1 and deferred to a later version. The `workers` count gates a queue's *concurrency width* (QM-066); it does NOT weight its *dispatch frequency* under this policy.
 
+### 9.8a QM-067a — Disposition of the losing item in a cross-queue collision
+
+§9.8 says a dispatcher MUST refuse an item whose bead a sibling queue already holds, and that a refusal MUST NOT be made durable. It does not say what becomes of the refused item. This rule states that, and it is additive: it changes no sentence of §9.8.
+
+A **cross-queue collision** is one active queue reserving a bead that another ACTIVE queue's item already holds. The two queues are inside the same daemon, so this is not the external claim of [beads-integration.md §4.5a BI-013c] and BI-013c does not govern it.
+
+The daemon MUST distinguish the two ways a sibling can hold the bead, because they lapse differently:
+
+1. **The sibling is RUNNING it** (its item is `dispatched`). The hold can lapse: the run ends. The losing item MUST stay `pending`, and the collision MUST be handled as a §9.8 refusal — the next eligible item behind it is offered on the same tick, and the queue is re-examined on the bounded poll. The daemon MUST NOT write the losing item terminal, MUST NOT charge it a dispatch attempt, and MUST NOT change its group's completion state.
+
+2. **The sibling has FINISHED it** (its item is `completed`). The hold cannot lapse: the work is done and the bead is closed. The losing item MUST be advanced to `completed`, for the same reason as §3.2b QM-002b Class A — an item whose bead has already finished is advanced, not failed. Running it again would duplicate finished work.
+
+An item held by both a running and a finished sibling is running now. The daemon MUST take case 1.
+
+**The refusal MUST be bounded.** The daemon MUST count consecutive collisions per queue item and, past an implementation-chosen bound, MUST fail the item with reason `cross_queue_duplicate`. A refusal that never lapses is a stall, and a stall presents to an operator as a slow daemon rather than as an error; the bound is what keeps a durable failure available for a sibling that is stuck rather than slow. The count MUST be consecutive: progress on the item clears it. The bound MUST be long enough that a healthy sibling run does not reach it, because a durable failure takes the losing item's group to complete-with-failures and parks the whole queue, and §8.3b QM-052b refuses to recover a queue whose bead is not open — so an operator cannot undo it while the collision lasts.
+
+**Every collision MUST be reported once, naming BOTH queues.** The report MUST carry the bead, the losing queue, the winning queue and the disposition taken. One bead in two queues is a planning mistake somebody has to repair, and neither queue name alone says where to look. The report MUST NOT repeat per tick: a refusal recurs for as long as the sibling runs, and one report per recurrence buries the one an operator needs. The wire form is `cross_queue_collision` [event-model.md §8.10.9].
+
+The behaviour this replaces failed the losing item on the first collision. That is the durable refusal §9.8 forbids, and its cost was not the item: one failed item parks its queue, so a single duplicated bead stopped every unrelated item behind it, with the repair blocked behind the very run that caused it. Bead ref: hk-nsion.
+
 ## A. Appendices
 
 ### A.1 Glossary
@@ -1380,6 +1411,40 @@ The following operations are explicitly out of scope for v0.1 and reserved for v
 - Write coalescing across QM-001 mutations.
 
 ### A.4 Changelog
+
+v0.1.12 — 2026-08-12 — Two changes, one subject: work that is already finished
+is recorded as finished, never as a failure.
+
+§3.2b (amended) — Class A is not limited to startup, and it SUPERSEDES
+[beads-integration.md §4.5a BI-013c] for a bead that has finished. The
+dispatcher's pre-claim ledger re-read meets Class A's condition earlier, and the
+shipped code failed the item there, which parked the queue over a bead that had
+already finished — unrecoverably, because §8.3b QM-052b refuses a queue whose
+bead is not open. Class A's correction now applies at that site too.
+
+**This one is not additive, and the earlier draft of this entry was wrong to
+call it so.** No sentence of §3.2b changed, but BI-013c's own MUST named `closed`
+and `tombstone` and prescribed `deferred-for-ledger-dep` for them, so this rule
+does not fill a gap — it overrides a stated answer, and BI-013c is amended to
+match (its v0.9.5). The first draft claimed BI-013c "defers the queue-side
+disposition to this spec" on the strength of its `per §6 QM-022` citation. It
+does not: QM-022 is §6.3 no-double-dispatch, a submit-time validation rule with
+no item-disposition content. The honest claim is supersession, and it stands on
+the merits — `deferred-for-ledger-dep` only postpones the same correction to the
+next daemon start, and `failed` parks the queue permanently. `deferred` (the
+non-terminal status) is untouched. Nothing observable changed: the daemon has
+never written `deferred-for-ledger-dep` at that site. Refs: hk-rern1.
+
+§9.8a QM-067a (new): the disposition of the losing item
+in a cross-queue collision. §9.8 QM-067 said a sibling queue's hold on a bead is
+a per-tick refusal and MUST NOT be made durable, but no rule anywhere had "what
+happens to the loser's item" as its subject, and the shipped code failed it
+terminally on sight — the durable refusal §9.8 forbids, which parked the loser's
+whole queue. QM-067a splits the sibling's hold into RUNNING (a §9.8 refusal; the
+item stays pending) and FINISHED (advance the item to completed, as §3.2b
+QM-002b Class A does), requires a bounded backstop past which the old terminal
+failure still applies, and requires one report per collision naming both queues.
+Additive: no sentence of §9.8 changed. Refs: hk-nsion.
 
 v0.1.11 — 2026-08-11 — QM-002a states the order it depends on. The check
 reverts a `dispatched` item only on an `open` bead, and it said nothing about a

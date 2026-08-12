@@ -26,6 +26,18 @@ import (
 // writeRealFailedArchive creates a live queue file for queueName and then
 // archives it through the REAL archive writer. It returns the archive path the
 // writer chose. Nothing here hand-builds an archive name.
+//
+// WHY THE MOD-TIME IS PLANTED AND NOT LEFT TO THE FILESYSTEM. `at` reaches the
+// writer only as a FILENAME: ArchiveFailedQueue formats it into the archive
+// suffix and then moves the file with os.Rename, which carries the live file's
+// real mod-time across untouched. The observer reads age as
+// ObserveQueueArchivesConfig.Now minus the mod-time, and it SORTS the archives
+// by mod-time, so a fixture that sets `at` in May 2026 and leaves the mod-time
+// at today gets negative ages and an order it never chose — the filename says
+// one thing and the disk says another. os.Chtimes makes the two agree, and the
+// value is read back because the filesystem, not the caller, decides what
+// actually landed. Refs: hk-3ty39. Same idiom as archiveViaRealWriter in
+// internal/lifecycle/queuearchiveobserver_test.go.
 func writeRealFailedArchive(t *testing.T, projectDir, queueName string, at time.Time) string {
 	t.Helper()
 
@@ -43,7 +55,23 @@ func writeRealFailedArchive(t *testing.T, projectDir, queueName string, at time.
 	if _, statErr := os.Stat(archivePath); statErr != nil {
 		t.Fatalf("archive %q does not exist after ArchiveFailedQueue: %v", archivePath, statErr)
 	}
+	if err := os.Chtimes(archivePath, at, at); err != nil {
+		t.Fatalf("chtimes %q: %v", archivePath, err)
+	}
+	if got := mustModTime(t, archivePath); !got.Equal(at) {
+		t.Fatalf("archive %q landed with mod-time %v; the fixture asked for %v", archivePath, got, at)
+	}
 	return archivePath
+}
+
+// mustModTime returns the mod-time the filesystem holds for path.
+func mustModTime(t *testing.T, path string) time.Time {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %q: %v", path, err)
+	}
+	return info.ModTime()
 }
 
 // TestFailedArchiveLayout_AllThreeReadersFindWhatTheWriterWrote is the
@@ -193,6 +221,56 @@ func TestOrphanSweepResult_ReportsArchivesAndDeletesNone(t *testing.T) {
 	for _, path := range written {
 		if _, statErr := os.Stat(path); statErr != nil {
 			t.Errorf("archive %q was removed; the sweep must not delete: %v", path, statErr)
+		}
+	}
+
+	// THE TWO ORDERED FIELDS. The report promises archives oldest first and
+	// over-retention candidates oldest first. Both are ordered by mod-time, and
+	// until the fixture planted mod-times it did not control that axis at all:
+	// `at` only named the file, so the real order was whatever order the test
+	// happened to create the files in, and it agreed with the intended order by
+	// luck. These assertions turn the promise into something that can fail.
+	gotOrder := make([]string, 0, len(report.Archives))
+	for _, a := range report.Archives {
+		gotOrder = append(gotOrder, a.Path)
+	}
+	assertSameOrder(t, "ObserveQueueArchives (oldest first)", gotOrder, written)
+	assertSameOrder(t, "OverRetentionPaths (oldest first)", report.OverRetentionPaths, written[:2])
+
+	// THE AGES. Measured from the injected clock against the planted mod-time,
+	// so each one is an exact figure rather than a sign that happens to work
+	// out. Every age here used to be about MINUS 85 days and nothing looked.
+	for i, a := range report.Archives {
+		want := at.Add(time.Hour).Sub(at.Add(time.Duration(i) * time.Minute))
+		if a.Age != want {
+			t.Errorf("Archives[%d] (%s) Age = %v; want %v measured from the injected clock", i, a.Path, a.Age, want)
+		}
+		if a.Age <= 0 {
+			t.Errorf("Archives[%d] (%s) Age = %v; an archive older than the injected clock cannot have a negative age", i, a.Path, a.Age)
+		}
+	}
+	if report.OldestAge != time.Hour {
+		t.Errorf("OldestAge = %v; want 1h", report.OldestAge)
+	}
+	if report.NewestAge != 57*time.Minute {
+		t.Errorf("NewestAge = %v; want 57m", report.NewestAge)
+	}
+	if report.OldestAge <= report.NewestAge {
+		t.Errorf("OldestAge %v is not greater than NewestAge %v; the list is not oldest first", report.OldestAge, report.NewestAge)
+	}
+}
+
+// assertSameOrder compares two path lists in order. assertSamePaths sorts both
+// sides before comparing, which is right for a set-equality claim and useless
+// for an ordering one.
+func assertSameOrder(t *testing.T, who string, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s returned %d path(s) %v; want %d %v", who, len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("%s returned %v; want %v (order is part of the claim)", who, got, want)
 		}
 	}
 }

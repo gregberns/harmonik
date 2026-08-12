@@ -69,7 +69,7 @@ with a live daemon (it works in a temp git worktree, never the live main tree).
 | `--from <branch>` | `integration` | PR-mode: head branch |
 | `--title <text>` | — | PR-mode: passthrough to `gh pr create` |
 | `--body <text>` | — | PR-mode: passthrough to `gh pr create` |
-| `--dry-run` | — | Print planned actions; mutate nothing |
+| `--dry-run` | — | Check the inputs, then print the planned actions. Mutate nothing. See "Dry-run preflight". |
 | `--protect-branch <branch>` | — | Repeatable; operator override for protect list |
 
 ### Mutual exclusion
@@ -87,6 +87,40 @@ argument error (exit 1).
    `target "<b>" is a protected branch; use 'harmonik promote --pr' to open a
    pull request instead`.
 5. PR-mode is always allowed regardless of `protect_branches`.
+
+## Dry-run preflight (push-mode)
+
+`--dry-run` answers one question for the operator: would this promotion start?
+A plan that prints for inputs that do not exist answers nothing, so push-mode
+checks the inputs before it prints the plan. Every check only reads. The dry run
+runs no `git fetch`, takes no lock, creates no worktree, and moves no ref.
+
+In order, and stopping at the first failure:
+
+1. `git rev-parse --git-dir` in the project directory. The project must be a git
+   work tree.
+2. `git rev-parse --verify --quiet <sha>^{commit}` for each SHA, in argument
+   order. Each SHA must name a commit this repository holds.
+3. `git remote get-url origin`. The repository must have a remote named
+   `origin`.
+4. `git ls-remote --exit-code --heads origin refs/heads/<target>`. The target
+   branch must exist on origin. Exit code 2 from `ls-remote` means the branch is
+   absent. Any other failure means the command could not reach origin, and the
+   message says so.
+
+A failed check prints one line to stderr and exits **1**. The message names the
+input that does not exist.
+
+The protection gate is a different answer. It runs before the mode dispatch, so
+it also fires under `--dry-run`, and it exits **5** with the "protected branch"
+message. An input that does not exist and a promotion that policy refuses never
+share a message or an exit code.
+
+After the checks pass, the dry run prints the plan. The build-gate line follows
+the same rule as step 4 of the push-mode algorithm: it is printed only when a
+`go.mod` is present, because the real gate only runs then.
+
+Bead: hk-promote-dryrun-validates-nothing-975nt.
 
 ## Push-mode algorithm
 
@@ -142,7 +176,7 @@ which had no retry and raced the daemon's own merges to the target branch
 | Code | Meaning |
 |---|---|
 | 0 | Success |
-| 1 | Argument / flag / config / tool-not-found error |
+| 1 | Argument / flag / config / tool-not-found error, or a `--dry-run` input that does not exist |
 | 2 | Cherry-pick conflict |
 | 3 | Build gate failed |
 | 4 | Push failed (all retries exhausted or rebase conflict on retry) |

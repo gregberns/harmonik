@@ -180,30 +180,97 @@ func TestRetentionKeepN(t *testing.T) {
 	}
 }
 
+// setModTime back-dates dir and returns the mod-time the FILESYSTEM actually
+// wrote, which is not always the one asked for — a filesystem may truncate it.
+// Every age in this file is measured from the value that came back, so the
+// arithmetic is exact rather than approximately right.
+func setModTime(t *testing.T, dir string, want time.Time) time.Time {
+	t.Helper()
+	if err := os.Chtimes(dir, want, want); err != nil {
+		t.Fatalf("chtimes %s: %v", dir, err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat %s: %v", dir, err)
+	}
+	return info.ModTime()
+}
+
 // TestRetentionAgePrune asserts the age arm removes stale dirs by mtime,
 // measured against the injected ClockPort (RS-015 — no wall-clock).
+//
+// WHY THE VIRTUAL NOW IS DERIVED FROM A STAT'D MOD-TIME. The age arm computes
+// Clock.Now().Sub(mtime): an INJECTED clock against a REAL filesystem mtime. A
+// fake clock set to an arbitrary calendar date is not commensurate with that
+// mtime. This test used to pin now at 2026-07-15 while the dir that stands for
+// "fresh" kept a real mtime of today, so its age came out about MINUS 28 days,
+// no threshold could read true, and the assertion that the fresh dir survived
+// was satisfied for free. It was also calendar-dependent: run before that date
+// it computed a large POSITIVE age and deleted the very dir it exists to
+// protect. Anchoring virtual now to a mod-time the test itself planted makes
+// every age exact and removes the calendar from the fixture. Refs: hk-3ty39,
+// and the same idiom in internal/keeper/watcher_test.go
+// driveWatcherFakeClockFrom.
+//
+// WHY THE FRESH DIR IS FIVE MINUTES OLD RATHER THAN BRAND NEW. An age of zero
+// survives any positive limit, so a zero-age fixture cannot tell a working age
+// arm from a disabled one. At five minutes it survives the one-hour limit and
+// is removed the moment the limit drops below five minutes — the negative
+// control that proves this test can fail. Run that control by lowering the
+// trigger Open's MaxAge, NOT the maxAge const: the const also feeds the two
+// fixture guards above, so lowering it trips a guard and never reaches the
+// assertion the control is aimed at.
 func TestRetentionAgePrune(t *testing.T) {
+	const (
+		freshAge = 5 * time.Minute
+		staleAge = 2 * time.Hour
+		maxAge   = time.Hour
+	)
+
 	ws := t.TempDir()
 	root := filepath.Join(ws, ".harmonik", "sessions")
-	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
+
+	// Stage both dirs with the age arm OFF (MaxAge unset), so nothing is pruned
+	// while the fixture is still being built.
+	oldSess := mustOpen(t, Config{WorkspacePath: ws, SessionID: "old", KeepN: 100})
+	mustClose(t, oldSess)
+	freshSess := mustOpen(t, Config{WorkspacePath: ws, SessionID: "fresh", KeepN: 100})
+	mustClose(t, freshSess)
+
+	// Plant the two mtimes, then read back what landed and anchor virtual now on
+	// it. The trigger Open below stamps its own dir at real now, so the anchor
+	// has to track real time — that is what makes the two clocks commensurate.
+	freshMT := setModTime(t, freshSess.Dir(), time.Now().Add(-freshAge))
+	now := freshMT.Add(freshAge)
+	oldMT := setModTime(t, oldSess.Dir(), now.Add(-staleAge))
 	clk := substrate.NewFakeClock(now)
 
-	// One old dir (2h stale) and, via a fresh Open with MaxAge=1h, expect prune.
-	old := mustOpen(t, Config{WorkspacePath: ws, SessionID: "old", KeepN: 100, Clock: clk})
-	mustClose(t, old)
-	staleT := now.Add(-2 * time.Hour)
-	if err := os.Chtimes(old.Dir(), staleT, staleT); err != nil {
-		t.Fatalf("chtimes: %v", err)
+	// Fixture guards. Without these a filesystem that truncated a mod-time, or a
+	// future edit that moved an age across the limit, would quietly turn this
+	// test back into one that cannot fail.
+	if got := now.Sub(oldMT); got <= maxAge {
+		t.Fatalf("fixture: stale dir age %v is not past the %v limit", got, maxAge)
+	}
+	if got := now.Sub(freshMT); got <= 0 || got >= maxAge {
+		t.Fatalf("fixture: fresh dir age %v is not inside (0, %v)", got, maxAge)
 	}
 
-	s := mustOpen(t, Config{WorkspacePath: ws, SessionID: "fresh", KeepN: 100, MaxAge: time.Hour, Clock: clk})
-	mustClose(t, s)
+	// A third Open is the trigger: it runs retention over the two staged dirs.
+	trigger := mustOpen(t, Config{WorkspacePath: ws, SessionID: "trigger", KeepN: 100, MaxAge: maxAge, Clock: clk})
+	mustClose(t, trigger)
 
 	if _, err := os.Stat(filepath.Join(root, "old")); !os.IsNotExist(err) {
 		t.Fatalf("age-prune did not remove the stale dir (err=%v)", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "fresh")); err != nil {
-		t.Fatalf("age-prune wrongly removed the fresh dir: %v", err)
+		t.Fatalf("age-prune wrongly removed the fresh dir (age %v, limit %v): %v",
+			now.Sub(freshMT), maxAge, err)
+	}
+	// The trigger dir carries a real mtime stamped by the filesystem moments
+	// ago. It survives only while virtual now tracks real time; an anchor set to
+	// some other calendar date deletes it or reports a negative age for it.
+	if _, err := os.Stat(filepath.Join(root, "trigger")); err != nil {
+		t.Fatalf("age-prune removed the dir it had just created — the injected clock is not commensurate with the filesystem: %v", err)
 	}
 }
 

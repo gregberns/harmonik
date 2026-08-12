@@ -337,7 +337,7 @@ func runCommsSendSubcommand(subArgs []string) int {
 	}
 	// Signal end of write so the daemon's decoder sees EOF on its read side.
 	if uw, ok := conn.(*net.UnixConn); ok {
-		if closeErr := uw.CloseWrite(); closeErr != nil {
+		if closeErr := uw.CloseWrite(); !isBenignCloseWrite(closeErr) {
 			log.Printf("harmonik comms send: close write: %v", closeErr)
 			return 1
 		}
@@ -369,6 +369,13 @@ func runCommsSendSubcommand(subArgs []string) int {
 
 	fmt.Println(result.EventID)
 
+	// A directed send to a name nobody uses is recorded and read by nobody, and
+	// it looked exactly like a delivered one. Say so (hk-rtqmu).
+	if to != "*" && !commsRecipientKnown(absProject, to) {
+		fmt.Fprintf(os.Stderr, "harmonik comms send: WARNING: no agent named %q is known in this project. The name is not in the presence registry, not in the crew registry and not in the agent manifests.\n", to)
+		fmt.Fprintf(os.Stderr, "harmonik comms send: The message is recorded and nobody has received it. It waits until an agent runs `harmonik comms recv --agent %s`.\n", to)
+	}
+
 	// Directed sends wake the recipient by default so durable delivery is also
 	// actionable when the agent is idle at its prompt. Best-effort: a wake
 	// failure does not affect the exit code. --no-wake is the explicit opt-out.
@@ -383,6 +390,57 @@ func runCommsSendSubcommand(subArgs []string) int {
 
 func commsShouldWake(directed, noWake bool) bool {
 	return directed && !noWake
+}
+
+// commsAlwaysAddressable are recipient names that never register on the bus.
+// The operator is a person, not a process, and reads the traffic with
+// `comms log`, so no presence beat ever carries that name.
+var commsAlwaysAddressable = []string{"operator"}
+
+// commsRecipientKnown reports whether name is an identity this project uses.
+//
+// THE SEND IS STILL ACCEPTED WHEN THIS IS FALSE, and that is deliberate. A
+// recipient may legitimately be addressed before it exists: comms-recv reads
+// from a durable per-agent cursor, and an agent with no stored cursor scans the
+// event log from the start, so a message sent to a crew that boots an hour
+// later is delivered in full on its first recv. Refusing an unknown name would
+// break mail-before-boot, which is a real workflow on the channel that carries
+// epic assignments. So the repair is to stop the send from LOOKING delivered,
+// not to stop it (hk-rtqmu).
+//
+// Three sources, because a name can be legitimate through any one of them:
+//
+//   - the crew registry, which holds every crew, commodore and admiral session
+//   - .harmonik/agents/, the project's declaration of the agents it defines,
+//     which is where the captain and the watch appear
+//   - the presence registry, which holds every name that ever joined or received
+//
+// They are read cheapest first. The presence registry is a projection over the
+// whole event log, so a name any directory can vouch for never pays for it.
+func commsRecipientKnown(absProject, name string) bool {
+	for _, builtin := range commsAlwaysAddressable {
+		if name == builtin {
+			return true
+		}
+	}
+	if records, err := crew.List(absProject); err == nil {
+		for _, r := range records {
+			if r.Name == name {
+				return true
+			}
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(absProject, ".harmonik", "agents"))
+	if err == nil {
+		for _, e := range entries {
+			if e.IsDir() && e.Name() == name {
+				return true
+			}
+		}
+	}
+	eventsPath := filepath.Join(absProject, ".harmonik", "events", "events.jsonl")
+	_, online := ComputePresenceRegistry(eventsPath)[name]
+	return online
 }
 
 // resolveProjectPath canonicalises projectDir for project-hash computation,
@@ -505,6 +563,34 @@ func commsInjectTmuxPane(ctx context.Context, paneTarget, text string) error {
 	return nil
 }
 
+// commsDaemonDown reports whether this project's daemon socket refuses a
+// connection, and returns the socket path so the caller can name it.
+//
+// `comms who` and `comms log` read events.jsonl directly and need no daemon.
+// That is deliberate and it is kept: reading the traffic after the daemon dies
+// is exactly when an operator needs it. What was missing is the label. With an
+// EMPTY registry, `comms who` printed "no agents currently online" — the same
+// sentence a healthy bus with nobody joined prints — and `comms log` served
+// two-month-old traffic with no mark on it. Both answered with confidence from
+// a file while every other verb in the group correctly refused (hk-11zpm).
+//
+// The probe dials rather than stats the path, so a socket file left behind by a
+// dead daemon counts as down, the same way `comms send` and `comms recv` see it.
+func commsDaemonDown(absProject string) (sockPath string, down bool) {
+	sockPath = filepath.Join(absProject, ".harmonik", "daemon.sock")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", sockPath)
+	if err != nil {
+		// Any other dial error is not evidence the daemon is down, so stay quiet.
+		return sockPath, commsIsSocketAbsent(err) || commsIsConnRefused(err)
+	}
+	if closeErr := conn.Close(); closeErr != nil {
+		log.Printf("harmonik comms: close daemon probe: %v", closeErr)
+	}
+	return sockPath, false
+}
+
 // commsIsSocketAbsent reports whether err indicates a missing socket file.
 // On Linux connect(2) to a missing unix socket returns ENOENT.
 // On macOS connect(2) to a missing unix socket returns EINVAL
@@ -585,6 +671,12 @@ FLAGS
   --project DIR   Project directory (default: cwd).
   --              End of flags; remaining args form the body.
   <body> | -      Message body as trailing args (joined by space) or "-" to read stdin.
+
+UNKNOWN RECIPIENTS
+  A --to name this project does not use is still accepted, because an agent
+  that starts later reads the whole backlog on its first recv. The send warns
+  on stderr instead, and the warning says that nobody has received the message
+  yet. Exit code 0 means "recorded", not "delivered".
 
 EXIT CODES
   0   Success (event_id printed to stdout)
@@ -679,6 +771,12 @@ func runCommsLogSubcommand(subArgs []string) int {
 	}
 	eventsPath := filepath.Join(absProject, ".harmonik", "events", "events.jsonl")
 
+	// Say where these lines came from when nothing is writing them (hk-11zpm).
+	if sockPath, down := commsDaemonDown(absProject); down {
+		fmt.Fprintf(os.Stderr, "harmonik comms log: the daemon is not running (socket %s missing or refused).\n", sockPath)
+		fmt.Fprintf(os.Stderr, "harmonik comms log: these lines come from the event log at %s. They are history, not live traffic.\n", eventsPath)
+	}
+
 	// Parse --since: try as event_id UUID first, then as a duration.
 	var sinceID core.EventID // zero value = scan from beginning
 	var wallCutoff time.Time // zero = no wall-time filter
@@ -764,6 +862,8 @@ USAGE
 
 Scans events.jsonl for all agent_message events ordered by event_id (file/chronological order).
 Does NOT advance any agent cursor. No daemon connection required.
+When the daemon is down, the output is labelled on stderr as history read from
+the event log, because nothing is adding to it.
 
 FLAGS
   --since EVENT_ID|DURATION
@@ -1056,7 +1156,7 @@ func runCommsPresenceSubcommand(subArgs []string, verb string) int {
 		return 1
 	}
 	if uw, ok := conn.(*net.UnixConn); ok {
-		if closeErr := uw.CloseWrite(); closeErr != nil {
+		if closeErr := uw.CloseWrite(); !isBenignCloseWrite(closeErr) {
 			log.Printf("harmonik comms %s: close write: %v", verb, closeErr)
 			return 1
 		}
@@ -1139,6 +1239,14 @@ func runCommsWhoSubcommand(subArgs []string) int {
 	}
 	eventsPath := filepath.Join(absProject, ".harmonik", "events", "events.jsonl")
 
+	// An empty roster is a legitimate state, so "no agents currently online" reads
+	// the same on a healthy bus that nobody has joined and on a bus that does not
+	// exist. Say which one this is (hk-11zpm).
+	if sockPath, down := commsDaemonDown(absProject); down {
+		fmt.Fprintf(os.Stderr, "harmonik comms who: the daemon is not running (socket %s missing or refused). No agent can be online now.\n", sockPath)
+		fmt.Fprintf(os.Stderr, "harmonik comms who: this roster comes from the event log at %s. It is history, not live presence.\n", eventsPath)
+	}
+
 	registry := ComputePresenceRegistry(eventsPath)
 
 	// Collect online and stale agents in deterministic order (sorted by name).
@@ -1202,6 +1310,8 @@ Reads the presence projection over events.jsonl and prints agents that are
 online within the staleness window (~120s). An agent is online if its latest
 agent_presence beat has status="online" and last_seen is within 120s of now.
 Read-only: emits nothing, advances no cursor. No daemon connection required.
+When the daemon is down, the roster is labelled on stderr as history, because
+no agent can be online without a bus.
 
 FLAGS
   --json          Emit one JSON object per online agent (NDJSON — one object per
@@ -1449,7 +1559,7 @@ func runCommsRecvSubcommand(subArgs []string) int {
 		return 1
 	}
 	if uw, ok := conn.(*net.UnixConn); ok {
-		if closeErr := uw.CloseWrite(); closeErr != nil {
+		if closeErr := uw.CloseWrite(); !isBenignCloseWrite(closeErr) {
 			log.Printf("harmonik comms recv: close write: %v", closeErr)
 			return 1
 		}
@@ -1597,7 +1707,7 @@ func sendPresenceRefreshBeat(ctx context.Context, sockPath, agent, sessionID str
 		return writeErr
 	}
 	if uw, ok := conn.(*net.UnixConn); ok {
-		if closeErr := uw.CloseWrite(); closeErr != nil {
+		if closeErr := uw.CloseWrite(); !isBenignCloseWrite(closeErr) {
 			return closeErr
 		}
 	}
@@ -1656,7 +1766,7 @@ func sendPresenceLeaveBeat(ctx context.Context, sockPath, agent, sessionID strin
 		return writeErr
 	}
 	if uw, ok := conn.(*net.UnixConn); ok {
-		if closeErr := uw.CloseWrite(); closeErr != nil {
+		if closeErr := uw.CloseWrite(); !isBenignCloseWrite(closeErr) {
 			return closeErr
 		}
 	}

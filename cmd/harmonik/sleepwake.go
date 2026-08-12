@@ -20,6 +20,9 @@ package main
 //	--agent <name>  wake one specific named session (e.g. "captain", "crew-1").
 //	--all           wake every sleeping session.
 //	Exactly one of --agent or --all is required.
+//	A --agent name that this project has no session for is REFUSED with exit 1
+//	(hk-o3mz8). The daemon treats an unmatched name as a no-op and still answers
+//	ok, so the CLI has to do this check or it reports a nudge for any string.
 //
 // Exit codes:
 //
@@ -38,8 +41,12 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"syscall"
+
+	"github.com/gregberns/harmonik/internal/crew"
 )
 
 // sleepWakeSocketResponse mirrors daemon.SocketResponse for local decoding.
@@ -167,10 +174,16 @@ func runWakeSubcommand(ctx context.Context, subArgs []string) int {
 		return 1
 	}
 
-	sockPath, code := resolveSleepWakeSock(projectDir, "wake")
+	absProject, code := resolveSleepWakeProject(projectDir, "wake")
 	if code != 0 {
 		return code
 	}
+	if agentName != "" {
+		if code := checkWakeTarget(absProject, agentName); code != 0 {
+			return code
+		}
+	}
+	sockPath := filepath.Join(absProject, ".harmonik", "daemon.sock")
 
 	payload, marshalErr := json.Marshal(struct {
 		Agent string `json:"agent,omitempty"`
@@ -197,21 +210,126 @@ func runWakeSubcommand(ctx context.Context, subArgs []string) int {
 		return 2
 	}
 	if wakeAll {
-		if _, err := fmt.Fprintln(os.Stdout, "wake: all sleeping sessions nudged"); err != nil {
+		if _, err := fmt.Fprintln(os.Stdout, "wake: the daemon accepted a wake request for every sleeping session"); err != nil {
 			return 1
 		}
 	} else {
-		if _, err := fmt.Fprintf(os.Stdout, "wake: %s nudged\n", agentName); err != nil {
+		// Not "nudged". The daemon answers ok whether it woke the session or
+		// found it already awake, so this states what the CLI knows (hk-o3mz8).
+		if _, err := fmt.Fprintf(os.Stdout, "wake: the daemon accepted a wake request for %q. It nudges that session only if the session sleeps.\n", agentName); err != nil {
 			return 1
 		}
 	}
 	return 0
 }
 
+// wakeSessionNameRe is the charset a wake target can use. It mirrors the crew
+// registry rule (internal/crew validName), which is where crew session names
+// come from, so a name this rejects can never key a sleeping session.
+var wakeSessionNameRe = regexp.MustCompile(`^[a-z0-9-]+$`)
+
+// wakeSessionNameMaxLen matches the crew registry length bound.
+const wakeSessionNameMaxLen = 64
+
+// wakeBuiltinTargets are the session names the daemon quiesce arbiter keys on
+// its own (internal/daemon/quiesce.go captainAgentName / watchAgentName). They
+// have no crew registry record, so they must be listed here or wake --agent
+// captain would be refused.
+var wakeBuiltinTargets = []string{"captain", "watch"}
+
+// checkWakeTarget refuses a --agent name this project has no session for.
+// It returns 0 when the name can be woken and 1 when it cannot.
+//
+// The daemon cannot help here. HandleDaemonWake treats a name it does not hold
+// as informational and returns success, and the socket reply carries no count,
+// so `wake --agent ../../etc` came back as "nudged" (hk-o3mz8). The names the
+// arbiter can hold are exactly the two builtins, the crew registry names, and
+// the session ids of on-disk sleep markers, so the CLI reads the same three
+// sources.
+func checkWakeTarget(absProject, agentName string) int {
+	if len(agentName) > wakeSessionNameMaxLen || !wakeSessionNameRe.MatchString(agentName) {
+		fmt.Fprintf(os.Stderr, "harmonik wake: %q cannot name a session. A session name is 1 to %d characters of lowercase letters, digits and hyphens. Nothing was nudged.\n", agentName, wakeSessionNameMaxLen)
+		return 1
+	}
+	known := knownWakeTargets(absProject)
+	for _, name := range known {
+		if name == agentName {
+			return 0
+		}
+	}
+	fmt.Fprintf(os.Stderr, "harmonik wake: no session named %q in %s. Nothing was nudged.\n", agentName, absProject)
+	fmt.Fprintf(os.Stderr, "harmonik wake: this project knows these session names: %s.\n", strings.Join(known, ", "))
+	fmt.Fprintf(os.Stderr, "harmonik wake: run `harmonik wake --all` to wake every sleeping session.\n")
+	return 1
+}
+
+// knownWakeTargets lists every name `wake --agent` can reach in this project,
+// sorted. It never fails: a project with no crew registry and no sleep markers
+// still returns the builtins.
+func knownWakeTargets(absProject string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	add := func(name string) {
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	for _, name := range wakeBuiltinTargets {
+		add(name)
+	}
+	records, err := crew.List(absProject)
+	if err == nil {
+		for _, r := range records {
+			add(r.Name)
+		}
+	}
+	for _, id := range sleepingSessionIDs(absProject) {
+		add(id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// sleepingSessionIDs reads the session ids of the .harmonik/.sleeping.<id>
+// markers the quiesce arbiter writes when it parks a session. The arbiter keys
+// its sleeping map by session id for any session it cannot match to a crew
+// record, so those ids are legitimate wake targets.
+func sleepingSessionIDs(absProject string) []string {
+	const markerPrefix = ".sleeping."
+	entries, err := os.ReadDir(filepath.Join(absProject, ".harmonik"))
+	if err != nil {
+		return nil
+	}
+	var ids []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		id := strings.TrimPrefix(e.Name(), markerPrefix)
+		if id != e.Name() && id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
 // resolveSleepWakeSock resolves the daemon socket path for the given project
 // directory (cwd when empty). Returns the socket path and exit code 0 on
 // success, or ("", non-zero) on error.
 func resolveSleepWakeSock(projectDir, verb string) (sockPath string, exitCode int) {
+	abs, code := resolveSleepWakeProject(projectDir, verb)
+	if code != 0 {
+		return "", code
+	}
+	return filepath.Join(abs, ".harmonik", "daemon.sock"), 0
+}
+
+// resolveSleepWakeProject resolves projectDir (cwd when empty) to an absolute
+// path. wake needs the directory itself, not only the socket under it, so it
+// can read the crew registry and the sleep markers before it dials.
+func resolveSleepWakeProject(projectDir, verb string) (absProject string, exitCode int) {
 	if projectDir == "" {
 		wd, err := os.Getwd()
 		if err != nil {
@@ -225,7 +343,7 @@ func resolveSleepWakeSock(projectDir, verb string) (sockPath string, exitCode in
 		fmt.Fprintf(os.Stderr, "harmonik %s: cannot resolve project path %q: %v\n", verb, projectDir, err)
 		return "", 1
 	}
-	return filepath.Join(abs, ".harmonik", "daemon.sock"), 0
+	return abs, 0
 }
 
 // sendSleepWakeRequest dials the daemon socket, sends payload, and reads the
@@ -247,7 +365,10 @@ func sendSleepWakeRequest(ctx context.Context, sockPath string, payload []byte, 
 		return sleepWakeSocketResponse{}, 2
 	}
 	if uw, ok := conn.(*net.UnixConn); ok {
-		_ = uw.CloseWrite() //nolint:errcheck // the daemon can decode, respond and close before this statement runs, at which point CloseWrite returns ENOTCONN for an operation that already succeeded
+		if closeErr := uw.CloseWrite(); !isBenignCloseWrite(closeErr) {
+			fmt.Fprintf(os.Stderr, "harmonik %s: close write: %v\n", verb, closeErr)
+			return sleepWakeSocketResponse{}, 2
+		}
 	}
 
 	if decErr := json.NewDecoder(conn).Decode(&resp); decErr != nil {
@@ -404,13 +525,16 @@ FLAGS
 
 NOTES
   Exactly one of --agent or --all is required.
-  Sessions that are not currently sleeping are silently skipped.
+  A --agent name this project has no session for is refused with exit 1,
+  and the refusal lists the names it does know.
+  A session that is not currently sleeping is skipped, so exit 0 means the
+  daemon accepted the request, not that a pane moved.
   This is the fleet-stall human escape hatch: if the automatic wake
   triggers missed a session, use harmonik wake --all to recover.
 
 EXIT CODES
-  0   sessions nudged
-  1   argument error
+  0   the daemon accepted the wake request
+  1   argument error, or no session by that name
   2   daemon rejected the request or protocol error
   17  daemon not running
 

@@ -87,7 +87,22 @@ const (
 	GroupCompletionDispositionIntermediate       GroupCompletionDisposition = "intermediate"
 	GroupCompletionDispositionPausedByFailure    GroupCompletionDisposition = "paused-by-failure"
 	GroupCompletionDispositionSuccessorActivated GroupCompletionDisposition = "successor-activated"
-	GroupCompletionDispositionQueueCompleted     GroupCompletionDisposition = "queue-completed"
+
+	// GroupCompletionDispositionSuccessorHeld means the group completed
+	// successfully and its successor stayed pending, because the queue is
+	// paused. It is the honest name for what a completion on a draining queue
+	// does: the item's outcome is recorded and the group closes, and no new
+	// group starts until an operator resumes the queue.
+	//
+	// Without it, that same result reported successor-activated, which is a
+	// lie an operator cannot see through — the queue file says the successor
+	// group is still pending and the disposition says it started.
+	//
+	// Spec ref: specs/queue-model.md §QM-031 (a pending group advances only on
+	// an active queue).
+	GroupCompletionDispositionSuccessorHeld GroupCompletionDisposition = "successor-held"
+
+	GroupCompletionDispositionQueueCompleted GroupCompletionDisposition = "queue-completed"
 )
 
 func (v GroupCompletionDisposition) String() string { return string(v) }
@@ -105,8 +120,8 @@ const (
 func (v GroupCompletionNoChangeReason) String() string { return string(v) }
 
 func (v GroupCompletionNoChangeReason) valid() bool {
-	switch v.String() {
-	case string(GroupCompletionNoChangeStaleQueue), string(GroupCompletionNoChangeMatchingTerminalOutcome):
+	switch v {
+	case GroupCompletionNoChangeStaleQueue, GroupCompletionNoChangeMatchingTerminalOutcome:
 		return true
 	default:
 		return false
@@ -137,6 +152,7 @@ func (r GroupCompletionResult) Validate() error {
 	case GroupCompletionDispositionIntermediate,
 		GroupCompletionDispositionPausedByFailure,
 		GroupCompletionDispositionSuccessorActivated,
+		GroupCompletionDispositionSuccessorHeld,
 		GroupCompletionDispositionQueueCompleted:
 		if !r.validAsChanged() {
 			return errors.New("queue: invalid changed completion result")

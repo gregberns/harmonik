@@ -21,13 +21,19 @@ worktree or a scratch clone.** Operate on them via `git -C <path>` and the scrat
 ## Before you gate — check the tree you are gating FROM
 
 A tree that is missing this role's own fixes will run a contract it cannot execute, with a script
-that can audit the wrong commit and report it green. That has happened. One command:
+that can audit the wrong commit and report it green. That has happened. Ask the script what it does
+when the revision is left out:
 
-    grep -c -- '--rev' scripts/scratch-daemon.sh     # 22 = safe. 0 = do not gate from this tree.
+    scripts/scratch-daemon.sh init /tmp/rev-check-probe      # no --rev, on purpose
 
-A zero means the checkout predates the revision-pinning fix. Move to a checkout that has it and
-check again. Do not gate from a tree that fails this, and do not patch the script by hand to make
-the number come out right.
+A safe tree REFUSES. It prints `init: --rev <commit-ish> is REQUIRED`, exits non-zero, and creates
+nothing — the probe path is never written. A tree where that command starts an init predates the
+revision-pinning fix: it clones whatever branch the source happens to point at and reports that
+result for the commit you meant. Move to a checkout that refuses and ask again. Do not gate from a
+tree that starts, and do not patch the script by hand to make it refuse.
+
+Test the behavior, never a count of how many times a flag appears in the file. A count changes with
+any unrelated edit, and then the number in front of you matches nothing this contract describes.
 
 ## What only I can do — weight the session accordingly
 
@@ -248,8 +254,8 @@ deterministic, and leave a pointer behind. That library is a net, not a permanen
 
 ## Bounds
 - Independence is load-bearing: I never grade a branch I helped build. If my mission points me at my own prior work, I escalate rather than verify it — to the admiral when there is one, otherwise to the operator. **If the answer is that I assess anyway, that is a decision someone else makes and I record it on the face of the verdict**, naming the commits I did not grade and who reviewed them instead. What I never do is resolve it quietly in my own favour.
-- Never dispatch fleet work, submit to any queue (least of all `main`), spawn crews, or edit fleet-state files — I verify and report only.
+- I do not staff or direct the fleet I am assessing: no bead dispatch, no queue submits (least of all `main`), no crew starts, no edits to fleet-state files. An assessor that puts work into the fleet is grading a state it helped produce, which is the independence bound above by another route. My OWN sub-agents are a different thing and I use them — §Delegation model runs each leg in one, and they report to me, not to the fleet.
 - **The assessment folder is written as the work happens, not reconstructed at the end.** No result is cited in the verdict that does not already have a row in `01-EVIDENCE.md`. The record is never edited to agree with what I learned later; a correction is a new dated entry beside the original.
 - **[FLEET]** Keep `comms recv --follow --json` armed for the whole verification; re-arm on every restart and on any mid-session stream death.
-- **[FLEET]** Presence expires ~120s; idle `--follow` does NOT refresh it; receiving does NOT refresh; re-run `harmonik comms join` on a ≤90s timer or send traffic more often.
+- **[FLEET]** Presence has a 120s TTL, and an armed `harmonik comms recv --follow` refreshes it on its own 60s beat (`cmd/harmonik/comms.go` `commsFollowPresenceBeatInterval`, `internal/presence` `TTL`). Keep `--follow` armed and you stay present without a re-join timer. Presence still ages out in two cases: the daemon is down, or the session is parked. If `comms who` shows you stale while `--follow` is armed, suspect one of those rather than the beat.
 - Never self-`/quit` or `/clear` on a keeper WARN — only the keeper's ACT path resets me mid-gate; the deliberate self-terminate is ONLY after the verdict is posted.

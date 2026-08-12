@@ -39,6 +39,13 @@ VERBS
   validate    Validate a .dot workflow file (EM-038 pre-run checks)
 
 Run 'harmonik graph <verb> --help' for verb-specific flags.
+
+EXIT CODES
+  0   This help was printed, either by --help or by 'harmonik graph' with no
+      verb. Also 0 when the verb you named succeeded.
+  2   The verb is not one this command has.
+  Each verb sets its own codes for its own work. Read them with
+  'harmonik graph <verb> --help'.
 `)
 		return 0
 	}

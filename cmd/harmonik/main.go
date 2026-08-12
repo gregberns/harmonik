@@ -287,15 +287,40 @@ USAGE
   harmonik hook-relay <event-kind>
 
 ARGUMENTS
-  event-kind  The Claude hook event type (e.g. PreToolUse, PostToolUse, Stop)
+  event-kind  The Claude hook event type. The relay sends four kinds to the
+              daemon: SessionStart, Stop, StopFailure and Notification. It
+              knows SessionEnd and does nothing with it. It accepts every
+              other kind and does nothing with it.
 
 NOTES
-  This subcommand is intended for use by Claude Code hook configurations, not
-  direct operator invocation. The daemon must be running to receive events.
+  Claude Code hook configurations call this subcommand. An operator rarely
+  calls it directly.
+  The relay reads the hook JSON on stdin. It sends one message to the daemon
+  socket that HARMONIK_DAEMON_SOCKET names.
+  A shell where every HARMONIK_* variable is UNSET is not a harmonik-managed
+  session. In that shell the relay sends nothing and exits 0. A call you type
+  yourself takes this path. Exporting even one of those names, with a value or
+  empty, makes the shell harmonik-managed. A required variable that is
+  exported but empty is then broken wiring, and the relay exits 1.
+  The daemon must run to receive an event. The relay looks at the daemon only
+  on a path that has an event to send. A socket that is not listening yet is a
+  daemon still starting, so the relay retries it for up to 25 seconds and then
+  exits 1. A dial that can never succeed, such as a path that is not a socket,
+  exits 1 at once with no wait. On a path that sends nothing the relay does not
+  look at the daemon at all.
 
 EXAMPLES
-  harmonik hook-relay PreToolUse
   harmonik hook-relay Stop
+  harmonik hook-relay SessionStart
+
+EXIT CODES
+  0   The relay sent the event. Also 0 when it had nothing to send: SessionEnd,
+      an event kind it does not know, or a shell where every HARMONIK_*
+      variable is unset.
+  1   Missing event-kind argument, broken harmonik wiring, unreadable or
+      invalid hook JSON on stdin, a session id that disagrees with
+      HARMONIK_CLAUDE_SESSION_ID, an event kind that disagrees with the one on
+      the command line, or a daemon socket that did not answer.
 `)
 			return 0
 		}
@@ -473,8 +498,8 @@ EXAMPLES
 	// This is the fleet-stall human escape hatch when automatic wake triggers miss.
 	//
 	// Exit-code contract:
-	//   0  — sessions nudged
-	//   1  — argument error
+	//   0  — the daemon accepted the wake request
+	//   1  — argument error, or no session by that name (hk-o3mz8)
 	//   2  — daemon rejected the request or protocol error
 	//  17  — daemon not running
 	//

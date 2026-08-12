@@ -62,7 +62,7 @@ Trivial commits (typo, whitespace, obvious one-line fix) MAY omit these trailers
 
 **`Trivial: true` bypass trailer.** To opt a single commit out of the `Reviewed-By:` / `Review-Verdict:` requirement, add the trailer `Trivial: true` anywhere in the commit message's trailer block (after the blank line separating the body from trailers). `scripts/validate-commit-msg.sh` (run via the agent-driven `/check` flow) detects this trailer and skips the reviewer-trailer check. Use ONLY for: typo fixes, whitespace normalization, obvious one-line corrections, and test-infrastructure trivial changes. The `make full` requirement still applies — `Trivial: true` does not bypass linting or tests, only the agent-reviewer trailer.
 
-Forbidden: emoji, "WIP" subjects on the integration branch, single-word subjects, messages that describe the diff instead of the intent.
+A commit message is read later by someone reconstructing why a line exists, usually from `git log` alone. Write for that reader: state the intent, not the diff, which the reader can already see. Four habits defeat that reader, so treat each as a signal to rewrite the subject — emoji, a "WIP" subject on the integration branch, a single-word subject, and a subject that restates the diff.
 
 Examples: `feat(s04): add claude-twin handler adapter` — `fix(workspace): honor run_id in worktree path` — `spec(handler-contract): narrow skill-injection failure to fail-launch`.
 
@@ -100,8 +100,11 @@ states a rule that the running system does not yet follow.
 - **Commit on a short-lived branch, then merge that branch into the integration branch.** Merge it
   when the review passes. Delete the branch after the merge.
 - **Do not commit to `main` directly.** Do not push `main`.
-- **No `user/<topic>` or long-lived `agent/<codename>` branches.** A work branch lives for one unit of
-  work.
+- **Keep a work branch short-lived — one unit of work.** A branch that outlives its unit of work
+  drifts from the integration branch, and the merge cost grows with every day it stays open. Two
+  patterns have produced that here and are worth stopping on: a `user/<topic>` branch, and an
+  `agent/<codename>` branch kept alive across sessions. If a branch needs to live longer, land the
+  finished part first.
 - **No release branches** pre-1.0. Tags point at `main`, because `main` is the released trunk. If a
   hot-fix on an older release is ever needed post-1.0, spin a `release/0.y` branch at that point — not
   preemptively.
@@ -265,9 +268,13 @@ No binary signing pre-1.0. Distribution is GitHub releases only until a user ask
 ## Git hygiene
 
 - **Merge a work branch into the integration branch.** Do not commit to `main`. See §"Branch model — land on the integration branch".
-- **Never rewrite main history** after a tag.
-- **Never `--force-push` main.** `--force-with-lease` is allowed on a short-lived work branch only.
-- **`--no-verify` forbidden.** Pre-commit hook failures require fixing the underlying issue, not bypassing the hook.
+- **Never rewrite `main` history after a tag.** A tag is a published pointer: the release ledger in
+  `internal/release/manifest.go` records the commit hash, the supervisor refuses a binary whose hash
+  matches a yanked entry, and both go blind if the commit that hash names is gone.
+- **Never `--force-push` `main`.** A force-push discards commits no local clone can recover, and
+  branch protection is what stops it. `--force-with-lease` is allowed on a short-lived work branch,
+  where the only history at risk is your own and the lease refuses if someone else pushed.
+- **`--no-verify` is forbidden, and it stays forbidden now that no hook reads it.** There is nothing left for the flag to skip (see §Fresh-clone bootstrap), so a commit carrying it is not bypassing a check — it is a written statement that the author intended to. That is the reason for the rule: this repo has no human merge gate, so the only thing standing between a bad commit and the integration branch is the author running `/check` and recording an honest verdict. An agent that reaches for `--no-verify` has already decided to route around its own gate, and the next agent has no way to see what was skipped. Red gate, red result, root-cause fix, re-commit.
 - **Signed commits (`git commit -S`)** — nice-to-have, not required; revisit when the product gets real users.
 - **`.gitignore`** must cover: `/bin/`, `/dist/`, `.harmonik/` (runtime state), `*.test`, `coverage.out`, `.kerf/` (gitignored per CLAUDE.md).
 

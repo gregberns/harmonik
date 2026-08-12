@@ -8,10 +8,10 @@ requirement-prefix: EV
 status: draft
 spec-category: foundation-cross-cutting
 spec-shape: taxonomy-first
-version: 0.7.8
+version: 0.7.9
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-08-05
+last-updated: 2026-08-12
 depends-on:
   - architecture
   - execution-model
@@ -308,6 +308,7 @@ The `agent_output_chunk` and `budget_accrual` types remain fine-grained because 
 | 8.10.6 | `queue_item_deferred_for_ledger_dep` | O | queue | audit, observability, orchestrator-core | `queue_id`, `group_index`, `bead_id`, `blocker_bead_id`, `detected_at` |
 | 8.10.7 | `queue_item_reconciled` | F | queue | audit, observability, orchestrator-core | `queue_id`, `group_index`, `bead_id`, `reason` (enum: `claim_write_lost`), `reconciled_at` |
 | 8.10.8 | `queue_cancelled_operator` | O | queue | audit, observability, operator-observability | parseable-or-corrupt XOR identity, selected archive, `cancelled_at` |
+| 8.10.9 | `cross_queue_collision` | O | queue | audit, observability, operator-observability | `bead_id`, `losing_queue`, `winning_queue`, `disposition` (enum: `refused` / `completed` / `failed`), `detected_at` |
 
 > Section Axes (§8.10 Queue lifecycle): All §8.10 event emissions are mechanism-tagged. Class F entries use the existing fsync-backed normal-path append; queue state and, for final success, the queue-owned completion receipt remain authoritative when append is absent or uncertain. Class O entries, including `queue_cancelled_operator`, are best-effort observations. Default per-entry Axes — class F: `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent`. Class O: `llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent`.
 
@@ -1551,6 +1552,18 @@ reconciled_at: <Timestamp>
 
 Startup reconciliation correction per [queue-model.md §3.2a QM-002a]: emitted when an item recorded as `dispatched` in queue.json is found to be `open` in the Beads ledger at daemon startup, indicating a prior claim-write succeeded for the queue but the corresponding Beads write was lost. The item is reverted to `pending` before this event is emitted. Class F: loss could silently re-dispatch an already-reverted item, so the correction MUST be durable before proceeding.
 
+#### `cross_queue_collision`
+
+```yaml
+bead_id: <String>
+losing_queue: <String>                   # the queue whose reservation was refused
+winning_queue: <String>                  # the queue that already holds the bead dispatched or completed
+disposition: <String>                    # enum: "refused" | "completed" | "failed"
+detected_at: <Timestamp>
+```
+
+Cross-queue collision report per [queue-model.md §9.8a QM-067a]: emitted when the dispatch reservation finds the bead of the item it is about to reserve already held by another ACTIVE queue. `disposition` says what happened to the LOSING item — `refused` (the sibling is running it; the item stays `pending` for this tick), `completed` (the sibling already finished it; the item is advanced), or `failed` (the collision outlived its bound; the item is failed with reason `cross_queue_duplicate`). Both queue names are REQUIRED and MUST differ: one bead in two queues is a planning mistake, and one name alone does not say where to look. Emitted once per collision, not once per tick — a refusal recurs for as long as the sibling runs. Class O: the durable record of the outcome is the queue item's own status per [queue-model.md §3.1 QM-001], and this event says why.
+
 #### `decision_required`
 
 ```yaml
@@ -1710,10 +1723,10 @@ This spec owns the payload SHAPE for every type in §8. The WHEN of each emissio
 - Operator / daemon events (§8.7): emission rules in [operator-nfr.md §6.5, §7.3] and [process-lifecycle.md §6.2, §8.6]. The new entries §8.7.16 `operator_command_failed` (ON-013a) and §8.7.17 `operator_escalation_cleared` (ON; companion to RC-emitted `operator_escalation_required`) are ON-emission-owned.
 - Observability events (§8.8): bus-internal (`consumer_failed`, `dead_letter_enqueued`, `bus_overflow`, `redaction_failed`) and free-call (`metric`). The new entry §8.8.5 `redaction_failed` (ON-022 fail-closed redactor) is bus-internal; the redactor MUST emit it before aborting the redaction-violating emission. The new entry §8.8.6 `bead_label_conflict` (per [execution-model.md §4.3 EM-012a]) is emitted by the daemon's claim path on tier-1 mode-resolution conflicts.
 - Queue-lifecycle events (§8.10): emission rules in [queue-model.md §3, §8].
-  All eight entries (`queue_submitted`, `queue_group_started`,
+  All nine entries (`queue_submitted`, `queue_group_started`,
   `queue_group_completed`, `queue_paused`, `queue_appended`,
   `queue_item_deferred_for_ledger_dep`, `queue_item_reconciled`,
-  `queue_cancelled_operator`) are queue-emission-owned; this spec owns payload
+  `queue_cancelled_operator`, `cross_queue_collision`) are queue-emission-owned; this spec owns payload
   shape, ordering, and durability class. Queue-model owns authoritative state,
   receipt identity, and the exact final-only condition for
   `completion_receipt_id`. The optional `queue_id` /
@@ -1919,6 +1932,7 @@ Default-if-unresolved: Implement `recover_and_log`; `quarantine_consumer` and `f
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-08-12 | 0.7.9 | agent (hk-nsion) | **Taxonomy addition (1 new §8.10 row): §8.10.9 `cross_queue_collision` (Class O).** Emitted by the dispatch reservation when the bead of the item it is about to reserve is already held by another ACTIVE queue, per the new [queue-model.md §9.8a QM-067a]. Payload: `bead_id`, `losing_queue`, `winning_queue`, `disposition` (enum `refused` / `completed` / `failed`), `detected_at`; both queue names REQUIRED and MUST differ. Emitted once per collision, not once per tick. **§6.3 payload schema** added before `decision_required`. **§6.5 co-ownership map** updated to nine queue-emission-owned entries (was eight). The event exists because QM-067a stops the losing item being failed on sight: the durable failure used to be the only signal that two queues held one bead, and removing it without a report would make a real planning mistake silent. No EV requirement IDs added, renamed, or retired; no §8 entries renumbered. Refs: hk-nsion. |
 | 2026-08-05 | 0.7.8 | agent (spec repair, hk-6lt60) | **EV-051 retired. The number is not reusable. No event type is added and §8.10 keeps its eight rows.** EV-051 arrived at 0.7.7 from a kerf work whose changelog holds two target tables and states that the first wins a disagreement. The first table reads "Adds class-O `queue_recovered` with payload, ordering, and replay rules" and its change design says "The event is class O". EV-051 says Class F, which under §4.4 EV-016 puts a synchronous `fsync(2)` on the emit path that the design kept off it. EV-051 also named no event type and added no §8 row, so it satisfied none of the three parts §4.6 EV-027 requires of an addition amendment. The §6.3 `queue_paused` payload note, written on 2026-08-03 one day after EV-051 landed, already said the recovery operation "emits no event today", and the live emitter contract [queue-model.md §8.3b QM-052b] requires a dispatch wake and no emission. The Class-O `queue_recovered` event is NOT landed in its place: it has no Go definition, constructor or registry entry, and adding it needs the full EV-027 amendment plus an emission requirement in the emitter spec. That work is card T3 of the kerf work and belongs with the code that emits the event. Refs: hk-6lt60, hk-7bfqe. |
 | 2026-08-02 | 0.7.7 | agent (kerf finalize, queue-dogfood-readiness) | **EV-051 added, and it should not have been.** The finalize appended an "Amendment — failed recovery observation" block carrying EV-051 and bumped the version with no row in this table. The row is written here at 0.7.8 so the table is complete. The finalize took every target from the second, superseded changelog table. Refs: hk-6lt60. |
 | 2026-08-02 | 0.7.6 | agent (codename:event-payload-ownership) | **Step 13 no-review binding.** Adds `queue_item_single_mode` as a distinct `workflow_selection_source`. A tier-0 queue item with `workflow_mode=single` maps to the same named no-review graph as a legacy label. `review_policy` is resolver output. Only the registered embedded `no-review-bead` version `1.0` descriptor, selected through one of the two legacy sources, may emit `no_review`. The event producer rejects every other no-review tuple before `run_started`. |

@@ -342,13 +342,47 @@ Rationale: bead-named test files reached 199,899 lines — 38% of all test code 
 
 Findings → flag: `missing-tests`, `bead-named-test`, `test-only-seam`
 
-### 4. Unwanted-abstraction detection
+### 4. Abstraction that cannot name what it buys
 
-Per CLAUDE.md: "Don't add abstraction layers the user hasn't asked for."
+Read `PRINCIPLES.md` before you run this check. It asks for several kinds of indirection
+by name: consumer-owned ports (§4), a constructor that can refuse an invalid value (§2), a
+clock threaded in as an input (§1). §2 of this skill makes the clock case non-negotiable,
+through two separate forbidigo rules with two different scopes. `SC6-DRIVER-CLOCKPORT`
+bans `time.Sleep`, `time.After` and `time.NewTimer` in production files under
+`internal/codexinput` and `internal/codexdriver`, so every wait there takes an injected
+`substrate.ClockPort`. `C23-CLOCK-RATCHET` bans every direct wall-clock read in production
+files under `internal/runloop` and `internal/runexec`. `internal/runloop` satisfies it with
+an injected `substrate.ClockPort`. `internal/runexec` satisfies it by reading no clock at
+all, so do NOT hand it a port. No bead body has ever named that port, and the build fails
+where it is missing.
 
-- Did the agent add an interface, wrapper type, indirection layer, or generalization
-  the bead body does not call for?
-- Did the agent expand scope beyond what the bead describes?
+So "the bead did not ask for it" cannot be the test. Applied literally it flags the exact
+indirection the linter requires, and the reviewer ends up arguing with the build.
+
+**The test is whether the diff can NAME what the abstraction buys.** Any one of these is
+enough:
+
+- a second implementation, or a second caller, that exists in the tree today;
+- a seam a test genuinely needs — one where the test could not otherwise reach the case
+  (note that §3 separately gates the `export_*_test.go` spelling of a test seam, which is
+  a different question from whether a seam is warranted);
+- a port that a linter or a `depguard` rule requires — `substrate.ClockPort` is the live
+  example;
+- a boundary a spec or `PRINCIPLES.md` draws.
+
+Flag when none of them can be named. The shapes that usually cannot: an interface with one
+implementation, one caller and no test that uses it; a wrapper whose methods only forward;
+a type parameter with a single instantiation; a config flag added for a caller that does
+not exist yet. That is speculation, and `PRINCIPLES.md` §5 describes where it leads — the
+function that grew a flag to serve a second caller and now serves neither.
+
+**Absence from the bead body is not by itself the finding.** A bead states the work, not
+the design. Picking the shape is the implementer's job. A reviewer who requires every type
+to appear in the ticket is asking the bead to have been written by someone who had already
+done the work.
+
+Scope creep is a separate question and keeps its own flag: a diff that changes behavior the
+bead does not mention is `scope-creep` whether or not any abstraction was added.
 
 Findings → flag: `unwanted-abstraction`, `scope-creep`
 
@@ -480,7 +514,7 @@ tags with `x-` to distinguish them from v1 vocabulary.
 | `missing-tests` | Inadequate test coverage for the change scope. |
 | `bead-named-test` | New `_test.go` filename contains a bead ID. |
 | `test-only-seam` | New or widened `export_*_test.go` entry. `BLOCK` if it exports a pointer to a production global. |
-| `unwanted-abstraction` | Agent added abstraction the bead didn't request. |
+| `unwanted-abstraction` | The diff adds an abstraction and names nothing it buys — no second caller in the tree, no test that could not reach the case otherwise, no linter or `depguard` rule that requires the port, no boundary a spec draws. Absence from the bead body is not on its own this flag. |
 | `scope-creep` | Diff exceeds the bead's stated scope. |
 | `bead-mismatch` | Diff does not match the bead body's description. |
 | `non-go-bead-idiom-na` | Idiom check skipped — bead is non-Go (markdown, skill). |

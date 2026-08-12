@@ -1,5 +1,3 @@
-//go:build scenario
-
 package daemon_test
 
 // rundriverfixture_test.go — the shared project/worktree/run-id fixtures used by
@@ -13,15 +11,20 @@ package daemon_test
 // build their project dirs and worktrees through exactly these functions. They live
 // here now so the deletion of the driver tests does not take them down.
 //
-// Carries //go:build scenario to match its only consumers. Without the tag the
-// file compiles into the untagged build with no users, where the `unused` linter
-// reports all five helpers as dead — a false positive that reads exactly like
-// real garbage and would invite a future sweep to delete live fixtures.
+// The file carried //go:build scenario while every consumer was scenario-tagged:
+// without the tag it compiled into the untagged build with no users, where the
+// `unused` linter reported all five helpers as dead — a false positive that reads
+// exactly like real garbage and would invite a future sweep to delete live
+// fixtures. The tag is GONE now because the untagged
+// dot_cascade_gatebackedge_test.go uses the same helpers, so every one of them
+// has a consumer in both builds. Do not re-add the tag without first checking
+// whether an untagged test still calls in here.
 //
 // Names are unchanged on purpose — a rename would touch every call site for no
 // behavioural reason.
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -65,6 +68,7 @@ func rlFixtureGitRepo(t *testing.T, dir string) {
 	run("config", "user.email", "test@harmonik.local")
 	run("config", "user.name", "Harmonik Test")
 	readmePath := filepath.Join(dir, "README")
+	//nolint:gosec // G306: test-only fixture file in a temp dir; not production
 	if err := os.WriteFile(readmePath, []byte("harmonik run-driver test repo\n"), 0o644); err != nil {
 		t.Fatalf("rlFixtureGitRepo: WriteFile: %v", err)
 	}
@@ -101,9 +105,14 @@ func rlFixtureWorktree(t *testing.T, projectDir string) (wtPath, parentSHA strin
 	}
 
 	t.Cleanup(func() {
-		rmCmd := exec.Command("git", "worktree", "remove", "--force", "--force", wtPath)
+		// context.Background(), not t.Context(): the test context is already
+		// cancelled by the time cleanup runs, so a context-bound command would be
+		// killed before it removed anything.
+		rmCmd := exec.CommandContext(context.Background(), "git", "worktree", "remove", "--force", "--force", wtPath)
 		rmCmd.Dir = projectDir
-		_ = rmCmd.Run()
+		if err := rmCmd.Run(); err != nil {
+			t.Logf("rlFixtureWorktree cleanup: git worktree remove %s: %v", wtPath, err)
+		}
 	})
 
 	return wtPath, parentSHA

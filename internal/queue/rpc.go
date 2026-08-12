@@ -1631,10 +1631,11 @@ func (a *HandlerAdapter) resolveSpawnCap(n, currentCap int) (int, *RPCError) {
 	// A raise from here on.
 	if a.spawnCapSet == nil {
 		safeMax := currentCap / 2
+		reason := fmt.Sprintf("set-concurrency %d would oversubscribe the local spawn cap. Each LOCAL bead needs 2 sessions, so %d asks for %d non-terminal slots. The cap now in force is %d slots, which is max_concurrent %d. Nothing changed. Restart with --max-concurrent %d or HARMONIK_MAX_CONCURRENT_SESSIONS=%d to raise the cap. Remote worker runs are not subject to this limit.", n, n, want, currentCap, safeMax, n, n*2)
 		return 0, &RPCError{
-			Code: -32099, Message: "spawn_cap_exceeded",
+			Code: -32099, Message: spawnCapExceededMessage(reason),
 			Detail: map[string]any{
-				"error":     fmt.Sprintf("set-concurrency %d would oversubscribe the local spawn cap: each LOCAL bead needs 2 sessions, cap = %d non-terminal slots (safe local max_concurrent = %d); restart with --max-concurrent %d or HARMONIK_MAX_CONCURRENT_SESSIONS=%d to raise the cap; remote worker runs are not subject to this limit", n, currentCap, safeMax, n, n*2),
+				"error":     reason,
 				"requested": n,
 				"spawn_cap": currentCap,
 				"safe_max":  safeMax,
@@ -1643,10 +1644,11 @@ func (a *HandlerAdapter) resolveSpawnCap(n, currentCap int) (int, *RPCError) {
 	}
 	if a.spawnCapCeiling > 0 && want > a.spawnCapCeiling {
 		safeMax := a.spawnCapCeiling / 2
+		reason := fmt.Sprintf("set-concurrency %d would raise the local spawn cap past what this host can serve. Each LOCAL bead needs 2 sessions, so %d asks for %d non-terminal slots. This host serves %d slots and the cap now in force is %d slots. The highest max_concurrent this host accepts is %d. Nothing changed. Restart with HARMONIK_MAX_CONCURRENT_SESSIONS=%d to declare a higher ceiling deliberately. Remote worker runs are not subject to this limit.", n, n, want, a.spawnCapCeiling, currentCap, safeMax, want)
 		return 0, &RPCError{
-			Code: -32099, Message: "spawn_cap_exceeded",
+			Code: -32099, Message: spawnCapExceededMessage(reason),
 			Detail: map[string]any{
-				"error":      fmt.Sprintf("set-concurrency %d would raise the local spawn cap past what this host can serve: each LOCAL bead needs 2 sessions, so it asks for %d non-terminal slots against a host bound of %d (safe local max_concurrent = %d); restart with HARMONIK_MAX_CONCURRENT_SESSIONS=%d to declare a higher ceiling deliberately; remote worker runs are not subject to this limit", n, want, a.spawnCapCeiling, safeMax, want),
+				"error":      reason,
 				"requested":  n,
 				"spawn_cap":  currentCap,
 				"host_bound": a.spawnCapCeiling,
@@ -1655,6 +1657,23 @@ func (a *HandlerAdapter) resolveSpawnCap(n, currentCap int) (int, *RPCError) {
 		}
 	}
 	return want, nil
+}
+
+// spawnCapExceededReason is the typed reason code for a refused spawn-cap
+// raise. It stays the first word of the refusal message so callers can still
+// match the class of the error.
+const spawnCapExceededReason = "spawn_cap_exceeded"
+
+// spawnCapExceededMessage joins the typed reason code to the human explanation.
+//
+// The numbers MUST ride in Message, not only in Detail. The daemon copies an
+// RPCError onto the wire as SocketResponse{Error: Message, ErrorCode: Code} and
+// drops Detail, and the CLI prints "error: <Message> (code <n>)". So a refusal
+// that kept its ceiling and its current value in Detail reached the operator as
+// the bare token, and a person who hit the cap with one extra digit learned
+// neither number (hk-qm3zv).
+func spawnCapExceededMessage(reason string) string {
+	return spawnCapExceededReason + ": " + reason
 }
 
 // HandleQueueSetConcurrency updates the daemon's runtime dispatch ceiling.

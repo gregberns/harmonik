@@ -8,10 +8,10 @@ requirement-prefix: CHB
 status: draft
 spec-category: runtime-subsystem
 spec-shape: requirements-first
-version: 0.10
+version: 1.4
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-05-13
+last-updated: 2026-08-12
 depends-on:
   - handler-contract
   - workspace-model
@@ -159,27 +159,53 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 
 #### CHB-003 — Required hook entries
 
-The materialized `${workspace_path}/.claude/settings.json` MUST contain at least the following `hooks` entries (using `type: command` with `args` form for shell-injection safety; `command: "harmonik"`):
+The materialized `${workspace_path}/.claude/settings.json` MUST contain at least the following `hooks` entries. Each entry uses `type: command` with the `args` form for shell-injection safety. The `command` value is the absolute path of the running harmonik binary, shown below as `<daemon_binary_path>`:
 
 ```
 {
   "hooks": {
-    "SessionStart":   [{ "matcher": "", "hooks": [{ "type": "command", "command": "harmonik", "args": ["hook-relay", "SessionStart"],   "timeout": 30 }] }],
-    "Stop":           [{ "matcher": "", "hooks": [{ "type": "command", "command": "harmonik", "args": ["hook-relay", "Stop"],           "timeout": 30 }] }],
-    "SessionEnd":     [{ "matcher": "", "hooks": [{ "type": "command", "command": "harmonik", "args": ["hook-relay", "SessionEnd"],     "timeout": 30 }] }],
-    "StopFailure":    [{ "matcher": "", "hooks": [{ "type": "command", "command": "harmonik", "args": ["hook-relay", "StopFailure"],    "timeout": 30 }] }],
-    "Notification":   [{ "matcher": "", "hooks": [{ "type": "command", "command": "harmonik", "args": ["hook-relay", "Notification"],   "timeout": 30 }] }]
+    "SessionStart":   [{ "matcher": "", "hooks": [{ "type": "command", "command": "<daemon_binary_path>", "args": ["hook-relay", "SessionStart"],   "timeout": 30 }] }],
+    "Stop":           [{ "matcher": "", "hooks": [{ "type": "command", "command": "<daemon_binary_path>", "args": ["hook-relay", "Stop"],           "timeout": 30 }] }],
+    "SessionEnd":     [{ "matcher": "", "hooks": [{ "type": "command", "command": "<daemon_binary_path>", "args": ["hook-relay", "SessionEnd"],     "timeout": 30 }] }],
+    "StopFailure":    [{ "matcher": "", "hooks": [{ "type": "command", "command": "<daemon_binary_path>", "args": ["hook-relay", "StopFailure"],    "timeout": 30 }] }],
+    "Notification":   [{ "matcher": "", "hooks": [{ "type": "command", "command": "<daemon_binary_path>", "args": ["hook-relay", "Notification"],   "timeout": 30 }] }]
   }
 }
 ```
 
-The hook timeout is fixed at 30 seconds. The relay's internal retry budget against `daemon_not_ready` MUST fit inside this envelope. The `command` value `"harmonik"` MUST be resolvable via PATH at Claude exec time; the handler MUST verify resolvability per [handler-contract.md §4.10 HC-042] before launch.
+The hook timeout is fixed at 30 seconds. The relay's internal retry budget against `daemon_not_ready` MUST fit inside this envelope.
+
+The `command` value MUST be an absolute path. The daemon resolves it one time at start with `os.Executable()` and MUST fail fast if that call gives an error. A `$PATH` lookup is forbidden here. The tmux window that runs Claude does not always carry the daemon's `$PATH`. [handler-contract.md §4.10 HC-042] forbids the same lookup for every binary it governs. A bare `"harmonik"` can therefore fail to resolve at hook time. An earlier revision of this requirement declared the literal `"harmonik"` and made the handler check that `$PATH` could resolve it. That text is retired (hk-kqdpf.6).
 
 Tags: mechanism
 
 #### CHB-004 — User-settings merge
 
-If a `${workspace_path}/.claude/settings.json` file already exists at the materialization time (inherited from the cloned repo state per [workspace-model.md §4.1 WM-003]), the workspace manager MUST attempt a merge: for each event-type key under `hooks`, the bridge-required matcher group is APPENDED to the existing array. User-declared hooks for the same event continue to fire alongside the bridge's hooks.
+If a `${workspace_path}/.claude/settings.json` file already exists at the materialization time (inherited from the cloned repo state per [workspace-model.md §4.1 WM-003]), the workspace manager MUST attempt a merge. For each event-type key under `hooks`, the merge MUST do these steps in this order:
+
+1. Remove each hook entry that invokes the `hook-relay` subcommand.
+2. Remove each matcher group whose hook-entry list is empty after step 1.
+3. Add the bridge-required matcher group to the end of the array.
+
+The merge MUST NOT add a second bridge group beside one that is already in the array. Step 1 removes the entry the previous launch wrote. Step 3 adds the entry this launch writes. An earlier revision of this requirement told the merge to append, and that text is retired. The merge runs one time for each agent launch. One worktree hosts many launches. An append therefore put one more copy of every bridge group in the file on each launch. Claude Code runs a hook one time for each configured copy, so the duplicates made one agent stop report as four (hk-dknb2).
+
+Step 1 removes hook ENTRIES and not whole matcher groups. The bridge group uses the default matcher `""`. Another writer is likely to choose that same value. A hook entry that another writer put in the bridge group MUST survive the merge. Step 2 removes a group only when harmonik wrote every entry in it.
+
+Step 1 MUST identify an entry as harmonik's by the `hook-relay` verb alone. The verb is the part of the entry that does not change between binaries. An older binary wrote a different `command` path, and it can also have written a different timeout. Step 1 MUST still remove that entry. Nothing a user writes invokes `hook-relay`, so step 1 never removes a user hook.
+
+Step 1 MUST fail closed. If an entry does not have the shape this rule expects, the merge MUST keep it. Harmonik cannot claim any of these shapes:
+
+- an entry that is not an object
+- an entry with no `args` key
+- an entry whose `args` value is not an array
+- an entry whose `args` array is empty
+- an entry whose first `args` element is not a string
+
+The two errors do not cost the same. If the merge keeps one of harmonik's own entries by mistake, the result is one duplicate hook. If the merge removes a hook another writer owns, the result is silent data loss.
+
+User-declared hooks for the same event continue to fire alongside the bridge's hooks.
+
+The merge is idempotent. A second merge over the result of a first merge, with the same daemon binary path, MUST leave the same bytes on disk.
 
 If the existing file is malformed JSON, the workspace manager MUST OVERWRITE with the bridge-required content AND log a warning line to the session log noting the displacement. No new bus event is emitted (the bridge introduces zero new event types per §4); operators MAY later route this through an existing observability surface.
 
@@ -738,3 +764,4 @@ A later evolution to stream-json + `--include-hook-events` is possible without c
 | 2026-05-14 | 1.0 | agent (hk-cmybm) | **CHB-028 amendment: session-completion instruction.** Every `agent-task.md` MUST include a `## Session Completion` section instructing Claude to run `/quit` after completing and committing the work. Root cause (hk-cmybm): in interactive TUI mode, Stop hook fires only on session exit — not after each assistant response. Without `/quit`, the tmuxSubstrateSession polling loop (`runWait`) never observes process exit, `sess.Wait()` blocks indefinitely, and the capacity gate jams. The `/quit` is executed by Claude itself (typed at the REPL), not injected via paste-buffer; this generates a real keypress that the TUI dispatches as a slash command. §4.11 CHB-028 augmented with session-completion-instruction paragraph (rationale + cross-refs). Code: `internal/workspace/agenttask_chb028.go` (`buildAgentTaskContent`). Test: `TestCHB028_SessionCompletionInstruction` (all three phases). Smoke v12: OPERATIONAL GREEN (bead_closed confirmed in events.jsonl, sess.Wait returns, capacity gate unblocked). |
 | 2026-07-08 | 1.2 | agent (hk-5gmkd, #25) | **WM-040a permissions.allow injection RETIRED (supersedes hk-53y35 amendment above).** `MaterializeClaudeSettings` no longer emits a `"permissions"`/`"allow"` block. Claude Code >= 2.1.204 treats a pre-approved `permissions.allow` in a git-worktree project settings.json as a consent gate — an interactive "pre-approves N tool permissions" modal that `--dangerously-skip-permissions` does NOT bypass — so a daemon-spawned pane wedges and HC-056 (`agent_ready_timeout`) fires. harmonik-managed bead worktrees rely on `--dangerously-skip-permissions` (HC-055b, the existing CHB-029 carveout) instead; a user's own committed `permissions.allow` is preserved untouched. `isHarmonikManagedWorktree` (internal/daemon/claudelaunchspec.go) additionally now matches `.harmonik/worktrees/` and crew-worktrees path segments so the flag is emitted even when the worktree-root canonicalization mismatches. Cross-ref: workspace-model.md §4.7a WM-040a (revised). Code: internal/workspace/claudesettings_wm040a.go, internal/daemon/claudelaunchspec.go. Refs: hk-5gmkd, #25. |
 | 2026-08-09 | 1.3 | agent (hk-g8d5x) | **CHB-029 amendment: the config write-lock wait is bounded, and the remote path resolves the config path on the worker.** The "Test isolation and concurrency" paragraph said the implementation MUST hold a *blocking* `LOCK_EX`. That has been wrong since `hk-bfvby` bounded the in-process Go writer (`acquireExclusiveBounded` in `internal/workspace/claudetrust_wm040b.go`), and the spec was never reconciled. The clause now requires a bounded wait: retry `LOCK_EX\|LOCK_NB` until the lock is held or a timeout ends, then fail with a structural error that names the config file and the lockfile. Reason: an unbounded wait lets one stuck holder starve every later run with no diagnostic, which is `hk-g8d5x` — a worker python program waited without limit on the operator's real `~/.claude.json.lock` and three `internal/daemon` tests each stalled about 50 seconds while the failure named the dispatch path. The same bead extends the rule to the two worker programs (`workerTrustUpsertProgram`, `workerThemeUpsertProgram`), which were still blocking. A second clause was added to the same paragraph: a remote run applies the SAME precedence on the worker, and it evaluates `CLAUDE_CONFIG_HOME` and `~` THERE. `CLAUDE_CONFIG_HOME` names a directory on the machine that sets it, so the daemon MUST NOT send its own value to a worker — `docs/live-twin-testing.md` requires exporting it to the daemon, and sending it across would point the worker at a directory that need not exist and kill the launch. Only `HARMONIK_CLAUDE_CONFIG_PATH`, harmonik's own single-file seam, may cross the wire. No other requirement in the paragraph was changed. Code: internal/workspace/remotematerialize.go, internal/workspace/claudetrust_wm040b.go. Tests: internal/workspace/workertrust_isolation_test.go. Refs: hk-g8d5x, hk-bfvby. |
+| 2026-08-12 | 1.4 | agent (hk-uu0ke) | **CHB-004 amended: the settings merge removes harmonik's own hook entries and then adds the current one. It no longer appends.** The prose said the bridge-required matcher group is APPENDED to the existing array, while the same requirement's axis line already declared `idempotency=idempotent`. The prose was the part that was wrong. The merge runs one time for each agent launch and one worktree hosts many launches, so the append put one more copy of every bridge group in the file on each launch. Seven of forty live worktrees carried duplicates and the worst held four copies of each of the five groups, which made one agent stop report as four. CHB-004 now states the three merge steps, states that step 1 removes hook ENTRIES and not whole matcher groups, states that step 1 MUST fail closed on any entry shape it does not recognise, and states that the merge leaves the same bytes on a second run. An entry another writer put in the default-matcher group beside harmonik's survives the merge. **CHB-003 amended in the same pass:** the `command` field is the absolute path of the running harmonik binary, resolved one time at daemon start with `os.Executable()`. The requirement had declared the literal `"harmonik"` and a `$PATH` lookup ever since hk-kqdpf.6 changed the code. It also told the handler to verify resolvability "per [handler-contract.md §4.10 HC-042]", and HC-042 holds no such duty. So the old text carried a false citation on top of three months of stale normative text. HC-042 does not govern the hook relay, which is a child of Claude Code and not a daemon-launched handler subprocess, but it forbids the same `$PATH` lookup for every binary it does govern. Frontmatter `version` and `last-updated` were also reconciled: they had read 0.10 / 2026-05-13 since revisions 1.1, 1.2 and 1.3 landed rows without touching them. Companion amendment: workspace-model.md WM-040a v0.4.12. Code: `internal/workspace/claudesettings_wm040a.go`. Beads: hk-dknb2 (the measurement), hk-uu0ke (this repair). No requirement IDs renumbered. |

@@ -534,7 +534,9 @@ func viaSendRequest(ctx context.Context, harmonikDir string, payload []byte) (vi
 		return viaSocketResponse{}, 1
 	}
 	if uw, ok := conn.(*net.UnixConn); ok {
-		_ = uw.CloseWrite() //nolint:errcheck
+		if closeErr := uw.CloseWrite(); !isBenignCloseWrite(closeErr) {
+			return viaSocketResponse{}, 1
+		}
 	}
 
 	var resp viaSocketResponse

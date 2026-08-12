@@ -21,9 +21,10 @@ package daemon_test
 //      counting run_started minus run_completed/run_failed events in order).
 //
 //  (c) The dup bead dispatches exactly once: the "winner" queue dispatches it
-//      and closes it in br; the "loser" queue sees its item failed with
-//      LastFailureReason containing "cross_queue_duplicate" (hk-a11re guard).
-//      No run starts for the loser copy — ClaimBead is never called for it.
+//      and closes it in br, and no run starts for the loser copy (hk-a11re
+//      guard). The loser's ITEM must not be driven terminal-with-failure and its
+//      queue must not park: losing another queue's race is a per-tick refusal
+//      per queue-model.md §9.8 QM-067, not a durable failure (hk-nsion).
 //
 //
 // TestScenario_ConcurrentMultiQueue_N2_MidRunKill exercises the G1 cause-side:
@@ -411,6 +412,26 @@ func cmqLoadQueueItems(t *testing.T, projectDir, queueName string) []cmqItemStat
 	return items
 }
 
+// cmqLoadQueueStatus reads one queue's own status off disk. It is separate from
+// cmqLoadQueueItems because the queue status is the half of a durable failure
+// that costs an operator the most: one failed item parks the whole queue, and
+// every unrelated item behind it stops.
+func cmqLoadQueueStatus(t *testing.T, projectDir, queueName string) string {
+	t.Helper()
+	queuePath := filepath.Join(projectDir, ".harmonik", "queues", queueName+".json")
+	//nolint:gosec // G304: path is t.TempDir()-based; not user input
+	data, err := os.ReadFile(queuePath)
+	if os.IsNotExist(err) {
+		return ""
+	}
+	require.NoError(t, err, "cmqLoadQueueStatus: read %s", queuePath)
+	var q struct {
+		Status string `json:"status"`
+	}
+	require.NoError(t, json.Unmarshal(data, &q), "cmqLoadQueueStatus: unmarshal %s", queuePath)
+	return q.Status
+}
+
 // cmqPollBeadClosed polls `br show <id>` every 10 ms for up to budget.
 // Returns true if the bead reaches "closed" status within budget.
 func cmqPollBeadClosed(t *testing.T, brWrapper, beadID string, budget time.Duration) bool {
@@ -465,7 +486,7 @@ func cmqPollRunStartedCount(t *testing.T, jsonlPath string, wantCount int, budge
 // Expected dispatch order (with round-robin + Workers=1 per queue):
 //
 //	tick 1 — alpha dispatches dupBead (1 alpha in-flight, 1 global)
-//	tick 2 — beta tries dupBead → cross_queue_duplicate guard fires;
+//	tick 2 — beta tries dupBead → the collision is detected and REFUSED;
 //	          beta then dispatches betaB (1 beta in-flight, 2 global)
 //	dupBead + betaB run concurrently (global at cap = 2)
 //	dupBead completes → alpha slot freed; alpha dispatches alphaA
@@ -475,8 +496,8 @@ func cmqPollRunStartedCount(t *testing.T, jsonlPath string, wantCount int, budge
 //
 //	(a) alphaA and betaB are closed in br; dupBead is closed by alpha.
 //	(b) Max concurrent runs observed ≤ MaxConcurrent=2 (QM-062).
-//	(c) Beta's dupBead item: status=failed, reason contains
-//	    "cross_queue_duplicate" (hk-a11re).
+//	(c) Beta's dupBead item is NOT failed and beta's queue is NOT parked
+//	    (hk-a11re detection, hk-nsion disposition).
 //
 // Not parallel: uses os.Setenv(HARMONIK_CLAUDE_CONFIG_PATH) to isolate
 // EnsureWorktreeTrust — same rationale as TestScenario_HappyPath_N1.
@@ -509,7 +530,7 @@ func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
 	// Queue "beta":  [dupBead (item 0), betaB  (item 1)]
 	//
 	// dupBead at index 0 in alpha ensures alpha dispatches it before beta can
-	// claim a slot, triggering the cross_queue_duplicate guard in beta.
+	// claim a slot, so beta meets the cross-queue collision.
 	ctx := t.Context()
 	qAlpha := cmqBuildActiveWaveQueue("alpha", "00000000-0000-7a00-8000-aa1000000001",
 		core.BeadID(dupBeadID), core.BeadID(alphaAID))
@@ -592,7 +613,7 @@ func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
 	//   2. betaB dispatched by beta   → run_completed
 	//   3. alphaA dispatched by alpha after dupBead completes → run_completed
 	//
-	// dupBead in beta gets cross_queue_duplicate BEFORE dispatch (no run starts).
+	// beta's copy of dupBead is stopped BEFORE dispatch (no run starts).
 	// So 3 run_started + 3 terminal events total.
 	//
 	// Budget: AgentReadyTimeout(5s) × 3 runs + merge overhead + headroom = 60s.
@@ -642,51 +663,66 @@ func TestScenario_ConcurrentMultiQueue_N2_HappyPath(t *testing.T) {
 	}
 	t.Logf("cmq (b): max concurrent runs = %d (cap = %d)", maxConcurrent, cfg.MaxConcurrent)
 
-	// ── Assertion (c): cross-queue dedup (hk-a11re) ───────────────────────────
+	// ── Assertion (c): the loser is stopped, not punished (hk-a11re, hk-nsion) ─
 	//
-	// Beta's queue file must contain a failed item for dupBead with
-	// LastFailureReason containing "cross_queue_duplicate". The alpha queue's
-	// dupBead item must be "completed" (it won the dispatch race).
+	// Two things are claimed here and they are separate.
 	//
-	// The beta queue file may have been renamed to *.paused-by-failure-<ts>
-	// if evaluateGroupAdvanceWithOutcome ran; read it via queue.Load which
-	// looks for the canonical *.json path only. If the file is absent (queue
-	// fully completed), fall back to reading the item status from the alpha
-	// side only and assert no run_started for beta's dupBead indirectly.
+	// DETECTION: the bead dispatches exactly once. Beta never starts a run for
+	// dupBead, so run_started stays at three. That is the hk-a11re property and
+	// it holds however beta found out — the ledger pre-claim re-read (BI-013c)
+	// and the reservation guard both stop it, and which one wins the race is not
+	// something this test can pin or needs to.
 	//
-	// Simpler: load both queue files directly from disk.
+	// DISPOSITION: beta's item must NOT be driven terminal-with-failure, and
+	// beta's queue must NOT park. queue-model.md §9.8 QM-067 names this exact
+	// case as a per-tick refusal and forbids making it durable, because a failed
+	// item takes its group to complete-with-failures and stops every unrelated
+	// item behind it — and `queue recover` refuses the queue while the shared
+	// bead is not open, so the operator cannot undo it while the race lasts.
+	//
+	// This test therefore asserts what must NOT have happened, plus the item's
+	// small set of acceptable resting states. It deliberately does not demand one
+	// exact status: pending (refused, cooldown still running), deferred-for-
+	// ledger-dep (the ledger detector got there first) and completed (the guard
+	// saw alpha finish) are all correct outcomes of a run this short, and pinning
+	// one would pin the race rather than the rule.
 	alphaItems := cmqLoadQueueItems(t, projectDir, "alpha")
 	betaItems := cmqLoadQueueItems(t, projectDir, "beta")
 	t.Logf("cmq (c): alpha items = %+v", alphaItems)
 	t.Logf("cmq (c): beta  items = %+v", betaItems)
 
-	if betaItems != nil {
-		// Find dupBead in beta's items.
+	// Detection: no second run for dupBead, whichever detector stopped it.
+	nStarted := cmqEventCount(t, jsonlPath, string(core.EventTypeRunStarted))
+	if nStarted > wantTerminalCount {
+		t.Errorf("cmq (c): %d run_started events; want ≤ %d (dupBead must not start in beta)",
+			nStarted, wantTerminalCount)
+	}
+
+	if betaItems == nil {
+		t.Log("cmq (c): beta queue file absent (queue completed and was unlinked); disposition assertions skipped")
+	} else {
+		if status := cmqLoadQueueStatus(t, projectDir, "beta"); status == string(queue.QueueStatusPausedByFailure) {
+			t.Errorf("cmq (c): beta queue status = %q; losing another queue's race must not park the loser's "+
+				"whole queue (§9.8 QM-067, hk-nsion)", status)
+		}
 		foundDupInBeta := false
 		for _, item := range betaItems {
-			if item.BeadID == dupBeadID {
-				foundDupInBeta = true
-				if item.Status != string(queue.ItemStatusFailed) {
-					t.Errorf("cmq (c): beta dupBead item status = %q, want \"failed\" (cross_queue_duplicate guard)",
-						item.Status)
-				}
-				if !strings.Contains(item.LastFailureReason, "cross_queue_duplicate") {
-					t.Errorf("cmq (c): beta dupBead LastFailureReason = %q, want to contain \"cross_queue_duplicate\"",
-						item.LastFailureReason)
-				}
+			if item.BeadID != dupBeadID {
+				continue
+			}
+			foundDupInBeta = true
+			if item.Status == string(queue.ItemStatusFailed) {
+				t.Errorf("cmq (c): beta dupBead item status = %q reason = %q; a refusal is a property of the "+
+					"tick and must not be made durable (§9.8 QM-067, hk-nsion)",
+					item.Status, item.LastFailureReason)
+			}
+			if strings.Contains(item.LastFailureReason, "cross_queue_duplicate") {
+				t.Errorf("cmq (c): beta dupBead LastFailureReason = %q; the terminal duplicate failure is now "+
+					"the tail case past a bound, not the first response to a collision", item.LastFailureReason)
 			}
 		}
 		if !foundDupInBeta {
 			t.Errorf("cmq (c): dupBead %s not found in beta queue items %+v", dupBeadID, betaItems)
-		}
-	} else {
-		// Beta queue completed and was unlinked — verify cross_queue_duplicate
-		// fired before any run by checking run_started count (should be exactly 3,
-		// not 4: dupBead in beta never starts).
-		nStarted := cmqEventCount(t, jsonlPath, string(core.EventTypeRunStarted))
-		if nStarted > wantTerminalCount {
-			t.Errorf("cmq (c): %d run_started events; want ≤ %d (dupBead must not start in beta)",
-				nStarted, wantTerminalCount)
 		}
 	}
 

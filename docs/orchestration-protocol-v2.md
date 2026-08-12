@@ -1,6 +1,16 @@
 # Orchestration Protocol v2 — harmonik as the Default Dispatcher
 
 **Status:** SUPERSEDED (2026-06-03). Normative orchestration content has been incorporated into `AGENTS.md` (= `CLAUDE.md`). This document is retained for historical context only.
+
+> **Correction — priority no longer comes from `kerf next`.** This document was written when
+> `kerf next` was treated as the ranked feed. It is not one. Its score comes from graph structure
+> alone, it never reads the `br` priority field, so a P0 bead and a P3 bead come back the same, and
+> it reports empty for a work that has no `bead_filter`. Priority now comes from stated intent
+> first — the named initiatives of the operator and the admiral — and then from the ledger, with
+> `br ready --sort priority --limit 0`. `kerf` still plans work, and `kerf map` still shows which
+> work owns a bead. The current loop is `docs/beads-workflow.md` §"Priority" and the
+> `orchestrator-rules` skill. Where this document and those two disagree, they win.
+
 **Goal:** Make `harmonik run --beads <ids>` the default dispatch mechanism for harmonik's own development. Target: ≥75% of substantive work flows main-agent → kerf → harmonik (not main-agent → sub-agent).
 
 ## Synopsis (≤25 lines)
@@ -9,8 +19,8 @@ Today: 6–7 beads have shipped through `harmonik run`. The rest went via inline
 
 The intended daily loop is:
 
-1. **Main agent** decides what's important next; records priority via `br update --priority` and (when needed) `kerf pin` / `kerf work edit`.
-2. **kerf** exposes the prioritized feed via `kerf next`.
+1. **Main agent** decides what's important next; records priority via `br update --priority` and (when needed) attaches the bead to a work with `kerf pin` / `kerf work edit`.
+2. **The ledger** exposes the ordered backlog via `br ready --sort priority --limit 0`, below the named initiatives. `kerf` attaches beads to works. It does not rank them.
 3. **Main agent** picks a batch (≥2, typically 3–5) and dispatches: `harmonik run --beads id1,id2,... --max-concurrent N`.
 4. **harmonik** runs each bead end-to-end: spawn claude → watch → commit → merge into its target branch → push → close. No orchestrator intervention. The target branch comes from `.harmonik/branching.yaml` key `defaults.lands_on`. Set that key to the integration branch. When the file is absent the daemon resolves the target to `main`.
 5. **Main agent** keeps moving while harmonik runs — queues the next batch, reviews completed work, files follow-ups, drains untriaged kerf items.
@@ -18,17 +28,17 @@ The intended daily loop is:
 
 The 75% criterion: count substantive commits (not hygiene/typo) per session; ≥3 of every 4 must carry a "Refs: hk-..." trailer landed by the daemon (visible in `git log --grep='Refs:' --format='%H %cn'` where committer is the agent identity).
 
-The bottleneck for "stops being mentioned, becomes the default" is three text edits — see Section B. Once landed, the next session-resume invocation will start with `bv --robot-triage` + `kerf next` and propose a harmonik batch BEFORE any sub-agent.
+The bottleneck for "stops being mentioned, becomes the default" is three text edits — see Section B. Once landed, the next session-resume invocation will start from the named initiatives and `br ready --sort priority --limit 0`, and propose a harmonik batch BEFORE any sub-agent.
 
 ---
 
 ## A. Workflow design — the canonical daily loop
 
 1. **Read state.** `/session-resume` reads `HANDOFF.md`, the `ORCHESTRATION DIRECTIVES` block, and `docs/orchestration-learnings.md`. Translate every codename on first mention.
-2. **Triage.** Run `bv --robot-triage` for the graph-aware top-N picks. Run `kerf next` for the kerf-managed prioritized feed. The two views are complementary: bv ranks by graph metrics (PageRank, unblocking fan-out); kerf ranks by work-attachment + momentum.
+2. **Order the work.** Take the named initiatives of the operator and the admiral first. Below that line, run `br ready --sort priority --limit 0` for the unclaimed backlog, and `br ready --sort oldest` to find work that is starving. Pass `--limit 0` — `br ready` returns 20 rows by default and a short listing is not evidence of a short backlog. `bv --robot-triage` and `kerf next` are graph views, not priority. Read them for structure, never for the order to execute.
 3. **Priorities are recorded in beads.** `br update <id> --priority <0-4>` is the authoritative write. P0 = unblock-the-project; P1 = next-meaningful-feature; P2 = useful-soon; P3+ = backlog. Main-agent owns the decision; never defers to user for routine priority calls (cross-project memory `feedback_br_ownership`).
-4. **Kerf is kept in sync via `kerf work edit --bead-filter` / `kerf pin`.** When a bead doesn't surface in `kerf next`, the fix is at the work-attachment layer, not by hand-picking IDs. Multi-matched beads get a `kerf pin <work> <bead>`. Untriaged beads get `kerf triage --ack` after each session.
-5. **Choose the batch.** Take the top 3–5 beads from `kerf next` (or `bv --robot-triage`) that (a) are P0/P1/P2, (b) are not blocked by an in-flight bead, (c) are NOT in the untested-workload classes listed in `HANDOFF.md` §"Three caveats" (priority-sensitive routing; >1 concurrency; code-touching if not yet probed). Mixing 1 code-touching + 2 docs is fine if probes have passed.
+4. **Kerf is kept in sync via `kerf work edit --bead-filter` / `kerf pin`.** A bead that surfaces in no work has lost its planning context, so the fix is at the work-attachment layer. Multi-matched beads get a `kerf pin <work> <bead>`. Untriaged beads get `kerf triage --ack` after each session. This keeps `kerf map` truthful; it does not make `kerf next` a priority source.
+5. **Choose the batch.** Take 3–5 beads from the top of the order established in step 2 that (a) are P0/P1/P2, (b) are not blocked by an in-flight bead, (c) are NOT in the untested-workload classes listed in `HANDOFF.md` §"Three caveats" (priority-sensitive routing; >1 concurrency; code-touching if not yet probed). Mixing 1 code-touching + 2 docs is fine if probes have passed.
 6. **Dispatch.** `harmonik run --beads id1,id2,... --max-concurrent N [--context "..."] [--review-loop]`. `N=2` is the validated ceiling until the parallelism probe lands. Run in background; do NOT block on it inline.
 7. **While harmonik runs**, the main agent does NOT wait. It (a) drafts the next batch's candidate list, (b) drains `kerf triage` untriaged items, (c) files follow-up beads observed from prior runs, (d) reviews recently-merged commits for the per-commit-reviewer gate, (e) reads context-window-cheap docs.
 8. **On harmonik exit**, inspect: exit code (0 = success / 1 = paused-by-failure / 2 = unexpected); `git log --oneline -N` for landed commits; bead statuses via `br list --status=closed --limit 10`. Run reviewer agent on any load-bearing commit (per HANDOFF v48 directive).
@@ -39,6 +49,10 @@ The bottleneck for "stops being mentioned, becomes the default" is three text ed
 ---
 
 ## B. Specific text changes (PR-style)
+
+> Sections B to E are a dated record of what was proposed and what was observed on 2026-05-20.
+> They are history, not current instructions. The `kerf next` order they quote is stale — see the
+> correction at the top of this file.
 
 ### B.1 — HANDOFF.md ORCHESTRATION DIRECTIVES — add HARD-RULE block
 

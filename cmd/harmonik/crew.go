@@ -646,7 +646,7 @@ func crewDialAndSend(sockPath, verb string, reqBytes []byte) (crewSocketResponse
 		return crewSocketResponse{}, 1
 	}
 	if uw, ok := conn.(*net.UnixConn); ok {
-		if closeWriteErr := uw.CloseWrite(); closeWriteErr != nil {
+		if closeWriteErr := uw.CloseWrite(); !isBenignCloseWrite(closeWriteErr) {
 			if _, err := fmt.Fprintf(os.Stderr, "harmonik %s: close request write side: %v\n", verb, closeWriteErr); err != nil {
 				return crewSocketResponse{}, 1
 			}

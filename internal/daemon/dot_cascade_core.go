@@ -264,6 +264,14 @@ func driveDotWorkflow(
 	// real failure reason instead of the misleading NO-commit nudge. Empty
 	// until a gate has run and failed (hk-778x9).
 	lastGateNotes := ""
+	// lastGateClass holds the failure class of the most recent gate failure. The
+	// commit_gate→implement back-edge reads it so the message the implementer
+	// receives describes what the gate ACTUALLY did. Only a deterministic gate FAIL
+	// observed a fault; a killed, cancelled or infra-glitched gate reached no
+	// verdict at all, and telling that implementer "the build/test gate did not
+	// pass, fix the failure" sends it to fix something nobody saw
+	// (hk-killed-gate-read-as-red-0hi5z). Empty until a gate has run and failed.
+	lastGateClass := core.FailureClass("")
 	// lastGateNodeID names the shell tool node that produced lastGatePassed.
 	// The no-progress block reads it to tell "the gate bounced me" from "no
 	// gate has ever run": lastGatePassed is false in both cases, and only the
@@ -417,6 +425,10 @@ func driveDotWorkflow(
 				lastGateNodeID = currentNodeID
 				if !lastGatePassed {
 					lastGateNotes = outcome.Notes
+					lastGateClass = ""
+					if outcome.FailureClass != nil {
+						lastGateClass = *outcome.FailureClass
+					}
 				}
 
 			case node.ToolCommand != "" && node.HandlerRef != "shell":
@@ -799,8 +811,7 @@ func driveDotWorkflow(
 							//     deliver the original commit nudge.
 							fromGateFail := prevNode != nil && prevNode.ID == "commit_gate" && !lastGatePassed
 							if fromGateFail && lastGateNotes != "" {
-								gateFailMsg := "The commit gate failed — your commit was recorded but the build/test gate did not pass. " +
-									"Fix the failure and re-commit:\n\n" + lastGateNotes
+								gateFailMsg := gateBackEdgeMessage(lastGateClass, lastGateNotes)
 								rfPayload = workspace.ReviewerFeedbackPayload{
 									WorkspacePath:  wtPath,
 									PriorIteration: priorIter,

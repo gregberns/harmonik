@@ -60,9 +60,9 @@ here only when a genuinely new area recurs:
 - **Initiative/area:** `fleet-reliability` (fleet-wide infra/wedge defects — disk, ledger, dispatch), `keeper-reliability` (keeper-specific subset), `keeper`, `comms`, `spec-drift`
 - **Test kind:** `scenario-test`, `exploratory-test`
 
-Bare functional labels tag *area or initiative*. A pure ranked-backlog bug with no area
+Bare functional labels tag *area or initiative*. A pure backlog bug with no area
 affiliation MAY carry no functional label — that is allowed, provided §4 goal-alignment holds
-(it points at the ranked backlog).
+(it points at the unclaimed backlog).
 
 ---
 
@@ -94,12 +94,14 @@ A filed bead must be traceable to one of:
 1. A **named initiative** in `.harmonik/crew/admiral-initiatives.md` (Codex-as-crew, Fleet
    comms/keeper reliability, freeze-and-carve, the assessor release-gate campaign) — via a
    `codename:` / area label or the campaign label.
-2. The **ranked backlog** — `kerf next` ranks it; it needs no initiative, but it must be a
-   real, actionable unit (not a vague "look into X").
+2. The **unclaimed backlog** — it needs no initiative, but it must be a real, actionable unit
+   (not a vague "look into X"), and its `--priority` must be honest, because
+   `br ready --sort priority --limit 0` is what orders this tier. Kerf plans work and does not
+   rank it, so a bead with a lazy priority sinks out of sight.
 
 A bead that maps to **neither** is an **orphan** — flag it: either attach the right
 initiative/area label, re-scope it into an actionable backlog item, or (if it's noise) it
-shouldn't have been filed. "Belongs to the ranked backlog" is a valid answer; "belongs to
+shouldn't have been filed. "Belongs to the unclaimed backlog" is a valid answer. "Belongs to
 nothing" is not.
 
 ---
@@ -117,7 +119,7 @@ Run this before every `br create` (and it is the exact set an auditor re-checks)
 6. **Codename** — `codename:<work>` if it belongs to a kerf work, and `<work>` matches `kerf map` exactly.
 7. **Campaign + disposition** — assessor findings: `assessor-campaign-<sha>` + exactly one of `remediation:blocking` / `known-issue`.
 8. **Area label** — a bare functional tag from §2.2 if it has an area; reconcile to the taxonomy (don't invent).
-9. **Goal link** — can you name the initiative or say "ranked backlog"? If neither, it's an orphan — fix before filing.
+9. **Goal link** — can you name the initiative or say "unclaimed backlog"? If neither, it's an orphan — fix before filing.
 
 ---
 
@@ -127,5 +129,3 @@ Run this before every `br create` (and it is the exact set an auditor re-checks)
 - `docs/beads-workflow.md` §"br command surface" — priority meanings and types; `AGENTS.md` / `CLAUDE.md` §"Key conventions" for the `codename:<name>` convention.
 - `.harmonik/crew/admiral-initiatives.md` — the named-initiative registry the §4 alignment check points at.
 - `specs/beads-integration.md §4.4` — terminal-transition ownership (out of scope here, referenced for the boundary).
-</content>
-</invoke>

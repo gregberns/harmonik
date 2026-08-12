@@ -27,6 +27,17 @@ DESCRIPTION
   joins them on run/<run_id> (git branch), and produces cost rollups by bead, model,
   and session. Works without a running daemon.
 
+  The report covers ONE project: the one named by --project. It reads the
+  transcripts of that project directory and of the worktrees inside it. A
+  session from a different project is not in the total.
+
+  Two lines say what the report does not know:
+    Cost unknown   runs whose model carries no price. The tokens are counted.
+                   The dollars are not, so the run is not reported as free.
+    Unattributed   sessions whose transcript directory starts with this
+                   project's path but names no place inside it. They stay out
+                   of the total.
+
   Outputs:
     summary   one-screen human-readable report (default)
     json      machine-readable JSON, pipeable to jq

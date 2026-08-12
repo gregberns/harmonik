@@ -282,6 +282,24 @@ NOTE
   daemon-boot orphan-sweep protection is automatic, not something to remember.
   The assessor is a STANDING role spawned manually by the admiral (spawn:manual).
 
+EXIT CODES
+  0   This help was printed, or the role launcher succeeded.
+  1   The role launcher failed. captain returns 1 for a bad captain flag or a
+      launch that did not complete. crew, commodore, admiral and assessor
+      return 1 for a bad argument or for an op the daemon refused.
+  2   No role was given, the role is not one of the six, or a bare name was
+      mixed with flags.
+  17  crew, commodore, admiral and assessor: the daemon is not running.
+      Exit 17 does NOT mean nothing happened. These roles provision the
+      project and wire the keeper first, then send the launch to the daemon.
+      A run that ends in 17 has already written files in the project and in
+      ~/.claude/settings.json. Only the session was not started.
+
+  'start daemon' is different: it runs the daemon in this process and returns
+  the daemon's own code — 0 on a clean shutdown, 1 on a startup or run
+  failure, 5 when another daemon holds the pidfile lock, 9 when this binary
+  is yanked.
+
 SEE ALSO
   harmonik captain --help        full captain flags
   harmonik crew start --help     full crew flags

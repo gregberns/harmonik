@@ -40,14 +40,18 @@ type TokenUsage = sessiondata.TokenUsage
 
 // RunRecord is the per-daemon-run result in AnalysisResult.
 type RunRecord struct {
-	RunID         string          `json:"run_id"`
-	BeadID        string          `json:"bead_id"`
-	NodeID        string          `json:"node_id,omitempty"`
-	QueueID       string          `json:"queue_id,omitempty"`
-	StartedAt     string          `json:"started_at,omitempty"`
-	EndedAt       string          `json:"ended_at,omitempty"`
-	Success       bool            `json:"success"`
-	TurnCount     int             `json:"turn_count"`
+	RunID     string `json:"run_id"`
+	BeadID    string `json:"bead_id"`
+	NodeID    string `json:"node_id,omitempty"`
+	QueueID   string `json:"queue_id,omitempty"`
+	StartedAt string `json:"started_at,omitempty"`
+	EndedAt   string `json:"ended_at,omitempty"`
+	Success   bool   `json:"success"`
+	TurnCount int    `json:"turn_count"`
+	// CostKnown is false when the collector wrote no cost for the run. The
+	// collector prices a run only when it knows the model. CostUSD is then 0,
+	// and 0 means "not known", not "free".
+	CostKnown     bool            `json:"cost_known"`
 	Models        map[string]int  `json:"models"`
 	DominantModel string          `json:"dominant_model"`
 	Usage         TokenUsage      `json:"usage"`
@@ -57,10 +61,13 @@ type RunRecord struct {
 
 // BeadRecord aggregates all runs for one bead.
 type BeadRecord struct {
-	BeadID        string         `json:"bead_id"`
-	RunCount      int            `json:"run_count"`
-	Usage         TokenUsage     `json:"usage"`
-	CostUSD       float64        `json:"cost_usd"`
+	BeadID   string     `json:"bead_id"`
+	RunCount int        `json:"run_count"`
+	Usage    TokenUsage `json:"usage"`
+	CostUSD  float64    `json:"cost_usd"`
+	// UnpricedRuns counts the runs of this bead that carry no cost. CostUSD
+	// covers the other runs only.
+	UnpricedRuns  int            `json:"unpriced_runs,omitempty"`
 	Models        map[string]int `json:"models"`
 	DominantModel string         `json:"dominant_model"`
 	NodeIDs       []string       `json:"node_ids,omitempty"`
@@ -114,13 +121,22 @@ type AnalysisResult struct {
 	BeadCount           int                           `json:"bead_count"`
 	RunCount            int                           `json:"run_count"`
 	OrchSessionCount    int                           `json:"orch_session_count"`
-	ByModel             map[string]ModelStat          `json:"by_model"`
-	ByTier              map[string]TierStat           `json:"by_tier"`
-	ByHour              map[string]HourStat           `json:"by_hour"`
-	TopBeads            []BeadRecord                  `json:"top_beads"`
-	TopRuns             []RunRecord                   `json:"top_runs"`
-	TopOrchestrators    []OrchestratorSession         `json:"top_orchestrators"`
-	Warnings            []string                      `json:"warnings"`
+	// UnpricedRunCount counts the runs that happened in this project and carry
+	// no cost. Their tokens are in GlobalUsage. Their dollars are not known, so
+	// they add nothing to ProductiveCostUSD.
+	UnpricedRunCount int        `json:"unpriced_run_count"`
+	UnpricedUsage    TokenUsage `json:"unpriced_usage"`
+	// UnattributedCostUSD is the spend of the sessions that this report cannot
+	// place. It is NOT part of TotalCostUSD. See transcriptScope.Uncertain.
+	UnattributedCostUSD      float64               `json:"unattributed_cost_usd"`
+	UnattributedSessionCount int                   `json:"unattributed_session_count"`
+	ByModel                  map[string]ModelStat  `json:"by_model"`
+	ByTier                   map[string]TierStat   `json:"by_tier"`
+	ByHour                   map[string]HourStat   `json:"by_hour"`
+	TopBeads                 []BeadRecord          `json:"top_beads"`
+	TopRuns                  []RunRecord           `json:"top_runs"`
+	TopOrchestrators         []OrchestratorSession `json:"top_orchestrators"`
+	Warnings                 []string              `json:"warnings"`
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -236,58 +252,28 @@ func RunAnalysis(cfg Config) (*AnalysisResult, error) {
 			fmt.Sprintf("session-data.jsonl read error: %v", sdErr))
 	}
 
-	runRecords := map[string]*RunRecord{}
-	beadRecords := map[string]*BeadRecord{}
-
-	for i := range sdRecords {
-		r := &sdRecords[i]
-		model := r.Model
-		if model == "" {
-			model = "unknown"
-		}
-		costUSD := 0.0
-		if r.CostUSD != nil {
-			costUSD = *r.CostUSD
-		}
-		rr := &RunRecord{
-			RunID:         r.RunID,
-			BeadID:        r.BeadID,
-			QueueID:       r.QueueID,
-			StartedAt:     r.StartedAt,
-			EndedAt:       r.EndedAt,
-			Success:       r.Success,
-			TurnCount:     r.TurnCount,
-			Models:        map[string]int{model: r.TurnCount},
-			DominantModel: model,
-			Usage:         r.TokensTotal,
-			CostUSD:       costUSD,
-		}
-		runRecords[r.RunID] = rr
-
-		br, ok := beadRecords[r.BeadID]
-		if !ok {
-			br = &BeadRecord{BeadID: r.BeadID, Models: map[string]int{}}
-			beadRecords[r.BeadID] = br
-		}
-		br.RunCount++
-		br.Usage.Add(r.TokensTotal)
-		br.CostUSD += costUSD
-		br.Models[model] += r.TurnCount
-	}
-
-	for _, br := range beadRecords {
-		br.DominantModel = dominantKey(br.Models)
-		br.CacheReadPct = br.Usage.CacheReadPct()
-	}
+	runRecords, beadRecords := ingestSessionData(sdRecords)
 
 	// Collect session IDs attributed to daemon runs (to exclude from orchestrator scan).
 	knownSessionIDs := map[string]bool{}
 
 	// Phase 2: orchestrator sessions — live transcript scan (not in session-data.jsonl).
-	orchSessions, orchErr := findOrchestratorSessions(cfg.ClaudeProjectsDir, cfg.Since, cfg.Until, knownSessionIDs)
+	// The scan reads only the transcript directories of the named project. It
+	// used to read one fixed path, so every report showed the same project's
+	// sessions whatever the operator named. Refs hk-usage-misattributes-cost-yymyu.
+	scope, scopeErr := scopeTranscriptDirs(cfg.ClaudeProjectsDir, projectDir)
+	if scopeErr != nil {
+		return nil, fmt.Errorf("usage: scope transcript dirs for %s: %w", projectDir, scopeErr)
+	}
+	orchSessions, orchErr := findOrchestratorSessions(scope.Own, cfg.Since, cfg.Until, knownSessionIDs)
 	if orchErr != nil {
 		return nil, fmt.Errorf("usage: find orchestrator sessions: %w", orchErr)
 	}
+	uncertainSessions, uncertainErr := findOrchestratorSessions(scope.Uncertain, cfg.Since, cfg.Until, knownSessionIDs)
+	if uncertainErr != nil {
+		return nil, fmt.Errorf("usage: find unattributed sessions: %w", uncertainErr)
+	}
+	result.noteScope(scope, uncertainSessions)
 
 	// Global rollups.
 	var productiveCost, orchCost float64
@@ -295,6 +281,10 @@ func RunAnalysis(cfg Config) (*AnalysisResult, error) {
 	for _, rr := range runRecords {
 		productiveCost += rr.CostUSD
 		globalUsage.Add(rr.Usage)
+		if !rr.CostKnown {
+			result.UnpricedRunCount++
+			result.UnpricedUsage.Add(rr.Usage)
+		}
 	}
 	for _, s := range orchSessions {
 		orchCost += s.CostUSD
@@ -426,20 +416,118 @@ func RunAnalysis(cfg Config) (*AnalysisResult, error) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// Phase 1 — session-data.jsonl rollup
+// ──────────────────────────────────────────────────────────────────────────────
+
+// ingestSessionData turns the pre-computed run records into the report's run
+// and bead rollups.
+//
+// A record with no cost keeps its tokens and gets no dollars. The collector
+// writes a cost only when it knows a price for the model, so a missing cost
+// means "not known". A report that adds 0 for such a run states a number it
+// does not have, and the run then reads as free work.
+func ingestSessionData(records []sessiondata.Record) (runsByID map[string]*RunRecord, beadsByID map[string]*BeadRecord) {
+	runRecords := map[string]*RunRecord{}
+	beadRecords := map[string]*BeadRecord{}
+
+	for i := range records {
+		r := &records[i]
+		model := r.Model
+		if model == "" {
+			model = "unknown"
+		}
+		costUSD, costKnown := 0.0, false
+		if r.CostUSD != nil {
+			costUSD, costKnown = *r.CostUSD, true
+		}
+		runRecords[r.RunID] = &RunRecord{
+			RunID:         r.RunID,
+			BeadID:        r.BeadID,
+			QueueID:       r.QueueID,
+			StartedAt:     r.StartedAt,
+			EndedAt:       r.EndedAt,
+			Success:       r.Success,
+			TurnCount:     r.TurnCount,
+			CostKnown:     costKnown,
+			Models:        map[string]int{model: r.TurnCount},
+			DominantModel: model,
+			Usage:         r.TokensTotal,
+			CostUSD:       costUSD,
+		}
+
+		br, ok := beadRecords[r.BeadID]
+		if !ok {
+			br = &BeadRecord{BeadID: r.BeadID, Models: map[string]int{}}
+			beadRecords[r.BeadID] = br
+		}
+		br.RunCount++
+		br.Usage.Add(r.TokensTotal)
+		br.CostUSD += costUSD
+		br.Models[model] += r.TurnCount
+		if !costKnown {
+			br.UnpricedRuns++
+		}
+	}
+
+	for _, br := range beadRecords {
+		br.DominantModel = dominantKey(br.Models)
+		br.CacheReadPct = br.Usage.CacheReadPct()
+	}
+	return runRecords, beadRecords
+}
+
+// noteScope records what the transcript scan could and could not place. It
+// warns when the project has no transcript directory at all, so an empty
+// orchestrator total reads as "no data found" and not as "no spend".
+func (r *AnalysisResult) noteScope(scope transcriptScope, uncertain []OrchestratorSession) {
+	if len(scope.Own) == 0 {
+		r.Warnings = append(r.Warnings,
+			"no transcript directory holds this project's sessions. Orchestrator spend is not measured.")
+	}
+	if len(uncertain) == 0 {
+		return
+	}
+	for _, s := range uncertain {
+		r.UnattributedCostUSD += s.CostUSD
+	}
+	r.UnattributedSessionCount = len(uncertain)
+	names := make([]string, 0, len(scope.Uncertain))
+	for _, d := range scope.Uncertain {
+		names = append(names, filepath.Base(d))
+	}
+	r.Warnings = append(r.Warnings, fmt.Sprintf(
+		"%d session(s) worth %s cannot be placed. Their transcript directory starts with this project's path but names no place inside it: %s. The total leaves them out.",
+		len(uncertain), fmtDollars(r.UnattributedCostUSD), strings.Join(names, ", ")))
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Phase 2 — Find long-lived orchestrator sessions
 // ──────────────────────────────────────────────────────────────────────────────
 
-func findOrchestratorSessions(claudeProjectsDir, since, until string, knownSessionIDs map[string]bool) ([]OrchestratorSession, error) {
-	user := os.Getenv("USER")
-	mainProjectDir := filepath.Join(claudeProjectsDir, fmt.Sprintf("-Users-%s-github-harmonik", user))
-	if _, err := os.Stat(mainProjectDir); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
+// findOrchestratorSessions reads the long-lived non-daemon sessions (captain,
+// crew, operator) from each of the given transcript directories. The caller
+// picks the directories, so this function decides nothing about which project a
+// session belongs to. See scopeTranscriptDirs.
+func findOrchestratorSessions(dirs []string, since, until string, knownSessionIDs map[string]bool) ([]OrchestratorSession, error) {
+	var sessions []OrchestratorSession
+	for _, dir := range dirs {
+		found, err := orchSessionsInDir(dir, since, until, knownSessionIDs)
+		if err != nil {
+			return nil, err
 		}
-		return nil, err
+		sessions = append(sessions, found...)
 	}
+	return sessions, nil
+}
 
-	entries, err := os.ReadDir(mainProjectDir)
+// orchSessionsInDir reads the orchestrator sessions of one transcript
+// directory. A session whose every git branch starts with "run/" is a daemon
+// run. session-data.jsonl already counts those, so this function drops them.
+func orchSessionsInDir(dir, since, until string, knownSessionIDs map[string]bool) ([]OrchestratorSession, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -454,24 +542,30 @@ func findOrchestratorSessions(claudeProjectsDir, since, until string, knownSessi
 			continue
 		}
 
-		fpath := filepath.Join(mainProjectDir, e.Name())
+		fpath := filepath.Join(dir, e.Name())
 		sess, err := analyzeOrchSession(fpath, sessionID, since, until)
 		if err != nil || sess.TurnCount == 0 {
 			continue
 		}
-		allRunBranches := true
-		for _, b := range sess.Branches {
-			if !strings.HasPrefix(b, "run/") {
-				allRunBranches = false
-				break
-			}
-		}
-		if allRunBranches && len(sess.Branches) > 0 {
+		if isDaemonRunSession(sess) {
 			continue
 		}
 		sessions = append(sessions, sess)
 	}
 	return sessions, nil
+}
+
+// isDaemonRunSession reports a session that ran only on run branches.
+func isDaemonRunSession(sess OrchestratorSession) bool {
+	if len(sess.Branches) == 0 {
+		return false
+	}
+	for _, b := range sess.Branches {
+		if !strings.HasPrefix(b, "run/") {
+			return false
+		}
+	}
+	return true
 }
 
 func analyzeOrchSession(fpath, sessionID, since, until string) (OrchestratorSession, error) {
@@ -621,6 +715,27 @@ func jsonInt64(raw json.RawMessage) int64 {
 
 func fmtDollars(v float64) string { return fmt.Sprintf("$%.4f", v) }
 
+// costUnknownLabel is the cost column for work whose dollars are not known.
+// "$0.0000" in that column reads as free work, which is a different claim.
+const costUnknownLabel = "cost unknown"
+
+// beadCostLabel gives the cost column for one bead. A bead gets a dollar amount
+// only when at least one of its runs carries a price.
+func beadCostLabel(b BeadRecord) string {
+	if b.RunCount > 0 && b.UnpricedRuns == b.RunCount {
+		return costUnknownLabel
+	}
+	return fmtDollars(b.CostUSD)
+}
+
+// runCostLabel gives the cost column for one run.
+func runCostLabel(rr RunRecord) string {
+	if !rr.CostKnown {
+		return costUnknownLabel
+	}
+	return fmtDollars(rr.CostUSD)
+}
+
 func fmtTokens(n int64) string {
 	switch {
 	case n >= 1_000_000:
@@ -651,6 +766,14 @@ func PrintSummary(r *AnalysisResult, w io.Writer) error {
 	p("  TOTAL COST:        %s", fmtDollars(r.TotalCostUSD))
 	p("  Productive (bead): %s  (%.1f%%)", fmtDollars(r.ProductiveCostUSD), r.ProductivePct)
 	p("  Idle/Orchestrator: %s  (%.1f%%)", fmtDollars(r.OrchestratorCostUSD), r.IdlePct)
+	if r.UnpricedRunCount > 0 {
+		p("  Cost unknown:      %d run(s), %s tokens. No price is known for the model.",
+			r.UnpricedRunCount, fmtTokens(r.UnpricedUsage.Total()))
+	}
+	if r.UnattributedSessionCount > 0 {
+		p("  Unattributed:      %s over %d session(s). Not in the total above.",
+			fmtDollars(r.UnattributedCostUSD), r.UnattributedSessionCount)
+	}
 	p("")
 	p("  Beads attributed:  %d", r.BeadCount)
 	p("  Daemon runs:       %d", r.RunCount)
@@ -691,8 +814,8 @@ func PrintSummary(r *AnalysisResult, w io.Writer) error {
 	if len(r.TopBeads) > 0 {
 		p("  TOP 10 BEADS BY COST:")
 		for i, b := range r.TopBeads {
-			p("    %2d. %-12s  %s  runs=%d  model=%s  cache_read=%.0f%%",
-				i+1, b.BeadID, fmtDollars(b.CostUSD), b.RunCount, b.DominantModel, b.CacheReadPct)
+			p("    %2d. %-12s  %-13s  runs=%d  model=%s  cache_read=%.0f%%",
+				i+1, b.BeadID, beadCostLabel(b), b.RunCount, b.DominantModel, b.CacheReadPct)
 		}
 		p("")
 	}
@@ -704,8 +827,8 @@ func PrintSummary(r *AnalysisResult, w io.Writer) error {
 			if rr.Success {
 				ok = "OK"
 			}
-			p("    %2d. bead=%-12s  %s  %s  model=%s  turns=%d",
-				i+1, rr.BeadID, fmtDollars(rr.CostUSD), ok, rr.DominantModel, rr.TurnCount)
+			p("    %2d. bead=%-12s  %-13s  %s  model=%s  turns=%d",
+				i+1, rr.BeadID, runCostLabel(rr), ok, rr.DominantModel, rr.TurnCount)
 		}
 		p("")
 	}

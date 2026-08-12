@@ -341,10 +341,10 @@ func workerConfigLockTimedOut(err error) bool {
 	return errors.As(err, &exitErr) && exitErr.ExitCode() == workerConfigLockTimeoutExit
 }
 
-// workerConfigProgramPrelude returns the head shared by the two worker programs
-// that write the SHARED Claude config: the trust upsert and the theme upsert. It
-// resolves the config path, and it defines the bounded lock acquire, the config
-// read, and the atomic write those programs use.
+// workerConfigProgramPrelude returns the head of the worker program that writes
+// the SHARED Claude config: the trust upsert. It resolves the config path, and it
+// defines the bounded lock acquire, the config read, and the atomic write that
+// program uses.
 //
 // # Where the config path comes from
 //
@@ -700,77 +700,3 @@ except BaseException:
         pass
     raise
 `, fallbackFirstStartTime)
-
-// EnsureClaudeThemeVia pre-seeds the top-level "theme" key in the config where
-// Claude Code will read it (the WORKER's ~/.claude.json for a remote run; box-A's
-// for a local run), suppressing the first-run theme-selection modal (hk-oga33).
-// It is the theme-modal analogue of EnsureWorktreeTrustVia, and mirrors its
-// transport: local (runner == nil) delegates to the in-process EnsureClaudeTheme;
-// remote runs the theme upsert as a python3 program fed ON STDIN (never via -c —
-// see EnsureWorktreeTrustVia for the SSH argv-resplit hazard). Theme is a GLOBAL
-// key (no worktree argument), so the program takes no argv and is a lock-free
-// no-op once any launch has seeded it.
-func EnsureClaudeThemeVia(ctx context.Context, runner tmux.CommandRunner) error {
-	if runner == nil {
-		return EnsureClaudeTheme()
-	}
-	cmd := runner.Command(ctx, "python3", "-")
-	cmd.Stdin = bytes.NewReader([]byte(workerThemeUpsertProgram(claudeConfigPathForWorker(), defaultTrustLockTimeout)))
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		// Same structural classification as the in-process sibling: ensureClaudeThemeAt
-		// returns ErrTrustLockTimeout from acquireExclusiveBounded, so the remote leg
-		// returns it too rather than an opaque "exit status 75".
-		if workerConfigLockTimedOut(err) {
-			return fmt.Errorf("%w\nremote: %s", ErrTrustLockTimeout, out)
-		}
-		return fmt.Errorf("workspace: EnsureClaudeThemeVia: %w\nremote: %s", err, out)
-	}
-	return nil
-}
-
-// workerThemeUpsertProgram builds the python3 program (fed on STDIN to
-// `python3 -`, NOT via -c) that idempotently seeds ~/.claude.json["theme"] =
-// "dark" when it is absent/null/empty on the worker. It mirrors
-// workerTrustUpsertProgram's concurrency contract — lock-free fast path when
-// already set; a bounded LOCK_EX sidecar-flock read-modify-write only when a
-// mutation is needed; atomic temp-file + os.replace; preserve all other keys;
-// never clobber an operator's explicit theme. The "dark" literal MUST stay in
-// sync with claudeDefaultTheme in claudetrust_wm040b.go.
-//
-// It takes the SAME lock on the SAME file as the trust upsert and it runs
-// immediately after it in the launch-spec build, so it needs the same config
-// path and the same bounded wait. Fixing only the trust program would have moved
-// the hang one step down the launch path (hk-g8d5x). This comment claimed the
-// wait was bounded for a while before the code made it so, which is why the
-// package now has a test for the bound rather than a sentence about it.
-func workerThemeUpsertProgram(cfgPathForWorker string, lockTimeout time.Duration) string {
-	return workerConfigProgramPrelude(cfgPathForWorker, lockTimeout) + workerThemeUpsertProgramBody
-}
-
-const workerThemeUpsertProgramBody = `
-def theme_set(cfg):
-    t = cfg.get("theme")
-    return isinstance(t, str) and t != ""
-
-# Fast path: probe WITHOUT the lock; a no-op when the theme is already set.
-if theme_set(load_cfg()):
-    sys.exit(0)
-
-# Write path: hold LOCK_EX on the sidecar lockfile across the read-modify-write so
-# concurrent writers (incl. the trust upsert) never lose each other's keys.
-lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
-try:
-    acquire_bounded(lock_fd)
-    cfg = load_cfg()
-    if theme_set(cfg):
-        sys.exit(0)
-    cfg["theme"] = "dark"
-    write_cfg(cfg)
-finally:
-    try:
-        fcntl.flock(lock_fd, fcntl.LOCK_UN)
-    except OSError:
-        pass
-    os.close(lock_fd)
-`

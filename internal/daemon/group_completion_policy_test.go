@@ -19,6 +19,17 @@ func TestDecideGroupCompletionEffects(t *testing.T) {
 		{name: "receipt retry has no effects", in: groupCompletionDurability{Disposition: queue.GroupCompletionDispositionReceiptRequired}, want: groupCompletionEffects{}},
 		{name: "intermediate committed", in: groupCompletionDurability{Disposition: queue.GroupCompletionDispositionIntermediate, Outcome: queue.OutcomeCommittedDurable}, want: groupCompletionEffects{Wake: true, EmitIntents: true, Refill: true}},
 		{name: "successor commit failed", in: groupCompletionDurability{Disposition: queue.GroupCompletionDispositionSuccessorActivated, Outcome: queue.OutcomeRejected}, want: groupCompletionEffects{Refill: true, LogFailure: true}},
+		// successor-held is what a completion on a DRAINED queue returns: the
+		// group closed and its successor stayed pending. It must earn the same
+		// effects as successor-activated, because the same transaction landed.
+		// These rows are the only sensor for that. Drop the constant from the
+		// switch in decideGroupCompletionEffects and the disposition falls to
+		// default, so a drained queue writes the item and then never wakes the
+		// dispatch loop and never emits the group event. Drop it from
+		// validateGroupCompletionDurability and the effects are never applied at
+		// all. Both mutants survived the whole package before these rows.
+		{name: "successor held committed", in: groupCompletionDurability{Disposition: queue.GroupCompletionDispositionSuccessorHeld, Outcome: queue.OutcomeCommittedDurable}, want: groupCompletionEffects{Wake: true, EmitIntents: true, Refill: true}},
+		{name: "successor held commit failed", in: groupCompletionDurability{Disposition: queue.GroupCompletionDispositionSuccessorHeld, Outcome: queue.OutcomeRejected}, want: groupCompletionEffects{Refill: true, LogFailure: true}},
 		{name: "paused committed", in: groupCompletionDurability{Disposition: queue.GroupCompletionDispositionPausedByFailure, Outcome: queue.OutcomeCommittedDurable}, want: groupCompletionEffects{Wake: true, CancelQueueExit: true, EmitIntents: true, Refill: true}},
 		{name: "paused committed with cleanup diagnostic", in: groupCompletionDurability{Disposition: queue.GroupCompletionDispositionPausedByFailure, Outcome: queue.OutcomeCommittedDurable, CleanupError: true}, want: groupCompletionEffects{Wake: true, CancelQueueExit: true, EmitIntents: true, Refill: true, LogFailure: true}},
 		{name: "final not committed", in: groupCompletionDurability{Disposition: queue.GroupCompletionDispositionQueueCompleted, Outcome: queue.OutcomeNotCommitted, Phase: queue.CompletionPhaseNotCommitted}, want: groupCompletionEffects{Refill: true, LogFailure: true}},

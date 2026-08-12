@@ -434,6 +434,20 @@ type Snapshot = queue.QueueSnapshot
 // a hard failure becomes a silent spin.
 var ErrQueueQuarantined = errors.New("queuewiring: queue is quarantined after a failed write")
 
+// ErrStaleSnapshot marks a transaction or a completion refused because the
+// caller's snapshot no longer describes the live queue — the generation moved,
+// or the bytes differ at the same generation. It is the ONE refusal a caller
+// may retry by re-reading: the queue is healthy and the world simply moved.
+//
+// It exists so a caller classifies the retryable case POSITIVELY. Classifying
+// it as "rejected and not quarantined" reads the same on this file today and
+// breaks quietly on the next refusal somebody adds: the completion path, for
+// one, returns the quarantine reason unwrapped, so a negative test there would
+// retry a queue that is shut until an operator repairs it.
+//
+// Spec ref: specs/queue-model.md §9.1 QM-060 (single writer).
+var ErrStaleSnapshot = errors.New("queuewiring: queue snapshot is stale")
+
 // The queue read commands reach the quarantine through this port. It is
 // satisfied by a runtime type assertion in queue.HandlerAdapter, so nothing
 // else would catch a rename of the method below.
@@ -557,12 +571,12 @@ func (s *QueueStore) Transact(ctx context.Context, req TransactionRequest) Trans
 	}
 	if req.Snapshot.Generation != s.generations[name] {
 		s.queueMu.Unlock()
-		return rejectedTransaction(errors.New("stale queue snapshot generation"))
+		return rejectedTransaction(fmt.Errorf("%w: generation moved", ErrStaleSnapshot))
 	}
 	current := queue.CloneQueue(s.queues[name])
 	if !sameQueue(current, req.Snapshot.Queue) {
 		s.queueMu.Unlock()
-		return rejectedTransaction(errors.New("snapshot bytes differ at same generation"))
+		return rejectedTransaction(fmt.Errorf("%w: bytes differ at the same generation", ErrStaleSnapshot))
 	}
 	if req.Mutate == nil {
 		s.queueMu.Unlock()
@@ -724,7 +738,7 @@ func (s *QueueStore) validateCompletionSnapshotLocked(req queue.CompletionReques
 	if req.Snapshot.Generation != s.generations[name] ||
 		!sameQueue(s.queues[name], req.Snapshot.Queue) ||
 		req.Snapshot.Queue == nil {
-		return errors.New("stale completion snapshot")
+		return fmt.Errorf("%w: completion snapshot no longer matches the live queue", ErrStaleSnapshot)
 	}
 	if req.Observe == nil || req.ReleaseTime == nil {
 		return errors.New("completion observation and release time source are required")

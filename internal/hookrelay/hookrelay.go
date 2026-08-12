@@ -94,25 +94,84 @@ type Env struct {
 	Phase            string // optional; "" when absent
 }
 
-// envFromOS reads HARMONIK_* env vars from the process environment.
-// Returns an error if any required variable is absent.
-func envFromOS() (Env, error) {
-	required := []struct {
-		key  string
-		dest *string
-	}{
-		{"HARMONIK_RUN_ID", nil},
-		{"HARMONIK_DAEMON_SOCKET", nil},
-		{"HARMONIK_WORKSPACE_PATH", nil},
-		{"HARMONIK_HANDLER_SESSION_ID", nil},
-		{"HARMONIK_CLAUDE_SESSION_ID", nil},
-		{"HARMONIK_WORKFLOW_ID", nil},
-		{"HARMONIK_NODE_ID", nil},
-		{"HARMONIK_AGENT_TYPE", nil},
-	}
+// requiredEnvKeys names every HARMONIK_* variable the relay cannot work without,
+// per specs/claude-hook-bridge.md §4.2 CHB-006. The order matches the
+// destination fields in envFromOS.
+//
+// It is a package-level list rather than a literal inside envFromOS so the tests
+// can read the SAME list the code reads. A test that keeps its own copy of these
+// names agrees with the code only until someone adds the ninth variable, and the
+// disagreement then shows up as a failure that depends on whether the machine
+// running the test happens to export the new name.
+var requiredEnvKeys = []string{
+	"HARMONIK_RUN_ID",
+	"HARMONIK_DAEMON_SOCKET",
+	"HARMONIK_WORKSPACE_PATH",
+	"HARMONIK_HANDLER_SESSION_ID",
+	"HARMONIK_CLAUDE_SESSION_ID",
+	"HARMONIK_WORKFLOW_ID",
+	"HARMONIK_NODE_ID",
+	"HARMONIK_AGENT_TYPE",
+}
 
+// optionalEnvKeys names the HARMONIK_* variables envFromOS reads but does not
+// demand. Absence is normal and is never an error.
+//
+// Same rule as requiredEnvKeys, and for the same reason: envFromOS indexes this
+// list to do the read. A list that no production code reads is a second copy of
+// a name, free to drift from the literal the code actually uses, which is the
+// hazard requiredEnvKeys exists to remove.
+var optionalEnvKeys = []string{
+	"HARMONIK_PHASE",
+}
+
+// errNotHarmonikSession reports that NOT ONE of the required HARMONIK_*
+// variables is present in the environment, so this Claude Code session was not
+// started by harmonik. The relay is a no-op there and says nothing (hk-f0xb6):
+// an operator running Claude Code by hand in a project whose settings.json
+// carries the hook must not see an error, and the daemon being down on a
+// developer box is a normal state.
+//
+// It is deliberately NOT returned when SOME variables are present. A session
+// with seven of the eight is harmonik-managed and has lost its wiring, which is
+// never normal — see envFromOS (hk-stop-relay-cannot-fail-5n2t3).
+var errNotHarmonikSession = errors.New("hook-relay: not a harmonik-managed session")
+
+// envFromOS reads HARMONIK_* env vars from the process environment.
+//
+// PRESENCE, NOT EMPTINESS, picks the outcome. The test is os.LookupEnv, because
+// a variable that is present and set to "" is not the same fact as a variable
+// that was never exported: the first is a harmonik session whose wiring arrived
+// broken, the second is a session harmonik never touched. Deciding with
+// os.Getenv conflated the two and sent the broken-wiring case down the silent
+// path — the exact vacuous success this function exists to remove.
+//
+// Three outcomes, and the difference between the last two is the whole point:
+//   - every required variable present and non-empty -> (Env, nil).
+//   - NOT ONE present                               -> errNotHarmonikSession.
+//     The caller exits 0 in silence.
+//   - any other mix                                 -> an error naming each
+//     unusable variable and saying whether it is absent or present-but-empty.
+//     The caller exits 1 and prints it. The session IS harmonik-managed and its
+//     completion signal cannot be delivered, so the daemon waits out the whole
+//     commit budget and records the finished agent as a budget overrun
+//     (hk-stop-relay-cannot-fail-5n2t3). Exiting 1 does not shorten that wait —
+//     a Claude implementer phase ends when a commit lands, so an agent that
+//     finishes without committing burns its budget whatever this hook does.
+//     What exit 1 changes is that the broken wiring becomes visible instead of
+//     being reported as success. Per CHB-017 an env-var mismatch is an
+//     unrecoverable failure and exits 1.
+//
+// A present-but-empty variable therefore lands in the loud third case, never in
+// the silent second one. It counts as wiring, so it keeps the session on the
+// loud path even when every other variable is absent.
+func envFromOS() (Env, error) {
 	var e Env
-	ptrs := []*string{
+	// One destination per name in requiredEnvKeys, in the SAME ORDER. Both halves
+	// of that sentence are load-bearing and neither is checked by the compiler: a
+	// short slice is an index panic, and a permuted one silently files each value
+	// under its neighbour's name. A test pins length and order together.
+	dests := []*string{
 		&e.RunID,
 		&e.DaemonSocket,
 		&e.WorkspacePath,
@@ -122,19 +181,49 @@ func envFromOS() (Env, error) {
 		&e.NodeID,
 		&e.AgentType,
 	}
-	for i := range required {
-		required[i].dest = ptrs[i]
-	}
 
-	for _, r := range required {
-		v := os.Getenv(r.key)
-		if v == "" {
-			return Env{}, fmt.Errorf("bridge_malformed_hook_payload: required env var %s is absent", r.key)
+	// absent: no such variable in the environment.
+	// blank:  the variable is exported, and its value is "".
+	var absent, blank []string
+	for i, key := range requiredEnvKeys {
+		v, present := os.LookupEnv(key)
+		switch {
+		case !present:
+			absent = append(absent, key)
+		case v == "":
+			blank = append(blank, key)
+		default:
+			*dests[i] = v
 		}
-		*r.dest = v
+	}
+	// Silence is correct only when the environment carries no harmonik wiring at
+	// all. An exported empty variable IS wiring, so one of those makes this
+	// condition unsatisfiable and the loud branch below takes the session.
+	if len(absent) == len(requiredEnvKeys) {
+		return Env{}, errNotHarmonikSession
+	}
+	if len(absent) > 0 || len(blank) > 0 {
+		var parts []string
+		if len(absent) > 0 {
+			parts = append(parts, "absent: "+strings.Join(absent, ", "))
+		}
+		if len(blank) > 0 {
+			parts = append(parts, "present but empty: "+strings.Join(blank, ", "))
+		}
+		return Env{}, fmt.Errorf(
+			"bridge_malformed_hook_payload: this session is harmonik-managed but %d of %d required env vars carry no value (%s); the agent completion signal cannot be delivered",
+			len(absent)+len(blank), len(requiredEnvKeys), strings.Join(parts, "; "))
 	}
 
-	e.Phase = os.Getenv("HARMONIK_PHASE") // optional
+	// The optional half, read the same indexed way. os.Getenv is right here:
+	// absent and present-but-empty both mean "no phase", which is a normal state
+	// and not a broken session.
+	optionalDests := []*string{
+		&e.Phase,
+	}
+	for i, key := range optionalEnvKeys {
+		*optionalDests[i] = os.Getenv(key)
+	}
 	return e, nil
 }
 
@@ -152,18 +241,9 @@ func Run(eventKind string, stdin io.Reader, stderr io.Writer, envOverride *Env) 
 	}
 
 	// Load env vars.
-	var e Env
-	if envOverride != nil {
-		e = *envOverride
-	} else {
-		var err error
-		e, err = envFromOS()
-		if err != nil {
-			// Not a harmonik-managed session (e.g., user running Claude Code
-			// directly in a project that has hook-relay settings.json). Exit 0
-			// silently — the hook is a no-op outside harmonik. (hk-f0xb6)
-			return 0
-		}
+	e, exitCode, ok := resolveEnv(stderr, envOverride)
+	if !ok {
+		return exitCode
 	}
 
 	// Read and validate stdin per CHB-012.
@@ -246,6 +326,35 @@ func Run(eventKind string, stdin io.Reader, stderr io.Writer, envOverride *Env) 
 	}
 
 	return 0
+}
+
+// resolveEnv produces the Env that Run works from. It has three outcomes, not
+// two, so the classification of an envFromOS error lives here rather than inline
+// in Run: ok=true carries a usable Env, and ok=false carries the exit code Run
+// must return.
+//
+// The two not-ok outcomes are deliberately different. A session with NO harmonik
+// wiring is not an error at all, and a harmonik-managed session with BROKEN
+// wiring must be loud.
+func resolveEnv(stderr io.Writer, envOverride *Env) (env Env, exitCode int, ok bool) {
+	if envOverride != nil {
+		return *envOverride, 0, true
+	}
+	e, err := envFromOS()
+	if errors.Is(err, errNotHarmonikSession) {
+		// Not a harmonik-managed session (e.g., user running Claude Code
+		// directly in a project that has hook-relay settings.json). Exit 0
+		// silently — the hook is a no-op outside harmonik. (hk-f0xb6)
+		return Env{}, 0, false
+	}
+	if err != nil {
+		// A harmonik-managed session with broken wiring. Reporting it is the
+		// point: the previous silent exit 0 made a green stop_hook_summary
+		// evidence of nothing at all (hk-stop-relay-cannot-fail-5n2t3).
+		writeDiagnostic(stderr, "%v\n", err)
+		return Env{}, 1, false
+	}
+	return e, 0, true
 }
 
 // buildMessage constructs the progress-stream message type and payload per CHB-013.

@@ -59,7 +59,7 @@ New here? Read these in order, then keep the references on hand.
 | tmux | Session substrate | `brew install tmux` / `apt install tmux` |
 | Claude Code CLI (`claude`) | Agent runtime | https://claude.ai/code |
 | `br` (beads_rust) | Task ledger (required) | See below |
-| `kerf` | Planning / prioritization (optional) | See below |
+| `kerf` | Spec-first planning (optional) | See below |
 
 ### Install `br` (beads_rust)
 
@@ -90,9 +90,10 @@ br --version
 
 ### Install `kerf` (optional)
 
-`kerf` is the planning and prioritization layer. The core daemon loop runs without it — you can
-submit beads directly via `harmonik queue submit`. Install it only if you want ranked feeds
-(`kerf next`) and structured planning passes.
+`kerf` is the spec-first planning layer. It plans work; it does not rank work — priority comes from
+the active plan and then from `br ready --sort priority`. The core daemon loop runs without kerf, and
+you can submit beads directly with `harmonik queue submit`. Install it if you want structured planning
+passes and `kerf map`, which shows which planned work owns a bead.
 
 ```bash
 # kerf is an internal sibling tool; see docs/components/internal/kerf.md for details

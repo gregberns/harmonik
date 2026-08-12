@@ -36,10 +36,13 @@ Here are the mechanics:
 **I do NOT**
 - Start the daemon, submit to a queue, join the comms bus, or subscribe to
   events. The daemon is down by operator directive and all of those fail.
-- Sit inline reading code that a sub-agent could read for me. Sub-agents are a
-  lane's only delegation channel — the fleet rule that calls Agent-tool dispatch
-  the wrong move is written for an orchestrator with a live daemon queue, and I
-  am not one.
+- Spend my own context on reading that would leave me short for judgment. That
+  is the test — not whether a sub-agent could have done it. Opening one file to
+  check one symbol is cheaper than briefing somebody. A sweep of the tree, a
+  spread of files, an investigation, a second opinion on my own patch: those go
+  out, several at once. Sub-agents are a lane's only delegation channel — the
+  fleet rule that calls Agent-tool dispatch the wrong move is written for an
+  orchestrator with a live daemon queue, and I am not one.
 - Edit another lane's packages without declaring it. `LANES.md` §1 owns the line
   and §5 owns how to cross it.
 - Decide anything `LANES.md` §8 reserves for the operator.

@@ -20,7 +20,7 @@ description: >
 
 The dispatch model is **one persistent daemon per project + a shared queue**. The daemon (`harmonik start daemon --project . --no-auto-pull --max-concurrent N`, running in a detached tmux session) is the dispatcher; agents dispatch by **submitting beads to its queue**. Multiple agents/orchestrators share that single daemon — the shared queue IS the multi-agent coordination mechanism.
 
-When working in this project (`$HARMONIK_PROJECT`), the FIRST tool call of the working phase should be `kerf next` (ranked bead feed with work-context), then a proposed `harmonik queue submit` dispatch batch — BEFORE any Agent-tool sub-agent invocation.
+When working in this project (`$HARMONIK_PROJECT`), the working phase opens by deciding what to work on, and then by proposing a `harmonik queue submit` dispatch batch — BEFORE any Agent-tool sub-agent invocation. Priority comes from stated intent first, then from the ledger. See step 1 of the loop below.
 
 ## Start the daemon once (if not already up)
 
@@ -39,8 +39,17 @@ tmux new-session -d -s harmonik-daemon \
 
 ## The loop
 
-1. **Triage.** `kerf next` — ranked feed of beads with work-context. Use `kerf triage` for drift detection (untriaged beads, external changes).
-2. **Pick a batch of beads** from the top of the feed (skip the untested-workload classes documented in `HANDOFF.md` until the probes land). The previously-flagged caveats (hk-rp48p priority-sort, hk-wx8z8 parallel pane allocator, hk-cj0gm Stop-hook delivery) are all FIXED; broad-class dispatch is now safe.
+1. **Triage — priority comes from stated intent first, then from the ledger.**
+
+   Work the named initiatives of the operator and the admiral first. These live in the active plan's order, in dated directives in `.harmonik/context/captain-lanes.md`, and in the direction-log RETURN-PATH.
+
+   Below that line, order the unclaimed backlog with `br ready --sort priority --limit 0`. Scope it to one lane with `--parent <epic_id>`. Use `br ready --sort oldest` to surface work that is starving.
+
+   Pass `--limit 0`. `br ready` returns 20 rows by default and sorts by `hybrid`. A short default listing is not evidence of a short backlog.
+
+   `kerf` plans work. It does not rank work. Use `kerf map` to see which work owns a bead and what context it carries, and `kerf triage` for drift detection (untriaged beads, external changes). Do not take an order from `kerf next`. Its score comes from graph structure and never reads the `br` priority field, so a P0 bead and a P3 bead come back the same. It also reports empty for a work that has no `bead_filter`. Ranking what matters is judgment, and a graph metric cannot do it for you.
+
+2. **Pick a batch of beads** from the top of that ordering (skip the untested-workload classes documented in `HANDOFF.md` until the probes land). The previously-flagged caveats (hk-rp48p priority-sort, hk-wx8z8 parallel pane allocator, hk-cj0gm Stop-hook delivery) are all FIXED; broad-class dispatch is now safe.
 3. **If the orchestrator session is keeper-managed:** signal in-flight dispatch before submitting:
    ```bash
    harmonik keeper set-dispatching <agent>
@@ -92,7 +101,9 @@ Sub-agent dispatch (via the Agent tool) is justified ONLY when:
 - **(b)** The change is ≤2 lines of typo / cross-reference cleanup where ~30s daemon overhead isn't worth it.
 - **(c)** The work touches an untested workload class per the readiness audit.
 
-Anything else: route through the daemon queue. If you're on the 4th Agent-tool call in a row, STOP and batch them onto the queue.
+Anything else: route through the daemon queue.
+
+**The smell is a sub-agent whose output is a commit.** Count the sub-agents you dispatched that end in a code change, not the raw number of Agent-tool calls. Research, review, triage and monitoring agents produce findings and no commit — a wave of those is not a routing failure, and there is nothing to batch, because none of them is a bead. Three implementation-shaped sub-agents in a row is the signal to stop: write them as beads and submit the batch to the queue instead.
 
 ## API rate-limit concurrency rule (HARD RULE — hk-kumjl / hk-ocbh2)
 
@@ -105,6 +116,8 @@ Observed failure mode: orchestrator dispatched ~40 parallel sub-agents while the
 - **Sub-agent phase** — heavy Agent-tool dispatch (research, parallel investigation); hold off on new queue submissions until the sub-agent wave drains.
 
 If you must interleave, cap total concurrent claude sessions (daemon-dispatched + sub-agents) to **≤5** across both modes to stay safely within the rate limit.
+
+**A major-issue fan-out is a sub-agent phase, not an exception to this rule.** The fan-out protocol spawns 10–15 agents in parallel on purpose (see the **major-issue-fanout** skill). That is legal because it IS the sub-agent mode: before you start a fan-out, stop submitting to the queue and let the in-flight beads drain. A fan-out layered on top of a live dispatching queue is the exact shape of the 56-minute stall above.
 
 ## Failure handling
 

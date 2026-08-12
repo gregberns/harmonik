@@ -3,7 +3,7 @@
 #
 # Runs ALL deterministic discovery from Steps 2a–2g and Step 4 (queue status,
 # comms who, crew list, tmux fleet, paused queues, recent comms, ready beads,
-# open epics, kerf next, kerf map) and emits a single Markdown STATE DIGEST.
+# open epics, kerf map) and emits a single Markdown STATE DIGEST.
 # The LLM reads ONE digest instead of 10+ individual discovery turns, reducing
 # context accrued before real work begins.
 #
@@ -115,10 +115,13 @@ fi
 echo ""
 
 # ── Step 4: Work plan discovery ───────────────────────────────────────────────
-echo "## 7. Ready Beads — all, unpaginated (STARTUP.md §4)"
-br ready --limit 0 --json 2>&1 \
+# --sort priority: `br ready` defaults to `hybrid` and to 20 rows. Both defaults
+# mislead a captain reading a boot digest — a short listing is not a short backlog,
+# and hybrid order is not priority order.
+echo "## 7. Ready Beads — all rows, priority order (STARTUP.md §4)"
+br ready --sort priority --limit 0 --json 2>&1 \
   | jq -r '.[] | "- \(.id)  P\(.priority // "?"): \(.title)"' 2>/dev/null \
-  || br ready --limit 0 2>&1 | head -40
+  || br ready --sort priority --limit 0 2>&1 | head -40
 echo ""
 
 echo "## 8. Open Epics (STARTUP.md §4)"
@@ -127,15 +130,13 @@ br list --status=open --type=epic --json 2>&1 \
   || br list --status=open --type=epic 2>&1 | head -20
 echo ""
 
-echo "## 9. Kerf Next — ranked feed (STARTUP.md §4)"
-kerf next --format=json 2>&1 \
-  | jq -r 'if type == "array" then .[] | "- \(.id // .bead_id // "?"): \(.title // .description // "")"
-           elif .items then .items[] | "- \(.id // .bead_id // "?"): \(.title // "")"
-           else . end' 2>/dev/null \
-  || kerf next 2>&1 | head -30
-echo ""
-
-echo "## 10. Kerf Map — works by area (STARTUP.md §4)"
+# NOTE: there is deliberately no `kerf next` section. kerf plans work, it does not
+# rank work — its score comes from graph structure and never reads the `br` priority
+# field, so a P0 and a P3 bead come back the same. Priority is stated intent first
+# (operator / admiral initiatives), then `br ready --sort priority --limit 0`, which
+# is section 7 above. `kerf map` stays: it answers "which kerf work owns this bead
+# and what context does it carry", which nothing else answers.
+echo "## 9. Kerf Map — which work owns which bead (STARTUP.md §4)"
 kerf map 2>&1 | head -60
 echo ""
 

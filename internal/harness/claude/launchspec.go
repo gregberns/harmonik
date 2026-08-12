@@ -121,29 +121,6 @@ func BuildLaunchSpec(ctx context.Context, rc shared.LaunchCtx) (handler.LaunchSp
 			"daemon: buildClaudeLaunchSpec: EnsureWorktreeTrust: %w", err)
 	}
 
-	// Step 3a' — Pre-seed ~/.claude.json["theme"] to suppress the first-run
-	// theme-selection modal (hk-oga33). Claude Code >= 2.1.214 renders an
-	// interactive "Choose the text style …" onboarding modal at Stage 1 (BEFORE
-	// SessionStart) when theme is unset; --dangerously-skip-permissions does NOT
-	// suppress it (covers only the trust modal), so a daemon-spawned pane wedges on
-	// it and agent_ready times out at 150s. Same ordering + local/remote dispatch as
-	// the trust seed. Fatal-structural for the same reason: an un-themed session
-	// blocks indefinitely on the modal rather than reaching SessionStart.
-	//
-	// The seed itself was live-refuted as a modal fix (fleet writers lost-update the
-	// shared file; top-level "theme" is not even the modal-gating key), and the modal
-	// no longer reproduces on claude v2.1.217 with the operator's normal shared
-	// config (see Step 3a''). It is left in place, but it is NOT inert: whenever
-	// top-level "theme" is absent, EnsureClaudeTheme takes an exclusive flock and
-	// read-modify-writes the operator's real shared ~/.claude.json (see
-	// ensureClaudeThemeAt). Since fleet writers can lost-update that key away, this
-	// can re-fire across launches. Retiring it is a follow-up; do not describe it as
-	// a no-op.
-	if err := workspace.EnsureClaudeThemeVia(ctx, rc.Runner); err != nil {
-		return handler.LaunchSpec{}, shared.LaunchArtifacts{}, fmt.Errorf(
-			"daemon: buildClaudeLaunchSpec: EnsureClaudeTheme: %w", err)
-	}
-
 	// Step 3a'' — Isolate a PRIVATE per-launch Claude config dir. REMOTE ONLY
 	// (rc.runner != nil, hk-qxvc2): PrepareIsolatedClaudeConfigDirVia runs the
 	// preparation ON THE WORKER, seeding from the WORKER's own onboarded

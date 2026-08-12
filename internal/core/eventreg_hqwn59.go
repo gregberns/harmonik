@@ -456,6 +456,9 @@ func registerQueueEvents() {
 	mustRegister(EventTypeQueueAppended, func() EventPayload { return &QueueAppendedPayload{} })
 	mustRegister(EventTypeQueueItemDeferredForLedgerDep, func() EventPayload { return &QueueItemDeferredForLedgerDepPayload{} })
 	mustRegister(EventTypeQueueItemReconciled, func() EventPayload { return &QueueItemReconciledPayload{} })
+	// cross_queue_collision (§9.8a QM-067a): emitted by the dispatch reservation
+	// when a sibling queue already holds the same bead. Durability class: O.
+	mustRegister(EventTypeCrossQueueCollision, func() EventPayload { return &CrossQueueCollisionPayload{} })
 }
 
 // registerHandlerPauseEvents registers all §8.11 handler-pause lifecycle event

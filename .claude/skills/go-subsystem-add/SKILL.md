@@ -106,7 +106,13 @@ Rules:
   not yet defined in `internal/core`: represent them as `*string` / `string`
   with a godoc TODO citing the spec section and a follow-up bead ID per
   `.claude/implementer-protocol.md §Typed-alias-deferral pattern`.
-- Do NOT add interface types the bead body does not call for.
+- **An interface here should be able to name what it buys.** A second implementation, a
+  seam a test genuinely needs, a port a linter requires, a boundary a spec draws — any one
+  of those is a reason. Absence from the bead body is not by itself a reason to leave one
+  out, because a bead states the work and not the design. What to avoid is the interface
+  added on speculation, where nothing yet on the other side of it can be named. At scaffold
+  time that is usually the case, so the scaffold ships the concrete type and the interface
+  arrives with its second caller.
 
 ### 2c. `internal/<subsystem>/<subsystem>_test.go`
 
@@ -132,7 +138,31 @@ func Test<SomeType>Compiles(t *testing.T) {
 Rules:
 - Use an external test package (`package <subsystem>_test`), not an internal
   `package <subsystem>` test, so the test exercises the exported surface.
-- `t.Parallel()` is required on every test function per `docs/methodology/TESTING.md`.
+- **Lean toward `t.Parallel()` on every test function**, and treat its absence as
+  something you should be able to justify in one line. It is the house default — about
+  62% of the test functions in this tree call it — and it is most of why the suite still
+  finishes.
+
+  It is not universal, and it cannot be. `t.Setenv`, `t.Chdir`, and
+  `cryptotest.SetGlobalRandom` set process-wide state, so the pinned Go toolchain refuses
+  to combine them with `t.Parallel` and **panics** with:
+
+  ```
+  testing: test using t.Setenv, t.Chdir, or cryptotest.SetGlobalRandom can not use t.Parallel
+  ```
+
+  The refusal is bidirectional — `Setenv`-then-`Parallel` panics the same as
+  `Parallel`-then-`Setenv` — and the check walks the whole ancestor chain, so a
+  non-parallel subtest under a parallel parent panics too. Around 155 call sites in this
+  tree set the environment this way, and none of them can be parallel. When your test is
+  one of them, omit `t.Parallel()` and write the reason on the line above it.
+
+  Nothing enforces any of this mechanically: `paralleltest` and `tparallel` are not in
+  `.golangci.yml`. The hazard that survives is the quiet one — **raw `os.Setenv` in a test
+  has no such guard.** It does not panic under `t.Parallel`; it silently races the whole
+  process environment against every other parallel test. Prefer `t.Setenv` precisely
+  because it fails loudly, and treat a raw `os.Setenv` in a new test as a smell worth
+  fixing before you look for anything else.
 - Do not import `internal/testhelpers` unless you actually call one of its
   helpers; the import will fail `unused` lint if the package is empty.
 

@@ -110,7 +110,10 @@ func reserveForRelease(t *testing.T, beadID core.BeadID) (string, *queuewiring.Q
 	t.Helper()
 	projectDir, store := releaseFixture(t, beadID)
 	runID := newReservationRunID(t)
-	reserved := reserveQueueItem(context.Background(), store, projectDir, releaseTarget(beadID, runID))
+	reservation := releaseTarget(beadID, runID)
+	reservation.QueueID = store.Snapshot(releaseQueueName).Queue.QueueID
+	reservation.ClaimTransitionID = newReservationTransitionID(t)
+	reserved := reserveQueueItem(context.Background(), store, projectDir, reservation)
 	if reserved.Verdict != reservationReserved {
 		t.Fatalf("setup: reserve verdict = %q; want %q", reserved.Verdict, reservationReserved)
 	}

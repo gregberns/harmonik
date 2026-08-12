@@ -262,6 +262,7 @@ var allPayloadCompatEntries = []PayloadCompatEntry{
 	{TypeName: EventTypeQueueItemDeferredForLedgerDep, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeQueueItemReconciled, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 	{TypeName: EventTypeQueueItemHeldForHandlerPause, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
+	{TypeName: EventTypeCrossQueueCollision, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},
 
 	// ── §8.11 Handler-pause lifecycle ──────────────────────────────────────
 	{TypeName: EventTypeHandlerPaused, CurrentVersion: 1, PreviousVersion: 0, CompatWindowHolds: true, AdditiveOnly: true},

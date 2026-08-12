@@ -19,7 +19,7 @@ Standing behavioral rules: the **`orchestrator-rules` skill** (`.claude/skills/o
 
 ## Per-role load map
 
-Each role loads only its slice. The boot runbook in each role's skill is authoritative; this is the map.
+Each role loads only its slice. **This map is the reading order.** Where any other file states one, it defers here. Each role's skill stays authoritative for that role's own steps; this is the map across roles. The slices differ on purpose: a captain does not boot-read `AGENT_INDEX.md` or `STATUS.md`, and an implementer-orchestrator has three steps where the captain has four.
 
 - **Captain — cold boot** (see `.claude/skills/captain/STARTUP.md`):
   1. Step 0 — identity + CWD guard.
@@ -30,17 +30,18 @@ Each role loads only its slice. The boot runbook in each role's skill is authori
   - Does **NOT** boot-read: `AGENT_INDEX.md`, `STATUS.md`, product/`docs/` knowledge base, full skill bodies. `.harmonik/context/roadmap.md` only on cold boot / milestone.
 - **Captain — keeper-restart resume (LEAN):** re-drain comms → re-read tier-3/tier-2 + ONE boot digest → trust cached tier state as input → re-arm watchers. No heavy re-derive.
 - **Crew — minimal load** (see `.claude/skills/crew-launch/SKILL.md`): its mission file (`.harmonik/crew/missions/<crew>.md`) + `crew-launch/SKILL.md` + `agent-comms` + `beads-cli` + `harmonik-dispatch`. Does **NOT** load fleet-level state (roadmap, captain-lanes, project.yaml, orchestrator standing-rules, STATUS, HANDOFF, knowledge base) — scoped to ONE epic + ONE queue.
-- **Implementer-orchestrator (main `/session-resume`, non-captain):** `AGENT_INDEX → STATUS → HANDOFF` reading order + the **`orchestrator-rules` skill** (standing rules) + `harmonik-dispatch`.
+- **Implementer-orchestrator (main `/session-resume`, non-captain):** `AGENT_INDEX → STATUS → HANDOFF` + the **`orchestrator-rules` skill** (standing rules) + `harmonik-dispatch`. **Three steps, not the captain's four:** `.harmonik/context/captain-lanes.md` is captain-tier, and its own tier header says so.
+- **Any session with no role:** `AGENT_INDEX.md` → `STATUS.md` → `HANDOFF.md`.
 
 ## Start here
 
-Read [AGENT_INDEX.md](AGENT_INDEX.md) first — the master map of the knowledge base (every doc reachable within two hops). Then [STATUS.md](STATUS.md) for phase + locked decisions, `.harmonik/context/captain-lanes.md` for the medium-term lane/epic tracker, and [HANDOFF.md](HANDOFF.md) for this-session state.
+Read [AGENT_INDEX.md](AGENT_INDEX.md) first — the master map of the knowledge base. Then [STATUS.md](STATUS.md) for phase + locked decisions, and [HANDOFF.md](HANDOFF.md) for this-session state. `.harmonik/context/captain-lanes.md` is captain-tier: a captain reads it at boot, and crews and implementer-orchestrators skip it. The load map above is the full statement of who reads what.
 
 **Booting as a captain or crew?** These skills are **project-local under the repo** — read them at `$PROJECT_DIR/.claude/skills/…`, NOT the global `~/.claude/skills/` (no captain/crew skill exists there). Captain: read `.claude/skills/captain/STARTUP.md` FIRST, then `SKILL.md` in that dir. Crew: read `.claude/skills/crew-launch/SKILL.md`. See also `.claude/skills/keeper` (per-session context-watcher) and `.claude/skills/harmonik-lifecycle` (supervise / promote / reconcile / init).
 
 ## Standing rules → the `orchestrator-rules` skill
 
-Dispatch discipline (the daily loop, the HARD-RULE exceptions), priority (kerf-first), bead lifecycle (daemon owns terminal transitions; never pre-set in_progress), the review gate, autonomy/flow boundaries, and the major-issue fan-out trigger: all canonical in the **`orchestrator-rules` skill** (`.claude/skills/orchestrator-rules/SKILL.md`). It points to the detail-owner skills; it does not duplicate them.
+Dispatch discipline (the daily loop, the HARD-RULE exceptions), priority (stated intent first, then the ledger), bead lifecycle (daemon owns terminal transitions; never pre-set in_progress), the review gate, autonomy/flow boundaries, and the major-issue fan-out trigger: all canonical in the **`orchestrator-rules` skill** (`.claude/skills/orchestrator-rules/SKILL.md`). It points to the detail-owner skills; it does not duplicate them.
 
 - **Daily loop / daemon / `queue submit` / `append` / `subscribe`:** the **harmonik-dispatch** skill. Full design: `docs/orchestration-protocol-v2.md`; the normative wave/stream/append contract is `specs/queue-model.md`.
 - **Monitoring the daemon** (the canonical Monitor pattern, stream-vs-wave, failure triage): the **harmonik-dispatch** skill.
@@ -63,74 +64,78 @@ This project uses [kerf](docs/components/internal/kerf.md) for structured planni
 ## Key conventions
 
 - **Operational state lives in tier files, not in this router.** `.harmonik/context/project.yaml` (durable phase + locked decisions), `.harmonik/context/captain-lanes.md` (lane registry + dated directives), `.harmonik/context/roadmap.md` (epic roadmap), `HANDOFF.md` (this-session). Each carries a header declaring who loads it and what must NOT go there.
-- **Ten architectural decisions** are locked in as of 2026-04-19. See [STATUS.md](STATUS.md#decisions-locked-in-2026-04-19). Reopening one requires strong new evidence.
+- **Ten architectural decisions** are locked in as of 2026-04-19. See [STATUS.md](STATUS.md#decisions-locked-in-2026-04-19). **Reopening one is the operator's call, and evidence is what earns the conversation.** Bring evidence that the decision is now wrong, say what changed, and put it to the operator. That the current task would be easier the other way is not evidence, and finding good evidence is not the same as having the authority to act on it.
+- **Write guidance as principles, not laws.** An agent treats a rule as a law: it obeys the letter and does strange things to satisfy it. A principle gives a direction to travel and leaves the judgment. When you write into this file, a skill, or a review criterion, prefer "lean toward X because Y" and "treat Z as a smell worth investigating" over "never X". Keep the absolutes for what is genuinely irreversible, for self-dealing, and for a protocol invariant with a silent mechanical consequence — and when you keep one, write the consequence next to it, so a reader can tell a law from a piece of documentation.
+- **Cite symbols, not line numbers.** A `file.go:72` reference rots within days and ships as stale guidance. Write `internal/keeper/thresholds.go` `HardCeilingAbsTokens` and let the reader grep.
+- **Write prose in plain, simple English.** Short common words, active voice, one instruction per sentence, one name per thing. This covers prose that is not code: docs, specs, plans, skills, commit bodies, PR text, and bead descriptions. It also covers what you say to the operator — give what a thing is, not a bead ID or a codename as its handle.
 - **Bead label convention for kerf work codenames:** use the `codename:<name>` prefix (e.g. `codename:handler-pause`, `codename:claude-hook-bridge`). Kerf work `bead_filter` clauses must match the same form. Functional/topical labels (e.g. `queue`, `spec-drift`) remain bare — only labels whose sole purpose is to identify a kerf work codename get the prefix.
 
-## Don't
+## Judgment calls
 
-- Don't reopen locked-in decisions without explicit operator request.
-- Don't add abstraction layers the operator hasn't asked for.
-- Don't skip the AGENT_INDEX → STATUS → captain-lanes → HANDOFF reading order when picking up the project.
+- **An abstraction has to name what it buys.** Name the thing and the abstraction is welcome: a second caller that exists today, a test seam the code has no other way to reach, a port a linter requires, or a boundary a spec draws. The smell is a layer that names nothing — one caller, no test that needed it, no rule that demanded it. Say what it buys in the commit body, and a reviewer can agree or disagree with a stated claim instead of guessing at intent.
+- **Read your role's slice.** The per-role load map above is the reading order, and the slices differ on purpose. Read less than yours and you boot on a stale claim. Read more than yours and you spend the context the role needs for its actual job.
 
 <!-- bv-agent-instructions-v2 -->
+<!-- end-bv-agent-instructions -->
+
+> **Maintainer note — the marker block above is machine-regenerable, and it is empty on purpose.**
+> `br agents --update` rewrites everything between the `bv-agent-instructions-v2` markers from br's
+> generic upstream template. This project's issue-tracking guidance therefore lives BELOW the markers,
+> where that command cannot reach it. After any `br agents --update`, read the regenerated block and
+> delete each claim upstream makes that is false here: (1) the bead ledger is gitignored and
+> machine-local, not "stored in `.beads/` and tracked in git"; (2) `git commit -m "..."` alone omits
+> the required review trailers; (3) commit-message validation is agent-enforced — git hooks
+> (lefthook) are retired, not "wired via `lefthook.yml`"; (4) an agent never claims a bead with
+> `br update --status=in_progress` and never closes one with `br close` — the daemon owns terminal
+> transitions, and a bead pre-set to `in_progress` stops being dispatchable with nothing reporting an
+> error; (5) `kerf next` is not the entry point for what to work on. Diff the block before you accept
+> the result.
 
 ---
 
-## Beads Workflow Integration
+## Issue tracking with beads (`br`)
 
-This project uses [beads_rust](https://github.com/Dicklesworthstone/beads_rust) (`br`) for issue tracking and [kerf](docs/components/internal/kerf.md) for prioritization and triage. Issues are stored in `.beads/` and tracked in git.
+This project uses [beads_rust](https://github.com/Dicklesworthstone/beads_rust) (`br`) as the task ledger. Each unit of work is a bead. [kerf](docs/components/internal/kerf.md) plans that work — see §"Planning with kerf" above.
 
-### Prioritization: use kerf, not bv
+**The ledger is machine-local.** `.beads/` is gitignored. Beads do not travel between clones and they do not reach CI, and `br sync --flush-only` stages nothing. Do not "fix" this by tracking `.beads/`: `br sync` rewrites the JSONL continuously, a tracked copy leaves the working tree perpetually dirty, and that trips the daemon's `implementer_escaped_worktree` detector and false-fails dispatched beads. Anything that must survive goes in a tracked doc or in the commit message.
 
-**`kerf next` is the single entry point for "what to work on."** It returns a ranked feed of beads with work-context (which kerf work owns each bead), cleanup tasks, and warnings. `kerf triage` handles drift detection (untriaged beads, external closes/reopens, multi-matched beads).
+### What to work on
+
+Priority comes from stated intent first, then from the ledger. Work the named initiatives of the operator first — the active plan's order and the dated directives in `.harmonik/context/captain-lanes.md`. Below that line, order the unclaimed backlog:
 
 ```bash
-kerf next                        # Ranked feed: top item is what to do next
-kerf next --format=json          # Machine-readable output
-kerf next --only=bead            # Only bead items (skip cleanup/warnings)
-kerf triage                      # Drift report: untriaged, multi-matched, external drift
-kerf triage --ack                # Advance baseline after acting on the report
-kerf map                         # Works grouped by area
+br ready --sort priority --limit 0                      # whole ready set, highest priority first
+br ready --sort priority --parent <epic_id> --limit 0   # scoped to one lane
+br ready --sort oldest --limit 0                        # what is starving
 ```
 
-`bv` (beads_viewer) is installed but **not used for prioritization** — kerf owns that. `bv` is only useful for graph-metric analysis (`--robot-insights` for PageRank/betweenness) or dependency graph export (`--robot-graph`), which kerf does not cover. **CRITICAL: Use ONLY --robot-* flags with bv. Bare bv launches an interactive TUI that blocks your session.**
+Pass `--limit 0`. `br ready` returns 20 rows by default and sorts by `hybrid`, so a short default listing is not evidence of a short backlog.
 
-### br Commands for Issue Management
+`kerf` plans work; it does not rank work. `kerf map` shows which planned work owns a bead and what context it carries. Do not take an order from `kerf next` — its score comes from graph structure and never reads the `br` priority field, so a P0 bead and a P3 bead come back the same, and it reports empty for a work with no `bead_filter`. Ranking what matters is judgment, and a graph metric cannot do it for you.
+
+**Never run bare `bv`** — it opens an interactive TUI that holds the terminal until a human quits it, so an agent session stops there and nothing reports an error. Use `--robot-*` flags only, and only for graph metrics (`--robot-insights` for PageRank and betweenness, `--robot-graph` for dependency export).
+
+### Reading and creating beads
 
 ```bash
-br ready              # Show issues ready to work (no blockers)
-br list --status=open # All open issues
-br show <id>          # Full issue details with dependencies
+br ready              # issues ready to work (no blockers)
+br list --status=open # all open issues
+br show <id>          # full issue details with dependencies
 br create --title="..." --type=task --priority=2
-br update <id> --status=in_progress
-br close <id> --reason="Completed"
-br close <id1> <id2>  # Close multiple issues at once
-br sync --flush-only  # Export DB to JSONL
+br dep add <issue> <depends-on>
+br comment <id> "..."
 ```
 
-### Workflow Pattern
+- **Priority**: P0=critical, P1=high, P2=medium, P3=low, P4=backlog. Use the numbers 0-4, not words.
+- **Types**: task, bug, feature, epic, chore, docs, question.
+- **Dependencies**: a bead can block another. `br ready` shows only unblocked work.
 
-1. **Triage**: Run `kerf next` to find the highest-impact actionable work
-2. **Claim**: Use `br update <id> --status=in_progress`
-3. **Work**: Implement the task
-4. **Complete**: Use `br close <id>`
-5. **Sync**: Always run `br sync --flush-only` at session end
+### The daemon owns the terminal transitions
 
-### Key Concepts
+**Do not set a bead to `in_progress`, and do not close one yourself.** The daemon claims a bead when it dispatches it and closes it when the work merges. A bead an agent pre-set to `in_progress` is no longer dispatchable, and the daemon cannot tell that state from a live run, so the work stalls and nothing reports an error. Creating beads, commenting on them, and adding dependencies are yours.
 
-- **Dependencies**: Issues can block other issues. `br ready` shows only unblocked work.
-- **Priority**: P0=critical, P1=high, P2=medium, P3=low, P4=backlog (use numbers 0-4, not words)
-- **Types**: task, bug, feature, epic, chore, docs, question
-- **Blocking**: `br dep add <issue> <depends-on>` to add dependencies
+### Committing
 
-### Session Protocol
+Commit with `git commit -F <file>`, not `-m`. Non-trivial commits carry `Reviewed-By:` and `Review-Verdict:` trailers, and `-m` cannot write them. Validation is agent-enforced — there are no git hooks, and `--no-verify` is forbidden. A `BLOCK` verdict is never committed. Quote the reviewer's verdict verbatim and never author your own approval. If no reviewer can be reached, record that fact in the trailer with no verdict and commit anyway: work stranded in a worktree is one `checkout` from gone, and a commit labelled "not reviewed" is a state the next person can act on.
 
-```bash
-git status              # Check what changed
-git add <files>         # Stage code changes
-br sync --flush-only    # Export beads changes to JSONL
-git commit -m "..."     # Commit everything
-git push                # Push to remote
-```
-
-<!-- end-bv-agent-instructions -->
+At session end, run `br sync --flush-only` to keep the local database and the JSONL consistent. Expect it to stage nothing.

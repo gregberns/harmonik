@@ -37,7 +37,7 @@ This fix **protects the whole fleet's verification integrity** — right now the
 - **CLAUDE harness. Implement via your OWN in-crew Agent subagents**, committing a reviewed diff on a branch. Do NOT `harmonik queue submit` — daemon dispatch is broken fleet-wide (hk-9hvr0/hk-8juwz) until roll-forward.
 - **Independent reviewer subagent** gates the commit before it's considered done (review gate applies to subagent-written diffs too).
 - **Verify with an isolated cache:** `GOCACHE=$(mktemp -d) go test ./internal/daemon/...` — and `grep "could not import"` your output before trusting any result (a wiped/again-fresh cache is silently wrong in both directions).
-- The **daemon owns terminal bead status** — do NOT set hk-gjbpp closed/in_progress yourself.
+- **Whoever runs the work owns the terminal bead status, and here that is the captain, not you.** Do not set hk-gjbpp to `closed` or `in_progress` yourself. A pre-set status makes the bead undispatchable, and the run then goes nowhere with no error. A close you make by hand leaves the ledger out of step with the run state, so the completion event never fires. A crew closes its own beads only when its mission file grants it in writing, and this file does not.
 - **Shared-file watchpoint:** `internal/daemon` is also touched by kilo (keeper) and juliet (no-auto-dispatch). Work in your OWN worktree/branch; rebase onto the target branch before finalizing; post to captain on a real conflict.
 - Model: **Sonnet** (small, contained fix).
 

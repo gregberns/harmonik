@@ -59,6 +59,18 @@ func foreignSessionConfig(t *testing.T, projectDir, agent string, tokens int64) 
 		IdleQuiesce:  1 * time.Millisecond,
 		Staleness:    120 * time.Second, // generous — gauge stays fresh
 		TmuxTarget:   "",
+		// WHICH OF THESE TWO THRESHOLDS ACTUALLY GATES ANYTHING HERE. Staleness
+		// does: the stale branch is evaluated BEFORE the foreign-session branch
+		// and `continue`s past it, so a gauge that ages past Staleness takes the
+		// hard-ceiling backstop out of reach. Every test built on this config
+		// depends on the gauge staying inside that window.
+		//
+		// IdleQuiesce does NOT. It is read only on the fresh-and-SID-matched
+		// path, and this config makes every tick a foreign_session, so the loop
+		// has already `continue`d before reaching the idle gate. The value is
+		// carried for shape, not for effect — no edit to it changes the outcome
+		// of any test in this file. Refs: hk-3ty39.
+		//
 		// Managed binding is "sess-managed"; .sid endorses the same value.
 		// The gauge carries "sess-foreign", so every tick is a foreign_session.
 		ReadManagedSessionFn:  func(_, _ string) (string, error) { return "sess-managed", nil },
@@ -427,12 +439,37 @@ func TestHardCeiling_CooldownPreventsMultipleRestarts(t *testing.T) {
 	cfg.HardCeilingRestartFn = spy.restart
 	cfg.HardCeilingCooldown = 10 * time.Second // long cooldown → only one attempt
 
+	// ANCHOR VIRTUAL TIME AT THE GAUGE'S REAL MOD-TIME. foreignSessionConfig
+	// wrote the gauge just now, at real time. The watcher reads gauge age as
+	// Clock.Since(modTime) — an injected clock against a real filesystem
+	// mod-time — so a fake clock that starts at some unrelated epoch is not
+	// commensurate with it. This test used to start virtual time in November
+	// 2023 against a gauge written today, which made every age about MINUS 2.7
+	// years: no positive Staleness could ever read true, and the whole staleness
+	// fixture was decorative. Starting from the stat'd mod-time makes the
+	// boot-time age exactly zero and each tick adds one PollInterval, so the
+	// gauge ages 40 × 5ms = 200ms of virtual time over the run — comfortably
+	// inside the 120s window, and now that is a fact rather than an accident.
+	// Refs: hk-3ty39; idiom and full rationale in watcher_test.go
+	// driveWatcherFakeClockFrom.
+	_, gaugeModTime := readCtxFor(t, projectDir, agent)
+
 	// Drive 40 deterministic ticks, all above 280K. The first fires the restart;
 	// the rest fall within the 10s cooldown (40 × 5ms = 200ms virtual ≪ 10s), so
 	// exactly one restart fires. FakeClock removes the -race tick-starvation flake
 	// where a fixed 300ms real window could yield zero effective ticks (hk-3dn16).
-	driveWatcherFakeClock(t, cfg, em, 40)
+	driveWatcherFakeClockFrom(t, gaugeModTime, cfg, em, 40)
 
+	// The gauge must stay inside the staleness window for the whole run. This is
+	// the assertion that gives Staleness teeth: the stale branch `continue`s past
+	// the hard-ceiling backstop, so a gauge that goes stale silently disarms the
+	// failsafe the rest of this test is about. Drop cfg.Staleness below the 200ms
+	// virtual run and this count goes red — which is exactly what could not
+	// happen while every age was negative. Measured: the restart count stays at
+	// 1 under that control, so this assertion is the only sensor for staleness.
+	if n := noGaugeStaleCount(em); n != 0 {
+		t.Errorf("want 0 no_gauge:stale over the run (the gauge must stay fresh, or the hard ceiling is never reached); got %d", n)
+	}
 	if n := spy.count(); n != 1 {
 		t.Errorf("want exactly 1 hard-ceiling restart (cooldown holds); got %d", n)
 	}

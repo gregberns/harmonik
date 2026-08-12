@@ -70,8 +70,42 @@ func noGaugeStaleCount(em *keeper.RecordingEmitter) int {
 // the keeper-side heartbeat so it NEVER reaches the stale branch. Without the
 // heartbeat the gauge ages past Staleness and the watcher emits
 // no_gauge:stale, continuing past BOTH triggers.
+//
+// TIME IS VIRTUAL HERE, and that is the repair (hk-vp02y). The watcher runs on
+// a clock anchored to the seeded gauge's real mod-time, so the boot-time age is
+// EXACTLY the seeded age and each tick adds a whole PollInterval. A gauge
+// mod-time is a real file time and cannot carry virtual time, so once the first
+// heartbeat write lands the age tracks the virtual time elapsed since the run
+// began. Every crossing is therefore a fixed tick number:
+//
+//	boot     age 3s  — below Staleness, so the boot-time check is silent
+//	tick 1   age 4s  — above HeartbeatThreshold, so the heartbeat writes
+//	tick 5   age 5s  — the age reaches Staleness, and from here the only thing
+//	                   that keeps the gauge out of the stale branch is the
+//	                   heartbeat writing on the same pass
+//
+// Nothing above is a rate. The boot-time age is exactly seedAge — the anchor
+// puts no real clock on that path at all. The real clock enters once, after the
+// first write: the file lands at wall-clock time while virtual time keeps
+// running ahead, so the age reads as virtual elapsed MINUS the real time the
+// run has spent. A slow box therefore makes the gauge look YOUNGER, which is
+// the direction this test wants, and cannot manufacture the stale event it
+// asserts against.
 func TestHeartbeat_KeepsLiveGaugeFresh(t *testing.T) {
 	t.Parallel()
+
+	const (
+		// seedAge sits above HeartbeatThreshold, so the heartbeat is due on the
+		// first tick, and below Staleness, so the boot-time check stays silent.
+		seedAge            = 3 * time.Second
+		heartbeatThreshold = 2500 * time.Millisecond
+		staleness          = 5 * time.Second
+		pollInterval       = 1 * time.Second
+		// 12 ticks is twelve virtual seconds, more than twice Staleness. With
+		// the heartbeat removed the gauge freezes at the seed and reaches
+		// Staleness on tick 2.
+		ticks = 12
+	)
 
 	projectDir := t.TempDir()
 	agent := "test-agent"
@@ -92,33 +126,42 @@ func TestHeartbeat_KeepsLiveGaugeFresh(t *testing.T) {
 		Tokens:    100_000,
 		SessionID: managedSID,
 		Ts:        time.Now().UTC().Format(time.RFC3339),
-	}, 70*time.Millisecond)
+	}, seedAge)
+	_, seededModTime := readCtxFor(t, projectDir, agent)
 
 	em := &keeper.RecordingEmitter{}
 	cfg := keeper.WatcherConfig{
 		AgentName:          agent,
 		ProjectDir:         projectDir,
-		PollInterval:       10 * time.Millisecond,
+		PollInterval:       pollInterval,
 		WarnPct:            80.0,
 		IdleQuiesce:        1 * time.Millisecond,
-		Staleness:          120 * time.Millisecond,
+		Staleness:          staleness,
 		HeartbeatEnabled:   true,
-		HeartbeatThreshold: 60 * time.Millisecond,
+		HeartbeatThreshold: heartbeatThreshold,
 		TmuxTarget:         "fake:0.0",
 		// Pane is alive (agent running) → heartbeat must keep the gauge fresh.
 		IsPaneIdleFn: func(context.Context, string) bool { return false },
 		// No transcript on disk → heartbeat carries last-good tokens forward.
 		TranscriptDir: filepath.Join(projectDir, "no-such-transcript-dir"),
+		// The derive-miss budget is a different contract, tested by
+		// TestHeartbeat_DeriveMissBudget_SuppressesCarryForward. Set it above
+		// the tick count so it cannot end the run early and change the subject.
+		HeartbeatMaxMisses: 1000,
 	}
 
-	runWatcherFor(context.Background(), cfg, em, 300*time.Millisecond)
+	driveWatcherFakeClockFrom(t, seededModTime.Add(seedAge), cfg, em, ticks)
 
 	if got := noGaugeStaleCount(em); got != 0 {
 		t.Fatalf("expected 0 no_gauge:stale events on a live pane, got %d", got)
 	}
 	cf, modTime := readCtxFor(t, projectDir, agent)
-	if time.Since(modTime) >= cfg.Staleness {
-		t.Fatalf("gauge was not refreshed: mod-time age %v >= Staleness %v", time.Since(modTime), cfg.Staleness)
+	// An OCCURRENCE assertion, not a rate: did the heartbeat write at all? The
+	// old form asked whether the gauge was younger than Staleness by the real
+	// clock, measured from outside the watcher after the run had ended. That
+	// reads the test harness's own scheduling delay, not the product.
+	if !modTime.After(seededModTime) {
+		t.Fatalf("gauge was not refreshed: mod-time %v is still the seeded %v", modTime, seededModTime)
 	}
 	if cf.SessionID != managedSID {
 		t.Fatalf("heartbeat stamped session_id %q, want managed %q", cf.SessionID, managedSID)
@@ -347,15 +390,43 @@ func TestHeartbeat_Cache_SkipsRederiveWithinTTL(t *testing.T) {
 // no_gauge:stale — restoring the safety signal that the carry-forward write was
 // silently suppressing.
 //
-// The test uses HeartbeatMaxMisses=2 so the budget is exceeded quickly without
-// long wall-clock delays. The contrast assertion (MaxMisses=100) confirms the
-// existing behaviour on a live pane is unchanged while the budget is large.
+// The test uses HeartbeatMaxMisses=2 so the budget is exceeded in a few ticks.
+// The contrast assertion (MaxMisses=100) confirms the existing behaviour on a
+// live pane is unchanged while the budget is large.
+//
+// BOTH ARMS RUN ON VIRTUAL TIME (hk-vp02y). The FakeClock starts at the seeded
+// gauge's real mod-time plus the seeded age, so the boot-time age is exactly
+// the seeded age and each tick adds exactly one PollInterval. No assertion here
+// reads a rate: the one real-time term subtracts from the age, so a slow box
+// can only delay a crossing into the spare ticks each arm leaves for it.
 func TestHeartbeat_DeriveMissBudget_SuppressesCarryForward(t *testing.T) {
 	t.Parallel()
 
 	// ── sub-test: budget exceeded → gauge goes stale → no_gauge:stale fires ──
 	t.Run("budget_exceeded_emits_stale", func(t *testing.T) {
 		t.Parallel()
+
+		// The whole sequence is a fixed tick number:
+		//
+		//	boot     age 3s  — below Staleness, so the boot-time check is silent
+		//	tick 1   age 4s  — heartbeat due, derive miss 1, gauge written
+		//	tick 3   age 3s  — heartbeat due, derive miss 2, gauge written
+		//	tick 4   age 4s  — heartbeat due, miss 3 busts the budget of 2,
+		//	                   so no write and the mod-time now stops moving
+		//	tick 5   age 5s  — the frozen gauge reaches Staleness → no_gauge:stale
+		//
+		// The real clock enters only as a term that SUBTRACTS from the age (a
+		// written file lands at wall-clock time while virtual time runs ahead),
+		// so a slow box can only DELAY the tick-5 crossing this test wants.
+		// Eleven spare ticks is eleven virtual seconds of room for that.
+		const (
+			seedAge            = 3 * time.Second
+			heartbeatThreshold = 2500 * time.Millisecond
+			staleness          = 5 * time.Second
+			pollInterval       = 1 * time.Second
+			// 16 ticks is three times what the sequence above needs.
+			ticks = 16
+		)
 
 		projectDir := t.TempDir()
 		agent := "test-agent"
@@ -367,19 +438,20 @@ func TestHeartbeat_DeriveMissBudget_SuppressesCarryForward(t *testing.T) {
 			Tokens:    180_000,
 			SessionID: "11111111-2222-4333-8444-555555555555",
 			Ts:        time.Now().UTC().Format(time.RFC3339),
-		}, 60*time.Millisecond)
+		}, seedAge)
+		_, seededModTime := readCtxFor(t, projectDir, agent)
 
 		em := &keeper.RecordingEmitter{}
 		cfg := keeper.WatcherConfig{
 			AgentName:  agent,
 			ProjectDir: projectDir,
 
-			PollInterval:       5 * time.Millisecond,
-			Staleness:          80 * time.Millisecond,
-			HeartbeatThreshold: 40 * time.Millisecond,
+			PollInterval:       pollInterval,
+			Staleness:          staleness,
+			HeartbeatThreshold: heartbeatThreshold,
 			HeartbeatEnabled:   true,
 			// Small budget: after 2 consecutive derive-misses the heartbeat stops
-			// writing, allowing the gauge to age past Staleness (80ms).
+			// writing, allowing the gauge to age past Staleness.
 			HeartbeatMaxMisses: 2,
 
 			TmuxTarget:   "fake:0.0",
@@ -391,9 +463,7 @@ func TestHeartbeat_DeriveMissBudget_SuppressesCarryForward(t *testing.T) {
 			TranscriptDir: filepath.Join(projectDir, "no-such-transcript-dir"),
 		}
 
-		// Run long enough for: 2 heartbeat writes (within budget) + budget exceeded
-		// + gauge ages past Staleness (80ms) → no_gauge:stale fires.
-		runWatcherFor(context.Background(), cfg, em, 600*time.Millisecond)
+		driveWatcherFakeClockFrom(t, seededModTime.Add(seedAge), cfg, em, ticks)
 
 		if got := noGaugeStaleCount(em); got == 0 {
 			t.Fatalf("expected ≥1 no_gauge:stale after derive-miss budget exceeded, got 0 (heartbeat is still papering over stale count)")
@@ -403,6 +473,18 @@ func TestHeartbeat_DeriveMissBudget_SuppressesCarryForward(t *testing.T) {
 	// ── sub-test: budget NOT exceeded → gauge stays fresh (existing behaviour) ──
 	t.Run("within_budget_keeps_gauge_fresh", func(t *testing.T) {
 		t.Parallel()
+
+		// Same arithmetic as TestHeartbeat_KeepsLiveGaugeFresh: the boot check
+		// is silent at 3s, the heartbeat writes from tick 1, and from tick 5 the
+		// carry-forward write is the only thing keeping the gauge out of the
+		// stale branch. With that write removed the gauge goes stale on tick 2.
+		const (
+			seedAge            = 3 * time.Second
+			heartbeatThreshold = 2500 * time.Millisecond
+			staleness          = 5 * time.Second
+			pollInterval       = 1 * time.Second
+			ticks              = 12
+		)
 
 		projectDir := t.TempDir()
 		agent := "test-agent"
@@ -420,16 +502,17 @@ func TestHeartbeat_DeriveMissBudget_SuppressesCarryForward(t *testing.T) {
 			Tokens:    180_000,
 			SessionID: managedSID,
 			Ts:        time.Now().UTC().Format(time.RFC3339),
-		}, 60*time.Millisecond)
+		}, seedAge)
+		_, seededModTime := readCtxFor(t, projectDir, agent)
 
 		em := &keeper.RecordingEmitter{}
 		cfg := keeper.WatcherConfig{
 			AgentName:  agent,
 			ProjectDir: projectDir,
 
-			PollInterval:       5 * time.Millisecond,
-			Staleness:          120 * time.Millisecond,
-			HeartbeatThreshold: 40 * time.Millisecond,
+			PollInterval:       pollInterval,
+			Staleness:          staleness,
+			HeartbeatThreshold: heartbeatThreshold,
 			HeartbeatEnabled:   true,
 			// Large budget: carry-forward continues for a long time — gauge stays fresh.
 			HeartbeatMaxMisses: 100,
@@ -442,14 +525,17 @@ func TestHeartbeat_DeriveMissBudget_SuppressesCarryForward(t *testing.T) {
 			TranscriptDir: filepath.Join(projectDir, "no-such-transcript-dir"),
 		}
 
-		runWatcherFor(context.Background(), cfg, em, 200*time.Millisecond)
+		driveWatcherFakeClockFrom(t, seededModTime.Add(seedAge), cfg, em, ticks)
 
 		if got := noGaugeStaleCount(em); got != 0 {
 			t.Fatalf("expected 0 no_gauge:stale while within miss budget on a live pane, got %d", got)
 		}
+		// An OCCURRENCE assertion, not a rate. The old form measured the gauge
+		// age with the real clock from outside the watcher after the run had
+		// ended, which reads the harness's scheduling delay, not the product.
 		_, modTime := readCtxFor(t, projectDir, agent)
-		if time.Since(modTime) >= cfg.Staleness {
-			t.Fatalf("gauge was not refreshed: mod-time age %v >= Staleness %v", time.Since(modTime), cfg.Staleness)
+		if !modTime.After(seededModTime) {
+			t.Fatalf("gauge was not refreshed: mod-time %v is still the seeded %v", modTime, seededModTime)
 		}
 	})
 }

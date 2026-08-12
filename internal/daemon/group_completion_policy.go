@@ -42,7 +42,14 @@ func decideGroupCompletionEffects(in groupCompletionDurability) (groupCompletion
 	}
 	out.LogFailure = in.Outcome != queue.OutcomeCommittedDurable || in.ObservationError || in.CleanupError || in.MarkerError
 	switch in.Disposition {
-	case queue.GroupCompletionDispositionIntermediate, queue.GroupCompletionDispositionSuccessorActivated:
+	// successor-held commits the same transaction as successor-activated and it
+	// wakes the loop for the same reason: the item and its group changed on
+	// disk, and the eager refill and the dispatch loop must both look again.
+	// The successor group did not start, but that is the queue's pause talking,
+	// not a reason to withhold the effects of the write that DID land.
+	case queue.GroupCompletionDispositionIntermediate,
+		queue.GroupCompletionDispositionSuccessorActivated,
+		queue.GroupCompletionDispositionSuccessorHeld:
 		if in.Outcome == queue.OutcomeCommittedDurable {
 			out.Wake = true
 			out.EmitIntents = true
@@ -74,7 +81,10 @@ func validateGroupCompletionDurability(in groupCompletionDurability) error {
 			return fmt.Errorf("group completion %s has durability facts", in.Disposition)
 		}
 		return nil
-	case queue.GroupCompletionDispositionIntermediate, queue.GroupCompletionDispositionSuccessorActivated, queue.GroupCompletionDispositionPausedByFailure:
+	case queue.GroupCompletionDispositionIntermediate,
+		queue.GroupCompletionDispositionSuccessorActivated,
+		queue.GroupCompletionDispositionSuccessorHeld,
+		queue.GroupCompletionDispositionPausedByFailure:
 		return validateNonFinalGroupCompletionDurability(in)
 	case queue.GroupCompletionDispositionQueueCompleted:
 		return validateFinalGroupCompletionDurability(in)

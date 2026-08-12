@@ -8,10 +8,10 @@ requirement-prefix: WM
 status: reviewed
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.4.11
+version: 0.4.12
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-08-05
+last-updated: 2026-08-12
 depends-on:
   - architecture
   - execution-model
@@ -639,7 +639,9 @@ For every workspace that will host a `claude-code` agent session (determined by 
 
 The write MUST follow the atomic-write discipline of WM-026: temp file + fsync + rename + fsync(parent_dir). The parent-directory fsync MUST complete BEFORE `workspace_leased` emits.
 
-If a `.claude/settings.json` file already exists in the worktree at materialization time (inherited from the cloned repo's state), the workspace manager MUST attempt a merge per [claude-hook-bridge.md §4.1 CHB-004]: the bridge-required hook entries are APPENDED to the existing event-type arrays. On malformed-JSON or merge-incompatible existing content, the workspace manager MUST OVERWRITE and log a warning line to the session log noting the displacement. No new bus event is emitted (the bridge introduces zero new event types per [claude-hook-bridge.md §4]); operators MAY later route this through an existing observability surface.
+If a `.claude/settings.json` file already exists in the worktree at materialization time (inherited from the cloned repo's state), the workspace manager MUST attempt a merge per [claude-hook-bridge.md §4.1 CHB-004]. The merge removes harmonik's own hook entries from each event-type array. It then adds the current bridge matcher-group. It MUST NOT add a second bridge group beside one that is already in the array. Hook entries that harmonik did not write stay in place. This includes an entry another writer put in the same matcher group as harmonik's, and an entry whose shape the merge cannot read. On malformed-JSON or merge-incompatible existing content, the workspace manager MUST OVERWRITE and log a warning line to the session log noting the displacement. No new bus event is emitted (the bridge introduces zero new event types per [claude-hook-bridge.md §4]); operators MAY later route this through an existing observability surface.
+
+**Materialization is idempotent.** Two launches against the same worktree with the same daemon binary path MUST leave the same bytes on disk. An earlier revision of this clause required an append, and that text is retired. Materialization runs one time for each agent launch. One worktree hosts many launches — implementer, resume, reviewer, and each retry. The append therefore put one more copy of every bridge group in the file on each launch. Claude Code runs a hook one time for each configured copy, so one agent stop reported as four. Seven of forty live worktrees carried duplicates when this was measured (hk-dknb2). The next launch repairs a worktree that already carries duplicates.
 
 **No permissions pre-authorization (hk-5gmkd, supersedes hk-53y35).** The materialized settings.json MUST NOT inject a harmonik-owned `"permissions"` object or `"allow"` array. A prior revision (hk-53y35) mandated a top-level `"permissions": {"allow": [...]}` block with the standard Claude Code tool set to suppress per-tool confirmation dialogs. That requirement is RETIRED: Claude Code >= 2.1.204 treats a pre-approved `permissions.allow` block in a git-worktree project settings.json as a consent gate, firing an interactive "This folder pre-approves N tool permissions" modal that `--dangerously-skip-permissions` does NOT bypass. In a daemon-spawned tmux pane there is no human to dismiss the modal, so `SessionStart` never fires and [handler-contract.md §4.9 HC-056] (`agent_ready_timeout`) fires. The allow-list is therefore a pure trip-wire, not an enabler.
 
@@ -652,7 +654,7 @@ Cross-ref: [claude-hook-bridge.md §4.12 CHB-029] (trust pre-seed companion). Be
 For workspaces that will NOT host a claude-code agent session, this requirement is a no-op.
 
 Tags: mechanism
-Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 ### 4.7b Worktree auto-trust pre-seed
 
@@ -1371,6 +1373,7 @@ Default-if-unresolved: Out of scope for now. Later support is an additive extens
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-08-12 | 0.4.12 | agent (hk-uu0ke) | **WM-040a amended: materialization removes harmonik's own hook entries and then adds the current one, and the idempotency axis flips to `idempotent`.** The merge clause said the bridge-required hook entries are APPENDED to the existing event-type arrays. That is what the code did, and it was wrong. Materialization runs one time for each agent launch and one worktree hosts many launches, so the file collected one more copy of every bridge group on each launch. Claude Code runs a hook one time for each configured copy, so one agent stop reported as four, and that is the path the daemon learns from that an agent stopped. Seven of forty live worktrees carried duplicates when this was measured, and the worst held four copies of each of the five groups (hk-dknb2). The merge clause now states remove-then-add, states that hook entries harmonik did not write stay in place, and adds an idempotency paragraph. The removal works on hook ENTRIES and not on whole matcher groups, so an entry another writer put in the default-matcher group beside harmonik's survives. Companion amendment: claude-hook-bridge.md CHB-004 v1.4. Code: `internal/workspace/claudesettings_wm040a.go`. No prior requirement IDs renumbered. Status remains `reviewed`. |
 | 2026-08-05 | 0.4.11 | agent (spec repair, hk-6lt60) | **WM-041 retired. The identifier is not reusable and is added to the retired list in the ID FREEZE note and in §10.1.** WM-041 arrived at 0.4.10 from a kerf work whose changelog holds two target tables and states that the first wins a disagreement. This spec appears in no row of the first table, and the work's own task file records bravo task 4, `WM-041`, as having "no card of record". It also contradicted four rules in this file: §4.8 WM-032 and the §7.1 `leased → discarded` row require the discard it forbade, §4.9 WM-034 and [run-state-machine.md RSM-021] require the reopen it forbade, "a nonterminal recovery disposition" is not a §7.1 state, not a §4.10 WM-037 `interrupt_state` value and not a verdict in the §4.9 WM-036 table, and its startup-adoption step is absent from the closed §4.3 WM-013c discovery path and from [process-lifecycle.md §4.2 PL-005]. Its gate cited "the terminal-recovery matrix", which no document defines. No requirement text is changed and no obligation is added. Refs: hk-6lt60, hk-7bfqe. |
 | 2026-08-02 | 0.4.10 | agent (kerf finalize, queue-dogfood-readiness) | **WM-041 added, and it should not have been.** The finalize appended an "Amendment — terminal recovery workspace" block carrying WM-041 and bumped the version with no row in this table and no change to `last-updated`. The row is written here at 0.4.11 so the table is complete. This spec was named in no row of the work's plan of record. Refs: hk-6lt60. |
 | 2026-07-30 | 0.4.9 | agent (spec citation cleanup) | **Rotted pointers repaired across `specs/`. No obligation changed by this pass.** Deleted files that were cited as implementation evidence now name the symbol that carries the behavior today. Line-number citations became symbol names, per the repo rule to cite symbols and never line numbers. The retired `review-loop` workflow mode was dropped from every list that presented it as a live selectable mode, because `core.WorkflowMode.Valid()` accepts only `single` and `dot`. Rules that name `review-loop` as a RETIRED value to reject are unchanged, and so are the event `review_loop_cycle_complete` and the review-loop-failure budget, whose symbols still exist. Where a spec named a test as its conformance sensor and that test no longer exists, the text now says so instead of claiming cover it does not have. |

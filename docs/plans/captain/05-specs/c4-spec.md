@@ -12,9 +12,10 @@
 > autonomy splits into two buckets:
 >
 > - **AUTONOMOUS (no ask):** every boot, establish + verify a crew per KNOWN ready
->   lane; organize the KNOWN open backlog into lanes by consuming the existing
->   `kerf next` ranking (executing it, not inventing it); reconcile presence-stale
->   crews; re-task a crew whose lane is COMPLETE to the next-ranked KNOWN lane;
+>   lane; organize the KNOWN open backlog into lanes from stated intent first and
+>   then the ledger order (executing an order that exists, not inventing one);
+>   reconcile presence-stale crews; re-task a crew whose lane is COMPLETE to the
+>   next-ranked KNOWN lane;
 >   fill every non-conflicting free slot.
 > - **SURFACE-AND-AWAIT (stop and ask):** only for GENUINELY NEW judgment —
 >   ranking a brand-NEW initiative not in the known feed, declaring a crew failed /
@@ -77,8 +78,8 @@ the surface a human drives to exercise the whole Captain & Crew slice end-to-end
   - Fill every non-conflicting free slot. Keep the fleet moving; do NOT park it.
 
   **SURFACE-AND-AWAIT — stop and ask the operator ONLY for GENUINELY NEW judgment:**
-  - Ranking a brand-NEW initiative that is **not already in the known `kerf next`
-    feed** (a never-before-seen body of work whose priority nobody has set).
+  - Ranking a brand-NEW initiative that is **carried by no durable doc and no
+    ledger row** (a never-before-seen body of work whose priority nobody has set).
   - Declaring a crew **failed** / killing or re-homing its work.
   - Reversing a **locked decision** or any **destructive repo/infra op**.
 
@@ -182,7 +183,7 @@ BOOT
   1. Daemon check. `harmonik crew list` (local) + `harmonik queue status`
      (exit 17 ⇒ daemon down ⇒ surface to operator, do not proceed to spawn).
 
-SPAWN (per KNOWN ready lane from `kerf next` / `crew list` — AUTONOMOUS every boot;
+SPAWN (per KNOWN ready lane from `br ready` / `crew list` — AUTONOMOUS every boot;
        also per crew assignment the operator hands the Captain for brand-new work)
   2. Write the C3 mission handoff to a stable path, e.g.
      .harmonik/crew/missions/<crew_name>.md, in the LOCKED schema
@@ -216,10 +217,11 @@ WATCH  (the steady state — runs concurrently)
               -- "epic <epic_id> completed (crew <name>, last child <id>); re-tasking to next KNOWN lane <next_epic>"
        c. RE-TASK the now-free crew to the next-ranked KNOWN lane — AUTONOMOUS
           (R-C4.6): write/refresh the handoff, mirror `--assignee` on the new epic,
-          send a `--topic assign` comms message. You are executing the existing
-          `kerf next` / `br ready` ranking; keep the fleet moving.
+          send a `--topic assign` comms message. You are executing an order that
+          exists — stated intent first, then `br ready --sort priority --limit 0`;
+          keep the fleet moving.
           **ONLY** SURFACE + AWAIT if the next lane would be a brand-NEW initiative
-          not already in the known `kerf next` feed (a genuinely-new-judgment case).
+          carried by no durable doc and no ledger row (a genuinely-new-judgment case).
           (R-C4.6 bright-line: organizing the known feed is autonomous.)
   7. Read progress on demand (mechanism #5):
        harmonik comms log --from <crew_name> --topic status --since 30m
@@ -245,7 +247,7 @@ referencing the epic id; the crew picks it up via its C3 boot-loop `comms recv`.
 
 The *which* epic follows the R-C4.6 bright-line:
 - **Autonomous re-task:** when a lane completes and the next-ranked KNOWN lane
-  exists in the `kerf next` / `br ready` feed, the Captain re-tasks without asking.
+  exists in stated intent or in the `br ready` order, the Captain re-tasks without asking.
   It is executing the existing ranking, not inventing one.
 - **Operator's call:** when no existing ranked lane covers the re-task, or the
   decision would be a genuinely-new ranking judgment (brand-new initiative, failure
@@ -253,11 +255,25 @@ The *which* epic follows the R-C4.6 bright-line:
 
 ### 3.3 The autonomy-boundary contract (judgment-out, restated)
 
+**Where "the known order" comes from (NORMATIVE).** Priority comes from stated
+intent first, then from the ledger. The Captain works the named initiatives of the
+operator and the admiral first — these live in the active plan's order, in dated
+directives in `captain-lanes.md`, and in the direction-log RETURN-PATH. Below that
+line it orders the unclaimed backlog with `br ready --sort priority --limit 0`,
+scoped to one lane with `--parent <epic_id>`, and uses `br ready --sort oldest` to
+surface work that is starving. It MUST pass `--limit 0`: `br ready` returns 20 rows
+by default and sorts by `hybrid`, so a short default listing is not evidence of a
+short backlog. `kerf` plans work, it does not rank work — `kerf map` shows which
+work owns a bead and what context it carries, and `kerf next` is NOT an order the
+Captain takes. Its score comes from graph structure and never reads the `br`
+priority field, so a P0 bead and a P3 bead come back the same, and it reports empty
+for a work with no `bead_filter`.
+
 The context devotes an explicit section to the boundary. Two explicit sides:
 
 **AUTONOMOUS — the Captain acts without asking:**
 1. **`epic_completed` for a KNOWN-ranked next lane** → re-task the now-free crew
-   to the next lane in the existing `kerf next` / `br ready` ranking. Write/refresh
+   to the next lane in the existing order — stated intent first, then `br ready`. Write/refresh
    the handoff, mirror `--assignee`, send `--topic assign`. This is executing the
    existing ranking, not inventing one.
 2. **KNOWN-backlog lane with no crew** → every boot, establish a crew for that lane
@@ -266,8 +282,8 @@ The context devotes an explicit section to the boundary. Two explicit sides:
    dead, re-establish fresh. (Re-establishing a lane ≠ declaring failed.)
 
 **SURFACE-AND-AWAIT — stop and ask the operator:**
-1. **Brand-NEW initiative not in the known feed** (no existing `kerf next` priority
-   to execute) → surface to the operator; do NOT rank.
+1. **Brand-NEW initiative carried by no durable doc and no ledger row** (no
+   existing priority to execute) → surface to the operator; do NOT rank.
 2. **Declaring a crew failed, killing, or re-homing its work** → always judgment-
    out; surface + await.
 3. **Reversing a locked decision or any destructive repo/infra op** → always
@@ -320,7 +336,7 @@ description: >
   KNOWN backlog into lanes, establish AND VERIFY a crew per lane, arm watchers,
   THEN monitor) — HANDOFF.md is one input, not the trigger.
   AUTONOMOUS: establish+verify a crew per KNOWN ready lane every boot, organize
-  the KNOWN open backlog into lanes by consuming the existing kerf next ranking,
+  the KNOWN open backlog into lanes from stated intent first and then br ready,
   reconcile presence-stale crews, re-task a COMPLETE lane's crew to the next-ranked
   KNOWN lane, fill every non-conflicting free slot.
   SURFACE-AND-AWAIT only for GENUINELY NEW judgment: ranking a brand-NEW initiative
@@ -341,13 +357,13 @@ sources:
 ## 0. What you are (and are NOT)  [R-C4.6 verbatim — two-bucket model]
 AUTONOMOUS (do without being told):
 - Establish + verify a crew per KNOWN ready lane every boot.
-- Organize the KNOWN open backlog into lanes by consuming existing kerf next ranking.
+- Organize the KNOWN open backlog into lanes from stated intent first, then br ready.
 - Reconcile presence-stale crews (re-establish dead ones, AC-6 for returning ones).
 - Re-task a COMPLETE lane's crew to the next-ranked KNOWN lane (comms re-task).
 - Fill every non-conflicting free slot.
 
 SURFACE-AND-AWAIT (stop and ask) — GENUINELY NEW judgment only:
-- Brand-NEW initiative not in the known kerf next feed (no existing priority).
+- Brand-NEW initiative carried by no durable doc and no ledger row (no existing priority).
 - Declaring a crew failed / killing or re-homing its work.
 - Reversing a locked decision or any destructive repo/infra op.
 
@@ -380,7 +396,7 @@ send --topic assign. Only surface-and-await if the next lane would be brand-NEW.
     1. Attribute via br show <epic_id> --format json → assignee (Gap 1, load-bearing).
     2. SURFACE dual-channel (status line + comms send --to operator --topic status).
     3. AUTONOMOUS RE-TASK: write/refresh handoff, mirror --assignee, send --topic assign
-       referencing the next-ranked KNOWN lane in kerf next / br ready.
+       referencing the next-ranked KNOWN lane in stated intent / br ready.
        ONLY SURFACE+AWAIT if the next lane is brand-NEW (genuinely-new judgment).
 
 ## 6. Read progress  (mechanism #5)
@@ -427,14 +443,14 @@ A Captain session given this context can:
   `epic_completed{epic_id,...}` the Captain: (a) emits a dual-channel status message
   (status line + `comms send --to operator --topic status`) naming the completed
   `epic_id` and the owning crew, and (b) AUTONOMOUSLY re-tasks the now-free crew to
-  the next-ranked KNOWN lane in the `kerf next` feed (a `--topic assign` comms
+  the next-ranked KNOWN lane in the known order (a `--topic assign` comms
   message — not a `crew start`). Verifiable: a `comms log --from <captain> --topic
   status` entry referencing the `epic_id`, AND a subsequent `--topic assign` to the
   crew referencing the next-ranked lane's epic. **Exception:** if no next KNOWN lane
   exists in the feed, the Captain surfaces-and-awaits instead (no `--topic assign`).
 - **AC-4 (judgment-out, NORMATIVE) — no autonomous GENUINELY-NEW-judgment decision.**
   Across AC-1..AC-3 the Captain makes **zero** of: inventing a new ranking for a
-  brand-new initiative not in the known `kerf next` feed; declaring a crew failed;
+  brand-new initiative carried by no durable doc and no ledger row; declaring a crew failed;
   killing or re-homing a crew's work; reversing a locked decision or performing a
   destructive op. Re-tasking a crew to the next-ranked KNOWN lane after an
   `epic_completed` IS autonomous and expected — the Captain executes the existing
@@ -443,7 +459,7 @@ A Captain session given this context can:
   appears; (b) no crew is declared failed or killed without prior operator direction;
   (c) a `comms send --topic assign` in response to an `epic_completed` is **correct
   and expected** (autonomous re-task to next KNOWN lane), but the referenced epic
-  MUST be one already present in the `kerf next` feed at the time of the event —
+  MUST be one already present in the known order at the time of the event —
   not a novel ranking choice invented by the Captain.
 - **AC-5 (#3, read-side) — reads the progress feed without acting on it.** The
   Captain can answer "how is crew X doing?" using `comms log --from X --topic
@@ -458,7 +474,7 @@ A Captain session given this context can:
 - **AC-7 (boot-without-handoff) — cold-boot still establishes the full fleet.**
   A Captain session that boots with NO prior HANDOFF.md (a fresh context, or one
   where the handoff file is absent or explicitly stale) MUST still: (a) run the full
-  boot sequence (STARTUP.md); (b) read `kerf next` + `harmonik crew list` to derive
+  boot sequence (STARTUP.md); (b) read `br ready --limit 0` + `harmonik crew list` to derive
   the current lane map and presence state from live sources; (c) establish AND verify
   (comms-online + pane-truth) a crew per KNOWN ready lane before settling into the
   monitor loop. The HANDOFF.md is ONE input among several — live state wins on any
@@ -497,18 +513,18 @@ session driving the context against a live daemon (there is no Go to unit-test).
    `subscribe --types epic_completed` fires; (b) the Captain emits a dual-channel
    status message (status line + `comms send --to operator --topic status`); and
    (c) the Captain then AUTONOMOUSLY sends a `--topic assign` to that crew
-   referencing the next-ranked KNOWN lane in the `kerf next` feed (AC-3, #4 + R-C4.6
+   referencing the next-ranked KNOWN lane in the known order (AC-3, #4 + R-C4.6
    bright-line). If the feed is empty, the Captain surfaces-and-awaits instead — that
    is also correct.
 6. **Negative check (AC-4):** confirm the transcript contains NO Captain-initiated
    GENUINELY-NEW-judgment action: no novel initiative ranking, no crew declared
    failed, no crew killed/re-homed, no locked-decision reversal, no destructive op.
-   A Captain-issued `--topic assign` referencing a KNOWN `kerf next` lane is correct
+   A Captain-issued `--topic assign` referencing a KNOWN ranked lane is correct
    (autonomous re-task) and does NOT fail the negative check.
 
 7. **Boot-without-handoff check (AC-7):** drive a fresh Captain session with the
    HANDOFF.md file absent (or renamed). Confirm: the Captain still runs the full
-   boot sequence (STARTUP.md checklist); reads `kerf next` + `harmonik crew list`
+   boot sequence (STARTUP.md checklist); reads `br ready --limit 0` + `harmonik crew list`
    to derive the current lane map; and issues `crew start` for every KNOWN ready lane
    (or confirms existing crews are live) before settling into the monitor loop. The
    Captain must NOT park at "awaiting operator instruction" before the fleet is

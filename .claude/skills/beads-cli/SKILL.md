@@ -34,10 +34,18 @@ you and the write discipline you must follow.
 
 **Agents MUST NOT issue terminal-transition `br` writes.**
 
-Terminal transitions — `claim` (open → in_progress), `close` (in_progress → closed),
-and `reopen` (closed → open) — are owned exclusively by the harmonik daemon per
-[beads-integration.md §4.4 BI-010]. Bypassing the daemon's adapter violates the
-idempotency and intent-log contracts of §4.10.
+**Whoever runs the work owns the terminal transitions, and that is not you.** On a lane the
+daemon dispatches, the terminal transitions — `claim` (open → in_progress), `close`
+(in_progress → closed), and `reopen` (closed → open) — are owned exclusively by the harmonik
+daemon per [beads-integration.md §4.4 BI-010]. Bypassing the daemon's adapter violates the
+idempotency and intent-log contracts of §4.10. On a lane a captain runs by hand, no daemon
+writes anything, so the captain gates the close.
+
+The one exception arrives as a written grant, never as your own reading of live
+state. A crew closes its own beads only when its own mission file says so in writing —
+the hand-run delivery lanes that answer to no captain carry that sentence. Do not derive the
+exception from what looks idle: whether anything dispatches your queue right now is the race
+this rule prevents.
 
 Agent-permissible writes are limited to:
 
@@ -49,7 +57,8 @@ Agent-permissible writes are limited to:
 | Update description/notes | `br update <bead_id> --notes "..."` | Clarifications, findings |
 
 Agents MUST NOT call `br update --claim`, `br close`, `br reopen`, or any command
-that transitions a bead's `status` field. Those paths are the daemon's exclusive domain.
+that transitions a bead's `status` field. Those paths belong to whoever runs the work,
+and a written grant in your own mission file is the only thing that makes them yours.
 
 ---
 
@@ -64,7 +73,16 @@ br ready --format json --limit 0 -l scope:bootstrap
 
 # Filter by label (AND logic)
 br ready --format json --limit 0 -l scope:bootstrap -l kind:scaffold
+
+# Order it. Default sort is `hybrid`; ask for the one you actually want.
+br ready --format json --limit 0 --sort priority      # by the br priority field
+br ready --format json --limit 0 --sort oldest        # surfaces work that is starving
+br ready --format json --limit 0 --parent <epic_id>   # scope to one lane
 ```
+
+`br ready --sort priority` is where an ordering of the unclaimed backlog comes from.
+Above that line, priority comes from stated intent — the named initiatives of the
+operator and the admiral, which no ledger query returns.
 
 `br ready` returns beads whose dependencies are all satisfied and whose status is
 `open`. It natively excludes `draft`-status beads (harmonik's readiness gate for
@@ -159,10 +177,19 @@ br blocked --format json | jq -r '.[].id'
 
 ## Output formats
 
-Always pass `--format json` to every `br` invocation that produces structured output.
-Text output parsing is explicitly forbidden by BI-025b. The TOON format is an
-alternative token-optimized notation — use json for pipelines, toon is optional for
-human-readable inspection only.
+Pass `--format json` to every `br` invocation that produces structured output, and parse
+only that. BI-025b forbids parsing `br` text output, and the reason is that the text
+layout is presentation: it re-flows on a column change or a version bump, and a parser
+built on it breaks silently and reports the wrong state rather than an error.
+
+**The rule is about parsing, not about the flag.** A few subcommands emit a scalar and
+support no `--format` at all — `br count` is the one you will meet. Read its scalar
+directly, do not pipe it to `jq`, and do not treat the missing flag as a reason to start
+parsing a table. If a command you need has no JSON form, that is a gap worth a bead, not
+a licence to regex the human output.
+
+The TOON format is an alternative token-optimized notation — use json for pipelines, toon
+is optional for human-readable inspection only.
 
 `br schema` emits JSON Schema definitions for all output types if you need to
 understand the shape of a response:
@@ -225,8 +252,11 @@ problem and do not try to change the installed `br` to match the manifest.
 
 ## What agents should NOT do
 
-- Do NOT call `br update --claim`, `br close`, or `br reopen` — daemon-owned.
-- Do NOT parse text output from `br` — always use `--format json`.
+- Do NOT call `br update --claim`, `br close`, or `br reopen` — owned by whoever runs
+  the work, not by you. See §Write discipline.
+- Do NOT parse `br` text output. Use `--format json` wherever the subcommand offers it,
+  and read the scalar directly on the few (such as `br count`) that do not — see
+  §Output formats.
 - Do NOT write additional Beads status values beyond the five-value write subset
   `{open, in_progress, closed, deferred, tombstone}` — harmonik MUST NOT extend
   Beads's status enum via writes (BI-007).

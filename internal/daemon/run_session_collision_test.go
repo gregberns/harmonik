@@ -281,16 +281,16 @@ func TestBeadRunOne_ARunWithACommandRunnerWritesNoRecord(t *testing.T) {
 			}
 			mu.Unlock()
 
-			// This neutralises all three HOME-mutating programs on the launch
-			// path, not just one: EnsureWorktreeTrustVia, EnsureClaudeThemeVia and
-			// PrepareIsolatedClaudeConfigDirVia, all called from
+			// This neutralises both HOME-mutating programs on the launch
+			// path, not just one: EnsureWorktreeTrustVia and
+			// PrepareIsolatedClaudeConfigDirVia, both called from
 			// internal/harness/claude/launchspec.go. Each takes a pure-Go branch
 			// when the runner is nil, but with one set each spawns `python3 -` and
 			// upserts into the REAL ~/.claude.json — the operator's own Claude Code
 			// config, outside any t.TempDir(). Left to run, the trust call also
 			// wedged: the run sat in CombinedOutput for nine minutes and took the
 			// package to its timeout. `true` keeps this test off the operator's
-			// machine state and bounded in time. All three are inside
+			// machine state and bounded in time. Both are inside
 			// BuildLaunchSpec and so strictly downstream of the record decision, so
 			// nothing the test asserts is masked. The leak itself is hk-85pqo.
 			if name == "python3" {

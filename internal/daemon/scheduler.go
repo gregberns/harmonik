@@ -74,6 +74,14 @@ const workloopPollInterval = 2 * time.Second
 // Bead ref: hk-vlkh4.
 const shutdownDrainTimeout = 10 * time.Second
 
+// groupCompletionDrainTimeout bounds the completion write a run makes when it
+// succeeds after the daemon context is already cancelled. It is deliberately
+// smaller than shutdownDrainTimeout: exitClean stops waiting for this goroutine
+// at that ceiling, every concurrent run spends from the same window, and one
+// slow disk must not starve its siblings of the write this bound exists to
+// allow.
+const groupCompletionDrainTimeout = 3 * time.Second
+
 // claimSkipInProgressCooldown is the minimum interval between ShowBead calls
 // for a bead that is in_progress with an active run. After the first
 // bead_claim_skipped detection, subsequent selection attempts for the same
@@ -1826,8 +1834,44 @@ func runDispatchedBead(runCtx, daemonCtx context.Context, env runloop.RunEnv, rp
 	defer completion.runRegistry.Unregister(env.RunID)
 
 	runOK := beadRunOne(runCtx, env, rp, handles, extraContext, preSelectedWorker, localSlotHeld)
-	if env.QueueItemIndex >= 0 && completion.queueStore != nil && env.QueueID != nil && env.QueueGroupIndex != nil && daemonCtx.Err() == nil {
-		evaluateGroupAdvanceWithOutcome(daemonCtx, completion.reapSeamPort, env.QueueName,
+	// A run that SUCCEEDED still owns its outcome when the daemon is already
+	// shutting down. Its merge, its bead close and its terminal event all detach
+	// from the cancelled context already, and exitClean waits on this goroutine
+	// -- up to shutdownDrainTimeout, not unconditionally -- before it parks the
+	// queue. Only the queue write was left behind. Without this the item stays
+	// dispatched with nothing that re-selects it, and the queue does not advance
+	// again until the next startup reconciles it.
+	//
+	// Two known limits, both filed rather than fixed here.
+	//
+	// The daemon context is read here and again at the write guard below, so a
+	// cancel that lands between the two still skips the write. That window is
+	// far narrower than the defect this closes and it heals on the next start,
+	// which reconciles a dispatched item whose bead is closed. See hk-5vriz.
+	//
+	// Letting this call through on a cancelled context also re-enables the whole
+	// group-completion effects tail during the drain, not just the durable
+	// write: applyGroupCompletionEffects can Wake the loop and can fire
+	// eagerRefillEval, which shells out to kerf and appends fresh items. That is
+	// in tension with operator-nfr.md ON-027 step (1), which says pending groups
+	// do not advance during a drain. The end state is benign -- exitClean parks
+	// the queue with resume-on-start and the appended items are pending -- but
+	// separating the write from the advance effects is a design change, not a
+	// line in this fix. See hk-31dag.
+	//
+	// A run that did NOT succeed keeps the old skip. A shutdown PARKS such a run
+	// rather than failing it: the bead is reopened, and writing the item failed
+	// here would pause the whole queue for work that is going back into the
+	// pool. The next startup reverts that item to pending instead.
+	completionCtx := daemonCtx
+	if runOK && daemonCtx.Err() != nil {
+		var cancelCompletion context.CancelFunc
+		completionCtx, cancelCompletion = context.WithTimeout(
+			context.WithoutCancel(daemonCtx), groupCompletionDrainTimeout)
+		defer cancelCompletion()
+	}
+	if env.QueueItemIndex >= 0 && completion.queueStore != nil && env.QueueID != nil && env.QueueGroupIndex != nil && completionCtx.Err() == nil {
+		evaluateGroupAdvanceWithOutcome(completionCtx, completion.reapSeamPort, env.QueueName,
 			*env.QueueID, *env.QueueGroupIndex, env.QueueItemIndex, runOK, time.Now())
 	}
 	if runOK && daemonCtx.Err() == nil {

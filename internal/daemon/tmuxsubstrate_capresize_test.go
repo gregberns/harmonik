@@ -22,9 +22,12 @@ package daemon_test
 //   - hk-pcjkp (P2): the two capacities moved in a fixed order, non-terminal
 //     first, and SetCapacity broadcasts. On a RAISE that wakes every blocked
 //     spawn against a spawnSem that still holds the OLD capacity; the woken
-//     spawns then miss the fast-path-only TryAcquire in acquireSpawnSlot and
-//     fail with a structural error. Asking for MORE capacity was the case that
-//     refused spawns.
+//     spawns then missed the fast-path-only TryAcquire in acquireSpawnSlot and
+//     failed with a structural error. Asking for MORE capacity was the case
+//     that refused spawns. The structural failure itself is gone since
+//     hk-terminal-reserve-unbounded-wyy6y — a missed fast path now waits out
+//     the rest of its budget — so what the ordering saves today is that wait,
+//     not the spawn.
 //
 // # Fix
 //
@@ -129,7 +132,8 @@ func TestSpawnCapResize_InvariantHoldsInsideTheResizeWindow(t *testing.T) {
 	for i, r := range seen {
 		if r.spawn < r.nonTerminal+1 {
 			t.Errorf("resize %d: inside the window spawn capacity=%d, non-terminal cap=%d — "+
-				"the reserved slot does not exist there, so a spawn woken by the first move is refused (hk-pcjkp)",
+				"the reserved slot does not exist there, so a spawn woken by the first move misses the "+
+				"fast path and falls into a bounded wait for capacity this resize already granted (hk-pcjkp)",
 				i, r.spawn, r.nonTerminal)
 		}
 	}
@@ -138,8 +142,16 @@ func TestSpawnCapResize_InvariantHoldsInsideTheResizeWindow(t *testing.T) {
 // TestSpawnCapRaise_WokenSpawnsAreNotRefused is the user-visible half of
 // hk-pcjkp: spawns blocked at a cap of 1, the cap raised to 64, and every one
 // of them must start. Pre-fix the first move wakes them all against a spawn
-// semaphore that still holds the old capacity, and every one past the first is
+// semaphore that still holds the old capacity, and every one past the first was
 // refused with a structural error.
+//
+// THIS GUARD NO LONGER DETECTS THAT REGRESSION (hk-6zv97). Since
+// hk-terminal-reserve-unbounded-wyy6y a woken spawn that misses the fast path
+// waits out its budget instead of being refused, so injecting the wrong raise
+// order leaves this test passing — every spawn still starts, only slower. What
+// it holds today is the weaker claim that the raise does not strand anyone.
+// TestSpawnCapResize_InvariantHoldsInsideTheResizeWindow below still fails on
+// the injected regression, so the ordering rule keeps a guard.
 //
 // The mid-resize seam is what makes this deterministic. The window is
 // microseconds wide in production, so without holding it open the test would

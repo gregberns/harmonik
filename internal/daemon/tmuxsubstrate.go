@@ -299,9 +299,18 @@ func WithSpawnCap(n int) TmuxSubstrateOption {
 // only at the ends: widen from the inside out, narrow from the outside in.
 // SetCapacity broadcasts to waiters, so moving the non-terminal bound first on
 // a raise wakes every blocked spawn against a spawnSem that still holds the old
-// capacity; those spawns then miss the fast-path-only TryAcquire in
-// acquireSpawnSlot and fail with a structural error. Asking for MORE capacity
-// was the case that refused spawns (hk-pcjkp).
+// capacity. Asking for MORE capacity was the case that refused spawns
+// (hk-pcjkp): those woken spawns missed the fast-path-only TryAcquire in
+// acquireSpawnSlot and died on a structural error. That outcome is gone —
+// acquireSpawnSlot now waits out the rest of its budget instead — so what the
+// order costs a woken NON-TERMINAL spawn is latency rather than its life.
+//
+// The order still protects liveness, and that is the reason to keep it. Inside
+// the wrong-order window the reserve does not exist, because
+// spawnSem.Capacity() is not yet above nonTerminalSem.Capacity(). A TERMINAL
+// spawn arriving there loses the slot it is guaranteed and falls into the
+// unbounded terminal wait. That has not changed, and it is worse than the
+// latency.
 //
 // spawnSem is resized through SetCapacityKeepingOneFree so a shrink can never
 // take the reserved slot away from work already in flight (hk-6yrs9). The
@@ -954,11 +963,39 @@ func (s *tmuxSubstrate) makeReleaseSlotFn(terminal bool) func() {
 
 // acquireSpawnSlot acquires the semaphore slot(s) required for a spawn.
 //
-// Non-terminal spawns (terminal==false): acquires nonTerminalSem first
-// (bounded by spawnAcquireTimeout) then spawnSem (fast-path only — always
-// available when non-terminal count ≤ cap, because spawnSem has cap+1 slots).
-// Returns ErrSpawnCapTimeout (wrapped in ErrStructural) if nonTerminalSem is
-// saturated and the timeout fires.
+// Non-terminal spawns (terminal==false): acquires nonTerminalSem first, then
+// spawnSem. Both waits share ONE budget — spawnAcquireTimeout measured from the
+// first — so the worst case is the same as it was when only the first wait was
+// bounded. Returns ErrSpawnCapTimeout (wrapped in ErrStructural) if either wait
+// runs the budget out.
+//
+// The second wait used to be a fast-path-only TryAcquire whose miss was
+// reported as a structural error, on the claim that holding a non-terminal
+// ticket proved spawnSem had room. The claim was false. It holds only while at
+// most ONE terminal session holds a slot, and nothing bounds terminal holders:
+// the terminal arm below waits on spawnSem's own capacity, so cap+1 of them can
+// hold slots at once. One consolidate node exists per in-flight DOT run
+// (isConsolidateJoinNode in dot_cascade_helpers.go), so two parallel runs are
+// enough. An ordinary spawn then died outright for a condition that was
+// transient (hk-terminal-reserve-unbounded-wyy6y).
+//
+// It costs the reserve some of its priority, and that is worth stating plainly.
+// A non-terminal spawn now queues on spawnSem itself, and Release broadcasts
+// with no ordering, so a slot freed by a terminal session can go to a parked
+// non-terminal waiter ahead of a terminal spawn already queued for it. That
+// could not happen before, when the non-terminal path never waited here. No
+// liveness is lost — the terminal wait is unbounded and non-terminal waiters
+// are bounded by the budget and by the cap — but "reserved for terminal
+// spawns" now means a slot they cannot be crowded out of for long, rather than
+// one they are always first to.
+//
+// Waiting out the budget instead is a SAFETY NET, not the repair. It deletes a
+// wrong assertion; it does not restore the property the assertion asserted. The
+// reserve is mis-sized rather than mis-implemented — "+1" encodes one terminal
+// at a time when the real population is one per in-flight run — and sizing it
+// to that population is the fix that makes the assertion true again. That half
+// raises the number of sessions the box may exceed the operator's cap by, so it
+// waits on the operator.
 //
 // Terminal spawns (terminal==true): acquires only spawnSem, bounded by ctx
 // only (no timeout). The reserved +1 slot guarantees that a terminal spawn
@@ -987,16 +1024,13 @@ func (s *tmuxSubstrate) acquireSpawnSlot(ctx context.Context, terminal bool) err
 			return fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: spawn cap: context cancelled: %w: %w",
 				err, handler.ErrStructural)
 		}
-		// nonTerminalSem acquired. spawnSem must have room (non-terminal count ≤
-		// cap; spawnSem capacity = cap+1). Fast-path acquire only.
+		// nonTerminalSem acquired. spawnSem usually has room and the fast path
+		// takes it. When it does not, over-subscribed terminal holders are
+		// sitting on the reserve; wait them out on what is left of the budget.
 		if s.spawnSem.TryAcquire() {
 			return nil
 		}
-		// Unexpected: nonTerminalSem was acquired but spawnSem is full. Release
-		// nonTerminalSem to avoid a permanent hold, then return a structural error.
-		s.nonTerminalSem.Release()
-		return fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: spawn cap: unexpected spawnSem saturation after nonTerminalSem acquired: %w",
-			handler.ErrStructural)
+		return s.awaitSpawnSemHoldingNonTerminal(ctx, start)
 	}
 
 	// Terminal path: acquire only spawnSem, bounded by ctx only (no timeout so
@@ -1006,6 +1040,93 @@ func (s *tmuxSubstrate) acquireSpawnSlot(ctx context.Context, terminal bool) err
 			err, handler.ErrStructural)
 	}
 	return nil
+}
+
+// awaitSpawnSemHoldingNonTerminal waits for a spawnSem slot on the remainder of
+// the acquire budget, while holding the nonTerminalSem ticket its caller
+// already took. It runs only when terminal holders have drawn spawnSem down
+// past the reserve (see acquireSpawnSlot).
+//
+// It releases the nonTerminalSem ticket on every failing return and on none of
+// the succeeding ones. Release only refuses to go negative — it does not panic
+// — so releasing twice would silently take a slot from another spawn rather
+// than fail loudly. Each arm here releases once and returns.
+//
+// The budget is read from the CONFIGURED timeout, never from the sign of the
+// remaining arithmetic. Acquire reads a non-positive timeout as "no timeout",
+// and a spent budget is reachable rather than theoretical: Acquire tests
+// saturation before it tests its own timer, so a waiter woken by a Release at
+// the instant the timer fires returns successfully at or past the deadline.
+// Passing that remainder through would turn a bounded wait into the indefinite
+// SpawnWindow block hk-4l7zs removed.
+func (s *tmuxSubstrate) awaitSpawnSemHoldingNonTerminal(ctx context.Context, start time.Time) error {
+	unbounded := s.spawnAcquireTimeout <= 0
+	remaining := time.Duration(0)
+	if !unbounded {
+		remaining = s.spawnAcquireTimeout - time.Since(start)
+		if remaining <= 0 {
+			s.nonTerminalSem.Release()
+			return s.spawnSemSaturatedErr(time.Since(start))
+		}
+	}
+
+	if err := s.spawnSem.Acquire(ctx, remaining); err != nil {
+		s.nonTerminalSem.Release()
+		if errors.Is(err, errSemaphoreAcquireTimeout) {
+			return s.spawnSemSaturatedErr(time.Since(start))
+		}
+		return fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: spawn cap: context cancelled: %w: %w",
+			err, handler.ErrStructural)
+	}
+	return nil
+}
+
+// spawnSemSaturatedErr reports a non-terminal spawn that ran out of budget
+// waiting on spawnSem itself.
+//
+// It carries its own message rather than reusing the nonTerminalSem timeout
+// arm's. That one builds cap from nonTerminalSem and in_use from spawnSem, and
+// the mismatch (hk-spawncap-timeout-mismatched-counters-ve2nk) is occasional
+// there but would be guaranteed here: this arm fires only with spawnSem full at
+// cap+1, so every message it could emit would read "cap=8 in_use=9" — the shape
+// ve2nk calls impossible-looking. The message here names each semaphore's own
+// figures under its own name instead.
+//
+// It states what it counted and does not do the subtraction for the reader.
+// Terminal holders look like spawn_sem_in_use minus non_terminal_in_use, and
+// that is wrong whenever another non-terminal spawn is parked in this same
+// wait: such a spawn holds a nonTerminalSem ticket and no spawnSem slot, so the
+// difference understates the terminal holders by the number of waiters. The
+// figures are also sampled one after another under no common lock, and the
+// failing spawn has already given its own ticket back, so non_terminal_in_use
+// does not count it. Two honest numbers beat one derived number that is quietly
+// off.
+//
+// The spawn_cap_blocked hook gets the operator's CONFIGURED ceiling, not
+// spawnSem's capacity. The payload field is documented as that ceiling, and the
+// launch path fires the same event a second time for this failure with the
+// configured value in it — reporting spawnSem's own number here would put one
+// blocked spawn in the event stream twice with two different caps. That is the
+// ve2nk mismatch moved out of a string and into the events, which is worse.
+//
+// The sentinel stays ErrSpawnCapTimeout, which is what makes this failure
+// observable through the spawn_cap_blocked event.
+//
+// It does NOT make the failure retryable where the old one was not. Both wrap
+// handler.ErrStructural, and nothing on the launch path reads either sentinel
+// to decide a retry: the reopen in runexec finalizeReopen is unconditional, and
+// ErrSpawnCapTimeout is read only to emit spawn_cap_blocked (agentlaunch.go)
+// and to pick an event type (classifyLaunchFailure in runloop). A spawn that
+// spends the whole budget reaches the disposition it always did. What the
+// change buys is that it usually no longer spends it, and that when it does the
+// failure is legible.
+func (s *tmuxSubstrate) spawnSemSaturatedErr(waited time.Duration) error {
+	if s.spawnCapBlocked != nil {
+		s.spawnCapBlocked(waited, s.SpawnSlotsInUse(), s.SpawnCapSize())
+	}
+	return fmt.Errorf("daemon: tmuxSubstrate.SpawnWindow: spawn cap: no spawn slot within %s: the reserve is held by terminal spawns (spawn_sem_cap=%d spawn_sem_in_use=%d non_terminal_in_use=%d): %w: %w",
+		s.spawnAcquireTimeout, s.spawnSem.Capacity(), s.spawnSem.InUse(), s.nonTerminalSem.InUse(),
+		ErrSpawnCapTimeout, handler.ErrStructural)
 }
 
 // SpawnWindow creates a new tmux window in the configured session, runs

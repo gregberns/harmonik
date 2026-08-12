@@ -11,6 +11,8 @@ import (
 
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
+	"github.com/gregberns/harmonik/internal/dispatch"
+	"github.com/gregberns/harmonik/internal/dispatchstore"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
@@ -36,7 +38,8 @@ type reconcileState struct {
 	sweepTmuxAdapter ltmux.Adapter
 	daemonOwnSession string
 
-	sweepResult OrphanSweepResult
+	sweepResult       OrphanSweepResult
+	dispatchOwnership DispatchReplayOwnership
 }
 
 // runStartupReconcile prepares the queue namespace before PL-005 / PL-006 step
@@ -53,6 +56,11 @@ func (bs *bootState) runStartupReconcile(ctx context.Context, daemonStartTime ti
 		return fmt.Errorf("daemon: prepare queue namespace before dispatch replay: %w", err)
 	}
 	st := &reconcileState{projectHash: lifecycle.ComputeProjectHash(cfg.ProjectDir)}
+	ownership, err := loadDispatchReplayOwnership(cfg.ProjectDir)
+	if err != nil {
+		return fmt.Errorf("daemon: read dispatch replay authority: %w", err)
+	}
+	st.dispatchOwnership = ownership
 
 	if err := bs.buildReconcileAdapters(ctx, st); err != nil {
 		return err
@@ -60,6 +68,51 @@ func (bs *bootState) runStartupReconcile(ctx context.Context, daemonStartTime ti
 	bs.runOrphanSweepAndAdopt(ctx, daemonStartTime, st)
 	bs.runCatBLSweeps(ctx, resolvedTargetBranch)
 	return nil
+}
+
+func loadDispatchReplayOwnership(projectDir string) (DispatchReplayOwnership, error) {
+	intents, err := dispatchstore.New(projectDir).List()
+	if err != nil {
+		return DispatchReplayOwnership{}, err
+	}
+	return dispatchReplayOwnership(intents)
+}
+
+func dispatchReplayOwnership(intents []dispatch.Intent) (DispatchReplayOwnership, error) {
+	ownership := DispatchReplayOwnership{
+		Beads:     make(map[core.BeadID]struct{}, len(intents)),
+		Runs:      make(map[core.RunID]struct{}, len(intents)),
+		Sessions:  make(map[string]struct{}),
+		Worktrees: make(map[core.RunID]struct{}),
+	}
+	queueItems := make(map[string]core.RunID, len(intents))
+	for _, intent := range intents {
+		if err := intent.Validate(); err != nil {
+			return DispatchReplayOwnership{}, err
+		}
+		itemKey := fmt.Sprintf("%s\x00%s\x00%d\x00%d", intent.Binding.QueueID, intent.Binding.QueueName, intent.Binding.GroupIndex, intent.Binding.ItemIndex)
+		if prior, exists := queueItems[itemKey]; exists && prior != intent.Binding.RunID {
+			return DispatchReplayOwnership{}, fmt.Errorf("dispatch intents %s and %s claim one queue item", prior, intent.Binding.RunID)
+		}
+		queueItems[itemKey] = intent.Binding.RunID
+		if _, exists := ownership.Beads[intent.Binding.BeadID]; exists {
+			return DispatchReplayOwnership{}, fmt.Errorf("more than one dispatch intent claims bead %s", intent.Binding.BeadID)
+		}
+		ownership.Beads[intent.Binding.BeadID] = struct{}{}
+		ownership.Runs[intent.Binding.RunID] = struct{}{}
+		switch intent.Phase {
+		case dispatch.PhaseRunDurable, dispatch.PhaseHandoffDurable:
+			ownership.Worktrees[intent.Binding.RunID] = struct{}{}
+		case dispatch.PhasePrepared, dispatch.PhaseClaimRefused, dispatch.PhaseClaimDurable:
+		}
+		if intent.Handoff != nil {
+			if _, exists := ownership.Sessions[intent.Handoff.SessionName]; exists {
+				return DispatchReplayOwnership{}, fmt.Errorf("more than one dispatch intent claims session %q", intent.Handoff.SessionName)
+			}
+			ownership.Sessions[intent.Handoff.SessionName] = struct{}{}
+		}
+	}
+	return ownership, nil
 }
 
 // buildReconcileAdapters constructs the BI bead adapter (with the BI-024a `br`
@@ -209,28 +262,7 @@ func (bs *bootState) runOrphanSweepAndAdopt(ctx context.Context, daemonStartTime
 		cfg.ProjectDir,
 		st.projectHash,
 		daemonStartTime,
-		OrphanSweepConfig{
-			BeadLedger:          st.beadLedger,
-			BeadResetter:        st.beadResetter,
-			BeadCat3cCloser:     st.beadCat3cCloser,
-			IntentGCLedger:      st.intentGCLedger,
-			IntentRedriveWriter: st.intentRedriveWriter, // BI-031 step-4 re-drive (hk-aev8t)
-			// BeadProvenance: sentinel-file checker (hk-11xkn) — provenance when
-			// all intent files have been cleared by prior crash-recovery runs.
-			BeadProvenance: lifecycle.NewSentinelFileProvenanceChecker(
-				lifecycle.BeadsOwnedDir(cfg.ProjectDir),
-			),
-			MergeCommitScanner: lifecycle.GitMergeCommitScanner{
-				ProjectDir:   cfg.ProjectDir,
-				TargetBranch: "", // defaults to "main" inside the scanner
-			},
-			IntentLogDir:       st.intentLogDir,
-			DaemonStartNS:      daemonStartTime.UnixNano(),
-			QueueDispatched:    st.queueDispatched,
-			QueueOwned:         st.queueOwned,
-			TmuxAdapter:        st.sweepTmuxAdapter, // hk-xb5yi: reap orphan windows from prior crash
-			DaemonSpawnSession: st.daemonOwnSession, // hk-9vp51: never sweep the daemon's own session
-		},
+		bs.orphanSweepConfig(daemonStartTime, st),
 	)
 	st.sweepResult = sweepResult
 
@@ -264,6 +296,33 @@ func (bs *bootState) runOrphanSweepAndAdopt(ctx context.Context, daemonStartTime
 
 	// RC-020a dispatch point (a): reconciliation_started + _completed markers.
 	bs.emitReconciliationMarkers(ctx, sweepResult)
+}
+
+func (bs *bootState) orphanSweepConfig(daemonStartTime time.Time, st *reconcileState) OrphanSweepConfig {
+	cfg := bs.cfg
+	return OrphanSweepConfig{
+		DispatchOwnership:   st.dispatchOwnership,
+		BeadLedger:          st.beadLedger,
+		BeadResetter:        st.beadResetter,
+		BeadCat3cCloser:     st.beadCat3cCloser,
+		IntentGCLedger:      st.intentGCLedger,
+		IntentRedriveWriter: st.intentRedriveWriter, // BI-031 step-4 re-drive (hk-aev8t)
+		// BeadProvenance: sentinel-file checker (hk-11xkn) — provenance when
+		// all intent files have been cleared by prior crash-recovery runs.
+		BeadProvenance: lifecycle.NewSentinelFileProvenanceChecker(
+			lifecycle.BeadsOwnedDir(cfg.ProjectDir),
+		),
+		MergeCommitScanner: lifecycle.GitMergeCommitScanner{
+			ProjectDir:   cfg.ProjectDir,
+			TargetBranch: "", // defaults to "main" inside the scanner
+		},
+		IntentLogDir:       st.intentLogDir,
+		DaemonStartNS:      daemonStartTime.UnixNano(),
+		QueueDispatched:    st.queueDispatched,
+		QueueOwned:         st.queueOwned,
+		TmuxAdapter:        st.sweepTmuxAdapter, // hk-xb5yi: reap orphan windows from prior crash
+		DaemonSpawnSession: st.daemonOwnSession, // hk-9vp51: never sweep the daemon's own session
+	}
 }
 
 // reconcileInFlightRuns reconciles pre-restart in-flight runs: for any run with

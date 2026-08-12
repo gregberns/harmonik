@@ -13,6 +13,7 @@ import (
 	"github.com/gregberns/harmonik/internal/brcli"
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/dispatch"
+	"github.com/gregberns/harmonik/internal/dispatchstore"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	runpkg "github.com/gregberns/harmonik/internal/run"
@@ -313,4 +314,175 @@ func TestStartupReconcilePreparesQueueNamespaceBeforeOtherRecovery(t *testing.T)
 	if !strings.Contains(err.Error(), "prepare queue namespace before dispatch replay") {
 		t.Fatalf("runStartupReconcile() error = %v", err)
 	}
+}
+
+func TestLoadDispatchReplayOwnershipClassifiesEveryDurablePhase(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		phase        dispatch.Phase
+		wantWorktree bool
+		wantSession  bool
+	}{
+		{name: "prepared", phase: dispatch.PhasePrepared},
+		{name: "claim refused", phase: dispatch.PhaseClaimRefused},
+		{name: "claim durable", phase: dispatch.PhaseClaimDurable},
+		{name: "run durable", phase: dispatch.PhaseRunDurable, wantWorktree: true},
+		{name: "handoff durable", phase: dispatch.PhaseHandoffDurable, wantWorktree: true, wantSession: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			projectDir := t.TempDir()
+			intent := replayOwnershipIntent(t, tc.phase)
+			if err := dispatchstore.New(projectDir).Create(replayOwnershipIntent(t, dispatch.PhasePrepared)); err != nil {
+				t.Fatal(err)
+			}
+			if tc.phase != dispatch.PhasePrepared {
+				if err := advanceReplayOwnershipIntent(t, projectDir, intent); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ownership, err := loadDispatchReplayOwnership(projectDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := ownership.Beads[intent.Binding.BeadID]; !ok {
+				t.Fatal("intent bead is not protected")
+			}
+			if _, ok := ownership.Runs[intent.Binding.RunID]; !ok {
+				t.Fatal("intent run is not protected")
+			}
+			_, hasWorktree := ownership.Worktrees[intent.Binding.RunID]
+			if hasWorktree != tc.wantWorktree {
+				t.Fatalf("worktree protection = %v, want %v", hasWorktree, tc.wantWorktree)
+			}
+			_, hasSession := ownership.Sessions["harmonik-replay-session"]
+			if hasSession != tc.wantSession {
+				t.Fatalf("session protection = %v, want %v", hasSession, tc.wantSession)
+			}
+		})
+	}
+}
+
+func TestStartupReconcileFailsClosedOnCorruptDispatchIntent(t *testing.T) {
+	projectDir := t.TempDir()
+	root := filepath.Join(projectDir, ".harmonik", "dispatch-intents")
+	if err := os.MkdirAll(root, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "0197d100-0000-7000-8000-000000000031.json"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bs := &bootState{cfg: Config{ProjectDir: projectDir}}
+	err := bs.runStartupReconcile(t.Context(), time.Now(), "main")
+	if err == nil || !strings.Contains(err.Error(), "read dispatch replay authority") {
+		t.Fatalf("runStartupReconcile() error = %v", err)
+	}
+}
+
+func TestDispatchReplayOwnershipRejectsCrossIntentConflicts(t *testing.T) {
+	first := replayOwnershipIntent(t, dispatch.PhaseHandoffDurable)
+	second := first
+	second.Binding.RunID = core.RunID(uuid.MustParse("0197d100-0000-7000-8000-000000000034"))
+	second.Binding.ClaimTransitionID = core.TransitionID(uuid.MustParse("0197d100-0000-7000-8000-000000000035"))
+	second.Run = &dispatch.RunBinding{RecordRunID: second.Binding.RunID}
+	second.Handoff = &dispatch.HandoffBinding{
+		SessionName: first.Handoff.SessionName, WorktreeLeaseRunID: second.Binding.RunID,
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*dispatch.Intent)
+	}{
+		{name: "queue item", mutate: func(intent *dispatch.Intent) { intent.Binding.BeadID = "hk-other" }},
+		{name: "bead", mutate: func(intent *dispatch.Intent) { intent.Binding.ItemIndex = 1 }},
+		{name: "session", mutate: func(intent *dispatch.Intent) {
+			intent.Binding.ItemIndex = 1
+			intent.Binding.BeadID = "hk-other"
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			candidate := second
+			candidate.Run = &dispatch.RunBinding{RecordRunID: second.Run.RecordRunID}
+			candidate.Handoff = &dispatch.HandoffBinding{
+				SessionName: second.Handoff.SessionName, WorktreeLeaseRunID: second.Handoff.WorktreeLeaseRunID,
+			}
+			tc.mutate(&candidate)
+			if _, err := dispatchReplayOwnership([]dispatch.Intent{first, candidate}); err == nil {
+				t.Fatal("dispatchReplayOwnership() accepted conflicting authority")
+			}
+		})
+	}
+}
+
+func TestStartupCoordinatorPassesDispatchOwnershipToOrphanSweep(t *testing.T) {
+	runID := core.RunID(uuid.MustParse("0197d100-0000-7000-8000-000000000031"))
+	ownership := DispatchReplayOwnership{
+		Beads:     map[core.BeadID]struct{}{core.BeadID("hk-owned"): {}},
+		Runs:      map[core.RunID]struct{}{runID: {}},
+		Sessions:  map[string]struct{}{"harmonik-owned": {}},
+		Worktrees: map[core.RunID]struct{}{runID: {}},
+	}
+	bs := &bootState{cfg: Config{ProjectDir: t.TempDir()}}
+	cfg := bs.orphanSweepConfig(time.Now(), &reconcileState{dispatchOwnership: ownership})
+	if _, ok := cfg.DispatchOwnership.Beads["hk-owned"]; !ok {
+		t.Fatal("startup coordinator dropped replay-owned bead")
+	}
+	if _, ok := cfg.DispatchOwnership.Runs[runID]; !ok {
+		t.Fatal("startup coordinator dropped replay-owned run")
+	}
+	if _, ok := cfg.DispatchOwnership.Sessions["harmonik-owned"]; !ok {
+		t.Fatal("startup coordinator dropped replay-owned session")
+	}
+	if _, ok := cfg.DispatchOwnership.Worktrees[runID]; !ok {
+		t.Fatal("startup coordinator dropped replay-owned worktree")
+	}
+}
+
+func replayOwnershipIntent(t *testing.T, phase dispatch.Phase) dispatch.Intent {
+	t.Helper()
+	binding := dispatch.Binding{
+		QueueID: "0197d100-0000-7000-8000-000000000032", QueueName: "main",
+		GroupIndex: 0, ItemIndex: 0, BeadID: "hk-replay-owner",
+		RunID:             core.RunID(uuid.MustParse("0197d100-0000-7000-8000-000000000031")),
+		ClaimTransitionID: core.TransitionID(uuid.MustParse("0197d100-0000-7000-8000-000000000033")),
+	}
+	intent, err := dispatch.NewPrepared(binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	switch phase {
+	case dispatch.PhasePrepared:
+	case dispatch.PhaseClaimRefused:
+		intent, err = intent.WithClaimRefused(dispatch.ClaimRefusalDependency)
+	case dispatch.PhaseClaimDurable, dispatch.PhaseRunDurable, dispatch.PhaseHandoffDurable:
+		intent, err = intent.WithClaimDurable()
+		if err == nil && (phase == dispatch.PhaseRunDurable || phase == dispatch.PhaseHandoffDurable) {
+			intent, err = intent.WithRunDurable()
+		}
+		if err == nil && phase == dispatch.PhaseHandoffDurable {
+			intent, err = intent.WithHandoffDurable("harmonik-replay-session")
+		}
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return intent
+}
+
+func advanceReplayOwnershipIntent(t *testing.T, projectDir string, target dispatch.Intent) error {
+	t.Helper()
+	store := dispatchstore.New(projectDir)
+	prior := replayOwnershipIntent(t, dispatch.PhasePrepared)
+	for _, phase := range []dispatch.Phase{dispatch.PhaseClaimRefused, dispatch.PhaseClaimDurable, dispatch.PhaseRunDurable, dispatch.PhaseHandoffDurable} {
+		if phase == dispatch.PhaseClaimRefused && target.Phase != dispatch.PhaseClaimRefused {
+			continue
+		}
+		next := replayOwnershipIntent(t, phase)
+		if err := store.Advance(prior, next); err != nil {
+			return err
+		}
+		if phase == target.Phase {
+			return nil
+		}
+		prior = next
+	}
+	return nil
 }

@@ -293,68 +293,6 @@ func completeAndUnlinkResult(
 	return TerminalResult{Committed: true}
 }
 
-// CancelQueueOnShutdown transitions q to QueueStatusCancelled, persists it, and
-// archives the per-queue file to .harmonik/queues/<name>.json.cancelled-<timestamp>
-// so that the next harmonik run invocation finds no blocking active queue. The
-// in-memory queue pointer is updated in-place.
-//
-// This is the canonical shutdown drain for the SIGINT / operator-cancel path
-// (hk-ppt32). The caller (runWorkLoop) invokes it only when the queue is still
-// in a non-terminal state (active) at ctx-cancel time.
-//
-// Returns nil when:
-//   - The persist succeeds and the file is renamed.
-//   - q is nil (no-op: nothing to cancel).
-//
-// Returns an error when Persist or the rename fails; the caller logs the error
-// but continues shutdown regardless.
-//
-// Spec ref: specs/queue-model.md §8 (shutdown drain, hk-ppt32).
-func CancelQueueOnShutdown(ctx context.Context, projectDir string, q *Queue) error {
-	return CancelQueueOnShutdownResult(ctx, projectDir, q, time.Now()).Err()
-}
-
-// CancelQueueOnShutdownResult persists a cancelled candidate before it changes
-// the supplied queue or renames the canonical file.
-func CancelQueueOnShutdownResult(ctx context.Context, projectDir string, q *Queue, archiveTime time.Time) TerminalResult {
-	if q == nil {
-		return TerminalResult{}
-	}
-	candidate := CloneQueue(q)
-	if err := CancelQueue(candidate); err != nil {
-		return TerminalResult{CommitErr: fmt.Errorf("queue: CancelQueueOnShutdown: transition cancelled status: %w", err)}
-	}
-	if err := Persist(ctx, projectDir, candidate); err != nil {
-		return TerminalResult{CommitErr: fmt.Errorf("queue: CancelQueueOnShutdown: persist: %w", err)}
-	}
-	if err := InstallCommittedQueueStatus(q, candidate); err != nil {
-		return TerminalResult{CommitErr: err}
-	}
-	// Rename per-queue file → <name>.json.cancelled-<ts> so Load() returns nil
-	// on the next harmonik run invocation (QM-027 guard bypassed cleanly).
-	name := NormaliseQueueName(q.Name)
-	src := queuePath(projectDir, name)
-	ts := archiveTime.UTC().Format("20060102150405")
-	dst := src + ".cancelled-" + ts
-	if err := os.Rename(src, dst); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return TerminalResult{Committed: true, CleanupErr: fmt.Errorf("queue: CancelQueueOnShutdown: rename to %q: %w", dst, err)}
-	}
-	// fsync parent directory so the rename is durable.
-	qDir := queuesDir(projectDir)
-	//nolint:gosec // G304: qDir is the daemon-internal .harmonik/queues directory
-	dir, err := os.Open(qDir)
-	if err != nil {
-		return TerminalResult{Committed: true, CleanupErr: fmt.Errorf("queue: CancelQueueOnShutdown: open parent dir %q: %w", qDir, err)}
-	}
-	if syncErr := dir.Sync(); syncErr != nil {
-		return TerminalResult{Committed: true, CleanupErr: fmt.Errorf("queue: CancelQueueOnShutdown: fsync parent dir %q: %w", qDir, errors.Join(syncErr, dir.Close()))}
-	}
-	if err := dir.Close(); err != nil {
-		return TerminalResult{Committed: true, CleanupErr: fmt.Errorf("queue: CancelQueueOnShutdown: close parent dir %q: %w", qDir, err)}
-	}
-	return TerminalResult{Committed: true}
-}
-
 // ArchiveFailedQueue renames .harmonik/queues/<name>.json to
 // .harmonik/queues/<name>.json.failed-<timestamp> so that a subsequent
 // `harmonik run` invocation finds no active queue file and can proceed without

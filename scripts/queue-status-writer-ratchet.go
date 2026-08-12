@@ -46,7 +46,6 @@ var durableRequirements = []durableRequirement{
 	{source: "internal/lifecycle/startup_pl005_qm002.go", function: "reconcileQueueTerminalState", call: "CompleteAndUnlink"},
 	{source: "internal/lifecycle/startup_pl005_qm002.go", function: "reconcileQueueTerminalState", call: "Persist"},
 	{source: "internal/queue/persistence.go", function: "completeAndUnlinkResult", call: "Persist"},
-	{source: "internal/queue/persistence.go", function: "CancelQueueOnShutdownResult", call: "Persist"},
 	{source: "internal/queuewiring/operatorevents.go", function: "transitionQueue", call: "Transact"},
 }
 

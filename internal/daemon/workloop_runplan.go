@@ -605,7 +605,7 @@ func resolveRunPlanPlace(ctx context.Context, req runPlanRequest, plan *runPlan)
 	// changes is that a bead landing on a protected branch can no longer slip
 	// past the protect check by racing a config write — it is now always
 	// checked. That is the safe direction of the two.
-	branch, branchErr := resolveBranchPlan(ctx, plan.ActiveRepo, string(beadID), beadBranchCfg, env.TargetBranch)
+	branch, branchErr := resolveBranchPlan(ctx, plan.ActiveRepo, string(beadID), beadBranchCfg, env.TargetBranch, parentBeadIDFromRecord(bead))
 	if branchErr != nil {
 		plan.Verdict = runPlanRefusedStartFrom
 		plan.Refusal = runPlanRefusal{
@@ -650,6 +650,15 @@ func resolveRunPlanPlace(ctx context.Context, req runPlanRequest, plan *runPlan)
 	}
 
 	return true
+}
+
+func parentBeadIDFromRecord(bead core.BeadRecord) string {
+	for _, edge := range bead.Edges {
+		if edge.EdgeKind == core.EdgeKindParentChild && edge.FromBeadID == bead.BeadID {
+			return string(edge.ToBeadID)
+		}
+	}
+	return ""
 }
 
 // resolveRunPlanHookSocket refuses a remote run whose daemon hook socket path is

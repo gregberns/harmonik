@@ -165,6 +165,15 @@ EXAMPLES
   harmonik handler status
   harmonik handler status --type claude-code --format json
   harmonik handler resume --type claude-code
+
+EXIT CODES
+  0   Success. Also 0 for this help.
+  1   No verb, a verb this command does not have, a bad argument, or a file
+      that could not be read, parsed or written.
+  2   status: the state file records a schema version this binary is too old
+      to read.
+      resume: handler-state.json holds no record for that handler type.
+  3   resume: the handler is already live. Add --force to make that a no-op.
 `); err != nil {
 		return fmt.Errorf("print handler usage: %w", err)
 	}

@@ -43,7 +43,7 @@ func TestClaudeConfigIsIsolatedFromTheOperatorHome(t *testing.T) {
 	if cfgPath == filepath.Join(home, ".claude.json") {
 		t.Fatalf("HARMONIK_CLAUDE_CONFIG_PATH = %q, which is the operator's real config", cfgPath)
 	}
-	if strings.HasPrefix(cfgPath, filepath.Join(home, ".claude")) {
+	if strings.HasPrefix(cfgPath, filepath.Join(home, ".claude")+string(os.PathSeparator)) {
 		t.Errorf("HARMONIK_CLAUDE_CONFIG_PATH = %q, which is inside the operator's Claude state", cfgPath)
 	}
 }

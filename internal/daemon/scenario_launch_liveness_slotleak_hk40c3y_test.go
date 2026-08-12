@@ -259,7 +259,10 @@ func llslEventCount(t *testing.T, jsonlPath, eventType string) int {
 // run_failed (agent_ready_timeout on the fake-substrate path) and why that still
 // exercises the slot-release / launch-liveness mechanism deterministically.
 //
-// Not parallel: RunConcurrentMerge sets/unsets HARMONIK_CLAUDE_CONFIG_PATH.
+// Not parallel: RunConcurrentMerge redirects HARMONIK_CLAUDE_CONFIG_PATH through
+// t.Setenv, which panics under t.Parallel. It used to set and UNSET the variable,
+// which deleted the package-wide isolation for every test that ran afterwards
+// (hk-85pqo). The conclusion here was always right; the mechanism named was not.
 //
 // Bead: hk-40c3y.
 func TestScenario_LaunchLiveness_SlotNoLeak_HK40C3Y(t *testing.T) {

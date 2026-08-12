@@ -12,13 +12,39 @@ package daemon_test
 // worktree goes away. Point that at the operator's real ~/.claude.json from a
 // test binary and every throwaway worktree leaves a permanent record behind.
 //
-// It is not cosmetic. Measured on the development machine: 9,280 project
-// entries, 9,150 of them naming directories that no longer exist, 85% of a
-// 1.8 MB file. The read-modify-write every spawn performs took 46.5 ms against
-// that file and 6.9 ms against a pruned one, all of it inside the exclusive
-// lock, and the bounded acquire ahead of it is what times out when the lock is
-// contended. An earlier round of the same growth reached 8 MB and starved a
+// It is not cosmetic, and the method matters as much as the number, so both are
+// here rather than only on a bead the ledger keeps machine-local. Measured on
+// the development machine 2026-08-12: the file held 9,280 project entries, of
+// which 9,150 named directories that no longer exist — 98.6% by entry count,
+// and about 85% of the 1.8 MB file by BYTES, because the dead weight is mostly the
+// pathnames used as keys (a 32-byte value under a key averaging 137
+// characters).
+//
+// The cost was taken over 20 iterations of the real writer cycle — ReadFile,
+// Unmarshal, set the key, MarshalIndent, temp write, Sync, Rename, then fsync
+// the parent directory — against the live file and against a small 101 KB
+// config: 46.5 ms versus 6.9 ms, a factor of 6.7.
+//
+// Read those two as bloated against small, NOT as the before and after of one
+// pruning. They do not close as a pair: 85% dead by bytes would leave about
+// 278 KB, and deleting the whole projects map still leaves about 270 KB, so a
+// 101 KB file is not this file with its dead entries removed. What else
+// differed was not recorded. The RATIO is the finding here; the provenance of
+// the small file is not, and nobody should quote 101 KB as a prune target.
+//
+// All of that runs inside the exclusive lock, with a four-attempt retry budget
+// above it, and the bounded acquire ahead of it is what times out when the lock
+// is contended. An earlier round of the same growth reached 8 MB and starved a
 // worker with a lock-acquire timeout.
+//
+// Several places in this tree quote a measurement of this one file:
+// internal/testhelpers/hermetic, internal/harness/claude/trustisolation_test.go,
+// internal/workspace/claudetrust_wm040b.go, and the 2026-06-09 postmortem. DO
+// NOT reconcile them by assuming the file grew. The two test files count only
+// dead paths under the Go test temp directory — 4,459 of 6,426 — while this
+// comment counts every directory that no longer exists, 9,150 of 9,280. On this
+// same date the temp-only count was 6,291 of 9,280. So the distance between 69%
+// and 98.6% is the definition changing, not the file growing.
 //
 // # Why a test and not a comment
 //
@@ -75,7 +101,7 @@ func TestClaudeConfigStaysIsolatedFromTheOperatorHome(t *testing.T) {
 	if cfgPath == filepath.Join(home, ".claude.json") {
 		t.Fatalf("HARMONIK_CLAUDE_CONFIG_PATH = %q, which is the operator's real config", cfgPath)
 	}
-	if strings.HasPrefix(cfgPath, filepath.Join(home, ".claude")) {
+	if strings.HasPrefix(cfgPath, filepath.Join(home, ".claude")+string(os.PathSeparator)) {
 		t.Errorf("HARMONIK_CLAUDE_CONFIG_PATH = %q, which is inside the operator's Claude state", cfgPath)
 	}
 }

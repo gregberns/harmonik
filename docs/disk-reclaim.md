@@ -13,6 +13,165 @@ disk therefore manufactures fake test failures and fake hangs fleet-wide, and
 the event log makes them look like real regressions. Check `df` before blaming
 a timing-out daemon or scenario test.
 
+## FIRST ACTION — reap the Go build cache (measured #1, 2026-08-11)
+
+This is the first ACTION in this runbook. It is not the first MEASUREMENT: when
+`df` and `du` disagree, the subtraction in the next section still comes first.
+Start with the dry run. It measures, it deletes nothing, and it tells you which
+of the two cases below you are in. The reap takes about a minute, and it is the
+largest single return this runbook has measured.
+
+```bash
+DRY_RUN=1 scripts/go-cache-reap.sh   # report only, delete nothing
+scripts/go-cache-reap.sh 15          # reap the shared cache to 15 GiB
+```
+
+Run it by hand. Nothing schedules it, and nothing should. The last step of the
+shared-cache section below gives the reason: an operator can pause the fleet
+first, and the daemon could not.
+
+The script also landed under a REQUEST_CHANGES verdict
+(`hk-reap-age-floor-r96xm`), so read it before you trust it. Its header still
+says a reap is safe during a build. That header is wrong, and the same bead asks
+for it to be corrected.
+
+Measured 2026-08-11, before the reap. The cache held 32.4 GiB by `du` and
+31.4 GiB by the sum of the file sizes. Both numbers are right. `du` counts
+allocated disk blocks, and the 165,000 one-line `-a` metadata files each take a
+whole block, which adds about 0.6 GiB. The reap removed 24,418 objects and
+returned **17.9 GiB in 48 seconds**. Free space went from 12 GiB to 29 GiB.
+
+**Prefer a quiet box. The claim that a reap is always safe beside a running
+build is WRONG, and this runbook records the symptom further down.** Most of a
+delete is harmless. Cache entries are content addressed, so a deleted entry is a
+cache miss and the build makes it again. A build that already has the file open
+keeps its handle. But Go stats a cache object and hands the PATH back to its
+caller, which opens it later, sometimes at link time. A delete inside that
+window is a build failure, not a cache miss.
+
+**Tell the two cases apart before you delete. The dry run prints the object
+count.** Fewer than 1,000 objects is a small reap. It is very unlikely to reach
+a file a live build is about to open, so run it whenever you want. Treat 1,000
+objects or more as a large reap. The headline recipe above is that case, because
+it took 24,418 objects. Before a large reap, make the box quiet: stop the lanes,
+let the running builds finish, then reap.
+
+A large reap can reach live entries, because this cache is churn and not stale
+accumulation. Measured on 2026-08-11, 13 to 17 percent of the output objects had
+been used within the last hour, and nothing at all had gone 5 days unused. The
+idle material is thin: on that day only 18 GiB of 31 GiB had gone more than a
+day without use, and the reap needed 17 GiB. The margin between taking the idle
+bytes and taking bytes a build still wants is one reap wide, and no age floor
+holds it open.
+
+Until the script grows an age floor (see `hk-reap-age-floor-r96xm`), the operator
+is the age floor. Quiet the box first.
+
+### Why the cache grows without limit
+
+Go bounds the build cache by TIME, not by SIZE. `trimLimit` in
+`cmd/go/internal/cache/cache.go` removes entries that are unused for 5 days.
+There is no size limit at all.
+
+**You cannot change the 5 days.** `trimLimit` is a compile-time constant, and no
+environment variable moves it. The cache package reads `GOCACHE`. That key only
+names the directory. It also reads `GOCACHEPROG`, which replaces the disk cache
+with an external program. It also reads three `GODEBUG` keys — `gocacheverify`,
+`gocachehash` and `gocachetest`. Those three are debug switches. `go env` has
+three cache keys: `GOCACHE`, `GOCACHEPROG` and `GOMODCACHE`. Not one of them
+sets a size bound.
+The 5 days comes from one month of telemetry from Go developers, where almost
+all reuse happened within 5 days of the last reuse (golang/go#22990). It fits
+one developer on one machine. It does not fit a fleet of lanes that cross-build
+five configurations.
+
+There is no steady state on this box, because Go removes nothing on this box. In
+the 24 hours to 2026-08-11 21:15 it made 13.1 GiB of new cache objects, measured
+on creation time (`stat -f %B`). Read that as a floor, because the reap earlier
+that day removed some of them. No entry reaches 5 days unused, so `trimLimit`
+never fires. Go ran its own trim at 16:15 that day and freed nothing. The cache
+therefore grows until a person removes it, and free space reaches the daemon's
+10 GiB dispatch floor long before Go acts.
+
+Age profile of the 31 GiB measured on 2026-08-11, before the reap. **These rows
+are last-USED times, not made-at times** — see "Use mtime, not creation time"
+below. They say how much of the cache is idle:
+
+| last used | size |
+|---|---|
+| less than 1 day | 12.8 GiB |
+| 1 to 2 days | 17.0 GiB |
+| 2 to 3 days | 1.2 GiB |
+| more than 3 days | 0.0 GiB |
+
+Do not read a daily creation rate off this table. It is a different measurement.
+The table cannot hold five days of creation, because an entry that builds keep
+using never ages into the old rows.
+
+### What the files are
+
+Each of the 256 shard directories holds two kinds of file.
+
+- `<hash>-a` is action metadata. There were 164,964 of them. Each one is a
+  single line of text, so they hold under 0.1 GiB of data. They take about
+  0.6 GiB of disk, because each one uses a whole block.
+- `<hash>-d` is the output. There were 41,835 of them, and they held 31.4 GiB.
+  `file` reports them as `ar` archives. They are compiled Go packages.
+
+Almost all the space is the `-d` objects. None of it is garbage. Every object
+is compiler output that Go made and kept on purpose. The problem is that no
+entry ever replaces another. One changed line makes a NEW entry for that
+package and for every package that depends on it. The old entry stays until it
+is 5 days stale.
+
+The count multiplies across three axes at the same time:
+
+- Build configurations. Counted 2026-08-11, the makefile and the scripts use
+  `-race` 34 times and `-tags=scenario` 14 times, and they ask for coverage in
+  three forms — `-coverprofile` 18 times, `-coverpkg` 15 times, `-covermode`
+  8 times — plus the `subprocess` and `integration` tags. These counts drift
+  every time the makefile or a script changes, so re-count them before you quote
+  them. Each configuration makes a separate set of entries for the same code.
+  Nothing here measures which axis multiplies hardest, so do not rank them. They
+  multiply together. Count the flags, not the word. A grep for `cover` returns
+  hundreds of hits, and almost all of them are the word "coverage" in script
+  names and identifiers.
+- Lane branches, each with its own source state. This runbook has said "about
+  15" since it was written. That figure is inherited and unverified. On
+  2026-08-11 only 5 lane cache directories existed.
+- Every commit.
+
+### Use mtime, not creation time
+
+Go touches an entry's mtime each time the entry is USED, at most once per hour.
+So mtime means "last used" and not "made at". Oldest mtime first is therefore
+least recently used, and that is what the script deletes. Creation time
+(`stat -f %B`) gives first in, first out. It would delete the packages that
+every build depends on, and it would cause constant rebuilds.
+
+### The per-lane caches need a separate run
+
+`scripts/go-cache-reap.sh` reaps the directory that `go env GOCACHE` reports.
+That is the shared cache. Each lane has its own cache under
+`~/Library/Caches/harmonik-lane-gocache/`, and the script does not see those.
+Point it at one with the same variable:
+
+```bash
+GOCACHE=~/Library/Caches/harmonik-lane-gocache/<lane>-<8hex> scripts/go-cache-reap.sh 2
+```
+
+A lane directory name ends in an 8-hex suffix, as in `bravo-6f0b4425`. Take the
+real name from `ls ~/Library/Caches/harmonik-lane-gocache/`.
+
+The per-lane caches have their own defect. Nothing removes a lane cache after
+its worktree goes away, and the caches for throwaway merge-check worktrees are
+never reused. See bead hk-qqg5c.
+
+### When the reap is not enough
+
+Read the next section and reconcile `df` against `du`. Space that the reap does
+not return is in a place that no file list shows.
+
 ## READ FIRST — reconcile `df` against `du` before you look at any file list
 
 **More than a dozen agents worked this runbook and none of them found the space.** The reason is
@@ -227,6 +386,19 @@ only way to see it.
 
 ## 0. `~/Library/Caches/*` — the shared Go caches, measured #1 on 2026-07-28
 
+> **The "FIRST ACTION" section at the top of this file replaces this section as
+> an action.** This section stays because it records how the shared cache was
+> found and how fast it grew. Use `scripts/go-cache-reap.sh` instead of the `go clean -cache` this
+> section recommends. `go clean -cache` empties the whole cache, so the next
+> build of every lane starts cold. The reap takes the cache down to a size limit
+> and keeps the entries that builds still use. Read the top section for why the
+> cache refills, because no reap changes that.
+>
+> **Two rules in this section are NOT superseded.** "Measure these first. Do not
+> clear them first" still holds, and `DRY_RUN=1` is how the reap obeys it. And no
+> automation owns this sweep: run it by hand, because an operator can pause the
+> fleet first and the daemon could not.
+
 Until 2026-07-28 `~/Library/Caches/go-build` appeared in this runbook only as
 one row of §2's Go-cache table, annotated "macOS-purgeable, see hk-pgtbr". That
 annotation reads as *the OS handles this one*, and it is why prior sweeps walked
@@ -241,7 +413,7 @@ du -sh ~/Library/Caches/go-build ~/Library/Caches/golangci-lint
 
 **Re-measured 2026-08-10: `go-build` held 20 GiB and `harmonik-lane-gocache` held
 19 GiB — 39 GiB of Go cache on a box with 9.8 GiB free.** The shared cache had
-doubled from the 9.4 GiB above in 13 days, and the per-checkout caches in step 1
+doubled from the 9.4 GiB above in 13 days, and the per-checkout caches below
 had grown from 13 GiB in six days. Read every figure in this section as a floor,
 not a size. They describe how fast these directories grow, and the growth rate is
 the part that stays true.
@@ -300,8 +472,9 @@ everything reads:
    A directory whose checkout is gone, or that no build has written to for
    hours, is free to delete, and it costs that checkout one cold build. A
    directory a lane is compiling against right now is **not** free — that is the
-   same mid-build hazard as step 3, at one lane's scale instead of the whole
-   box. This is why the step lists directories before it deletes them.
+   same mid-build hazard as the shared-cache step below, at one lane's scale
+   instead of the whole box. This is why the step lists directories before it
+   deletes them.
 
 2. **Stale worktrees — §4.** Deleting a worktree directory never loses a commit;
    only uncommitted changes are at risk, and §4 shows how to find those first.

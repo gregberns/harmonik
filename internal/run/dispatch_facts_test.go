@@ -102,7 +102,7 @@ func runFactIntent(t *testing.T, phase dispatch.Phase) dispatch.Intent {
 			intent, err = intent.WithRunDurable()
 		}
 		if err == nil {
-			intent, err = intent.WithHandoffDurable("harmonik-run-test")
+			intent, err = intent.WithHandoffDurable("harmonik-run-test", "run-test")
 		}
 	}
 	if err != nil {

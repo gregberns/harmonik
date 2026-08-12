@@ -95,6 +95,7 @@ type RunBinding struct {
 // HandoffBinding proves that the session and worktree lease name this run.
 type HandoffBinding struct {
 	SessionName        string     `json:"session_name"`
+	WindowName         string     `json:"window_name"`
 	WorktreeLeaseRunID core.RunID `json:"worktree_lease_run_id"`
 }
 
@@ -165,7 +166,7 @@ func (i Intent) WithRunDurable() (Intent, error) {
 }
 
 // WithHandoffDurable returns the next intent after handoff identity is durable.
-func (i Intent) WithHandoffDurable(sessionName string) (Intent, error) {
+func (i Intent) WithHandoffDurable(sessionName, windowName string) (Intent, error) {
 	if err := i.Validate(); err != nil {
 		return Intent{}, fmt.Errorf("dispatch: invalid run predecessor: %w", err)
 	}
@@ -175,7 +176,9 @@ func (i Intent) WithHandoffDurable(sessionName string) (Intent, error) {
 	i.Phase = PhaseHandoffDurable
 	runBinding := *i.Run
 	i.Run = &runBinding
-	i.Handoff = &HandoffBinding{SessionName: sessionName, WorktreeLeaseRunID: i.Binding.RunID}
+	i.Handoff = &HandoffBinding{
+		SessionName: sessionName, WindowName: windowName, WorktreeLeaseRunID: i.Binding.RunID,
+	}
 	if err := i.Validate(); err != nil {
 		return Intent{}, err
 	}
@@ -236,6 +239,9 @@ func (i Intent) validateHandoffBinding() error {
 		}
 		if i.Handoff.SessionName == "" {
 			return errors.New("dispatch: session_name is required at handoff_durable")
+		}
+		if i.Handoff.WindowName == "" {
+			return errors.New("dispatch: window_name is required at handoff_durable")
 		}
 		if i.Handoff.WorktreeLeaseRunID != i.Binding.RunID {
 			return errors.New("dispatch: worktree lease identity does not match run_id")
@@ -305,6 +311,7 @@ func (i Intent) MarshalJSON() ([]byte, error) {
 	if i.Handoff != nil {
 		w.Handoff = &handoffBindingWire{
 			SessionName:        i.Handoff.SessionName,
+			WindowName:         i.Handoff.WindowName,
 			WorktreeLeaseRunID: i.Handoff.WorktreeLeaseRunID.String(),
 		}
 	}
@@ -365,6 +372,7 @@ type runBindingWire struct {
 
 type handoffBindingWire struct {
 	SessionName        string `json:"session_name"`
+	WindowName         string `json:"window_name"`
 	WorktreeLeaseRunID string `json:"worktree_lease_run_id"`
 }
 
@@ -416,6 +424,7 @@ func (w intentWire) intent() (Intent, error) {
 		}
 		value.Handoff = &HandoffBinding{
 			SessionName:        w.Handoff.SessionName,
+			WindowName:         w.Handoff.WindowName,
 			WorktreeLeaseRunID: core.RunID(uuid.MustParse(w.Handoff.WorktreeLeaseRunID)),
 		}
 	}

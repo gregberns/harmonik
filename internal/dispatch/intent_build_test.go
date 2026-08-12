@@ -20,7 +20,7 @@ func TestIntentPhaseBuildersPreserveBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WithRunDurable: %v", err)
 	}
-	handoff, err := runIntent.WithHandoffDurable("crew-charlie")
+	handoff, err := runIntent.WithHandoffDurable("crew-charlie", "run-charlie")
 	if err != nil {
 		t.Fatalf("WithHandoffDurable: %v", err)
 	}
@@ -30,7 +30,8 @@ func TestIntentPhaseBuildersPreserveBinding(t *testing.T) {
 	if handoff.Run == nil || handoff.Run.RecordRunID != binding.RunID {
 		t.Fatalf("run binding = %+v", handoff.Run)
 	}
-	if handoff.Handoff == nil || handoff.Handoff.SessionName != "crew-charlie" || handoff.Handoff.WorktreeLeaseRunID != binding.RunID {
+	if handoff.Handoff == nil || handoff.Handoff.SessionName != "crew-charlie" ||
+		handoff.Handoff.WindowName != "run-charlie" || handoff.Handoff.WorktreeLeaseRunID != binding.RunID {
 		t.Fatalf("handoff binding = %+v", handoff.Handoff)
 	}
 }
@@ -84,15 +85,15 @@ func TestIntentPhaseBuildersRejectInvalidPredecessors(t *testing.T) {
 		t.Fatal("WithRunDurable accepted invalid claim predecessor")
 	}
 	runIntent := testIntent(PhaseRunDurable)
-	runIntent.Handoff = &HandoffBinding{SessionName: "early", WorktreeLeaseRunID: runIntent.Binding.RunID}
-	if _, err := runIntent.WithHandoffDurable("crew-charlie"); err == nil {
+	runIntent.Handoff = &HandoffBinding{SessionName: "early", WindowName: "run-early", WorktreeLeaseRunID: runIntent.Binding.RunID}
+	if _, err := runIntent.WithHandoffDurable("crew-charlie", "run-charlie"); err == nil {
 		t.Fatal("WithHandoffDurable accepted invalid run predecessor")
 	}
 }
 
 func TestWithHandoffDurableDetachesRunBinding(t *testing.T) {
 	prior := testIntent(PhaseRunDurable)
-	next, err := prior.WithHandoffDurable("crew-charlie")
+	next, err := prior.WithHandoffDurable("crew-charlie", "run-charlie")
 	if err != nil {
 		t.Fatalf("WithHandoffDurable: %v", err)
 	}

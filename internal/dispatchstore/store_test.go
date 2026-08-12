@@ -40,6 +40,7 @@ func testIntent(phase dispatch.Phase) dispatch.Intent {
 	if phase == dispatch.PhaseHandoffDurable {
 		intent.Handoff = &dispatch.HandoffBinding{
 			SessionName:        "harmonik-run-0197d100",
+			WindowName:         "run-0197d100",
 			WorktreeLeaseRunID: runID,
 		}
 	}

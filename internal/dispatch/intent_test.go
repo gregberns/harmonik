@@ -40,6 +40,7 @@ func testIntent(phase Phase) Intent {
 	if phase == PhaseHandoffDurable {
 		i.Handoff = &HandoffBinding{
 			SessionName:        "harmonik-run-0197d100",
+			WindowName:         "run-0197d100",
 			WorktreeLeaseRunID: runID,
 		}
 	}
@@ -69,7 +70,7 @@ func TestIntentRejectsIncompleteAndEarlyPhaseData(t *testing.T) {
 		{name: "refusal with run", mutate: func(i *Intent) { *i = testIntent(PhaseClaimRefused); i.Run = &RunBinding{RecordRunID: i.Binding.RunID} }},
 		{name: "refusal with handoff", mutate: func(i *Intent) {
 			*i = testIntent(PhaseClaimRefused)
-			i.Handoff = &HandoffBinding{SessionName: "not-allowed", WorktreeLeaseRunID: i.Binding.RunID}
+			i.Handoff = &HandoffBinding{SessionName: "not-allowed", WindowName: "not-allowed", WorktreeLeaseRunID: i.Binding.RunID}
 		}},
 		{name: "run missing", mutate: func(i *Intent) { i.Phase = PhaseRunDurable }},
 		{name: "run early", mutate: func(i *Intent) { i.Run = &RunBinding{RecordRunID: i.Binding.RunID} }},
@@ -81,8 +82,11 @@ func TestIntentRejectsIncompleteAndEarlyPhaseData(t *testing.T) {
 			i.Phase = PhaseHandoffDurable
 			i.Run = &RunBinding{RecordRunID: i.Binding.RunID}
 		}},
-		{name: "handoff early", mutate: func(i *Intent) { i.Handoff = &HandoffBinding{SessionName: "s", WorktreeLeaseRunID: i.Binding.RunID} }},
+		{name: "handoff early", mutate: func(i *Intent) {
+			i.Handoff = &HandoffBinding{SessionName: "s", WindowName: "w", WorktreeLeaseRunID: i.Binding.RunID}
+		}},
 		{name: "session missing", mutate: func(i *Intent) { *i = testIntent(PhaseHandoffDurable); i.Handoff.SessionName = "" }},
+		{name: "window missing", mutate: func(i *Intent) { *i = testIntent(PhaseHandoffDurable); i.Handoff.WindowName = "" }},
 		{name: "lease mismatch", mutate: func(i *Intent) { *i = testIntent(PhaseHandoffDurable); i.Handoff.WorktreeLeaseRunID = otherRunID }},
 	}
 	for _, tc := range tests {
@@ -204,12 +208,17 @@ func TestIntentWireMovesSessionIdentityToHandoff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(handoffData), `"handoff":{"session_name":"harmonik-run-0197d100"`) {
+	wantHandoff := `"handoff":{"session_name":"harmonik-run-0197d100","window_name":"run-0197d100"`
+	if !strings.Contains(string(handoffData), wantHandoff) {
 		t.Fatalf("handoff-durable bytes = %s", handoffData)
+	}
+	withoutWindow := strings.Replace(string(handoffData), `,"window_name":"run-0197d100"`, "", 1)
+	var decoded Intent
+	if err := json.Unmarshal([]byte(withoutWindow), &decoded); err == nil {
+		t.Fatal("handoff without window_name decode = nil")
 	}
 	legacy := strings.Replace(string(runData), wantRun,
 		`"run":{"record_run_id":"`+testRunID+`","session_name":"legacy"}`, 1)
-	var decoded Intent
 	if err := json.Unmarshal([]byte(legacy), &decoded); err == nil {
 		t.Fatal("legacy run.session_name decode = nil")
 	}

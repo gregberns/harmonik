@@ -385,7 +385,7 @@ func TestDispatchReplayOwnershipRejectsCrossIntentConflicts(t *testing.T) {
 	second.Binding.ClaimTransitionID = core.TransitionID(uuid.MustParse("0197d100-0000-7000-8000-000000000035"))
 	second.Run = &dispatch.RunBinding{RecordRunID: second.Binding.RunID}
 	second.Handoff = &dispatch.HandoffBinding{
-		SessionName: first.Handoff.SessionName, WorktreeLeaseRunID: second.Binding.RunID,
+		SessionName: first.Handoff.SessionName, WindowName: "run-second", WorktreeLeaseRunID: second.Binding.RunID,
 	}
 	for _, tc := range []struct {
 		name   string
@@ -402,7 +402,8 @@ func TestDispatchReplayOwnershipRejectsCrossIntentConflicts(t *testing.T) {
 			candidate := second
 			candidate.Run = &dispatch.RunBinding{RecordRunID: second.Run.RecordRunID}
 			candidate.Handoff = &dispatch.HandoffBinding{
-				SessionName: second.Handoff.SessionName, WorktreeLeaseRunID: second.Handoff.WorktreeLeaseRunID,
+				SessionName: second.Handoff.SessionName, WindowName: second.Handoff.WindowName,
+				WorktreeLeaseRunID: second.Handoff.WorktreeLeaseRunID,
 			}
 			tc.mutate(&candidate)
 			if _, err := dispatchReplayOwnership([]dispatch.Intent{first, candidate}); err == nil {
@@ -458,7 +459,7 @@ func replayOwnershipIntent(t *testing.T, phase dispatch.Phase) dispatch.Intent {
 			intent, err = intent.WithRunDurable()
 		}
 		if err == nil && phase == dispatch.PhaseHandoffDurable {
-			intent, err = intent.WithHandoffDurable("harmonik-replay-session")
+			intent, err = intent.WithHandoffDurable("harmonik-replay-session", "run-replay-session")
 		}
 	}
 	if err != nil {

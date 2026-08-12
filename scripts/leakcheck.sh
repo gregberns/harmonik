@@ -75,6 +75,12 @@ while read -r pid ppid cpu etime comm; do
 
     base="${comm##*/}"
 
+    # THESE THREE LINE FORMATS ARE PARSED. scripts/run-full.sh reads the LEAK,
+    # BUSY and SPAWN prefixes and the cpu= field to decide whether to refuse to
+    # start the test suite. Change a prefix or drop cpu= and that check silently
+    # matches nothing and stops refusing, which fails open. Update it in the
+    # same commit.
+    #
     # Rule 1 — an orphaned shell or Go test binary is always a leak.
     case "$base" in
     sh | bash | zsh | dash | *.test)

@@ -337,7 +337,7 @@ func runCommsSendSubcommand(subArgs []string) int {
 	}
 	// Signal end of write so the daemon's decoder sees EOF on its read side.
 	if uw, ok := conn.(*net.UnixConn); ok {
-		if closeErr := uw.CloseWrite(); closeErr != nil {
+		if closeErr := uw.CloseWrite(); !isBenignCloseWrite(closeErr) {
 			log.Printf("harmonik comms send: close write: %v", closeErr)
 			return 1
 		}
@@ -1156,7 +1156,7 @@ func runCommsPresenceSubcommand(subArgs []string, verb string) int {
 		return 1
 	}
 	if uw, ok := conn.(*net.UnixConn); ok {
-		if closeErr := uw.CloseWrite(); closeErr != nil {
+		if closeErr := uw.CloseWrite(); !isBenignCloseWrite(closeErr) {
 			log.Printf("harmonik comms %s: close write: %v", verb, closeErr)
 			return 1
 		}
@@ -1559,7 +1559,7 @@ func runCommsRecvSubcommand(subArgs []string) int {
 		return 1
 	}
 	if uw, ok := conn.(*net.UnixConn); ok {
-		if closeErr := uw.CloseWrite(); closeErr != nil {
+		if closeErr := uw.CloseWrite(); !isBenignCloseWrite(closeErr) {
 			log.Printf("harmonik comms recv: close write: %v", closeErr)
 			return 1
 		}
@@ -1707,7 +1707,7 @@ func sendPresenceRefreshBeat(ctx context.Context, sockPath, agent, sessionID str
 		return writeErr
 	}
 	if uw, ok := conn.(*net.UnixConn); ok {
-		if closeErr := uw.CloseWrite(); closeErr != nil {
+		if closeErr := uw.CloseWrite(); !isBenignCloseWrite(closeErr) {
 			return closeErr
 		}
 	}
@@ -1766,7 +1766,7 @@ func sendPresenceLeaveBeat(ctx context.Context, sockPath, agent, sessionID strin
 		return writeErr
 	}
 	if uw, ok := conn.(*net.UnixConn); ok {
-		if closeErr := uw.CloseWrite(); closeErr != nil {
+		if closeErr := uw.CloseWrite(); !isBenignCloseWrite(closeErr) {
 			return closeErr
 		}
 	}

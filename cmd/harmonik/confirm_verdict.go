@@ -238,7 +238,10 @@ func sendVerdictOverrideRequest(projectDir, runID, op, promoteTo string) int {
 		return 1
 	}
 	if uw, ok := conn.(*net.UnixConn); ok {
-		_ = uw.CloseWrite() //nolint:errcheck
+		if closeErr := uw.CloseWrite(); !isBenignCloseWrite(closeErr) {
+			fmt.Fprintf(os.Stderr, "harmonik %s: socket close-write error: %v\n", cmdName, closeErr)
+			return 1
+		}
 	}
 
 	var resp verdictOverrideResp

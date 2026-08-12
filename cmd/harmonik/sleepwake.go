@@ -365,7 +365,10 @@ func sendSleepWakeRequest(ctx context.Context, sockPath string, payload []byte, 
 		return sleepWakeSocketResponse{}, 2
 	}
 	if uw, ok := conn.(*net.UnixConn); ok {
-		_ = uw.CloseWrite() //nolint:errcheck // the daemon can decode, respond and close before this statement runs, at which point CloseWrite returns ENOTCONN for an operation that already succeeded
+		if closeErr := uw.CloseWrite(); !isBenignCloseWrite(closeErr) {
+			fmt.Fprintf(os.Stderr, "harmonik %s: close write: %v\n", verb, closeErr)
+			return sleepWakeSocketResponse{}, 2
+		}
 	}
 
 	if decErr := json.NewDecoder(conn).Decode(&resp); decErr != nil {

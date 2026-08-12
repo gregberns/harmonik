@@ -113,6 +113,101 @@ func (o OSAdapter) ListWindows(ctx context.Context, session string) ([]string, e
 	return parseLines(out), nil
 }
 
+// TargetProbeStatus is the closed transport result for one exact dispatch pane.
+type TargetProbeStatus string
+
+const (
+	// TargetProbeSessionAbsent means the requested session was not listed.
+	TargetProbeSessionAbsent TargetProbeStatus = "session_absent"
+	// TargetProbeWindowAbsent means the requested window was not listed.
+	TargetProbeWindowAbsent TargetProbeStatus = "window_absent"
+	// TargetProbePaneAbsent means the requested window had no pane result.
+	TargetProbePaneAbsent TargetProbeStatus = "pane_absent"
+	// TargetProbeExact means every requested pane value was read.
+	TargetProbeExact TargetProbeStatus = "exact"
+	// TargetProbeDuplicate means the session or window name was not unique.
+	TargetProbeDuplicate TargetProbeStatus = "duplicate"
+	// TargetProbeSessionUnreadable means session enumeration failed.
+	TargetProbeSessionUnreadable TargetProbeStatus = "session_unreadable"
+	// TargetProbeWindowUnreadable means window enumeration failed.
+	TargetProbeWindowUnreadable TargetProbeStatus = "window_unreadable"
+	// TargetProbePaneUnreadable means the exact pane query failed or was malformed.
+	TargetProbePaneUnreadable TargetProbeStatus = "pane_unreadable"
+)
+
+// TargetProbe is one transport-level read of an exact dispatch pane.
+type TargetProbe struct {
+	Status            TargetProbeStatus
+	RunID             string
+	ClaimTransitionID string
+	SessionName       string
+	WindowName        string
+	PanePID           string
+	PaneDead          string
+}
+
+// ProbeDispatchTarget reads the immutable window options and pane liveness.
+func (o OSAdapter) ProbeDispatchTarget(ctx context.Context, session, window string) TargetProbe {
+	sessions, err := o.ListSessions(ctx)
+	if err != nil {
+		return TargetProbe{Status: TargetProbeSessionUnreadable}
+	}
+	sessionCount := countExact(sessions, session)
+	if sessionCount == 0 {
+		return TargetProbe{Status: TargetProbeSessionAbsent}
+	}
+	if sessionCount != 1 {
+		return TargetProbe{Status: TargetProbeDuplicate}
+	}
+	windows, err := o.ListWindows(ctx, session)
+	if err != nil {
+		return TargetProbe{Status: TargetProbeWindowUnreadable}
+	}
+	windowCount := countExact(windows, window)
+	if windowCount == 0 {
+		return TargetProbe{Status: TargetProbeWindowAbsent}
+	}
+	if windowCount != 1 {
+		return TargetProbe{Status: TargetProbeDuplicate}
+	}
+	return o.readDispatchTargetPane(ctx, session, window)
+}
+
+func (o OSAdapter) readDispatchTargetPane(ctx context.Context, session, window string) TargetProbe {
+	const format = "#{@harmonik-run-id}\t#{@harmonik-claim-transition-id}\t" +
+		"#{@harmonik-session-name}\t#{@harmonik-window-name}\t#{pane_pid}\t#{pane_dead}"
+	target := session + ":" + window
+	out, err := o.effectiveRunner().Command(ctx, "tmux", "list-panes", "-t", target, "-F", format).CombinedOutput()
+	if err != nil {
+		return TargetProbe{Status: TargetProbePaneUnreadable}
+	}
+	lines := parseLines(out)
+	if len(lines) == 0 {
+		return TargetProbe{Status: TargetProbePaneAbsent}
+	}
+	if len(lines) != 1 {
+		return TargetProbe{Status: TargetProbeDuplicate}
+	}
+	fields := strings.Split(lines[0], "\t")
+	if len(fields) != 6 {
+		return TargetProbe{Status: TargetProbePaneUnreadable}
+	}
+	return TargetProbe{
+		Status: TargetProbeExact, RunID: fields[0], ClaimTransitionID: fields[1],
+		SessionName: fields[2], WindowName: fields[3], PanePID: fields[4], PaneDead: fields[5],
+	}
+}
+
+func countExact(values []string, want string) int {
+	count := 0
+	for _, value := range values {
+		if value == want {
+			count++
+		}
+	}
+	return count
+}
+
 // NewWindowIn creates a new named tmux window inside params.Session using
 // params.WindowName. The new window runs params.Command (or the default shell
 // when Command is empty) with the given environment variables and working

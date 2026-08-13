@@ -895,6 +895,7 @@ script-tests:  ## Self-tests for the shell the gate depends on
 	scripts/lint-changed-test.sh
 	scripts/changed-func-coverage-test.sh
 	scripts/queue-daemon-count-test.sh
+	scripts/secret-scan-test.sh
 	scripts/with-lane-gocache.sh scripts/reachability-gate-test.sh
 
 # freeze-gates — the per-subsystem "do not move this back" greps. Cheap

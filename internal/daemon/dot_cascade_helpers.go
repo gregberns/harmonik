@@ -71,6 +71,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -579,7 +580,7 @@ func dispatchDotToolNode(ctx context.Context, bus handlercontract.EventEmitter, 
 	// Every reason a gate FAILs is decided by classifyDotToolNodeFailure, which
 	// returns the class and the one-line description this path logs for it. An
 	// empty description is a class that is logged nowhere.
-	fc, logDesc := classifyDotToolNodeFailure(err, execCtx.Err(), ctx.Err(), combined, node.ID, timeoutSecs)
+	fc, logDesc := classifyDotToolNodeFailure(err, execCtx.Err(), ctx.Err(), combined, node.ID, timeoutSecs, runner != nil)
 	if logDesc != "" {
 		fmt.Fprintf(os.Stderr, "daemon: %s; gate log: %s\n", logDesc, gateLogPath)
 	}
@@ -595,12 +596,33 @@ func dispatchDotToolNode(ctx context.Context, bus handlercontract.EventEmitter, 
 // run context's error, both read after the command returned. combined is the
 // gate's combined stdout+stderr.
 //
+// remote says a CommandRunner ran the gate rather than the daemon running it as
+// a direct child. That is all it says — the caller passes runner != nil, and the
+// runner that production wires in is an SSHRunner. A different runner would take
+// this branch and would not necessarily mean ssh at all.
+//
+// It is here because, for an ssh runner, it changes what one exit code MEANS:
+// ssh exits 255 when the transport failed or when the remote command died from a
+// signal it cannot report. No ssh runs on the local path, so a LOCAL 255 is an
+// exit status the gate command itself returned, and the same number must not be
+// read the same way. That is what the parameter buys — one reading that is only
+// available on one path.
+//
+// It is a CONFLATION, and a knowing one: ssh also returns the remote command's
+// OWN exit status, and 255 is a legal one, so a remote gate that genuinely chose
+// to exit 255 is read here as a gate that reached no verdict. That is the same
+// mis-reading in the other direction, and it is accepted because the cost is
+// asymmetric — a gate wrongly read as "no verdict" stops the run for triage,
+// while a gate wrongly read as a verdict sends an implementer to fix a fault
+// nobody observed. Nothing on this path approves anything.
+// (hk-gate-error-143-still-deterministic-rhske)
+//
 // THE ORDER OF THE CHECKS BELOW IS LOAD-BEARING. The two kills the daemon issues
 // itself — the node's own timeout, and a run teardown / re-dispatch — must be
 // caught before the outside-signal branch, because that branch means "something
 // other than the daemon signalled the gate" and is only true once these two are
 // ruled out.
-func classifyDotToolNodeFailure(err, execCtxErr, runCtxErr error, combined []byte, nodeID string, timeoutSecs int) (class core.FailureClass, logDesc string) {
+func classifyDotToolNodeFailure(err, execCtxErr, runCtxErr error, combined []byte, nodeID string, timeoutSecs int, remote bool) (class core.FailureClass, logDesc string) {
 	// Timeout-killed: parent deadline exceeded first.
 	if errors.Is(execCtxErr, context.DeadlineExceeded) {
 		return core.FailureClassTransient, fmt.Sprintf("dot tool node %q timed out after %ds", nodeID, timeoutSecs)
@@ -662,6 +684,23 @@ func classifyDotToolNodeFailure(err, execCtxErr, runCtxErr error, combined []byt
 	// did not pass. Fix the failure and re-commit".
 	if sigDesc, killed := gateKilledBySignal(err, combined); killed {
 		return core.FailureClassCanceled, fmt.Sprintf("dot tool node %q was KILLED mid-flight (%s) — it reached no verdict, so this is NOT a test failure; canceled, routed to close-needs-attention for triage", nodeID, sigDesc)
+	}
+
+	// REMOTE only: ssh exits 255 for a transport it could not make or keep, and
+	// for a remote command whose exit status it cannot report because a signal
+	// ended it. Both mean the gate reached NO VERDICT, which is the same thing
+	// the kill branch above says, so it takes the same class. Before this, a
+	// dropped connection and a killed remote gate that wrote no make recipe line
+	// both fell through to deterministic and sent the implementer to fix a fault
+	// nobody observed. Locally the number means nothing of the sort, which is why
+	// this reads `remote`.
+	//
+	// It also swallows a remote gate that genuinely exited 255 on its own, since
+	// ssh passes the remote command's own status through. See the `remote`
+	// paragraph on this function for why that trade is taken.
+	// (hk-gate-error-143-still-deterministic-rhske)
+	if remote && tmux.IsSSHConnectionFailure(err) {
+		return core.FailureClassCanceled, fmt.Sprintf("dot tool node %q ran on a worker and ssh exited 255 — the transport failed or the remote gate died from a signal; it reached no verdict, so this is NOT a test failure; canceled, routed to close-needs-attention for triage", nodeID)
 	}
 
 	// Infra-signature check: go build-cache TOCTOU failures emit a distinctive
@@ -734,23 +773,64 @@ func tailString(s string, n int) string {
 	return "…(truncated)…\n" + cut
 }
 
-// isGateBuildCacheInfraError reports whether gate output matches a known go
-// build-cache / toolchain infrastructure failure signature. Infra failures are
-// transient — retry on the same committed tree succeeds — and must not be
-// misclassified as deterministic (which would bounce the bead back to the
-// implementer with a false "fix the build" signal).
+// gateOutputSignature is one content string a gate-output detector matches,
+// paired with the rendering gateEvidenceQuote writes in its place.
 //
-// Known signatures (hk-y3frr / hk-guez / hk-7xgu4 TOCTOU lineage):
-//   - "is not in std" — concurrent go clean -cache deleted stdlib entries
-//     while "go build ./..." was running; observed as "package bufio is not
-//     in std". Passes immediately on retry after the cache is warm again.
-func isGateBuildCacheInfraError(output []byte) bool {
-	return strings.Contains(string(output), "is not in std")
+// The pairing is the point, and it is why this is a record rather than two
+// lists kept side by side. The detectors below scan the WHOLE gate log, with no
+// position scoping to protect them, and every line this daemon writes about a
+// gate lands in the NEXT gate's log — the gate runs the suite under `go test
+// -v`, and the report tool replays a failing test's own output. A detector
+// string that a diagnostic reproduces word for word therefore makes the
+// detector a generator of its own trigger.
+//
+// Measured 2026-08-12: the kill diagnostic had already been taught to strip
+// make's recipe anchor, but nothing stripped `] Error 127`, so a failure
+// message that quoted a `... Error 127` line back at the reader turned the next
+// genuinely RED gate structural, and the implementer was told "NOTHING is known
+// to be wrong with your change" — the exact sentence this whole unit exists to
+// keep off a human's screen.
+//
+// Holding both strings in ONE record makes the sanitizer's coverage DERIVED
+// rather than maintained in parallel: a detector reads text and gateEvidenceQuote
+// reads quoted, so adding a signature to a table extends both at once.
+//
+// That is a CONVENTION, and the language does not enforce it. gateUnscopedSignatures
+// below is an ordinary expression: a new []gateOutputSignature table can be handed
+// to gateOutputHasAnySignature and reach the classifier without ever being named in
+// it, and then a string this daemon matches on is one it can also write unrewritten.
+// What holds the convention is a test —
+// TestEveryDetectorTableIsReachableFromTheSanitizer reads this file and requires
+// every package-level table here to be reachable from the sanitizer or to carry a
+// written exemption. It sees package-level tables only, so a detector that matches a
+// bare string with no table, or builds one inside a function, is still outside it.
+// (hk-gate-selftest-fakes-a-kill-0hj0i)
+type gateOutputSignature struct {
+	// text is what the detector matches, anywhere in the gate's output.
+	text string
+	// quoted is what gateEvidenceQuote writes in text's place. It MUST NOT
+	// contain text — otherwise the rewrite buys nothing — and it MUST still
+	// read as the same fact to a human, because these strings are the whole
+	// content of a diagnostic somebody has to act on.
+	quoted string
 }
 
-// isGateCannotRunError reports whether the gate output shows the gate could not
-// RUN, as opposed to running and finding a fault in the change. The only cause
-// in this class is a command the gate names that does not exist.
+// gateBuildCacheInfraSignatures are the known go build-cache / toolchain
+// infrastructure failure signatures. Infra failures are transient — retry on the
+// same committed tree succeeds — and must not be misclassified as deterministic
+// (which would bounce the bead back to the implementer with a false "fix the
+// build" signal). (hk-y3frr / hk-guez / hk-7xgu4 TOCTOU lineage)
+//
+//   - "is not in std" — concurrent go clean -cache deleted stdlib entries while
+//     "go build ./..." was running; observed as "package bufio is not in std".
+//     Passes immediately on retry after the cache is warm again.
+var gateBuildCacheInfraSignatures = []gateOutputSignature{
+	{text: "is not in std", quoted: "is not part of std"},
+}
+
+// gateCannotRunSignatures are the signatures that say the gate could not RUN, as
+// opposed to running and finding a fault in the change. The only cause in this
+// class is a command the gate names that does not exist.
 //
 // Two signatures, both meaning exit 127 from a shell:
 //
@@ -761,13 +841,45 @@ func isGateBuildCacheInfraError(output []byte) bool {
 //     make's format and keeps the match off a bare "127" in test output.
 //   - ": command not found" — the same failure when the missing name has no
 //     slash in it, so the shell reports it by name rather than by path.
+var gateCannotRunSignatures = []gateOutputSignature{
+	{text: "] Error 127", quoted: "] Error code 127"},
+	{text: ": command not found", quoted: ": command was not found"},
+}
+
+// gateUnscopedSignatures is every signature whose detector reads the whole gate
+// log. It is exactly the set gateEvidenceQuote has to rewrite, and it is built
+// FROM the detectors' own tables rather than restated, so adding a signature to
+// either table above extends the sanitizer with it. Adding a whole new table does
+// NOT extend it — an operand has to be added here too, and the test named on
+// gateOutputSignature is what makes that a failure rather than a silent hole.
+var gateUnscopedSignatures = slices.Concat(gateBuildCacheInfraSignatures, gateCannotRunSignatures)
+
+// gateOutputHasAnySignature reports whether output contains any signature in sigs.
+func gateOutputHasAnySignature(output string, sigs []gateOutputSignature) bool {
+	for _, sig := range sigs {
+		if strings.Contains(output, sig.text) {
+			return true
+		}
+	}
+	return false
+}
+
+// isGateBuildCacheInfraError reports whether gate output matches a known build-
+// cache / toolchain infrastructure signature. See gateBuildCacheInfraSignatures.
+func isGateBuildCacheInfraError(output []byte) bool {
+	return gateOutputHasAnySignature(string(output), gateBuildCacheInfraSignatures)
+}
+
+// isGateCannotRunError reports whether the gate output shows the gate could not
+// RUN. See gateCannotRunSignatures.
 //
-// A test that prints one of these strings in its own output would be
+// A gate log that quotes one of these strings for some other reason is
 // misclassified. That costs a run that stops and names the reason instead of
-// looping, which is the safer direction and never approves anything.
+// looping, which is the safer direction and never approves anything — but it is
+// still a wrong answer, so anything this daemon WRITES has the strings rewritten
+// on the way out (gateEvidenceQuote).
 func isGateCannotRunError(output []byte) bool {
-	s := string(output)
-	return strings.Contains(s, "] Error 127") || strings.Contains(s, ": command not found")
+	return gateOutputHasAnySignature(string(output), gateCannotRunSignatures)
 }
 
 // gateBackEdgeMessage builds the note delivered to an implementer that a failed
@@ -818,14 +930,51 @@ func gateBackEdgeMessage(class core.FailureClass, notes string) string {
 //     line is the only evidence, and it is the shape the live run produced:
 //     `make[1]: *** [test-scenario] Terminated: 15`.
 //
-// The match is anchored on make's `*** [` recipe-failure prefix on the SAME line
-// as the signal word, so ordinary test output that happens to contain the word
-// "Terminated" does not trip it. A false positive costs a run that stops at
-// close-needs-attention instead of looping back to the implementer; it can never
-// approve anything. NOT covered by the output detector: a shell that reports its
-// signalled child as exit 128+N without naming the signal — make then prints
-// `Error 143` and only the exit-state detector can see through it, which it does
-// on every local run.
+// WHERE the output detector looks is as load-bearing as what it looks for, and
+// two live findings are the same detector wrong in opposite directions:
+//
+//   - The gate log is a VERBOSE REPLAY of the whole suite, so it contains every
+//     string this detector matches — make output that tests print as fixtures,
+//     and the classifier's own diagnostic, which used to quote the matched line
+//     word for word. Scanning the whole transcript found that text 13,000 lines
+//     from the end of a gate that had GENUINELY FAILED and reported a kill; the
+//     real failure was reported to the operator as "NOTHING is known to be wrong
+//     with your change". (hk-gate-selftest-fakes-a-kill-0hj0i)
+//   - A signal that reaches only a DESCENDANT is reported by the recipe shell as
+//     exit 128+N, so make prints `*** [test-scenario] Error 143` and never names
+//     the signal, and the top-level shell exits 2 on its own. This comment used
+//     to claim the exit-state detector saw through that case "on every local
+//     run". It does not, and cannot: the daemon's own child exited cleanly.
+//     Error 137 is the OOM killer and Error 143 is a SIGTERM to a child, which
+//     are the shapes a loaded box produces — and a loaded box is exactly when a
+//     gate gets killed. (hk-gate-error-143-still-deterministic-rhske)
+//
+// THE PRECEDENCE RULE that reconciles them is REGIONAL, not "the last line
+// wins": only make's TERMINAL recipe-failure cascade is evidence about how the
+// GATE ended (gateTerminalRecipeFailures). Text outside that cascade is the
+// suite's transcript, and it says nothing about the gate however exactly it
+// matches — that is why a `Terminated: 15` in the transcript loses to an
+// `Error 1` cascade.
+//
+// WHERE the cascade begins is not a clean line, and the comment used to imply it
+// was. gateTerminalRecipeFailures walks backwards and tolerates
+// gateCascadeGapLines of non-recipe text between members, so a stray anchored
+// line that lands inside that window is pulled in as a cascade member — and go
+// test's four-line failure trailer is exactly the tolerance. That window is why
+// the scan ALSO rejects an INDENTED line: make writes its recipe failures at
+// column 0 and go test indents everything a test wrote, so indentation says the
+// line came from a test and not from make, whatever else is on it.
+//
+// INSIDE the cascade any kill signature wins, and the first one in make's own
+// write order decides (gateSignalKillOutputLine). A kill is named two ways and
+// either one is enough — a signal word, or an exit code in the 128+N range. So
+// `make[1]: *** [test-scenario] Terminated: 15` followed by `make: *** [full]
+// Error 2` IS a kill: the inner recipe died from the signal, and the outer make
+// only reports that it gave up. A cascade that names neither a signal nor a
+// 128+N code is a VERDICT: the gate ran and found a fault.
+//
+// A false positive here costs a run that stops at close-needs-attention instead
+// of looping back to the implementer; it can never approve anything.
 func gateKilledBySignal(err error, output []byte) (string, bool) {
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) && exitErr.ProcessState != nil {
@@ -839,19 +988,231 @@ func gateKilledBySignal(err error, output []byte) (string, bool) {
 	return "", false
 }
 
-// gateSignalKillOutputLine finds make's recipe-failure line for a command that
-// died from a signal, and returns it for the log.
+// gateSignalKillOutputLine finds the line in make's TERMINAL recipe-failure
+// cascade that says the gate died from a signal, and returns it for the log.
+// Within the cascade the FIRST such line decides, because make unwinds from the
+// recipe that died out to the top: the inner recipe carries the signal, and the
+// outer make lines above it only report that it gave up.
+// Returns the line rendered by gateEvidenceQuote, never the raw text.
 func gateSignalKillOutputLine(output []byte) (string, bool) {
-	for _, line := range strings.Split(string(output), "\n") {
-		if !strings.Contains(line, "*** [") {
-			continue
-		}
-		if strings.Contains(line, "Terminated") || strings.Contains(line, "Killed") ||
-			strings.Contains(line, "Interrupt") || strings.Contains(line, "Hangup") {
-			return strings.TrimSpace(line), true
+	for _, line := range gateTerminalRecipeFailures(output) {
+		if gateRecipeLineNamesAKill(line) {
+			return gateEvidenceQuote(line), true
 		}
 	}
 	return "", false
+}
+
+// gateLineIsIndented reports whether a line begins with whitespace.
+//
+// It is the cheap, non-make-specific test for "a TEST wrote this line, not
+// make". make writes its recipe-failure lines at column 0 —
+// `make[1]: *** [test] Error 1` — and go test indents everything a test wrote by
+// at least four spaces: the `file.go:NN: ` first line of a failure message and
+// every continuation line under it alike. Requiring a cascade member to START
+// with `make` would do the same job for a Go build and break every gate whose
+// driver is not make, so indentation is the more portable of the two.
+//
+// The cost is not zero, and it falls on the kill detector. A gate whose output
+// reaches this daemon through anything that indents — a log formatter that adds
+// a prefix, a wrapper that pipes through `sed 's/^/  /'`, a harness that quotes
+// the child's output — has EVERY line indented, including make's own. Then no
+// line is admitted to the terminal cascade, gateSignalKillOutputLine finds
+// nothing, and a killed gate reads as a plain failure again: the exact defect
+// this file was opened to remove. Nothing in the daemon indents gate output
+// today, which is why this is a stated limit rather than a bug. Anyone adding a
+// step between the gate and this classifier has to read this paragraph first.
+//
+// It replaced a narrower rule that matched go test's `file.go:NN: ` prefix
+// alone. Measured 2026-08-12: that rule left the multi-line case open, because
+// only the FIRST line of a failure message carries the prefix. A sibling test in
+// this package writes `…reads as a clean exit:\n%s` with a raw anchor on the
+// continuation line, and a red gate whose log replayed it classified canceled —
+// the same defect, one line further down.
+//
+// What it does NOT cover: a line written straight to stdout or stderr, which
+// nothing indents. The daemon's own diagnostics are that shape, and what covers
+// them is gateEvidenceQuote at the writing end, not this.
+func gateLineIsIndented(line string) bool {
+	return line != "" && (line[0] == ' ' || line[0] == '\t')
+}
+
+// gateRecipeFailureAnchor is the prefix make writes when a recipe fails:
+// `make[1]: *** [test-scenario] Error 1`. It is the shape make itself uses to
+// report on a command it ran.
+const gateRecipeFailureAnchor = "*** ["
+
+// gateCascadeGapLines bounds how many non-recipe lines may sit between two
+// members of make's terminal cascade. make unwinds a failed recipe through its
+// recursive invocations back to back; the tolerance covers the few lines that
+// legitimately interleave — `make[1]: Leaving directory …` under -w, `make: ***
+// Waiting for unfinished jobs`, and ssh's "Connection to <host> closed." after a
+// remote gate. It is deliberately small: every line of slack is a line of
+// verbose test output that gets read as make's own report.
+const gateCascadeGapLines = 4
+
+// gateTerminalRecipeFailures returns make's recipe-failure lines from the END of
+// the gate output, in the order make wrote them — the cascade it prints as one
+// failed recipe unwinds through the recursive invocations and stops the build.
+//
+// What scoping to the tail buys: the gate runs `make full`, which runs the suite
+// under `go test -v`, so the log replays every line every test printed. Any
+// string this file looks for can appear in there — as a test fixture, or as the
+// daemon's own diagnostic about some earlier gate. Those lines are
+// indistinguishable from the real thing BY CONTENT. They are distinguishable by
+// POSITION: only the lines make wrote as it gave up sit at the end of the log.
+// (hk-gate-selftest-fakes-a-kill-0hj0i)
+//
+// Position alone is not quite enough, because the region has a soft edge: the
+// scan tolerates gateCascadeGapLines of slack between members, and go test's
+// failure trailer (`--- FAIL`, `FAIL`, the package line, `FAIL`) is exactly that
+// many lines. So an anchored line a TEST wrote can sit inside the window, ahead
+// of make's real cascade, and be admitted as its first member — which is the
+// original bug with a four-line reach instead of a 13,000-line one. Hence the
+// second exclusion below: gateLineIsIndented.
+func gateTerminalRecipeFailures(output []byte) []string {
+	lines := strings.Split(string(output), "\n")
+	// Drop trailing blank lines first. The cascade is the last thing MAKE
+	// writes, but the captured bytes need not end there — a shell that echoes
+	// after the gate, and a transport that flushes the stream, both leave empty
+	// lines behind it. An empty line is not a recipe failure, so without this it
+	// counts as gap, and enough of them push the whole cascade out of reach.
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
+	}
+	// Walk backwards from the end, allowing gateCascadeGapLines of slack between
+	// members, and stop as soon as the gap is exceeded. The scan is bounded by
+	// the cascade itself, so the transcript above it is never examined — a
+	// 17,000-line log costs one split and a few lines of comparison.
+	var reversed []string
+	gap := 0
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.Contains(lines[i], gateRecipeFailureAnchor) && !gateLineIsIndented(lines[i]) {
+			reversed = append(reversed, strings.TrimSpace(lines[i]))
+			gap = 0
+			continue
+		}
+		gap++
+		if gap > gateCascadeGapLines {
+			break
+		}
+	}
+	cascade := make([]string, 0, len(reversed))
+	for i := len(reversed) - 1; i >= 0; i-- {
+		cascade = append(cascade, reversed[i])
+	}
+	return cascade
+}
+
+// gateCascadeKillWords are the signal names make writes into a recipe-failure
+// line when the process IT forked was killed by a signal.
+//
+// These are read ONLY inside make's terminal cascade
+// (gateTerminalRecipeFailures), and a line that has lost make's recipe anchor
+// can never be a cascade member. That position scoping is what protects them, so
+// unlike gateUnscopedSignatures they are NOT rewritten by gateEvidenceQuote —
+// and they must not be, because naming which signal ended the gate is the whole
+// value of the diagnostic.
+var gateCascadeKillWords = []string{"Terminated", "Killed", "Interrupt", "Hangup"}
+
+// gateRecipeLineNamesAKill reports whether one recipe-failure line says the
+// command died from a signal. Two spellings, because make reports a signalled
+// child either way, and which one it writes depends on how far down the signal
+// landed:
+//
+//   - by NAME (`Terminated: 15`) when make's OWN child took the signal, so make
+//     read the signal out of the wait status itself;
+//   - by CODE 128+N (`Error 143`) when the signal landed on a grandchild. The
+//     recipe shell reports its dead child as an ordinary exit status of 128+N,
+//     and make cannot tell that apart from a status the shell chose.
+//
+// make writes the recipe-failure line in both cases; the shell only supplies the
+// number in the second.
+func gateRecipeLineNamesAKill(line string) bool {
+	for _, word := range gateCascadeKillWords {
+		if strings.Contains(line, word) {
+			return true
+		}
+	}
+	return gateRecipeExitCodeIsSignalDeath(line)
+}
+
+// gateRecipeExitCodeIsSignalDeath reports whether a recipe-failure line carries
+// an exit code in the range a shell uses to report a child that died from a
+// signal: 128+N, i.e. 129..255. `Error 137` is the OOM killer and `Error 143` is
+// a SIGTERM.
+//
+// It is a RANGE, not a proof, and this comment used to read as one. Any program
+// may `exit 200` of its own accord, and a gate command that does reads as killed
+// here. The range is used anyway because it is the only evidence a grandchild
+// kill leaves, and because being wrong this way stops the run for triage while
+// being wrong the other way sends an implementer to fix a fault nobody observed.
+//
+// Below 129 is a real exit status a command chose, and the classifier must keep
+// reading those as verdicts: `Error 1` is a test that failed, `Error 2` is make
+// itself giving up, and `Error 127` is a missing command, which the structural
+// branch owns.
+func gateRecipeExitCodeIsSignalDeath(line string) bool {
+	const marker = "] Error "
+	i := strings.LastIndex(line, marker)
+	if i < 0 {
+		return false
+	}
+	rest := line[i+len(marker):]
+	end := 0
+	for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
+		end++
+	}
+	if end == 0 {
+		return false
+	}
+	code, err := strconv.Atoi(rest[:end])
+	if err != nil {
+		return false
+	}
+	return code >= 129 && code <= 255
+}
+
+// gateRecipeFailureAnchorQuoted is what gateEvidenceQuote writes in place of
+// make's recipe anchor. It says the same thing to a reader and matches nothing.
+const gateRecipeFailureAnchorQuoted = "recipe ["
+
+// gateEvidenceQuote renders gate-log text for a message this daemon writes,
+// WITHOUT reproducing any string this file's detectors key on.
+//
+// This is not cosmetic. The classifier's diagnostic goes to stderr, the gate runs
+// the suite under `go test -v`, and a test that drives this path therefore prints
+// the diagnostic into the NEXT gate's log. Quoting the matched line word for word
+// made the detector a generator of its own trigger: on 2026-08-12 it matched its
+// own earlier message and relabelled a genuinely red gate as a kill. A diagnostic
+// that describes the evidence cannot do that. (hk-gate-selftest-fakes-a-kill-0hj0i)
+//
+// Its coverage is DERIVED, not listed. Two rewrites, one per class of detector:
+//
+//   - make's recipe anchor. Removing it is what disarms every CASCADE-SCOPED
+//     detector at once — the kill words and the 128+N exit code are read only
+//     inside make's terminal cascade, and gateTerminalRecipeFailures admits a
+//     line to that cascade only if the anchor is on it. So the signal words stay
+//     legible in the message, which is what a reader needs.
+//   - every entry of gateUnscopedSignatures. Those detectors scan the entire log
+//     and nothing about position protects them, so each one is rewritten to a
+//     rendering that reads the same and matches nothing. Because that set IS the
+//     detectors' own tables, a signature added to an EXISTING table arrives here
+//     with it. A whole new table does not: gateUnscopedSignatures is an ordinary
+//     expression, so a table that is never made an operand of it reaches the
+//     classifier with no rewrite here, and so does one appended to at run time.
+//     The convention is held by a test, not by the language — see the comment on
+//     gateOutputSignature, which names it and names what it cannot see.
+//
+// It was written for the anchor alone, and for a while it defended one detector
+// while starving the other: a message that had lost the anchor still carried
+// `] Error 127`, and a red gate whose log replayed one read as structural.
+func gateEvidenceQuote(line string) string {
+	out := strings.ReplaceAll(line, gateRecipeFailureAnchor, gateRecipeFailureAnchorQuoted)
+	for _, sig := range gateUnscopedSignatures {
+		out = strings.ReplaceAll(out, sig.text, sig.quoted)
+	}
+	return out
 }
 
 // nodeIsReviewer reports whether an agentic node is a reviewer-class node. The

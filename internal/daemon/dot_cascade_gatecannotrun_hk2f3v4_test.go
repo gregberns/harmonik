@@ -15,6 +15,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -34,7 +35,10 @@ func TestIsGateCannotRunError(t *testing.T) {
 	}
 	for _, out := range cannotRun {
 		if !isGateCannotRunError([]byte(out)) {
-			t.Errorf("a gate that could not run reads as runnable:\n%s", out)
+			// gateEvidenceQuote, not a raw %s: `out` here carries "] Error 127"
+			// and ": command not found", and a FAILING run of this test puts them
+			// in the log the NEXT gate's classifier reads.
+			t.Error(gateEvidenceQuote(fmt.Sprintf("a gate that could not run reads as runnable:\n%s", out)))
 		}
 	}
 

@@ -34,6 +34,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -128,7 +129,10 @@ func TestGateSignalKillOutputLine(t *testing.T) {
 	}
 	for _, out := range ranAndFailed {
 		if line, ok := gateSignalKillOutputLine([]byte(out)); ok {
-			t.Errorf("a gate that RAN and found a fault reads as killed (matched %q):\n%s", line, out)
+			// gateEvidenceQuote, not a raw %s: `out` here carries "] Error 127",
+			// and a FAILING run of this test puts it in the log the NEXT gate's
+			// classifier reads.
+			t.Error(gateEvidenceQuote(fmt.Sprintf("a gate that RAN and found a fault reads as killed (matched %q):\n%s", line, out)))
 		}
 	}
 }

@@ -88,23 +88,41 @@ func awaitWorkLoopExit(t *testing.T, workDone context.Context, loopDone <-chan e
 		}
 	case <-time.After(workLoopDrainBudget + workLoopExitGrace):
 		// Report, then JOIN before unwinding. t.Fatalf here would leave the loop
-		// running while this test unwinds, and the project dir is a t.TempDir, so
-		// cleanup then deletes the tree out from under a live loop. The loop's
-		// shutdown writes into that tree, so the failure surfaces as
-		// "CancelQueueOnShutdown: persist ... no such file or directory" in
-		// WHICHEVER TEST RUNS NEXT — which reads as a queue defect and has sent
-		// readers into internal/queue more than once. Refs hk-33e6p.
+		// running while this test unwinds. The deletion is the t.TempDir cleanup,
+		// which testing runs after this Goexit — so without the join it lands under
+		// a live loop.
+		//
+		// The loop's shutdown then writes into the vanished tree via queue.Persist.
+		// If that write fails, drainQueuesForRestart prints the error to os.Stderr
+		// rather than t.Log, so it is attributed to no test: a reader meets it
+		// beside whatever test runs next and reads it as a queue defect. Grep
+		// drainQueuesForRestart to find it. Do NOT grep CancelQueueOnShutdown —
+		// hk-33e6p records the symptom under that name, but 2881c0c41 deleted that
+		// path. hk-33e6p also says this has misdirected readers more than once
+		// without recording one instance; treat that as unevidenced.
+		//
+		// The write usually does NOT fail. queue.Persist calls os.MkdirAll before
+		// it writes, so it recreates the tree and succeeds silently: expect a stray
+		// directory under TMPDIR. Only a narrow race with RemoveAll gives ENOENT or
+		// a TempDir cleanup failure.
+		//
+		// The join exists only because this arm fires at workLoopDrainBudget +
+		// workLoopExitGrace while testCtx expired at workLoopDrainBudget. Shrink
+		// this timer to the drain budget and the join gets no grace.
 		t.Errorf("runWorkLoop did not return within %s after %s",
 			workLoopDrainBudget+workLoopExitGrace, drained)
 		select {
 		case <-loopDone:
-			// Late but clean: nothing is running now, so cleanup is safe and the
-			// only failure is the one reported above.
+			// Late but joined. Not proof the tree is quiet: exitClean waits only
+			// shutdownDrainTimeout (10s) for in-flight runs, then returns anyway,
+			// so a run it abandoned can still write. The failure to report is
+			// still the one above.
 		case <-time.After(workLoopExitGrace):
-			// The loop is genuinely wedged, so joining is not available and the
-			// deletion below cannot be made safe. Say so here, because the next
-			// reader's alternative is to blame the package that reports the I/O
-			// error rather than the test that caused it.
+			// The helper stopped waiting. That is not proof the loop is wedged.
+			// Either way the join is unavailable and the deletion cannot be made
+			// safe. Say so here, because the next reader's alternative is to blame
+			// the package that reports the I/O error rather than the test that
+			// caused it.
 			t.Errorf("runWorkLoop still had not returned %s later; the project dir is about to be deleted under a running loop, so treat any persist or no-such-file error in a LATER test in this package as fallout from THIS failure, not as a defect of its own",
 				workLoopExitGrace)
 		}

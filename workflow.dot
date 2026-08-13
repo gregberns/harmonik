@@ -101,9 +101,13 @@ digraph "standard-bead" {
     // CLI, workspace, daemon, run loop / exec / lease / launch, workflow and the
     // graph engine, merge, merge queue, core, handler, git probe and the CLI.
     //
-    // A PER-BEAD GATE MUST BE CHEAP. `make full` costs roughly 19-22 minutes and
-    // every bead was paying it; that is not what it is for. `make full` is the
-    // integration-branch-into-main decision and it runs there and in CI only.
+    // A PER-BEAD GATE MUST BE CHEAP. `make full` tests every package and then
+    // runs the whole scenario tier on top of that, and every bead was paying
+    // for it; that is not what it is for. It measured 20 minutes on 2026-08-11
+    // at 4ebd8a334 — timed start to end, load sampled every 15 s, in
+    // assessments/2026-08-11-1434-gate-on-alpha-tip/01-EVIDENCE.md section 2.
+    // `make full` is the integration-branch-into-main decision and it runs
+    // there and in CI only.
     //
     // Fail-closed at every step. No retry, and no path that reports SUCCESS on a
     // timeout, an OOM, a compile failure or an exit code nothing recognised.

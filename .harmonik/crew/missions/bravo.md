@@ -37,10 +37,11 @@ current gate. Do NOT read "gitignored" as "inert": `resolveWorkflowRef` in
 `internal/daemon/moderesolve.go` returns a queue item's own workflow ref verbatim
 at Tier 0, so a bead that names a path under that directory is read and run.
 
-- **`make full` is NOT the per-bead gate and never was supposed to be.** It costs
-  19-22 minutes and every bead was paying it. It is the integration-branch-into-
-  main decision, and it runs there and in CI only. **Do not report `make full`
-  failures as release blockers.** We know it is broken. It is not the current job.
+- **`make full` is NOT the per-bead gate and never was supposed to be.** It
+  measured 20 minutes on 2026-08-11 and every bead was paying for it. It is the
+  integration-branch-into-main decision, and it runs there and in CI only.
+  **Do not report `make full` failures as release blockers.** We know it is
+  broken. It is not the current job.
 - **Anything outside the core set is DEFERRED BY DEFAULT.** File it and move on.
   Do not put it on a blocker list, do not rank it, do not ask about it.
 - **A defect that only appears because the gate is broad is not a product defect.**

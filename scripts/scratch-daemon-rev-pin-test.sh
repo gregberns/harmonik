@@ -225,10 +225,20 @@ assert_eq "base" "$(cat "$S2/marker.txt" 2>/dev/null)" \
 # ---------------------------------------------------------------------------
 # NAMED — the verdict names the revision.
 # ---------------------------------------------------------------------------
-# Redirect to a file rather than piping into grep. Under `pipefail` a matching
-# `grep -q` exits early, the writer takes SIGPIPE, and the pipeline reports
-# failure even though the text was found — the assertion would then be measuring
-# the plumbing instead of the script.
+# Never pipe into `grep -q` in this file. Under `pipefail` a matching `grep -q`
+# exits as soon as it finds the text, the writer upstream takes SIGPIPE, and the
+# pipeline reports failure even though the text was found — the assertion then
+# measures the plumbing instead of the script. Feed grep from a file or a
+# here-string, both of which have no writer to kill.
+#
+# This rule was written here and then broken eight times further down the same
+# file, and it cost three weeks of a red merge gate. It only bites when the text
+# is long enough that the writer is still writing when grep leaves, so the three
+# sites that fed grep the whole ~950-line script under audit failed on Linux and
+# passed on macOS. Two of those three were NEGATIVE assertions, which fail open:
+# on Linux they reported "not found" whatever the script contained, so they
+# could not fail. A green run of this file on a developer box said nothing about
+# any of them.
 assertions=$((assertions + 1))
 $SD status "$S1" >"$ROOT/status-exact.out" 2>&1
 if grep -q "revision: $COMMIT_C" "$ROOT/status-exact.out"; then
@@ -354,7 +364,7 @@ assertions=$((assertions + 1))
 out="$($SD up "$S5" 2>&1)"; st=$?
 if [ "$st" -eq 0 ]; then
     fail "STALE BINARY: 'up' started a binary stamped $COMMIT_C on a tree pinned to $COMMIT_B"
-elif ! printf '%s' "$out" | grep -q 'built from a different revision'; then
+elif ! grep -q 'built from a different revision' <<<"$out"; then
     fail "STALE BINARY: 'up' failed (exit $st) but not because the binary and the tree disagree"
     printf '%s\n' "$out" >&2
 else
@@ -412,7 +422,7 @@ printf '#!/bin/sh\nexit 1\n' >"$S6/.harmonik/bin/harmonik"
 chmod +x "$S6/.harmonik/bin/harmonik"
 assertions=$((assertions + 1))
 out="$($SD up "$S6" 2>&1)"
-if printf '%s' "$out" | grep -q "${COMMIT_C}+local-edits"; then
+if grep -q "${COMMIT_C}+local-edits" <<<"$out"; then
     pass "LOCAL EDITS: 'up' names the labelled revision rather than the bare commit"
 else
     fail "LOCAL EDITS: 'up' did not name the labelled revision"
@@ -423,7 +433,7 @@ fi
 # "tmux" would not: no line on the success path contains it, so that assertion
 # could never fail.
 assertions=$((assertions + 1))
-if printf '%s' "$out" | grep -q 'waiting for daemon socket'; then
+if grep -q 'waiting for daemon socket' <<<"$out"; then
     fail "LOCAL EDITS: 'up' started a daemon; this test must never start one"
 else
     pass "LOCAL EDITS: 'up' stopped before starting anything"
@@ -603,7 +613,7 @@ for sub in build up; do
     st=$?
     if [ "$st" -eq 0 ]; then
         fail "UNPINNED: '$sub' exited 0 on a tree that carries no audit revision"
-    elif ! printf '%s' "$out" | grep -q 'audit revision'; then
+    elif ! grep -q 'audit revision' <<<"$out"; then
         fail "UNPINNED: '$sub' failed (exit $st) but not because the tree is unpinned"
         printf '%s\n' "$out" >&2
     else
@@ -626,7 +636,7 @@ assertions=$((assertions + 1))
 out="$($SD build "$S4" 2>&1)"; st=$?
 if [ "$st" -eq 0 ]; then
     fail "DRIFT: build exited 0 on a tree that was moved off its audited revision"
-elif ! printf '%s' "$out" | grep -qi 'drift'; then
+elif ! grep -qi 'drift' <<<"$out"; then
     fail "DRIFT: build failed (exit $st) but not because the tree drifted"
     printf '%s\n' "$out" >&2
 else
@@ -656,21 +666,21 @@ assertions=$((assertions + 1))
 # Comment lines are excluded by SHAPE: this file's own header explains the
 # defect and would otherwise match the prose it is describing.
 code="$(grep -vE '^[[:space:]]*#' "$SCRIPT")"
-if printf '%s\n' "$code" | grep -q 'git -C "\$scratch" checkout'; then
+if grep -q 'git -C "\$scratch" checkout' <<<"$code"; then
     pass "STRUCTURAL: the script really checks the scratch tree out to a revision"
 else
     fail "STRUCTURAL: no 'git checkout' of the scratch tree — nothing moves it to a named commit"
 fi
 
 assertions=$((assertions + 1))
-if printf '%s\n' "$code" | grep -q 'remote get-url origin'; then
+if grep -q 'remote get-url origin' <<<"$code"; then
     fail "STRUCTURAL: the clone source is derived from the origin URL again — that serves the remote's DEFAULT BRANCH, not the commit under audit"
 else
     pass "STRUCTURAL: the clone source is not derived from the origin URL"
 fi
 
 assertions=$((assertions + 1))
-if printf '%s\n' "$code" | grep -q 'skipping git clone'; then
+if grep -q 'skipping git clone' <<<"$code"; then
     fail "STRUCTURAL: init can skip the clone for an existing tree again — that is how a stale tree survives a second run"
 else
     pass "STRUCTURAL: init has no silent skip-the-clone path"

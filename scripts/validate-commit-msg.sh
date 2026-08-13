@@ -78,7 +78,20 @@ known_reviewers() {
     for d in "$skills"/*reviewer*; do
       [[ -d "$d" ]] || continue
       name="$(basename "$d")"
-      git -C "$root" ls-files --error-unmatch -- ".claude/skills/${name}/SKILL.md" >/dev/null 2>&1 || continue
+      # A reviewer name is a plain identifier. Without this, a directory named
+      # with glob metacharacters walks straight into the pathspec below, and a
+      # git pathspec GLOBS: an empty, untracked `mkdir '*reviewer'` matched the
+      # real agent-reviewer's tracked SKILL.md and minted `*reviewer` as a
+      # trusted identity. That is the mkdir-mints-a-reviewer act this tracked
+      # check was added to stop, walking in through the check itself.
+      [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || continue
+      # Read HEAD, not the index. `git ls-files` answers "is it staged", and the
+      # same agent writes the index and the commit message in one operation —
+      # so `git add` alone minted a trusted reviewer, with no commit and no
+      # review. Asking HEAD means the skill is in the history somebody already
+      # accepted. `:(literal)` is unnecessary against a HEAD path, which does
+      # not glob; the name-shape guard above is what closes that door now.
+      git -C "$root" cat-file -e "HEAD:.claude/skills/${name}/SKILL.md" 2>/dev/null || continue
       found+="${name}"$'\n'
     done
   fi
@@ -91,10 +104,13 @@ known_reviewers() {
 # check_approval_identity — the extra bar an APPROVE / CLEAN has to clear.
 #
 # Reads the global REVIEWED_BY (the whole `Reviewed-By:` line). An approval must
-# name one of the reviewer skills this repo has, with an optional parenthetical
-# qualifier after it — `agent-reviewer (codex harness)` passes, `Codex reviewer`
-# does not. And it must not name the author: the rule says do not author your
-# own approval, so a value that says "self" is refused here.
+# name one of the reviewer skills this repo has, and NOTHING else on the line —
+# `agent-reviewer` passes, `agent-reviewer (codex harness)` and `Codex reviewer`
+# do not. Detail about the run belongs in the verdict's `notes`. The
+# parenthetical used to pass, which meant `agent-reviewer (myself)` read as an
+# approval by a real reviewer. And the value must not name the author: the rule
+# says do not author your own approval, so a value that says "self" is refused
+# here.
 #
 # This proves the name is a real reviewer. It cannot prove that reviewer ran.
 check_approval_identity() {
@@ -128,8 +144,11 @@ check_approval_identity() {
   # Both were measured passing before this changed.
   #
   # A name with nothing after it is worth more than a name with a comment after
-  # it: it is one exact-match grep to audit, and there is no room left in the
-  # line to say something the audit cannot see. Detail about the run belongs in
+  # it: one grep audits every approving commit, and there is no room left in
+  # the line to say something the audit cannot see. Grep it case-insensitively
+  # — the comparison below folds case so this script can run under the bash 3.2
+  # that ships with macOS, so `AGENT-REVIEWER` is accepted and a case-sensitive
+  # audit would miss it. Detail about the run belongs in
   # the verdict's own `notes`, where it is inside the JSON the reviewer emits
   # rather than beside it.
   base="$value"
@@ -168,6 +187,22 @@ STRIPPED="$(grep -v '^#' "$MSG_FILE" || true)"
 # ── 2. Extract subject line (first non-blank line) ───────────────────────────
 SUBJECT="$(printf '%s\n' "$STRIPPED" | awk 'NF{print;exit}')"
 
+# ── 3. Merge / fixup commit bypass ───────────────────────────────────────────
+# Git writes a merge subject and `git commit --fixup` writes a fixup subject.
+# Neither is Conventional Commits and neither ever will be, so these are
+# recognised BEFORE the subject rules rather than after them.
+#
+# It used to sit below those rules, where it exempted the trailers and nothing
+# else. Every merge commit therefore failed on the subject format, and the only
+# way to keep the validator usable was to hide merges from it — which meant a
+# merge could carry any message at all, including an approval nobody gave, and
+# nothing ever read it. Recognising the shape first is what lets a merge be
+# checked instead of skipped.
+IS_MERGE_OR_FIXUP=false
+if grep -qE '^(Merge|fixup!|squash!) ' <<<"$SUBJECT"; then
+  IS_MERGE_OR_FIXUP=true
+fi
+
 # ── 3. Conventional Commits subject validation ────────────────────────────────
 # Pattern per bead hk-kv7fe: type[(scope)]: description
 # Scope is restricted to lower-case alphanumerics, commas, hyphens.
@@ -177,7 +212,7 @@ SUBJECT="$(printf '%s\n' "$STRIPPED" | awk 'NF{print;exit}')"
 # 9 types only; ci/revert/style are NOT canonical here. Update both this regex
 # AND build-practices.md if the set ever expands.
 CC_PATTERN='^(feat|fix|refactor|test|docs|chore|spec|build|perf)(\([a-z0-9,:-]+\))?(!)?: .+'
-if ! printf '%s\n' "$SUBJECT" | grep -qE "$CC_PATTERN"; then
+if [[ "$IS_MERGE_OR_FIXUP" == "false" ]] && ! grep -qE "$CC_PATTERN" <<<"$SUBJECT"; then
   err "subject does not match Conventional Commits format."
   err "  Expected: <type>[(<scope>)][!]: <description>"
   err "  Allowed types: feat fix refactor test docs chore spec build perf"
@@ -187,13 +222,13 @@ fi
 
 # ── 4. Subject length ─────────────────────────────────────────────────────────
 SUBJECT_LEN="${#SUBJECT}"
-if (( SUBJECT_LEN > 72 )); then
+if [[ "$IS_MERGE_OR_FIXUP" == "false" ]] && (( SUBJECT_LEN > 72 )); then
   err "subject line is ${SUBJECT_LEN} chars; max is 72."
   err "  Got: $SUBJECT"
 fi
 
 # ── 5. Trailing-period check ──────────────────────────────────────────────────
-if printf '%s\n' "$SUBJECT" | grep -qE '\.$'; then
+if [[ "$IS_MERGE_OR_FIXUP" == "false" ]] && grep -qE '\.$' <<<"$SUBJECT"; then
   err "subject must not end with a period."
 fi
 
@@ -201,13 +236,10 @@ fi
 # If the message contains `Trivial: true` anywhere in the trailer block,
 # skip the Reviewed-By / Review-Verdict requirement.
 IS_TRIVIAL=false
-if printf '%s\n' "$STRIPPED" | grep -qE '^Trivial: true$'; then
+if grep -qE '^Trivial: true$' <<<"$STRIPPED"; then
   IS_TRIVIAL=true
 fi
-
-# ── 7. Merge / fixup commit bypass ───────────────────────────────────────────
-# Merge commits and fixup!/squash! commits skip trailer validation.
-if printf '%s\n' "$SUBJECT" | grep -qE '^(Merge|fixup!|squash!) '; then
+if [[ "$IS_MERGE_OR_FIXUP" == "true" ]]; then
   IS_TRIVIAL=true
 fi
 

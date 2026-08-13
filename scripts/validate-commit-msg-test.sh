@@ -583,6 +583,117 @@ Review-Verdict: {"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"Look
 fi
 
 # ---------------------------------------------------------------------------
+# A REVIEWER NAME MAY NOT BE A GLOB.
+#
+# The rule above says an approval must name a reviewer skill that git tracks,
+# so that an untracked `mkdir` cannot mint a trusted name. The first version of
+# that rule handed the directory name straight to a git pathspec, and a git
+# pathspec GLOBS. An empty, untracked directory called `*reviewer` therefore
+# matched the REAL agent-reviewer's tracked SKILL.md, and `Reviewed-By:
+# *reviewer` on an APPROVE exited 0. The check meant to stop a minted reviewer
+# was the way one got minted.
+#
+# These cases need their own repository: the exploit is a directory beside the
+# real reviewer skills, and this one's tree is not a place to put one.
+# ---------------------------------------------------------------------------
+glob_repo="$work/globrepo"
+mkdir -p "$glob_repo/scripts" "$glob_repo/.claude/skills/agent-reviewer"
+cp "$VALIDATOR" "$glob_repo/scripts/validate-commit-msg.sh"
+chmod +x "$glob_repo/scripts/validate-commit-msg.sh"
+printf 'the real reviewer skill\n' >"$glob_repo/.claude/skills/agent-reviewer/SKILL.md"
+git -C "$glob_repo" init -q
+git -C "$glob_repo" config user.email 'test@example.invalid'
+git -C "$glob_repo" config user.name 'validate-commit-msg-test'
+git -C "$glob_repo" config commit.gpgsign false
+git -C "$glob_repo" add scripts/validate-commit-msg.sh .claude/skills/agent-reviewer/SKILL.md >/dev/null 2>&1
+git -C "$glob_repo" commit -q -m 'seed' >/dev/null 2>&1
+
+# The exploit: untracked, empty, and named so that git globs it onto the real one.
+mkdir -p "$glob_repo/.claude/skills/*reviewer"
+
+run_in_glob_repo() {
+    printf '%s\n' "$1" >"$glob_repo/msg"
+    "$glob_repo/scripts/validate-commit-msg.sh" "$glob_repo/msg" >"$work/out" 2>&1
+}
+
+assertions=$((assertions + 1))
+if run_in_glob_repo 'fix(gate): a subject that is otherwise fine
+
+Reviewed-By: *reviewer
+Review-Verdict: {"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"minted"}'; then
+    fail "an untracked directory named with a glob minted a trusted reviewer"
+    sed 's/^/    /' "$work/out" >&2
+elif grep -qF "must name a reviewer skill this repo has" "$work/out"; then
+    pass "a glob-named reviewer directory does not mint a reviewer"
+else
+    fail "the glob-named reviewer was refused for the wrong reason"
+    sed 's/^/    /' "$work/out" >&2
+fi
+
+# The negative control for the case above. If the tracked lookup broke
+# outright, the case above would pass while proving nothing.
+assertions=$((assertions + 1))
+if run_in_glob_repo 'fix(gate): a subject that is otherwise fine
+
+Reviewed-By: agent-reviewer
+Review-Verdict: {"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"a real review"}'; then
+    pass "the real tracked reviewer name is still accepted in that repository"
+else
+    fail "the tracked lookup rejected the genuine reviewer name"
+    sed 's/^/    /' "$work/out" >&2
+fi
+
+# An untracked reviewer skill with an ordinary name is refused too. Nothing
+# covered this rule before, which is why the glob got through it.
+mkdir -p "$glob_repo/.claude/skills/forged-reviewer"
+printf 'a skill nobody reviewed\n' >"$glob_repo/.claude/skills/forged-reviewer/SKILL.md"
+assertions=$((assertions + 1))
+if run_in_glob_repo 'fix(gate): a subject that is otherwise fine
+
+Reviewed-By: forged-reviewer
+Review-Verdict: {"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"minted"}'; then
+    fail "an untracked reviewer skill minted a trusted reviewer"
+    sed 's/^/    /' "$work/out" >&2
+elif grep -qF "must name a reviewer skill this repo has" "$work/out"; then
+    pass "an untracked reviewer skill does not mint a reviewer"
+else
+    fail "the untracked reviewer was refused for the wrong reason"
+    sed 's/^/    /' "$work/out" >&2
+fi
+
+# STAGED is not TRACKED. `git add` alone used to be enough, and the same agent
+# writes the index and the commit message in one operation — so a reviewer
+# could be minted with no commit and no review at all.
+git -C "$glob_repo" add .claude/skills/forged-reviewer/SKILL.md >/dev/null 2>&1
+assertions=$((assertions + 1))
+if run_in_glob_repo 'fix(gate): a subject that is otherwise fine
+
+Reviewed-By: forged-reviewer
+Review-Verdict: {"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"minted"}'; then
+    fail "a merely STAGED reviewer skill minted a trusted reviewer"
+    sed 's/^/    /' "$work/out" >&2
+elif grep -qF "must name a reviewer skill this repo has" "$work/out"; then
+    pass "a staged-but-uncommitted reviewer skill does not mint a reviewer"
+else
+    fail "the staged reviewer was refused for the wrong reason"
+    sed 's/^/    /' "$work/out" >&2
+fi
+
+# The same skill, once it is COMMITTED, is accepted — that is the whole point
+# of the rule: a reviewer arrives as a diff somebody can decline.
+git -C "$glob_repo" commit -q -m 'add a reviewer skill' >/dev/null 2>&1
+assertions=$((assertions + 1))
+if run_in_glob_repo 'fix(gate): a subject that is otherwise fine
+
+Reviewed-By: forged-reviewer
+Review-Verdict: {"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"a real review"}'; then
+    pass "a reviewer skill git tracks is accepted"
+else
+    fail "a tracked reviewer skill was refused, so the rule is not about tracking"
+    sed 's/^/    /' "$work/out" >&2
+fi
+
+# ---------------------------------------------------------------------------
 printf 'validate-commit-msg-test: %d assertions, %d failures\n' "$assertions" "$failures"
 [ "$failures" -eq 0 ] || exit 1
 echo "validate-commit-msg-test: PASS"

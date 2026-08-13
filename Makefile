@@ -895,6 +895,7 @@ script-tests:  ## Self-tests for the shell the gate depends on
 	scripts/lint-changed-test.sh
 	scripts/changed-func-coverage-test.sh
 	scripts/queue-daemon-count-test.sh
+	scripts/commit-msg-gate-test.sh
 	scripts/secret-scan-test.sh
 	scripts/with-lane-gocache.sh scripts/reachability-gate-test.sh
 
@@ -938,6 +939,11 @@ gate-static:  ## Shared static half of fast and full: format, build, vet, freeze
 	fi
 	$(MAKE) script-tests
 	$(MAKE) fmt-check
+	# The commit just made must carry a well-formed message and honest review
+	# trailers. About a tenth of a second. This is the ONLY place a bad message
+	# fails a build, and the only moment failing is fair: the commit is yours,
+	# it is the tip, and amending it costs nothing.
+	scripts/commit-msg-gate.sh --head-only
 	scripts/with-lane-gocache.sh go build ./...
 	scripts/with-lane-gocache.sh go vet ./...
 	scripts/with-lane-gocache.sh $(MAKE) vet-tagged
@@ -1142,6 +1148,13 @@ gate-test-report-probe:  ## Smallest real use of the test step (drives scripts/g
 .PHONY: full
 full:  ## THE merge decision: everything in fast over EVERY package, plus the lint allow list, scenario tier, module hygiene
 	$(MAKE) gate-static
+	# The ledger: every commit from the grandfather baseline forward, named and
+	# counted. It REPORTS and never fails. Everything in that range is already
+	# written and most of it arrived by merge, and amending a commit another
+	# lane can see is what this project refuses outright — so there is no legal
+	# repair for a bad message in there. A gate that refuses what cannot be
+	# fixed gets deleted, not obeyed. gate-static above is the enforcement.
+	scripts/commit-msg-gate.sh
 	$(MAKE) gate-test-compile
 	$(call RUN_TESTS_AND_REPORT,make full,./...,-short)
 	$(MAKE) lint-allow

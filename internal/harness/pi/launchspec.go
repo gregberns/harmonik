@@ -159,9 +159,11 @@ type RunCtx struct {
 	APIKeyFile string
 
 	// BaseURL is the OPTIONAL base URL for a locally-hosted OpenAI-compatible
-	// endpoint (from harnesses.pi.base_url). When non-empty and this is the
-	// initial turn, BuildLaunchSpec generates a models.json under the run's
-	// pi-agent dir and injects PI_CODING_AGENT_DIR into the child env. Absent =
+	// endpoint (from harnesses.pi.base_url). When non-empty, BuildLaunchSpec
+	// injects PI_CODING_AGENT_DIR into the child env on EVERY turn — that
+	// directory holds both models.json and Pi's session store, so a resume turn
+	// needs it to find the session it is told to resume (hk-6hfev). The
+	// models.json under that dir is generated on the initial turn only. Absent =
 	// today's cloud-provider behavior byte-for-byte unchanged. Bead: hk-z13jz.
 	BaseURL string
 
@@ -328,30 +330,44 @@ func BuildLaunchSpec(rc RunCtx) (handler.LaunchSpec, error) {
 		}
 	}
 
-	// base_url passthrough (hk-z13jz): when baseURL is set AND this is the
-	// initial turn (priorSessionID == nil), generate a models.json so Pi can
-	// target the locally-hosted OpenAI-compatible endpoint.
+	// base_url passthrough (hk-z13jz): when baseURL is set, Pi must be pointed at
+	// the per-run pi-agent dir under the run worktree
+	// (<workspacePath>/.harmonik/pi-agent/). Pi reads it via PI_CODING_AGENT_DIR,
+	// which is injected into the child env only (never argv — mirror the api-key
+	// injection pattern). When baseURL is absent this block is a no-op: today's
+	// cloud-provider behavior unchanged.
 	//
-	// The generated models.json is written to a deterministic per-run pi-agent
-	// dir under the run worktree (<workspacePath>/.harmonik/pi-agent/). Pi
-	// reads it via PI_CODING_AGENT_DIR, which is injected into the child env
-	// only (never argv — mirror the api-key injection pattern). When baseURL is
-	// absent this block is a no-op: today's behavior unchanged.
-	if rc.BaseURL != "" && rc.PriorSessionID == nil {
+	// The guard is SPLIT on purpose (hk-6hfev). PI_CODING_AGENT_DIR is not part
+	// of generating models.json — it names the directory that holds BOTH
+	// models.json AND Pi's session store (<dir>/sessions/...). A resume turn
+	// passes --session <PriorSessionID>; without PI_CODING_AGENT_DIR, Pi looks
+	// for that session under the operator home where it was never written and
+	// exits 1 with "No session found matching '<uuid>'" in a few seconds, so
+	// every REQUEST_CHANGES round trip threw away the first pass. The env var
+	// therefore goes on EVERY turn.
+	//
+	// The models.json WRITE stays initial-turn-only. It is already on disk in the
+	// same directory from the initial turn, and Provider/Model are documented as
+	// ignored on a resume turn (BuildLaunchSpec does not even require them to be
+	// non-empty there) — so rewriting the file on resume would clobber a good
+	// config with one keyed on an empty provider.
+	if rc.BaseURL != "" {
 		piAgentDir := filepath.Join(rc.WorkspacePath, ".harmonik", "pi-agent")
 		if mkdirErr := os.MkdirAll(piAgentDir, 0o700); mkdirErr != nil {
 			return handler.LaunchSpec{}, fmt.Errorf(
 				"BuildLaunchSpec: create pi-agent dir %q: %w", piAgentDir, mkdirErr)
 		}
-		modelsJSON, buildErr := buildPiModelsJSON(rc.Provider, rc.BaseURL, rc.API, rc.APIKeyFile, rc.APIKeyEnv, rc.Model)
-		if buildErr != nil {
-			return handler.LaunchSpec{}, fmt.Errorf(
-				"BuildLaunchSpec: build models.json: %w", buildErr)
-		}
-		modelsPath := filepath.Join(piAgentDir, "models.json")
-		if writeErr := os.WriteFile(modelsPath, modelsJSON, 0o600); writeErr != nil {
-			return handler.LaunchSpec{}, fmt.Errorf(
-				"BuildLaunchSpec: write models.json to %q: %w", modelsPath, writeErr)
+		if rc.PriorSessionID == nil {
+			modelsJSON, buildErr := buildPiModelsJSON(rc.Provider, rc.BaseURL, rc.API, rc.APIKeyFile, rc.APIKeyEnv, rc.Model)
+			if buildErr != nil {
+				return handler.LaunchSpec{}, fmt.Errorf(
+					"BuildLaunchSpec: build models.json: %w", buildErr)
+			}
+			modelsPath := filepath.Join(piAgentDir, "models.json")
+			if writeErr := os.WriteFile(modelsPath, modelsJSON, 0o600); writeErr != nil {
+				return handler.LaunchSpec{}, fmt.Errorf(
+					"BuildLaunchSpec: write models.json to %q: %w", modelsPath, writeErr)
+			}
 		}
 		env = append(env, "PI_CODING_AGENT_DIR="+piAgentDir)
 	}

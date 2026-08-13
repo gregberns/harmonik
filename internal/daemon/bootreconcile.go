@@ -56,7 +56,7 @@ func (bs *bootState) runStartupReconcile(ctx context.Context, daemonStartTime ti
 		return fmt.Errorf("daemon: prepare queue namespace before dispatch replay: %w", err)
 	}
 	st := &reconcileState{projectHash: lifecycle.ComputeProjectHash(cfg.ProjectDir)}
-	ownership, err := loadDispatchReplayOwnership(cfg.ProjectDir)
+	intents, ownership, err := loadDispatchReplayAuthority(cfg.ProjectDir)
 	if err != nil {
 		return fmt.Errorf("daemon: read dispatch replay authority: %w", err)
 	}
@@ -65,22 +65,62 @@ func (bs *bootState) runStartupReconcile(ctx context.Context, daemonStartTime ti
 	if err := bs.buildReconcileAdapters(ctx, st); err != nil {
 		return err
 	}
+	if err := bs.preflightDispatchReplay(ctx, st, intents); err != nil {
+		return err
+	}
 	bs.runOrphanSweepAndAdopt(ctx, daemonStartTime, st)
 	bs.runCatBLSweeps(ctx, resolvedTargetBranch)
 	return nil
 }
 
 func loadDispatchReplayOwnership(projectDir string) (DispatchReplayOwnership, error) {
+	_, ownership, err := loadDispatchReplayAuthority(projectDir)
+	return ownership, err
+}
+
+func loadDispatchReplayAuthority(projectDir string) ([]dispatch.Intent, DispatchReplayOwnership, error) {
 	store := dispatchstore.New(projectDir)
 	intents, err := store.List()
 	if err != nil {
-		return DispatchReplayOwnership{}, err
+		return nil, DispatchReplayOwnership{}, err
 	}
 	receipts, err := store.ListSessionStartReceipts()
 	if err != nil {
-		return DispatchReplayOwnership{}, err
+		return nil, DispatchReplayOwnership{}, err
 	}
-	return dispatchReplayOwnership(intents, receipts)
+	ownership, err := dispatchReplayOwnership(intents, receipts)
+	return intents, ownership, err
+}
+
+func (bs *bootState) preflightDispatchReplay(
+	ctx context.Context,
+	st *reconcileState,
+	intents []dispatch.Intent,
+) error {
+	if len(intents) == 0 {
+		return nil
+	}
+	reader := filesystemDispatchReplayReader{
+		projectDir: bs.cfg.ProjectDir,
+		beads:      st.orphanStatusReader,
+		resolve:    newSessionStartAdapterResolver(st.sweepTmuxAdapter, bs.cfg.Workers),
+	}
+	return preflightDispatchReplayWithReader(ctx, intents, reader)
+}
+
+func preflightDispatchReplayWithReader(
+	ctx context.Context,
+	intents []dispatch.Intent,
+	reader dispatchReplayFactReader,
+) error {
+	steps, err := planDispatchReplay(ctx, intents, reader)
+	if err != nil {
+		return fmt.Errorf("daemon: plan dispatch replay before orphan sweep: %w", err)
+	}
+	if len(steps) > 0 {
+		return fmt.Errorf("daemon: dispatch replay executor is not configured for %d action(s)", len(steps))
+	}
+	return nil
 }
 
 func dispatchReplayOwnership(

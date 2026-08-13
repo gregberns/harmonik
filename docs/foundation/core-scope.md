@@ -330,8 +330,17 @@ section used to say "No PRs — now or later" and "Direct commits to `main`".
 **Required trailers when applicable:**
 - `Refs: <bead-id|kerf-codename>`
 - `Co-Authored-By:` for agent-assisted
-- `Reviewed-By: agent-reviewer (APPROVE|REQUEST_CHANGES)` on every non-trivial commit — makes review outcome auditable via `git log`
+- `Reviewed-By: agent-reviewer` on every non-trivial commit — makes review outcome auditable via `git log`. The value is the reviewer's name alone, and nothing may follow it: `agent-reviewer (APPROVE)` and `agent-reviewer (codex harness)` are refused. The verdict word lives in the `Review-Verdict:` JSON, and detail about the run goes in that JSON's `notes` field. The name must also be a reviewer skill directory that git tracks, so an untracked directory cannot mint a reviewer identity.
 - `BREAKING CHANGE:` footer for incompatible changes
+
+When no reviewer could be reached, record that instead of an approval. The two lines are exact:
+
+```
+Reviewed-By: none — no reviewer was reached for this commit
+Review-Verdict: {"schema_version": 1, "verdict": "NOT_REVIEWED", "flags": ["no-reviewer-reached"], "notes": "<what was verified instead, and by whom>"}
+```
+
+`build-practices.md` §Commit conventions owns these rules; `scripts/validate-commit-msg.sh` enforces them.
 
 **Commit body for non-trivial commits:** Why / What / Spec alignment / Test plan / Risk sections (same info the old PR template had, now embedded in the commit).
 

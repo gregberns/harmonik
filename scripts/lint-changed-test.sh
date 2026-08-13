@@ -152,7 +152,7 @@ assertions=$((assertions + 1))
 steps=$(HARMONIK_GATE_SELFTEST=1 make -n gate-static 2>/dev/null)
 if [ -z "$steps" ]; then
     fail "structural: 'make -n gate-static' produced nothing, so nothing was checked"
-elif ! printf '%s\n' "$steps" | grep -q 'scripts/lint-changed.sh'; then
+elif ! grep -q 'scripts/lint-changed.sh' <<<"$steps"; then
     fail "structural: no step of gate-static calls scripts/lint-changed.sh"
 else
     bypass=$(printf '%s\n' "$steps" | grep -vE '^[[:space:]]*#' | grep 'golangci-lint' | grep -v 'lint-changed.sh')

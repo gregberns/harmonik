@@ -77,7 +77,13 @@ else
     # (go test exits 1 with "matched no packages" on a bare module — treat as
     # vacuous pass, not an error).
     go_output=$(go test -coverprofile="${PROFILE}" -covermode=atomic ./... 2>&1) || {
-        if echo "${go_output}" | grep -q "matched no packages"; then
+        # Match against a here-string, not `echo ... | grep -q`. Under pipefail a
+        # piped `grep -q` leaves on the first match, the writer upstream dies of
+        # SIGPIPE, and the pipeline reports that death as the pipeline's status —
+        # so a real "matched no packages" reads as "no match" and the vacuous pass
+        # is lost. `go test ./...` output passes the size where that starts (this
+        # is measured: it flips at roughly 16 KB of output after the match line).
+        if grep -q "matched no packages" <<<"${go_output}"; then
             echo "coverage-gate: no packages to test; vacuously passed"
             exit 0
         fi

@@ -624,7 +624,17 @@ func WriteReviewLoopWorkflowDot(t *testing.T, projectDir string) {
 
 // WriteStandardWorkflowDot installs the canonical workflow with its explicit
 // commit gate. Scenario fixtures use this when the gate itself is part of the
-// claim under test and provide a small project-local `make full` target.
+// claim under test.
+//
+// A fixture that calls this MUST also write a project-local Makefile defining
+// BOTH `full` and `core`, because the graph's commit gate now runs `make core`
+// (D3=v3) and this helper copies that graph verbatim. Define them as one rule,
+// `full core:`, so the fixture does not care which name the graph asks for.
+// A fixture that defines only `full` fails with "No rule to make target 'core'",
+// and that failure reads as a broken GATE rather than a broken fixture — the
+// gate log shows a make error and no test output at all. Three fixtures were
+// fixed for exactly this. An earlier version of this comment told authors to
+// provide a `make full` target, which is the instruction that produces the bug.
 func WriteStandardWorkflowDot(t *testing.T, projectDir string) {
 	t.Helper()
 

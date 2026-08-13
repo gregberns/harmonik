@@ -111,6 +111,18 @@ harmonik comms send (--to NAME | --broadcast) [--from NAME] [--topic T]
 - `<body>` — trailing args joined by space, or `-` to read stdin.
 - Prints the minted `event_id` on success.
 - Exit 17 = daemon not running.
+- **Exit 1 = the recipient is a name this project does not know.** The message is
+  still recorded and still durable — a peer that boots later still reads it on
+  its first `recv` — but nobody has received it yet, and a caller that branches
+  on the exit code must not read that as delivered. A name counts as known when
+  it is in the crew registry, in `.harmonik/agents/`, or in the presence
+  registry; `operator` is always addressable and a `--broadcast` is never
+  checked.
+- For a name that matches NOTHING, `harmonik wake --agent <name>` exits 1 too.
+  Do not read that as the two surfaces sharing one list — they do not. `wake`
+  reaches a tmux pane and `send` reaches a mailbox, so `operator` is addressable
+  by `send` and not wakeable, and the sets stay deliberately different. They
+  agree only on a name neither of them knows.
 
 ```bash
 # Direct message
@@ -376,7 +388,7 @@ cross-reference.)
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | Argument error or op rejected |
+| 1 | Argument error, op rejected, or — on `send` — the recipient is a name this project does not know (see above: the message is still recorded, but nobody has received it) |
 | 2 | Unrecognised verb |
 | 17 | Daemon not running (send/recv/join/leave) |
 

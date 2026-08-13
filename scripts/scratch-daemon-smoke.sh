@@ -168,7 +168,7 @@ else
     bad "fail_signature UNSTABLE across runs (sig1='$sig1' sig2='$sig2') — dedup would break"
 fi
 # Confirm normalization actually fired (no raw run-id / timestamp / abs path leaked).
-if printf '%s' "$sig1" | grep -qE 'run-aaa|2026-06-25|/private/tmp'; then
+if grep -qE 'run-aaa|2026-06-25|/private/tmp' <<<"$sig1"; then
     bad "fail_signature still contains volatile tokens: '$sig1'"
 else
     ok "fail_signature has no volatile tokens (run-id/timestamp/path redacted)"

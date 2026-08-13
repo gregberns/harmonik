@@ -95,11 +95,16 @@ Read the `Makefile` before you name a target here.
 The assessor MUST run **two** targets on the pinned commit in the isolated
 scratch clone. They answer different questions and both belong in the evidence.
 
-- **`make core` — the HARD gate.** It runs `gate-static` (the script self-tests,
-  `fmt-check`, `go build ./...`, `go vet ./...`, the tagged vet, the freeze
+- **`make core` — the HARD gate.** It runs `gate-static-product`
+  (`fmt-check`, `go build ./...`, `go vet ./...`, the tagged vet, the freeze
   greps, the reachability gate, and changed-line lint) and then the `CORE_PKGS`
   set. **A red `core` is a BLOCK.** This is what "the build works" means for
-  this sign-off.
+  this sign-off. `gate-static-product` leaves out `script-tests`, the self-tests
+  for the shell scripts the gates depend on — the one difference from
+  `gate-static`, by operator decision (D3=v3,
+  `internal/daemon/standard-bead.dot`). This gate therefore does not prove the
+  gate tooling itself fails closed. `make fast`, `make full` and CI run
+  `gate-static` and still run `script-tests`, so that proof lives there.
 - **`make full` — the merge decision, and what CI runs.** It adds every
   remaining package, the whole-tree lint allow list, the scenario tier and
   module hygiene. Run it and report each failure. A red `full` beside a green

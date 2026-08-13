@@ -129,6 +129,27 @@ if jq -e '[.seeds[] | select(.labels[]? == "dot:review-loop")] | length > 0' "$S
     if [ -f "$RL" ]; then
         cp "$RL" "$SCRATCH/review-loop.dot"
         echo "[core-loop-seed] provisioned $SCRATCH/review-loop.dot <- specs/examples/review-loop.dot (untracked; dot:review-loop same-model reviewer)"
+        # UNTRACKED IS NOT ENOUGH — IT ALSO HAS TO BE IGNORED (hk-48zdw).
+        # Go's build stamp is whole-tree `git status`, and that counts untracked
+        # files. This copy therefore dirtied the very tree the gate pins: every
+        # binary built after it carried vcs.modified=true, `harmonik version
+        # --binary --contains <rev>` refused it with exit 3, and the assessor
+        # contract voids any result from such a binary. The repo's own .gitignore
+        # carries a root-anchored `/review-loop.dot` for that reason — ignored is
+        # invisible to the stamp, and is still untouched by the `git reset --hard
+        # HEAD` a landing runs on the project dir, which is why a TRACKED file
+        # cannot serve here.
+        #
+        # This WARNS rather than fails, because a scratch pinned to a commit from
+        # before that .gitignore entry legitimately has no such rule, and auditing
+        # an old commit must stay possible. The refusal belongs to the gate, which
+        # reads the stamp of the binary that actually got built:
+        # `scratch-daemon.sh provenance`.
+        if ! git -C "$SCRATCH" check-ignore -q -- review-loop.dot 2>/dev/null; then
+            echo "[core-loop-seed] WARNING: review-loop.dot is NOT ignored in this scratch, so it will make the tree dirty and Go will stamp vcs.modified=true on the gate binary." >&2
+            echo "[core-loop-seed]   No result from that binary is an audit of the pinned commit, and 'scratch-daemon.sh provenance' will refuse it." >&2
+            echo "[core-loop-seed]   Expected: a root-anchored '/review-loop.dot' line in the .gitignore of the revision under audit (added for hk-48zdw)." >&2
+        fi
     else
         echo "[core-loop-seed] WARNING: $RL not found — dot cells fall back to standard-bead.dot (claude reviewer leak)" >&2
     fi

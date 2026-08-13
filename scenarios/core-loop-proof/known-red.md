@@ -36,6 +36,18 @@ same signature line for line. Report: `.harmonik/reports/rel-650f359b-gate.md` �
 **Retire this entry when** a run shows REQUEST_CHANGES at iteration 1 followed by an APPROVE
 after re-dispatch, with the work landed on `core-loop-proof-dot-integ`.
 
+**Amended 2026-08-13 (hk-vf4ju): that retire condition used to be unreachable, and it is
+reachable now.** Non-convergence was not the only thing holding this cell red. Two assertion
+defects held it red as well, on the OPPOSITE ordering — the very ordering the retire condition
+above names. `gap6`'s same-model clause counted the reviewer's EMPTY model string as a foreign
+model, and `gap1`'s last-wins read the reviewer's `claude-code` tier-3 `harness_selected` as
+the run's harness. A converged run launches the reviewer LAST, so it would have gone red on
+both. The daemon forcing the reviewer to claude-code is settled policy and is not the defect;
+the assertions were written to a claim about it that was never true. Both are fixed in
+`scripts/core-loop-assert.jq`, and the golden
+`testdata/pi-dot-roundtrip-pass.ndjson` now carries the reviewer's selection events instead of
+omitting them. Convergence (`hk-psla4`) is what remains.
+
 Until then the forced LT gate (`make core-loop-lt` with `EXTRA_CELLS='pi-dot:local|pi|local'`)
 **cannot be made green by any release**, and a release must not be blocked on it — the gate
 cannot currently tell two commits apart. Scope the T9 full-matrix green gate as

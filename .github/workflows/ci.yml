@@ -22,7 +22,24 @@ on:
 
 jobs:
   check:
-    name: make full
+    # THIS NAME IS AN IDENTIFIER, NOT A LABEL. Branch protection on `main`
+    # requires the status context `check (Tier 2)`, and a job's context IS its
+    # `name:`. Rename this and nothing reports that context again — GitHub then
+    # treats the required check as PENDING rather than failing, so every later
+    # PR to main blocks forever on a check that cannot arrive. The gate would
+    # not go green and would not go red; it would stop existing while still
+    # blocking. That is what happened: an earlier commit on this branch renamed
+    # the job to `make full` to match what it runs, which was true and would
+    # have wedged main the moment the branch landed.
+    #
+    # "Tier 2" names a tier vocabulary this repo deleted. The name is stale on
+    # purpose: it is the string GitHub matches, so it costs nothing to keep and
+    # a merge to change. To retire it, edit branch protection and this line in
+    # the same window, or main is unprotected in between.
+    # scripts/required-check-name-gate.sh holds this name and the protection
+    # setting in agreement, and checks the eight other ways a job can stop
+    # reporting the context without its name changing at all.
+    name: check (Tier 2)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

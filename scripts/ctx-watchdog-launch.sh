@@ -90,7 +90,10 @@ tmux kill-session -t "$SESS" 2>/dev/null || true
 tmux new-session -d -s "$SESS" -e "HARMONIK_AGENT=$AGENT" \\
   "claude --dangerously-skip-permissions --model sonnet --remote-control $RC_LABEL --resume $SID"
 for _i in \$(seq 1 45); do
-  tmux capture-pane -p -t "$SESS" 2>/dev/null | grep -q '❯' && break
+  # Capture, then match the variable. Piped into \`grep -q\` under pipefail the
+  # early exit kills capture-pane and the match reads as a miss.
+  _pane="\$(tmux capture-pane -p -t "$SESS" 2>/dev/null || true)"
+  grep -q '❯' <<<"\$_pane" && break
   sleep 1
 done
 tmux load-buffer -b ctxwd "$PROMPT_FILE"
@@ -107,7 +110,10 @@ tmux new-session -d -s "$SESS" -e "HARMONIK_AGENT=$AGENT" \
 
 # Wait for the claude prompt, then seed the /loop prompt via bracketed paste + Enter.
 for _i in $(seq 1 45); do
-  tmux capture-pane -p -t "$SESS" 2>/dev/null | grep -q '❯' && break
+  # Same reason as the generated respawn above: a here-string has no writer for
+  # grep's early exit to kill, so the prompt is detected instead of waited out.
+  _pane="$(tmux capture-pane -p -t "$SESS" 2>/dev/null || true)"
+  grep -q '❯' <<<"$_pane" && break
   sleep 1
 done
 tmux load-buffer -b ctxwd "$PROMPT_FILE"

@@ -302,8 +302,15 @@ and `--heartbeat` validate properly.
 
 Class: probe
 Exercises: `comms send`, `comms who`, the presence registry
-Bead: `hk-rtqmu`
-Status: OPEN at `aedbd770` (found 2026-08-10)
+Bead: `hk-rtqmu`, then `hk-zj9nw`
+Status: FIXED for the exit code (2026-08-13). The signature recorded below is the
+PRE-FIX one and is kept verbatim, because a corpus case is a record of what was
+measured. `comms send` to an unknown recipient now exits **1**, so the sentence
+"Both spellings exit 0" no longer describes this build — re-run the steps and the
+rc line is the part that changed. Everything else here still holds: the message is
+still recorded and still looks delivered in `comms log`, and `comms who` is still
+not a usable pre-flight check. Those two are the open residue, on `hk-q70e9` —
+split out so this case does not cite a closed bead for open work.
 
 Preconditions: a live scratch daemon. No agent named `nosuchlane` anywhere.
 

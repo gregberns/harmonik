@@ -62,6 +62,7 @@ init  →  build  →  up  →  batch  →  feedback  →  down
 | `build`    | `build <scratch-path>` | Build the scratch binary FROM the clone → `<scratch>/.harmonik/bin/harmonik`. |
 | `up`       | `up <scratch-path>` | Run the scratch binary as `harmonik start daemon --project <scratch>` in its own tmux session, with `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` stripped; wait (≤45s) for the socket. This script starts no supervisor of its own. |
 | `status`   | `status <scratch-path>` | Print project path, tmux session liveness, socket presence, daemon PID state, last 10 log lines. |
+| `provenance` | `provenance <scratch-path>` | A VERDICT, not a report: exit 0 only when the built binary carries a Go vcs stamp that names the pinned commit with `vcs.modified=false`. Every other state — no binary, no pin, no stamp, wrong revision, dirty tree — exits non-zero and names itself on a `SCRATCH_PROVENANCE <token> …` line. `status` prints the same facts for a human; this is the form a gate can act on (hk-48zdw). |
 | `down`     | `down <scratch-path>` | Stop ONLY the scratch daemon (argv-verified PID kill), tear down its confirmed tmux session, remove the stale socket. |
 | `cycle`    | `cycle <scratch-path>` | `down` → `build` → `up`. The fast inner loop after each edit. |
 | `batch`    | `batch <scratch-path> <name> --beads id1,id2,…`  **or**  `batch <scratch-path> <name> --file <queue.json>` | Submit a named batch to the SCRATCH queue, await every item's terminal event, emit a structured pass/fail summary (JSON artifact + grep-able stdout). |

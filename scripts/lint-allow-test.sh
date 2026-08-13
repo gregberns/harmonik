@@ -233,7 +233,7 @@ fi
 # ---------------------------------------------------------------------------
 assertions=$((assertions + 1))
 steps=$(HARMONIK_GATE_SELFTEST=1 make -n full 2>/dev/null)
-if printf '%s\n' "$steps" | grep -q 'scripts/lint-allow\.sh'; then
+if grep -q 'scripts/lint-allow\.sh' <<<"$steps"; then
     pass "make full runs the lint allow-list step"
 else
     fail "make full does NOT run lint-allow, so nothing above is enforced"
@@ -251,7 +251,7 @@ fi
 # ---------------------------------------------------------------------------
 assertions=$((assertions + 1))
 fast_steps=$(HARMONIK_GATE_SELFTEST=1 make -n fast 2>/dev/null)
-if printf '%s\n' "$fast_steps" | grep -q -- '--new-from-rev'; then
+if grep -q -- '--new-from-rev' <<<"$fast_steps"; then
     pass "make fast still lints changed lines with --new-from-rev"
 else
     fail "make fast does NOT lint changed lines, so a finding added to an already-listed file goes unseen"
@@ -285,7 +285,7 @@ fi
 # `make fast` restores that hole silently, so it is asserted here.
 # ---------------------------------------------------------------------------
 assertions=$((assertions + 1))
-if printf '%s\n' "$fast_steps" | grep -q 'scripts/lint-allow\.sh'; then
+if grep -q 'scripts/lint-allow\.sh' <<<"$fast_steps"; then
     pass "make fast runs the whole-tree allow-list judge"
 else
     fail "make fast does NOT run lint-allow, so a finding outside a changed hunk waits for the next merge decision"

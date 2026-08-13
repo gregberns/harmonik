@@ -231,7 +231,7 @@ fi
 # ---------------------------------------------------------------------------
 assertions=$((assertions + 1))
 fast_steps=$(HARMONIK_GATE_SELFTEST=1 make -n fast 2>/dev/null)
-if printf '%s\n' "$fast_steps" | grep -q 'scripts/lint-allow-ratchet\.sh'; then
+if grep -q 'scripts/lint-allow-ratchet\.sh' <<<"$fast_steps"; then
     pass "make fast runs the allow-list ratchet"
 else
     fail "make fast does NOT run the ratchet, so the allow list can grow freely"

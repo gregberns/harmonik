@@ -348,8 +348,19 @@ func (s *Store) SetEnabled(id string, enabled bool) (bool, error) {
 // sentinel. A caller that wants to preserve the existing pid (e.g. the
 // missed-fire skip path, which records the skipped instant in LastFire but did
 // not spawn a process) MUST pass the job's current LastPID; the daemon tick does
-// exactly that. A command-action fire passes the freshly spawned pid; a
-// spawn-crew fire passes 0 (no command pid to track).
+// exactly that. A command-action fire that SUCCEEDED passes the freshly spawned
+// pid; a spawn-crew fire passes 0 (no command pid to track).
+//
+// A command-action fire that FAILED TO START also passes 0, deliberately, and
+// that is the one caller which neither spawns a process nor preserves the prior
+// pid (hk-pbdti). Zero is the honest record: no process exists, and overlapBlocks
+// treats only LastPID > 0 as a prior run that may still be alive, so a start that
+// produced nothing blocks nothing. Under the SKIP policy this cannot lose a live
+// pid, because a live prior pid blocks before the fire is attempted at all. Under
+// the ALLOW policy it can overwrite a live pid with 0 — harmless today, since
+// allow returns before reading the field and nothing in the tree kills by
+// LastPID, but an operator who flips allow to skip while that process is still
+// running gets one skip evaluation that does not block.
 //
 // This is called by the work loop after a fire (or a missed-skip); it is the
 // only mutation the daemon tick performs that records fire state.

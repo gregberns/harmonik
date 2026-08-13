@@ -57,6 +57,16 @@
 # EXIT (default, lenient): 0 iff no red cell. PENDING/SKIP are printed loud and counted but do
 #   not flip the exit on their own. EXIT (--gate, forced LT): 0 iff EVERY cell is green — any
 #   red OR pending OR skip → non-zero (the T9 zero-PENDING gate; a partial matrix never passes).
+#
+# PROVENANCE IS PART OF THE VERDICT (hk-48zdw). Before it runs anything, and again beside
+#   the grid, this runner asks `scratch-daemon.sh provenance` whether the scratch binary
+#   carries a Go vcs stamp that names the pinned commit with vcs.modified=false. The WORSE
+#   of the two answers is the one that stands — a later `clean` never clears an earlier
+#   refusal, because the cells were graded by the binary that refusal named. It is not
+#   advice: `all_green` is false and --gate exits non-zero for any answer but `clean`, and
+#   the answer is printed on the `MATRIX_PROVENANCE` line and in the `provenance` field of
+#   MATRIX_JSON. A green grid from a binary that cannot name its commit is not a pass, and
+#   this runner used to print exactly that.
 
 set -euo pipefail
 
@@ -164,11 +174,11 @@ fi
 # ---- D1: local-model (pi) readiness preflight -----------------------------
 # Before running any pi cell we POST a tiny completion to the ornith /v1/completions
 # endpoint (the same loopback tunnel -> DGX vLLM the pi harness uses). A real non-empty
-# completion => the model is live, proceed. A 0-byte reply / timeout / non-200 => the vLLM
-# behind the tunnel is wedged, so the cell is marked SKIP-loud (never green; fails --gate)
-# with detail "pi endpoint wedged/no response" rather than letting the daemon spend minutes
-# discovering the wedge as a run_failed. Always-on for pi (no --no-preflight escape hatch):
-# a green pi cell MUST be backed by a live model, and catching the wedge here is the point.
+# completion => the model is live, proceed. No answer, a busy status or an empty reply,
+# after the retries in pi_preflight below => the cell is marked SKIP-loud (never green;
+# fails --gate) rather than letting the daemon spend minutes discovering the same thing
+# as a run_failed. Always-on for pi (no --no-preflight escape hatch): a green pi cell
+# MUST be backed by a live model, and catching a dead model here is the point.
 # Endpoint, model and key are READ FROM THE SCRATCH'S OWN harnesses.pi config, which is
 # what the pi harness will actually dial. Override via PI_BASE_URL / PI_MODEL / PI_KEY_FILE.
 #
@@ -181,8 +191,15 @@ fi
 # believed for days. A probe that does not dial what the harness dials is not a preflight, it
 # is a second source of truth that silently disagrees.
 #
-# The model matters for the same reason: vLLM 404s an unknown model id, and a 404 here is
-# indistinguishable from a wedge in the output above.
+# The model matters for the same reason: vLLM 404s an unknown model id, and pi_probe_once
+# must report that as a refusal, not as an endpoint that did not answer.
+#
+# THE SAME MISTAKE, ONE LAYER UP. The probe was fixed, and the message beside it was not.
+# It kept saying "pi endpoint wedged/no response — restart vLLM on dgx". A message that
+# names a remedy is a claim about the cause, and that claim was wrong twice out of two
+# runs: the endpoint was busy for a few seconds after the previous cell, not wedged, and
+# it needed nothing done to it. The SKIP line now reports what the probe saw and how hard
+# it tried, and it tells the reader to probe the endpoint before changing anything.
 harness_cfg_value() {
     # Pull one scalar out of the harnesses.<harness> block of the scratch config. Flat
     # scalars only; trailing `# ...` comments and surrounding quotes are stripped.
@@ -209,27 +226,127 @@ harness_cfg_value() {
 PI_BASE_URL="${PI_BASE_URL:-$(harness_cfg_value pi base_url)}"
 PI_MODEL="${PI_MODEL:-$(harness_cfg_value pi model)}"
 PI_KEY_FILE="${PI_KEY_FILE:-$HOME/.config/harmonik/ornith.key}"
-pi_preflight() {
-    command -v curl >/dev/null 2>&1 || { log "preflight: curl missing — cannot probe pi endpoint"; return 1; }
+# HOW LONG THE PROBE WAITS, AND WHY IT RETRIES. A free endpoint answers this probe in
+# about 1.2s (measured 1.135s / 1.204s / 1.560s). A cell runs for about 280s, and the
+# endpoint stays busy for a few seconds after that agent stops. One 12s shot fired
+# straight after a long cell therefore measures contention, not health: it called the
+# endpoint dead twice out of two runs, the same probe answered in 1.2s a moment later,
+# and the review round-trip cell never started (hk-odimo).
+#
+# So the preflight makes 3 tries of 12s each and waits 5s then 10s between them. The
+# LAST try starts at 39s (two timeouts plus both waits), so 39s is the busy window it
+# reliably survives; the budget expires at 51s. That is about 30x the free answer time.
+# A dead endpoint refuses at once, so it costs only the 15s of waits — 5% of one cell.
+# The SKIP still exists to stop the daemon spending minutes on a dead model. It must
+# not spend minutes proving the model is dead either. Override with PI_PROBE_TIMEOUT /
+# PI_PROBE_TRIES / PI_PROBE_BACKOFF.
+#
+# A refusal is NOT retried. An unknown model id, a bad key or a malformed request gives
+# the same answer on every try, and repeating it only hides the reason. HTTP 429 and 5xx
+# ARE retried: they are how a loaded vLLM says "busy", which is the condition this retry
+# exists for.
+# scripts/core-loop-matrix-preflight-test.sh CUTS THIS BLOCK OUT AND SOURCES IT — from the
+# line below to the end of pi_preflight. It runs the real functions against a stub endpoint,
+# with no daemon and no network. Move the block or rename either function and that test
+# fails loudly rather than testing nothing. Run it by hand after any edit here.
+PI_PROBE_TIMEOUT="${PI_PROBE_TIMEOUT:-12}"
+PI_PROBE_TRIES="${PI_PROBE_TRIES:-3}"
+PI_PROBE_BACKOFF="${PI_PROBE_BACKOFF:-5 10}"
+# What the last probe observed. The SKIP line prints this instead of naming a remedy.
+PI_PREFLIGHT_DETAIL=""
+
+pi_probe_once() {
+    # One probe of the pi endpoint. Sets PI_PREFLIGHT_DETAIL to what it observed.
+    #   0 = live (a real, non-empty completion came back)
+    #   1 = try again (no answer, a busy/5xx status, or an empty completion)
+    #   2 = do not try again (bad config, or the endpoint refused the request)
+    local key="" out body http rc=0
     # An unreadable config is a failed preflight, not a fallback to a guess. Guessing is
     # exactly what produced the false wedge.
-    [ -n "$PI_BASE_URL" ] || { log "preflight: no harnesses.pi.base_url in $SCRATCH/.harmonik/config.yaml"; return 1; }
-    [ -n "$PI_MODEL" ]    || { log "preflight: no harnesses.pi.model in $SCRATCH/.harmonik/config.yaml"; return 1; }
-    local key="" body
-    [ -f "$PI_KEY_FILE" ] && key="$(tr -d '[:space:]' < "$PI_KEY_FILE" 2>/dev/null)"
-    body="$(curl -sS -m 12 -X POST "$PI_BASE_URL/completions" \
+    if [ -z "$PI_BASE_URL" ]; then
+        PI_PREFLIGHT_DETAIL="no harnesses.pi.base_url in $SCRATCH/.harmonik/config.yaml"; return 2
+    fi
+    if [ -z "$PI_MODEL" ]; then
+        PI_PREFLIGHT_DETAIL="no harnesses.pi.model in $SCRATCH/.harmonik/config.yaml"; return 2
+    fi
+    if ! command -v curl >/dev/null 2>&1; then
+        PI_PREFLIGHT_DETAIL="curl is missing, so the pi endpoint cannot be probed"; return 2
+    fi
+    if [ -f "$PI_KEY_FILE" ]; then key="$(tr -d '[:space:]' < "$PI_KEY_FILE" 2>/dev/null)"; fi
+
+    # Read curl's own status from the assignment, never through a pipe. A pipeline
+    # reports the LAST command's status, so `curl | jq` hides a dead endpoint behind a
+    # jq parse error and the two need opposite fixes.
+    out="$(curl -sS -m "$PI_PROBE_TIMEOUT" -w '\n%{http_code}' -X POST "$PI_BASE_URL/completions" \
         -H "Authorization: Bearer $key" -H "Content-Type: application/json" \
-        -d "{\"model\":\"$PI_MODEL\",\"prompt\":\"ping\",\"max_tokens\":16}" 2>/dev/null)" || return 1
-    [ -n "$body" ] || return 1
-    # A model the server does not serve returns a 404 body with no choices. Report that as
-    # itself rather than as a wedge — they need opposite fixes.
-    if printf '%s' "$body" | jq -e '.error' >/dev/null 2>&1; then
-        log "preflight: endpoint answered but rejected the request: $(printf '%s' "$body" | jq -r '.error.message // .error' 2>/dev/null | head -1)"
+        -d "{\"model\":\"$PI_MODEL\",\"prompt\":\"ping\",\"max_tokens\":16}" 2>/dev/null)" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        case "$rc" in
+            7)  PI_PREFLIGHT_DETAIL="nothing accepted a connection at $PI_BASE_URL" ;;
+            28) PI_PREFLIGHT_DETAIL="the pi endpoint sent no answer in ${PI_PROBE_TIMEOUT}s" ;;
+            *)  PI_PREFLIGHT_DETAIL="the probe failed with curl exit $rc" ;;
+        esac
         return 1
     fi
-    printf '%s' "$body" \
-        | jq -e '((.choices[0].text // .choices[0].message.content // "") | tostring | length) > 0' \
-          >/dev/null 2>&1
+    http="${out##*$'\n'}"
+    body="${out%$'\n'*}"
+    case "$http" in
+        200) ;;
+        429|5??)
+            PI_PREFLIGHT_DETAIL="the pi endpoint answered HTTP $http (busy or not ready)"; return 1 ;;
+        *)
+            # A model the server does not serve returns 404. Report that as itself rather
+            # than as a dead endpoint — they need opposite fixes, and no retry fixes this.
+            local why
+            why="$(jq -r '.error.message // .error // empty' <<<"$body" 2>/dev/null | head -1)"
+            PI_PREFLIGHT_DETAIL="the pi endpoint answered HTTP $http and refused the request${why:+: $why}"
+            return 2 ;;
+    esac
+    if jq -e '.error' <<<"$body" >/dev/null 2>&1; then
+        local msg
+        msg="$(jq -r '.error.message // .error' <<<"$body" 2>/dev/null | head -1)"
+        PI_PREFLIGHT_DETAIL="the pi endpoint answered but refused the request: $msg"
+        return 2
+    fi
+    if ! jq -e '((.choices[0].text // .choices[0].message.content // "") | tostring | length) > 0' \
+        <<<"$body" >/dev/null 2>&1; then
+        PI_PREFLIGHT_DETAIL="the pi endpoint answered with an empty completion"
+        return 1
+    fi
+    PI_PREFLIGHT_DETAIL="the pi endpoint answered"
+    return 0
+}
+
+pi_preflight() {
+    local -a backoff
+    read -r -a backoff <<<"$PI_PROBE_BACKOFF"
+    [ "${#backoff[@]}" -gt 0 ] || backoff=(5)
+    local try rc wait_s waited=0
+    for (( try=1; try<=PI_PROBE_TRIES; try++ )); do
+        rc=0
+        pi_probe_once || rc=$?
+        if [ "$rc" -eq 0 ]; then
+            if [ "$try" -gt 1 ]; then
+                log "preflight: the pi endpoint answered on try $try of $PI_PROBE_TRIES (after ${waited}s of waits)"
+            fi
+            return 0
+        fi
+        # A refusal reads the same on every try. Report it now.
+        if [ "$rc" -eq 2 ]; then
+            return 1
+        fi
+        if [ "$try" -ge "$PI_PROBE_TRIES" ]; then break; fi
+        if [ "$((try-1))" -lt "${#backoff[@]}" ]; then
+            wait_s="${backoff[$((try-1))]}"
+        else
+            wait_s="${backoff[$(( ${#backoff[@]} - 1 ))]}"
+        fi
+        log "preflight: $PI_PREFLIGHT_DETAIL — try $try of $PI_PROBE_TRIES; next try in ${wait_s}s"
+        sleep "$wait_s"
+        waited=$((waited + wait_s))
+    done
+    PI_PREFLIGHT_DETAIL="$PI_PREFLIGHT_DETAIL — $PI_PROBE_TRIES tries of ${PI_PROBE_TIMEOUT}s over ${waited}s of waits"
+    return 1
 }
 
 # ---- model resolution for the cell specs ----------------------------------
@@ -256,9 +373,17 @@ seed_model_for() {
     harness_cfg_value "$harness" model
 }
 
-# foreign_models_for <seed-key> <harness> — every OTHER harness family's model, which is
-# exactly the set that must never appear on this cell's runs. Derived, so adding a harness or
-# changing a model updates the leak check for free instead of needing a second edit.
+# foreign_models_for <seed-key> <harness> — every OTHER harness family's model. Derived, so
+# adding a harness or changing a model updates the leak check for free instead of needing a
+# second edit.
+#
+# READ THE SET AS "must never appear ON THIS CELL'S OWN HARNESS", not "must never appear in
+# this cell's capture". gap1 filters model_selected by harness before it looks for a leak, so
+# a node on another family is out of scope by construction. The distinction is load-bearing on
+# a DOT cell: its review node runs on claude-code BY DESIGN, because a reviewer never inherits
+# a SessionIDCaptured harness (internal/runloop ReviewerDefaultHarness), so a claude model can
+# legitimately be resolved inside the capture. This comment used to state the wider claim,
+# which reads as a false red on every dot cell. Bead: hk-vf4ju.
 foreign_models_for() {
     local own_key="$1" own_harness="$2" out="" k h m
     while IFS=$'\t' read -r k h; do
@@ -353,6 +478,100 @@ else
     log "reusing already-up scratch daemon at $SCRATCH (--no-cycle)"
 fi
 
+# ---- provenance: the binary this grid grades must name its own commit ------
+# WHY THIS IS HERE AND NOT IN A README. This runner used to print an all-green
+# grid, and BATCH_SUMMARY used to print a bare commit hash beside it, for a
+# binary the Go toolchain had stamped vcs.modified=true. The assessor contract
+# reads a bare hash as "clean" and treats a dirty stamp exactly as +local-edits —
+# no result from such a binary is an audit of that commit. So the two truths sat
+# twenty-five lines apart in one log, and the run read as a valid PASS. It was
+# not a rare accident either: scripts/core-loop-seed.sh writes an untracked
+# review-loop.dot into the tree before the build, Go's stamp counts untracked
+# files, and the gate therefore dirtied itself on EVERY run (hk-48zdw).
+#
+# A gate has to assert its own provenance. `scratch-daemon.sh provenance` is that
+# assertion with an exit code on it: 0 only when the built binary carries a Go
+# vcs stamp naming the pinned commit with vcs.modified=false.
+#
+# IT IS READ TWICE, ON PURPOSE. Once here, so a void run costs seconds instead of
+# a full matrix of real agents; once again beside the verdict, because the claim
+# being made is about the binary that actually ran, and a matrix run is minutes of
+# real agents editing this tree. `batch` itself never rebuilds — it calls cmd_up,
+# which refuses a binary whose recorded revision is not the pin — so the second
+# read is for the case where something ELSE replaced the binary. Do not read it as
+# a re-measurement that can clear the first: the token is monotonic (below) and a
+# later `clean` is recorded and ignored.
+#
+# WHAT EACH MODE DOES WITH IT.
+#   --gate (the LT leg)  refuses. The gate exists to produce a result an assessor
+#                        may fold into a PASS, and there is no such result here.
+#   default (lenient)    reports. scripts/scratch-daemon.sh deliberately keeps the
+#                        edit-and-cycle developer loop working on a modified tree,
+#                        and failing that loop here would delete it. But the JSON
+#                        this run emits still carries all_green:false and the
+#                        provenance token, so a lenient run cannot be quoted as a
+#                        clean one either.
+#
+# PROVENANCE_TOKEN starts at `unchecked`, which is not `clean`, so any path that
+# reaches the verdict without reading the stamp fails the same way a dirty one does.
+#
+# THE TOKEN IS MONOTONIC — it may only ever get WORSE (hk-48zdw). The stamp is read
+# twice, and without this rule the second reading simply overwrote the first. Two
+# ways that hands back a `clean` nobody earned:
+#   - lenient mode does not stop on a bad pre-flight, so a run whose FIRST reading
+#     said `dirty` grades every cell with the binary that reading refused. If
+#     anything cleans the tree and rebuilds before the second reading, the run then
+#     reports `clean`, and the cell verdicts it reports were never audited.
+#   - a `provenance` that prints a clean line and THEN exits non-zero used to leave
+#     the token at `clean`, because only the return value carried the refusal and
+#     nothing downstream reads the return value. `all_green` and --gate both key on
+#     the token alone, so the token has to carry it.
+# A later `clean` is therefore recorded and ignored, never adopted.
+PROVENANCE_TOKEN="unchecked"
+PROVENANCE_LINE="provenance was never read"
+PROVENANCE_FRESH_TOKEN="unchecked"   # what the LAST read alone said (for reporting)
+PROVENANCE_READS=0
+
+read_provenance() {
+    local out status fresh_token fresh_line
+    out="$("$SCRATCH_DAEMON" provenance "$SCRATCH" 2>&1)"; status=$?
+    # The token, not the exit code, is what the verdict keys on: a subcommand this
+    # scratch-daemon.sh is too old to have exits non-zero with no token at all, and
+    # that must read as "not proven", never as "no news is good news".
+    fresh_token="$(awk '$1=="SCRATCH_PROVENANCE" && t=="" {t=$2} END {print (t==""?"unreadable":t)}' <<<"$out")"
+    fresh_line="$(awk '$1=="SCRATCH_PROVENANCE" && l=="" {l=$0} END {print l}' <<<"$out")"
+    [ -n "$fresh_line" ] || fresh_line="SCRATCH_PROVENANCE $fresh_token (no machine-readable line; '$SCRATCH_DAEMON provenance' exited $status)"
+    # A clean line from a command that then refused is not a clean answer. The two
+    # halves disagree about one binary and only the pessimistic half may be believed.
+    if [ "$status" -ne 0 ] && [ "$fresh_token" = "clean" ]; then
+        fresh_line="SCRATCH_PROVENANCE inconsistent ('$SCRATCH_DAEMON provenance' printed a clean line and then exited $status) — $fresh_line"
+        fresh_token="inconsistent"
+    fi
+    PROVENANCE_TEXT="$out"
+    PROVENANCE_FRESH_TOKEN="$fresh_token"
+    if [ "$PROVENANCE_READS" -eq 0 ] || [ "$fresh_token" != "clean" ] || [ "$PROVENANCE_TOKEN" = "clean" ]; then
+        PROVENANCE_TOKEN="$fresh_token"
+        PROVENANCE_LINE="$fresh_line"
+    else
+        log "provenance now reads clean, but an earlier read of this run said '$PROVENANCE_TOKEN' — keeping the earlier one. Every cell above was graded by the binary that reading refused."
+    fi
+    PROVENANCE_READS=$((PROVENANCE_READS + 1))
+    # The CUMULATIVE token is the verdict, so that is what the caller is told.
+    [ "$PROVENANCE_TOKEN" = "clean" ]
+}
+
+if read_provenance; then
+    log "$PROVENANCE_LINE"
+else
+    printf '%s\n' "${PROVENANCE_TEXT:-}" >&2
+    if [ "$GATE" -eq 1 ]; then
+        die "--gate: the scratch binary cannot prove it is the pinned commit (provenance=$PROVENANCE_TOKEN).
+  Nothing this run could print would be an audit of that commit, so it stops before running the matrix.
+  The message above says what is wrong with the binary and what to do about it."
+    fi
+    log "WARNING: provenance=$PROVENANCE_TOKEN — this run cannot be quoted as an audit of the pinned commit (all_green will be false)"
+fi
+
 # ---- iterate the matrix ---------------------------------------------------
 # Grid rows accumulate as: cell<TAB>verdict<TAB>detail  (verdict ∈ green|red|pending|skip)
 GRID=()
@@ -431,15 +650,24 @@ for _run_cell in "${RUN_CELLS[@]}"; do
             continue
         fi
 
-        # D1: local-model preflight — pi cells only. A wedged vLLM (0-byte/timeout/non-200)
-        # is SKIP-loud (never green; fails --gate), not a slow run_failed discovered minutes
+        # D1: local-model preflight — pi cells only. A model that does not answer is
+        # SKIP-loud (never green; fails --gate), not a slow run_failed discovered minutes
         # later. Always-on; the readiness of the model IS the precondition for a pi green.
+        # The SKIP line reports what the probe saw and how hard it tried. It names no
+        # remedy: the old line told the operator to restart vLLM on another box, and the
+        # condition it fired on cleared by itself in seconds (see pi_probe_once above).
         if [ "$h" = "pi" ]; then
             if pi_preflight; then
                 log "preflight OK — pi endpoint answered ($PI_BASE_URL)"
             else
-                log "SKIP  $cell — pi endpoint wedged/no response ($PI_BASE_URL) — restart vLLM on dgx"
-                GRID+=("$cell	skip	pi endpoint wedged/no response")
+                log "SKIP  $cell — $PI_PREFLIGHT_DETAIL ($PI_BASE_URL)"
+                # The printed command must send what pi_probe_once sends, down to the key
+                # header and the timeout. A second probe that dials something else is how
+                # the first false wedge survived. `$(tr ...)` is NOT expanded here: the
+                # operator's shell reads the key file, so no key reaches this log.
+                log "      probe it by hand before you change anything:"
+                log "      curl -sS -m $PI_PROBE_TIMEOUT -X POST $PI_BASE_URL/completions -H \"Authorization: Bearer \$(tr -d '[:space:]' < $PI_KEY_FILE)\" -H 'Content-Type: application/json' -d '{\"model\":\"$PI_MODEL\",\"prompt\":\"ping\",\"max_tokens\":16}'"
+                GRID+=("$cell	skip	$PI_PREFLIGHT_DETAIL")
                 n_skip=$((n_skip+1))
                 continue
             fi
@@ -613,6 +841,20 @@ done
 echo "--------------------------------------------------------"
 echo "green=$n_green red=$n_red pending=$n_pending skip=$n_skip"
 echo "MATRIX_SUMMARY green=$n_green red=$n_red pending=$n_pending skip=$n_skip"
+# Re-read the stamp of the binary that actually ran, and print it WITH the grid.
+# The grid and the provenance used to live in different parts of the log, which is
+# how a dirty binary got a green verdict quoted off it.
+#
+# The token is monotonic, so this read can only make the verdict worse. When the
+# fresh read is clean and the verdict is not, read_provenance has already said why,
+# and dumping its (clean) output here would read as a contradiction, so it is not.
+if ! read_provenance && [ "$PROVENANCE_FRESH_TOKEN" != "clean" ]; then
+    printf '%s\n' "${PROVENANCE_TEXT:-}" >&2
+fi
+echo "MATRIX_PROVENANCE $PROVENANCE_TOKEN ($PROVENANCE_LINE)"
+if [ "$PROVENANCE_TOKEN" != "clean" ]; then
+    echo "MATRIX_PROVENANCE VOID — no cell verdict above is an audit of the pinned commit; this run cannot pass."
+fi
 echo "========================================================"
 
 # ---- T3 (hk-9cw6q): red-cell → deduped fleet bead -------------------------
@@ -646,14 +888,20 @@ if [ "$JSON" -eq 1 ]; then
         done | jq -cs '.'
     )"
     all_green="false"
-    [ "$n_red" -eq 0 ] && [ "$n_pending" -eq 0 ] && [ "$n_skip" -eq 0 ] && all_green="true"
+    # Provenance is a term of all_green, not a note beside it. The assessor folds
+    # this field; a true here on a binary that cannot name its commit is the exact
+    # false PASS hk-48zdw was filed for.
+    [ "$n_red" -eq 0 ] && [ "$n_pending" -eq 0 ] && [ "$n_skip" -eq 0 ] \
+        && [ "$PROVENANCE_TOKEN" = "clean" ] && all_green="true"
     jq -cn \
         --argjson cells "${cells_json:-[]}" \
         --argjson green "$n_green" --argjson red "$n_red" \
         --argjson pending "$n_pending" --argjson skip "$n_skip" \
         --argjson gate "$GATE" --argjson all_green "$all_green" \
+        --arg prov "$PROVENANCE_TOKEN" --arg provline "$PROVENANCE_LINE" \
         '{summary:{green:$green, red:$red, pending:$pending, skip:$skip},
-          gate:($gate==1), all_green:$all_green, cells:$cells}' \
+          gate:($gate==1), all_green:$all_green,
+          provenance:{status:$prov, detail:$provline}, cells:$cells}' \
         | sed 's/^/MATRIX_JSON /'
 fi
 
@@ -662,7 +910,8 @@ fi
 # EVERY cell is green — any red OR pending OR skip fails (the T9 zero-PENDING gate), so the
 # assessor's forced-local LT leg never mistakes a partial matrix for a pass.
 if [ "$GATE" -eq 1 ]; then
-    [ "$n_red" -eq 0 ] && [ "$n_pending" -eq 0 ] && [ "$n_skip" -eq 0 ]
+    [ "$n_red" -eq 0 ] && [ "$n_pending" -eq 0 ] && [ "$n_skip" -eq 0 ] \
+        && [ "$PROVENANCE_TOKEN" = "clean" ]
 else
     [ "$had_red" -eq 0 ]
 fi

@@ -37,21 +37,52 @@ import (
 //	--project=<dir>    equals form
 //	--json             output raw JSON (shorthand for --format json)
 //	--format json|text output format (default text)
+//
+// A selector given with an EMPTY value is refused (exit 2) rather than read
+// as the daemon's default queue. Only the absence of every selector reaches
+// the usage error (hk-wki4e).
 func RunQueueRecover(ctx context.Context, subArgs []string, out, errOut io.Writer) int {
 	diag := newPrinter(errOut)
 	var queueName string
+	// GIVEN is not the same question as NON-EMPTY. `--queue=` and
+	// `--queue ""` both leave queueName == "", which the resolution below
+	// cannot tell apart from a caller who never typed the flag unless the
+	// parse records that they did.
+	queueNameGiven := false
 	projectDir, positional, outputJSON, ok := parseQueueFlagsExtra(subArgs, errOut, func(args []string, i int) (int, bool) {
 		switch {
 		case args[i] == "--queue" && i+1 < len(args):
 			queueName = args[i+1]
+			queueNameGiven = true
 			return i + 2, true
 		case strings.HasPrefix(args[i], "--queue="):
 			queueName = strings.TrimPrefix(args[i], "--queue=")
+			queueNameGiven = true
 			return i + 1, true
 		}
 		return i, false
 	})
 	if !ok {
+		return exitTransportError
+	}
+
+	// An empty selector VALUE is refused here, before the request is built.
+	//
+	// Recover is the destructive verb of this family: it re-arms every failed
+	// item, resets attempt counts, clears failure reasons and reopens groups.
+	// An empty queue name did not reach an error — `HandleQueueRecover` reads
+	// "" as `queue.QueueNameMain`, so `harmonik queue recover "$q"` with $q
+	// unset rewrote item state on a queue the caller never named, printed
+	// "recovered: main", and exited 0 (hk-wki4e).
+	//
+	// A BARE `harmonik queue recover` is a different act — it supplies no
+	// selector at all — and keeps the usage error below.
+	switch {
+	case queueNameGiven && queueName == "":
+		diag.println("harmonik queue recover: --queue was given an empty value; pass a queue name or drop the flag. Nothing was recovered.")
+		return exitTransportError
+	case len(positional) > 0 && positional[0] == "":
+		diag.println("harmonik queue recover: the queue name argument was empty; pass a queue name or drop the argument. Nothing was recovered.")
 		return exitTransportError
 	}
 

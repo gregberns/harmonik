@@ -35,12 +35,12 @@ package daemon_test
 //
 // # Test project worktree
 //
-// The commit_gate in standard-bead.dot runs `make full`.
+// The commit_gate in standard-bead.dot runs `make core` (D3=v3).
 //
 // To make this pass inside the test worktree we create:
 //   - A minimal go.mod (module em012a-test; go 1.21) and one doc.go, so the
 //     worktree is a real Go module.
-//   - A Makefile whose `full` target exits 0.
+//   - A Makefile whose `full` and `core` targets exit 0.
 //
 // The Makefile is the fixture's own, not this repo's. What is under test here
 // is mode resolution, not the gate, so the gate is stubbed to pass and every
@@ -123,9 +123,14 @@ func em012aProjectDir(t *testing.T) string {
 		t.Fatalf("em012aProjectDir: write doc.go: %v", err)
 	}
 
-	// Makefile — commit_gate runs `make full`, and this fixture stubs it green
-	// because the subject under test is mode resolution, not the gate.
-	makefile := ".PHONY: full\nfull:\n\t@exit 0\n"
+	// Makefile — commit_gate runs the per-bead gate, and this fixture stubs it
+	// green because the subject under test is mode resolution, not the gate.
+	// BOTH target names are defined on purpose. The graph named `make full`
+	// until 2026-08-13 and names `make core` from D3=v3 on; a fixture that
+	// stubs only the current one goes red with "No rule to make target" the
+	// next time that policy moves, and that failure looks like a gate bug
+	// rather than a stale fixture.
+	makefile := ".PHONY: full core\nfull core:\n\t@exit 0\n"
 	if err := os.WriteFile(filepath.Join(dir, "Makefile"), []byte(makefile), 0o644); err != nil {
 		t.Fatalf("em012aProjectDir: write Makefile: %v", err)
 	}

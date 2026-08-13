@@ -59,13 +59,22 @@ if ! tmux has-session -t "$TARGET" 2>/dev/null; then
   exit 69
 fi
 
+# Take the newest match WITHOUT piping into `head -1`. Under pipefail `head`
+# leaves after one line, `ls` upstream dies of SIGPIPE, and the pipeline reports
+# that death as its own status. On this machine the glob already matches 226
+# session files and `ls -t` emits 24 KB of paths, which is past the size where
+# the SIGPIPE actually lands — the shipped pipeline returns 1 while printing the
+# right answer. Capture, then slice the first line with no second process.
 find_rollout() {
   if [ -n "$PINNED" ]; then
     printf '%s\n' "$PINNED"
     return
   fi
-  grep -ls "\"cwd\":\"$REPO\"" "$SESSION_ROOT"/*/*/*/rollout-*.jsonl 2>/dev/null \
-    | xargs -r ls -t 2>/dev/null | head -1
+  local matches sorted
+  matches=$(grep -ls "\"cwd\":\"$REPO\"" "$SESSION_ROOT"/*/*/*/rollout-*.jsonl 2>/dev/null) || return 0
+  [ -n "$matches" ] || return 0
+  sorted=$(printf '%s\n' "$matches" | xargs -r ls -t 2>/dev/null) || return 0
+  printf '%s\n' "${sorted%%$'\n'*}"
 }
 
 # Prints "<record-type>\t<last agent message on one line>".
@@ -112,7 +121,13 @@ while sleep "$POLL_SECS"; do
     continue
   fi
 
-  if printf '%s' "$msg" | grep -qiE "$ASK_RE"; then
+  # Here-string, not `printf ... | grep -qiE`. This veto is the reason the
+  # watcher is safe to leave running: it must fire when the agent is asking YOU
+  # something. Piped, `grep -q` leaves on the match and the writer's SIGPIPE
+  # becomes the pipeline's status under pipefail, so the veto silently never
+  # fires and the nudge goes out over the top of the question. A here-string has
+  # no writer process to kill.
+  if grep -qiE "$ASK_RE" <<<"$msg"; then
     log "BLOCKED, needs you: ...${msg: -240}"
     continue
   fi

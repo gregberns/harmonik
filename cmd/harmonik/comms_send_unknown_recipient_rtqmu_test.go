@@ -20,7 +20,14 @@ package main
 // hour later is delivered in full on its first recv. Refusing an unknown name
 // would break that. The repair is to stop the send from LOOKING delivered.
 //
-// Bead ref: hk-rtqmu.
+// The first repair changed the stderr text and left the exit code at 0, which
+// only reached a human who was reading stderr. A script or an agent branching
+// on the exit code was still told the epic was delivered. The exit code is now
+// 1, matching `harmonik wake --agent <name>` for the same question — a name
+// that matches nothing (hk-zj9nw). Accepting the send and reporting success are
+// separate acts: the message stays durable and a later recv still gets it.
+//
+// Bead ref: hk-rtqmu, hk-zj9nw.
 
 import (
 	"encoding/json"
@@ -87,8 +94,8 @@ func TestCommsSend_UnknownRecipientIsReportedAsUndelivered(t *testing.T) {
 	sock := commsServeSendingDaemon(t, dir)
 
 	stdout, stderr, code := commsSendTo(t, dir, sock, "bravoo")
-	if code != 0 {
-		t.Fatalf("comms send exited %d, want 0 — the message is durably recorded and a later recv still gets it (stderr=%q)", code, stderr)
+	if code != 1 {
+		t.Fatalf("comms send to a name nobody uses exited %d, want 1 — a caller that branches on the exit code was told the message was delivered (stderr=%q)", code, stderr)
 	}
 	if !strings.Contains(stdout, "019fef4e") {
 		t.Fatalf("comms send stopped printing the event id: %q", stdout)
@@ -177,5 +184,33 @@ func TestCommsRecipientKnown_SourcesAreIndependent(t *testing.T) {
 		if got := commsRecipientKnown(dir, tc.name); got != tc.want {
 			t.Errorf("commsRecipientKnown(%q) = %v, want %v — %s should decide it", tc.name, got, tc.want, tc.since)
 		}
+	}
+}
+
+// TestCommsSend_UnknownRecipientExitsLikeWake is the sibling-agreement check
+// (hk-zj9nw). `harmonik wake --agent <name>` and `harmonik comms send --to
+// <name>` are asked the same question — a name this project has no session for
+// — and they must not answer it differently. wake refuses with 1
+// (checkWakeTarget); send now reports 1 after recording the message.
+func TestCommsSend_UnknownRecipientExitsLikeWake(t *testing.T) {
+	dir := commsSendProject(t)
+	sock := commsServeSendingDaemon(t, dir)
+
+	const nobody = "nosuchlane"
+
+	wakeCode := checkWakeTarget(dir, nobody)
+	if wakeCode == 0 {
+		t.Fatalf("checkWakeTarget(%q) = 0: the precedent this test compares against is gone", nobody)
+	}
+
+	stdout, stderr, sendCode := commsSendTo(t, dir, sock, nobody)
+	if sendCode != wakeCode {
+		t.Errorf("comms send --to %s exited %d but wake --agent %s exits %d: two surfaces disagree about whether reaching nobody succeeded\nstdout=%q\nstderr=%q",
+			nobody, sendCode, nobody, wakeCode, stdout, stderr)
+	}
+	// The send is still accepted: the event id is on stdout and the message is
+	// durable. Only the answer to the caller changed.
+	if !strings.Contains(stdout, "019fef4e") {
+		t.Errorf("comms send stopped recording the message when it started reporting failure: stdout=%q", stdout)
 	}
 }

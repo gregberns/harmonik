@@ -5,8 +5,14 @@ package daemon
 // When a bead has no explicit workflow_ref AND no <projectDir>/workflow.dot exists,
 // the daemon loads this embedded graph instead of failing (hk-30vlb).
 //
-// The embedded graph is identical to specs/examples/standard-bead.dot (the canonical
-// source of truth). The copy here is the embed target; keep in sync with the spec file.
+// The embedded graph and specs/examples/standard-bead.dot are byte-identical, and
+// TestStandardBeadDotEmbedValidAndInSync enforces that. Keep the two in sync.
+//
+// WHICH WAY TO COPY IS NOT SETTLED, so check before you reconcile a divergence.
+// This comment used to call the spec file "the canonical source of truth", but
+// the D3=v3 gate change was written into THIS file first and the spec copy was
+// left stale, so the repair copied embedded -> spec. Read both, keep the copy
+// that carries the current gate, and do not copy by direction alone.
 //
 // Review-floor guarantee (hk-30vlb §REVIEW FLOOR):
 //   (a) The embedded graph contains a reviewer node, so the DOT default is reviewed

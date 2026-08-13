@@ -89,7 +89,7 @@ digraph "sub-workflow-example" {
         type="sub-workflow",
         sub_workflow_ref="specs/examples/sub-workflow-commit-gate.dot",
         workflow_version="1.0",
-        role="commit gate: build + vet + scenario tests via sub-workflow-commit-gate.dot"
+        role="commit gate: build + vet + test-compile, then the core test set (CORE_PKGS, no -short) via sub-workflow-commit-gate.dot"
     ];
 
     // review: agentic reviewer. Emits preferred_label (APPROVE / REQUEST_CHANGES

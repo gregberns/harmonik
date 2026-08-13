@@ -113,7 +113,7 @@ pane_is_idle() {
   # interrupt · ctrl+t to hide") is NOT a busy signal — it is always present —
   # so we only treat "esc to interrupt" as busy when it co-occurs with a
   # running timer "(<n>s" on the same line (the spinner running-line).
-  if printf '%s' "$cap" | grep -qE '\([0-9]+(\.[0-9]+)?[ms][^)]*esc to interrupt'; then
+  if grep -qE '\([0-9]+(\.[0-9]+)?[ms][^)]*esc to interrupt' <<<"$cap"; then
     return 1
   fi
   # The live elapsed-time running-line Claude prints while a turn/agent is in
@@ -121,10 +121,10 @@ pane_is_idle() {
   # The idle prompt never shows a running "(<n>s ·" / "(<n>m <n>s ·" counter.
   # Match an opening "(" + an elapsed token (Ns | NmNs | Nm Ns | N.Ns) followed
   # by the " · " separator that the running-line always carries.
-  if printf '%s' "$cap" | grep -qE '\([0-9]+(\.[0-9]+)?m?( ?[0-9]+s)?[[:space:]]*·'; then
+  if grep -qE '\([0-9]+(\.[0-9]+)?m?( ?[0-9]+s)?[[:space:]]*·' <<<"$cap"; then
     return 1
   fi
-  if printf '%s' "$cap" | grep -qE '(✻|✶|✳|✢|∗|⋆|◐|◓|◑|◒)[[:space:]]*(Worked for|Cogitating|Thinking|Pondering|Running|Booting|Forging|Channelling|Computing|Crafting|Distilling|Synthesizing|Working|Herding|Simmering|Mulling|Noodling|Percolating|Ruminating|Schlepping|Vibing)'; then
+  if grep -qE '(✻|✶|✳|✢|∗|⋆|◐|◓|◑|◒)[[:space:]]*(Worked for|Cogitating|Thinking|Pondering|Running|Booting|Forging|Channelling|Computing|Crafting|Distilling|Synthesizing|Working|Herding|Simmering|Mulling|Noodling|Percolating|Ruminating|Schlepping|Vibing)' <<<"$cap"; then
     return 1
   fi
 
@@ -133,19 +133,27 @@ pane_is_idle() {
   # enough — we must positively reject any of these dialog signals first.
   #   "Do you want to proceed?"  /  "❯ 1. Yes"  /  "❯ 2. No"  /  a numbered
   #   option row like "  1. Yes" / "2. No" / "❯ 1. Allow" / etc.
-  if printf '%s' "$cap" | grep -qE 'Do you want to'; then
+  if grep -qE 'Do you want to' <<<"$cap"; then
     return 1
   fi
-  if printf '%s' "$cap" | grep -qE '❯[[:space:]]*[0-9]+\.'; then
+  if grep -qE '❯[[:space:]]*[0-9]+\.' <<<"$cap"; then
     return 1
   fi
   # A standalone numbered-option row ("1. Yes", "  2. No"): a menu choice line.
-  if printf '%s' "$cap" | grep -qE '^[[:space:]]*[12]\.[[:space:]]'; then
+  if grep -qE '^[[:space:]]*[12]\.[[:space:]]' <<<"$cap"; then
     return 1
   fi
   # "esc to interrupt" anywhere we have NOT already cleared as the static footer
   # bar: if it appears on a line WITHOUT the footer-bar markers, treat as busy.
-  if printf '%s' "$cap" | grep -E 'esc to interrupt' | grep -qvE '⏵⏵|ctrl\+t|bypass permissions'; then
+  # Two stages, so capture between them: piped, the middle grep dies of SIGPIPE
+  # when the -q on the right leaves early, and pipefail turns that into "not
+  # busy" — the fail-open direction for a guard whose whole job is to refuse to
+  # type into a pane that is mid-turn or holding a permission dialog. The
+  # emptiness test is not optional either: `grep -qv PATTERN <<<""` is handed one
+  # empty line, which -v matches, so a pane with no such line would read busy.
+  local esc_lines
+  esc_lines="$(grep -E 'esc to interrupt' <<<"$cap" || true)"
+  if [[ -n "$esc_lines" ]] && grep -qvE '⏵⏵|ctrl\+t|bypass permissions' <<<"$esc_lines"; then
     return 1
   fi
 
@@ -156,7 +164,7 @@ pane_is_idle() {
   # content row (a footer/status box renders below it), so we scan the tail.
   # The dialog/menu guards above already rejected the "❯ 1. Yes" selection-caret
   # case, so any empty "❯ " row remaining here is the real input prompt.
-  if printf '%s' "$cap" | grep -qE '^[[:space:]]*❯[[:space:]]*$'; then
+  if grep -qE '^[[:space:]]*❯[[:space:]]*$' <<<"$cap"; then
     return 0
   fi
   # No empty input-prompt row => can't confirm idle => busy.
@@ -218,7 +226,7 @@ drain_into_pending() {
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     # heartbeat lines: skip
-    if printf '%s' "$line" | grep -q '"type":[[:space:]]*"heartbeat"'; then
+    if grep -q '"type":[[:space:]]*"heartbeat"' <<<"$line"; then
       continue
     fi
     # must be parseable JSON with an event_id

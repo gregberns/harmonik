@@ -81,6 +81,13 @@ type t4StubLedger struct {
 	// closed collects bead IDs passed to CloseBead.
 	closed []core.BeadID
 
+	// closeCallCount counts CloseBead invocations, including the ones that return
+	// closeErr. closed[] cannot stand in for it: the error path returns before
+	// appending, so an empty closed[] is the same observation whether CloseBead
+	// failed or was never called at all. Telling those apart is the whole point
+	// of the T4-S4 assertions below (hk-vzxg5).
+	closeCallCount int
+
 	// opened collects bead IDs passed to ReopenBead.
 	opened []core.BeadID
 
@@ -118,6 +125,7 @@ func (s *t4StubLedger) ClaimBead(_ context.Context, _ string, _ brcli.TimeoutCon
 func (s *t4StubLedger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, id core.BeadID, _ bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.closeCallCount++
 	if s.closeErr != nil {
 		return s.closeErr
 	}
@@ -142,6 +150,12 @@ func (s *t4StubLedger) getReadyCallCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.readyCallCount
+}
+
+func (s *t4StubLedger) getCloseCallCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closeCallCount
 }
 
 func (s *t4StubLedger) getClosedIDs() []core.BeadID {
@@ -458,15 +472,39 @@ done:
 // T4-S4: Bead deleted from DB while in flight — CloseBead error handling
 // ─────────────────────────────────────────────────────────────────────────────
 
-// TestT4_CloseBeadError confirms the work loop continues processing after a
-// CloseBead error (simulating "bead deleted from DB while handler was running").
-// The loop must not crash, must not hang, and must attempt to process the next
-// available bead.
+// TestT4_CloseBeadError confirms the work loop continues processing after a run
+// fails. The loop must not crash, must not hang, and must attempt to process the
+// next available bead.
+//
+// It also confirms the terminal event on that path. A CloseBead error fails the
+// run: internal/runexec/run.go stepRunFinalizing takes the CloseError branch to
+// doneClosed(..., false), and workloop.go emitRunCompleted maps success=false to
+// run_failed. That is deliberate (hk-wfbxf) and normative --
+// specs/execution-model.md EM-052 step 6 requires run_failed, not run_completed,
+// on a CloseBead error -- because a bead left in_progress while the event log
+// claims the run completed is split-brain. On the ORDINARY close ladder -- the
+// one this fixture exercises -- a hard close error must also NOT reopen the bead
+// (hk-c1ah6 / hk-hypbi): reopening would re-dispatch work whose ledger state
+// nobody can trust. Scope that claim, because the same function contains a
+// deliberate exception: stepRunFinalizing's AttentionClose branch (the review-loop
+// budget-exhausted ladder, which cites the same beads) DOES reopen on a hard close
+// error, before emitting the failed terminal. This fixture never sets
+// AttentionClose, so the unconditional reading below would be wrong as a general
+// rule and is right as a statement about this path.
+//
+// THE HANDLER MUST COMMIT, and that is load-bearing (hk-vzxg5). This test used to
+// run `sh -c "exit 0"`, which exits clean without advancing HEAD. Every run then
+// failed its pre-close guard -- "exited without advancing HEAD past <sha>" -- and
+// took the reopen spine, so CloseBead was NEVER CALLED and the injected closeErr
+// was inert. The test still passed, because its only observation of the terminal
+// was a t.Logf that asserted nothing and its "no closed IDs" check is satisfied
+// just as well by never closing anything. A committing WorktreeFactory does not
+// fix it either; the commit has to come from the handler, inside the run.
 //
 // Finding candidates:
 //   - Does the loop crash or hang when CloseBead returns an error?
 //   - Does the loop continue to the next bead after a CloseBead failure?
-//   - Is run_completed still emitted even if CloseBead fails?
+//   - Which terminal does a close error produce, and is the bead reopened?
 func TestT4_CloseBeadError(t *testing.T) {
 	skipRealDaemonE2EInShort(t)
 	t.Parallel()
@@ -487,7 +525,7 @@ func TestT4_CloseBeadError(t *testing.T) {
 		Bus:              collector,
 		ProjectDir:       projectDir,
 		HandlerBinary:    "/bin/sh",
-		HandlerArgs:      []string{"-c", "exit 0"},
+		HandlerArgs:      workloopFixtureAdvanceHeadHandlerArgs(t),
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
@@ -503,38 +541,67 @@ func TestT4_CloseBeadError(t *testing.T) {
 		done <- daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	// Wait for both beads to be attempted (CloseBead called twice — both will fail).
-	for ledger.getClaimCallCount() < 2 {
+	// Wait for both beads to reach CloseBead AND for both runs to emit a terminal.
+	// Two separate waits are needed and neither alone is enough. A claim is taken
+	// at the START of a run, so the claim count says nothing about outcomes. The
+	// close count says both runs reached the ladder this test is about -- but the
+	// terminal event is emitted AFTER CloseBead returns, so a close count of 2 can
+	// still be one terminal short, and asserting then reads a half-finished loop.
+	terminals := func() int {
+		n := 0
+		for _, et := range collector.eventTypes() {
+			if et == string(core.EventTypeRunCompleted) || et == string(core.EventTypeRunFailed) {
+				n++
+			}
+		}
+		return n
+	}
+	for ledger.getCloseCallCount() < 2 || terminals() < 2 {
 		select {
 		case <-ctx.Done():
-			t.Logf("T4-S4: only %d claim(s) seen before the budget ran out; closeErr injected; loop may have crashed",
-				ledger.getClaimCallCount())
-			t.Error("T4-S4: FINDING: work loop did not continue to next bead after CloseBead error")
+			t.Logf("T4-S4: %d claim(s), %d close attempt(s), %d terminal(s) before the budget ran out; loop may have crashed",
+				ledger.getClaimCallCount(), ledger.getCloseCallCount(), terminals())
+			t.Error("T4-S4: FINDING: work loop did not carry both beads to CloseBead and a terminal")
 			goto doneS4
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
 
 doneS4:
-	// run_completed should still be emitted even if CloseBead fails, because the
-	// event is emitted BEFORE CloseBead in the current workloop.go code path.
 	events := collector.eventTypes()
 	t.Logf("T4-S4: events emitted: %v", events)
 
 	completedCount := 0
+	failedCount := 0
 	for _, et := range events {
-		if et == string(core.EventTypeRunCompleted) {
+		switch et {
+		case string(core.EventTypeRunCompleted):
 			completedCount++
+		case string(core.EventTypeRunFailed):
+			failedCount++
 		}
 	}
-	if completedCount == 0 {
-		t.Logf("T4-S4: run_completed not seen; workloop.go emits run_completed before CloseBead — check ordering")
-	}
-	t.Logf("T4-S4: run_completed emitted %d time(s) with closeErr injected", completedCount)
 
-	// Closed IDs should be empty since CloseBead always fails.
+	// The split-brain property (hk-wfbxf, EM-052 step 6). A run whose bead close
+	// failed must not report a completed run.
+	if completedCount != 0 {
+		t.Errorf("T4-S4: FINDING: run_completed emitted %d time(s) despite CloseBead failing; the bead is not closed and the event log says otherwise (hk-wfbxf, EM-052 step 6); events=%v", completedCount, events)
+	}
+	if failedCount < 2 {
+		t.Errorf("T4-S4: FINDING: expected a run_failed terminal for each of the 2 beads, got %d; events=%v", failedCount, events)
+	}
+
+	// Nothing was closed: CloseBead returned closeErr on both attempts.
 	if ids := ledger.getClosedIDs(); len(ids) != 0 {
 		t.Errorf("T4-S4: expected no closed IDs since closeErr injected; got: %v", ids)
+	}
+
+	// A HARD close error must not reopen the bead on the ORDINARY close ladder
+	// (hk-c1ah6 / hk-hypbi). Reopening would re-dispatch work whose ledger state
+	// nobody can trust. AttentionClose is the documented exception and this fixture
+	// does not set it.
+	if opened := ledger.getReopenedIDs(); len(opened) != 0 {
+		t.Errorf("T4-S4: FINDING: hard CloseBead error reopened %v; a bead whose close failed must be left alone for operator triage (hk-c1ah6/hk-hypbi)", opened)
 	}
 
 	cancel()

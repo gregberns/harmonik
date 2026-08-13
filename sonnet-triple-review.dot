@@ -8,8 +8,14 @@
 //     and cannot meet the >=3 bar — DOT mode is required.)
 //
 // Built from specs/examples/triple-review-consolidate.dot (THE MARQUEE) +
-// the commit_gate node from specs/examples/standard-bead.dot, so the keeper
-// unit tests must build+pass BEFORE any reviewer runs. Per-node model=/effort=
+// the commit_gate node from specs/examples/standard-bead.dot, so the CORE
+// packages must build+pass BEFORE any reviewer runs. Read that precisely: the
+// gate is `make core`, and CORE_PKGS holds `./cmd/harmonik` but NOT
+// `./internal/keeper`. So the keeper tests that live beside the CLI in
+// `cmd/harmonik` DO gate the reviewers, and the tests in `internal/keeper` do
+// NOT run here at all — run those by hand. An earlier version of this header
+// said "the keeper unit tests" gate the reviewers without that split, which was
+// true of the older affected-package gate and is only half true now. Per-node model=/effort=
 // OVERRIDE the run-level pair (dot_cascade.go:781-787), so no daemon env change
 // and no global daemon restart are needed — Sonnet is scoped to THIS lane only.
 //
@@ -51,16 +57,20 @@ digraph "sonnet-triple-review" {
         role="implement the bead's change; commit required. On re-entry: address consolidated review feedback or fix the build/test failure. Keeper rules: identity-first, net LOC down, RED-then-GREEN first commit, ZERO warn/act/force threshold changes."
     ];
 
-    // commit_gate: build + vet (whole-repo) + affected-package-scoped unit/scenario
-    // tests (fail-open on infra). Keeper redesign is unit-tier (internal/keeper +
-    // cmd/harmonik/keeper*.go) so this runs fast keeper tests; reviewers run only on SUCCESS.
+    // commit_gate: `make core` — the 29 packages named at CORE_PKGS in the Makefile,
+    // run without -short, fail-closed at every step. That list is FIXED and it is not
+    // the whole repo. For the keeper redesign this graph exists for, that cuts both
+    // ways: CORE_PKGS holds `./cmd/harmonik`, so keeper tests beside the CLI run here,
+    // but it does NOT hold `./internal/keeper`, so that package's tests never run at
+    // this gate and must be run by hand. `make full` stays the merge decision on the
+    // integration branch and in CI. Reviewers run only on SUCCESS.
     commit_gate [
         type="non-agentic",
         handler_ref="shell",
         idempotency_class="idempotent",
-        tool_command="make full",
+        tool_command="make core",
         timeout="3600",
-        role="commit gate: make full — whole-repo build, vet, tests, lint allow list and scenario tier, fail-closed; exit 0 = ready for review"
+        role="commit gate: make core — the core set only: can this run beads through the queue? fail-closed; exit 0 = ready for review"
     ];
 
     // review_correctness: Sonnet. Correctness/edge-cases/contracts lens.

@@ -19,6 +19,48 @@ work to you and nothing closes your beads. You and alpha are the parallelism.
 > that closed weeks ago. None of it applies. If you are carrying any of it forward
 > from memory, drop it.
 
+
+## THE OBJECTIVE — read this before anything else in this file
+
+**Get the daemon running work reliably, so load moves onto the DGX Spark and the
+operator stops spending their own Claude and Codex tokens driving it by hand.**
+That has been the objective for weeks. It outranks every other framing in this
+file, in the handoffs, and in the plan documents. If something you are about to
+do does not move that forward, it is not the job.
+
+**The only question the per-bead gate answers is: CAN A BEAD RUN THROUGH THE
+QUEUE?** The gate is `make core` — the 29 CORE_PKGS, run without `-short`. It is
+`make core` in every TRACKED workflow graph as of 2026-08-13 (D3=v3). The
+palette under `.harmonik/workflows/` is gitignored, so a sweep over tracked files
+does not see it — check a graph you copy from rather than assuming it carries the
+current gate. Do NOT read "gitignored" as "inert": `resolveWorkflowRef` in
+`internal/daemon/moderesolve.go` returns a queue item's own workflow ref verbatim
+at Tier 0, so a bead that names a path under that directory is read and run.
+
+- **`make full` is NOT the per-bead gate and never was supposed to be.** It
+  measured 20 minutes on 2026-08-11 and every bead was paying for it. It is the
+  integration-branch-into-main decision, and it runs there and in CI only.
+  **Do not report `make full` failures as release blockers.** We know it is
+  broken. It is not the current job.
+- **Anything outside the core set is DEFERRED BY DEFAULT.** File it and move on.
+  Do not put it on a blocker list, do not rank it, do not ask about it.
+- **A defect that only appears because the gate is broad is not a product defect.**
+  Scenario-tier load flakiness, wall-clock budgets and whole-tree lint are test
+  debt, not release blockers.
+
+**Do not ask permission for anything inside this scope.** Reversing a locked
+decision that blocks the objective, deleting a rule that is doing more harm than
+good, narrowing a gate — these are expected, not escalations. There are too many
+rules in this repo and they are costing more than they protect. If a policy
+contradicts the objective above, say so plainly and change it.
+
+**Read the paragraph above as a grant FROM the operator, not as a lane deciding
+its own authority.** The operator gave it directly and it is written here for
+that reason. `AGENTS.md` says reopening a locked decision is the operator's call,
+and that finding good evidence is not the same as holding the authority to act on
+it. That still governs everything the operator has not named. A mission file does
+not silently outrank the router.
+
 ## Read in this order
 
 1. **`HANDOFF-bravo.md`** (root of the checkout you work in) — your state: what happened last session and

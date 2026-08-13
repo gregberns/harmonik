@@ -594,11 +594,15 @@ func gitPushOrigin(ctx context.Context, projectDir, targetBranch string) ([]byte
 }
 
 // commitHandlePushFailure rolls back the local ref-advance and classifies a push
-// failure (Phase D, inside the exclusion domain): a non-fast-forward rejection
-// below the retry cap fetches the new remote tip, advances the local target to
-// it, and signals a push-retry re-prepare; any other failure (or an exhausted
-// budget) is terminal. All commands (update-ref, fetch, rev-parse) are
-// commit-allowlisted (RSM-017).
+// failure (Phase D, inside the exclusion domain). A rejection classified
+// retryable by IsRetryablePushRejection, below the retry cap, fetches the new
+// remote tip, advances the local target to it, and signals a push-retry
+// re-prepare; any other failure, and an exhausted budget, is terminal. All
+// commands (update-ref, fetch, rev-parse) are commit-allowlisted (RSM-017).
+//
+// This widens the retryable class RSM-019 enumerates as "rebase conflict,
+// non-fast-forward, format failure", and it is what keeps EM-052 step 5 — a
+// push failure MUST reopen the bead — from firing on a race that recovers.
 //
 // The rollback is COMPARE-AND-SWAP on advancedTip: because the push now runs
 // OUTSIDE the domain (Phase B), a sibling merge may have advanced+published the
@@ -612,17 +616,16 @@ func commitHandlePushFailure(ctx context.Context, projectDir, targetBranch, prio
 		gitUpdateRefBestEffort(ctx, projectDir, targetBranch, priorMainTip)
 	}
 
-	pushOutStr := string(pushOut)
-	isNonFF := strings.Contains(pushOutStr, "non-fast-forward") || strings.Contains(pushOutStr, "[rejected]")
-	if !isNonFF || pushAttempt >= maxPushAttempts {
+	if !IsRetryablePushRejection(string(pushOut)) || pushAttempt >= maxPushAttempts {
 		return commitOutcome{done: &Outcome{
 			Success: false,
 			Reason:  fmt.Sprintf("push_failed: %v\n%s", pushErr, pushOut),
 		}}
 	}
 
-	// Non-FF push rejection: fetch the new remote tip, advance the local target to
-	// it, and re-prepare (rebase) OUTSIDE the domain on retry.
+	// Recoverable ref-update rejection (stale local target, or a lost push race):
+	// fetch the new remote tip, advance the local target to it, and re-prepare
+	// (rebase) OUTSIDE the domain on retry.
 	fetchCmd := exec.CommandContext(ctx, "git", "fetch", "origin", targetBranch)
 	fetchCmd.Dir = projectDir
 	if fetchOut, fetchErr := fetchCmd.CombinedOutput(); fetchErr != nil {

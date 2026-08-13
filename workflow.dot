@@ -8,7 +8,7 @@
 // Topology:
 //   start
 //   → implement (agent: implementer; commit required)
-//   → commit_gate (tool: make full — the whole-repo merge decision, fail-closed)
+//   → commit_gate (tool: make core — the core set: can beads run through the queue? fail-closed)
 //     SUCCESS                   → review
 //     FAIL + deterministic      → implement (fix-loop, capped at 3)
 //     FAIL + transient          → commit_gate (self-loop, capped at 2)
@@ -26,20 +26,23 @@
 //
 // Key design decisions:
 //   D1=A: single shell commit_gate node (NOT separate build/test/scenario nodes).
-//   D3=v2: the gate is `make full` — WHOLE REPO, fail-closed. This reverses
-//     the affected-package-scoped, fail-open v1.1 gate and deletes the script
-//     that implemented it. Two reasons. Scoping asked git what changed since
-//     main to choose packages: main is hundreds of commits behind, and even
-//     from a fresh base the question cannot find a break in a package the
-//     change did not touch, which is the usual case because internal/daemon
-//     imports eight other packages. Measured 2026-08-03, the whole repo costs
-//     about 13 seconds more than internal/daemon alone, so the scoping bought
-//     nothing. And the script had five ways to APPROVE work that never passed
-//     (compile failure, timeout, signal kill, unrecognized exit code, and a
-//     retry that allowed when the second run passed) against one way to block.
-//     The v1.1 rationale was that a pre-existing RED in an unrelated package
-//     would block every bead. That is true and it is the correct outcome: a
-//     tree with a red test is a tree nothing should merge into. Fix the red.
+//   D3=v3: the gate is `make core` — THE CORE SET ONLY, fail-closed. Operator
+//     instruction, standing: the only question this gate answers is "can this
+//     run beads through the queue?". `make core` is named and built for exactly
+//     that — the 29 CORE_PKGS, run WITHOUT `-short`, so it executes TestSmokeLoop
+//     (real ledger, real worktree, real merge, bead to closed) and
+//     TestScenario_HappyPath_N1. `make full` runs those same packages WITH
+//     `-short` and skips both; it stays the merge decision on the integration
+//     branch and in CI, where nothing is blocked waiting on it.
+//     This is NOT the fail-open v1.1 gate that v2 deleted. That one chose
+//     packages by asking git what changed since main — main is over a thousand
+//     commits behind, so the question was unanswerable — and it had five ways to
+//     APPROVE work that never passed against one way to block. CORE_PKGS is a
+//     FIXED list in the Makefile and inherits neither defect.
+//     v2's reason for going whole-repo was that a red in an unrelated package
+//     should block every bead. That is a defensible merge policy and it belongs
+//     on the merge decision, not on the per-bead gate: a broad gate made the
+//     scenario tier's own load-flakiness into a release blocker three times over.
 //   The SOLE-inbound-edge invariant: no path reaches close except review→close[APPROVE].
 //     This is a golden-test-asserted contract (see internal/workflow/scenario_standard_bead_hkp0kum_test.go).
 //
@@ -91,16 +94,36 @@ digraph "standard-bead" {
         role="implement the bead's change; commit required. On re-entry: address reviewer feedback or fix the build/test failure."
     ];
 
-    // commit_gate: `make full` — the merge decision, defined in the Makefile.
-    // It runs the format check, `go build ./...`, `go vet ./...`, the tagged
-    // vet, the subsystem freeze greps, the changed-line lint, a compile of
-    // every _test.go file, `go test -short -count=1 ./...` over EVERY package,
-    // the whole-tree lint allow list, the tagged scenario tier and the module
-    // hygiene checks.
+    // commit_gate: `make core` — the per-bead gate, defined in the Makefile.
+    // It runs the static half (format, `go build ./...`, `go vet ./...`, the
+    // subsystem freeze greps, the changed-line lint) and then the 29 CORE_PKGS
+    // WITHOUT `-short`. That set is the run path: queue, queue wiring, ledger
+    // CLI, workspace, daemon, run loop / exec / lease / launch, workflow and the
+    // graph engine, merge, merge queue, core, handler, git probe and the CLI.
     //
-    // Fail-closed at every step. No package scoping, no retry, and no path that
-    // reports SUCCESS on a timeout, an OOM, a compile failure or an exit code
-    // nothing recognised. scripts/gate-fails-closed-test.sh holds that.
+    // A PER-BEAD GATE MUST BE CHEAP. `make full` tests every package and then
+    // runs the whole scenario tier on top of that, and every bead was paying
+    // for it; that is not what it is for. It measured 20 minutes on 2026-08-11
+    // at 4ebd8a334 — timed start to end, load sampled every 15 s, in
+    // assessments/2026-08-11-1434-gate-on-alpha-tip/01-EVIDENCE.md section 2.
+    // `make full` is the integration-branch-into-main decision and it runs
+    // there and in CI only.
+    //
+    // Fail-closed at every step. No retry, and no path that reports SUCCESS on a
+    // timeout, an OOM, a compile failure or an exit code nothing recognised.
+    //
+    // This gate IS package-scoped — to the fixed CORE_PKGS list named above. An
+    // earlier version of this comment said "no package scoping", which the same
+    // comment then contradicted eight lines up by naming 29 packages. What the
+    // v1.1 gate did and this one does not is DERIVE the scope, by asking git what
+    // changed since main. A fixed list in the Makefile is still a scope; it is
+    // just one that cannot silently shrink to nothing.
+    //
+    // scripts/gate-fails-closed-test.sh covers `core` as of 2026-08-13, and the
+    // claim it holds is exactly one: STRUCTURALLY, every step of `make core`
+    // propagates its exit status. Its behavioural cases drive `gate-test-compile`
+    // and `full` and do not reach `core`. So read it as proof that no step of this
+    // gate swallows a failure — not as proof that the gate tests the right things.
     //
     // Keeping the gate here rather than in the graph is deliberate: the graph
     // used to carry its own copy of the command, so the graph and the Makefile
@@ -113,7 +136,7 @@ digraph "standard-bead" {
         type="non-agentic",
         handler_ref="shell",
         idempotency_class="idempotent",
-        tool_command="make full",
+        tool_command="make core",
         // The node timeout must clear the work the node does, or a real red can
         // never report. That is the history here: at 900s this node timed out
         // deterministically, was classified TRANSIENT, burned its self-loop
@@ -129,7 +152,7 @@ digraph "standard-bead" {
         // cache and a loaded box (load average 43.67 has been observed during
         // this node). A timeout here is a hard FAIL, never an approval.
         timeout="3600",
-        role="commit gate: make full — whole-repo build, vet, tests, lint allow list and scenario tier, fail-closed; exit 0 = ready for review"
+        role="commit gate: make core — the core set only: can this run beads through the queue? fail-closed; exit 0 = ready for review"
     ];
 
     // review: agentic reviewer. Emits an Outcome whose preferred_label

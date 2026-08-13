@@ -248,6 +248,16 @@ core-loop-lt: build-all  ## WS4-5 forced LT gate: inits scratch from LOCAL check
 	bash scripts/scratch-daemon.sh init "$(LT_SCRATCH)" --source "$(CURDIR)" --rev "$$(git -C "$(CURDIR)" rev-parse HEAD)"
 	@# Seed the fixture beads into the fresh scratch DB + emit the cell->bead_id map so the
 	@# scoped cell launches (isolates origin + pre-creates the pi landing branch).
+	@#
+	@# SEED BEFORE BUILD IS DELIBERATE, and it is safe only because of two things
+	@# (hk-48zdw). The seed writes an untracked review-loop.dot into the scratch
+	@# root, and the matrix step below builds after it, so this ordering used to
+	@# stamp vcs.modified=true on the gate binary and void every run. Reordering to
+	@# build-then-seed does NOT fix that: the file has to stay in the tree for the
+	@# whole run, so any rebuild the daemon triggers would dirty the stamp again.
+	@# What fixes it is that the file is IGNORED (root-anchored /review-loop.dot in
+	@# .gitignore, invisible to Go's stamp), and that the matrix step now asserts
+	@# the binary's stamp before it grades anything. Do not "tidy" this order.
 	bash scripts/core-loop-seed.sh "$(LT_SCRATCH)" "$(LT_SEED_MAP)"
 	@# Run the scoped matrix: MATRIX_SEED_MAP wires per-cell seeds; --harnesses/--substrates
 	@# scope to pi:local; --assert --gate --json keep the forced zero-PENDING gate + JSON grid.
@@ -659,12 +669,20 @@ twins: build-twin-generic build-twin-claude build-twin-pi build-twin-fail build-
 build-all: build twins  ## go build ./... + all twins (full build artifact set)
 
 # ---------------------------------------------------------------------------
-# Secret scan — blocks staging content that adds API keys, credential
-# patterns, or .env files. Invoked by the agent-driven validation command
-# (git hooks are retired); also callable standalone to audit a working tree.
+# Secret scan — refuses content that adds API keys, credential patterns, or
+# .env files.
+#
+# THIS TARGET IS THE STANDALONE ONE, and it is not where the scan runs. It reads
+# the INDEX, for use before a commit is made. The gates run AFTER the commit,
+# when the index is empty, so they call the script directly with a committed
+# scope: `--head-only` from gate-static and `--range` from full. Nothing depends
+# on this target, and from 2026-07-23, when lefthook was deleted, to 2026-08-12
+# nothing depended on the scan at all while four documents said it ran —
+# scripts/gate-fails-closed-test.sh now asserts both call sites are in the
+# expanded step list.
 # ---------------------------------------------------------------------------
 .PHONY: secret-scan
-secret-scan:  ## Scan staged diff for API keys / credentials / .env files
+secret-scan:  ## Scan the staged index for API keys / credentials / .env files (gates use --head-only / --range)
 	scripts/secret-scan.sh
 
 # ---------------------------------------------------------------------------
@@ -895,6 +913,10 @@ script-tests:  ## Self-tests for the shell the gate depends on
 	scripts/lint-changed-test.sh
 	scripts/changed-func-coverage-test.sh
 	scripts/queue-daemon-count-test.sh
+	scripts/required-check-name-gate-test.sh
+	scripts/commit-msg-gate-test.sh
+	scripts/secret-scan-test.sh
+	scripts/pipefail-grepq-gate-test.sh
 	scripts/with-lane-gocache.sh scripts/reachability-gate-test.sh
 
 # freeze-gates — the per-subsystem "do not move this back" greps. Cheap
@@ -918,6 +940,8 @@ freeze-gates:  ## Subsystem freeze / ratchet greps (structural, sub-second each)
 	scripts/workloop-scheduler-freeze-gate.sh
 	scripts/queue-status-writer-ratchet.sh
 	scripts/lint-allow-ratchet.sh
+	scripts/required-check-name-gate.sh
+	scripts/pipefail-grepq-gate.sh
 
 # gate-static — everything fast and full share that runs no test.
 #
@@ -929,14 +953,69 @@ freeze-gates:  ## Subsystem freeze / ratchet greps (structural, sub-second each)
 # Do NOT swap in with-isolated-gocache.sh: it deletes the cache on exit, so
 # every line here would build cold.
 .PHONY: gate-static
-gate-static:  ## Shared static half of fast and full: format, build, vet, freeze greps, changed-line lint
+gate-static:  ## Shared static half of fast and full: script self-tests, format, build, vet, freeze greps, changed-line lint
+	$(MAKE) script-tests
+	$(MAKE) gate-static-product
+
+# gate-static-product — the static half MINUS the script self-tests.
+#
+# WHY THIS SPLIT EXISTS. `script-tests` tests the GATE TOOLING — the shell
+# scripts that implement the gates — not the product. It costs minutes and it
+# runs before a single line of product code is checked. That is right for `fast`
+# and `full`, which are developer and CI targets. It is wrong for the per-bead
+# commit gate, whose only question is "can this run beads through the queue?".
+# A bead's gate must not spend its first several minutes proving that
+# lint-allow-test.sh still works.
+#
+# `make core` therefore calls THIS target, and `fast` / `full` keep the script
+# self-tests through `gate-static` above.
+#
+# WHAT THE SPLIT COSTS, stated plainly, because an earlier version of this
+# comment claimed it cost nothing. `make core` is the only gate the per-bead
+# path runs on its own, and it now runs the gate scripts WITHOUT running the
+# tests that prove those scripts fail closed. secret-scan.sh, commit-msg-gate.sh
+# and lint-changed.sh all still execute here; what no longer executes on this
+# path is the proof that they still refuse what they exist to refuse. That proof
+# now lives only in `fast`, `full` and CI.
+#
+# Read that as a real reduction, not a technicality:
+# scripts/gate-fails-closed-test.sh exists because secret-scan.sh had no caller
+# for twenty days AND was admitting a key when a test was finally written for it.
+# That test just moved off the continuously-run path onto the hand-run one.
+#
+# The trade is still worth making — a bead's gate must not spend its first
+# minutes proving that lint-allow-test.sh works — but it is a trade, and the
+# next person to read this should not have to rediscover which half was given
+# up. Refs D3=v3 (see internal/daemon/standard-bead.dot).
+.PHONY: gate-static-product
+gate-static-product:  ## Static half without the script self-tests (what `make core` runs)
 	@if [ -z "$(TIMEOUT_BIN)" ]; then \
 		echo "NOTE: no timeout/gtimeout on PATH, so the per-step wall-clock cap is inert."; \
 		echo "      go test -timeout=$(GATE_GO_TIMEOUT) still bounds a hung TEST, but a hang in"; \
 		echo "      the toolchain itself will hang instead of failing. brew install coreutils."; \
 	fi
-	$(MAKE) script-tests
 	$(MAKE) fmt-check
+	# The commit just made must carry a well-formed message and honest review
+	# trailers. About a tenth of a second. This is the only place a bad message
+	# CAN fail a build, and the only moment failing is fair: the commit is
+	# yours, it is the tip, and amending it costs nothing.
+	#
+	# READ "CAN" AS THE WHOLE OF THE CLAIM. --head-only demotes itself to advice
+	# and exits 0 whenever the history does not descend from the message
+	# baseline named in that script, and that baseline is not an ancestor of
+	# main. So on main a bad message fails NOWHERE: this call goes advisory and
+	# the ledger call in `full` never fails by design. An earlier version of
+	# this comment said "the ONLY place a bad message fails a build" flatly,
+	# which reads as a guarantee that only holds on a branch that descends from
+	# the baseline. Bead hk-commit-msg-gate-advisory-on-main-ap068 is the record.
+	scripts/commit-msg-gate.sh --head-only
+	# The same moment, for credentials. --head-only, NOT the default index scope.
+	# The gates run after the commit is made, when the ordinary flow leaves
+	# nothing staged, so the index scope here would read whatever a developer
+	# happened to leave behind rather than the change under test. Not a
+	# GUARANTEED no-op — stage a key and the index scope does block it — but it
+	# answers a question nobody asked, and it is silent when it answers nothing.
+	scripts/secret-scan.sh --head-only
 	scripts/with-lane-gocache.sh go build ./...
 	scripts/with-lane-gocache.sh go vet ./...
 	scripts/with-lane-gocache.sh $(MAKE) vet-tagged
@@ -1043,8 +1122,9 @@ endef
 # is the only one that can see an EXTRA finding in a file-and-linter pair the
 # allow list already carries, because the list holds no count.
 #
-# LAST, and NOT inside gate-static. The assessor's gate calls gate-static too,
-# and a lint red there would block every test before it ran.
+# LAST, and NOT inside the shared static half. The assessor's gate is `make
+# core`, which reaches that half through gate-static-product, and a lint red
+# there would block every test before it ran.
 #
 # THE COST OF RUNNING IT LAST, and why it is still the right place. make stops
 # at the first failing step, so a red TEST step hides this one. The finding is
@@ -1112,7 +1192,7 @@ fast:  ## THE inner loop: format, build, vet, compile every test, unit-test the 
 # ---------------------------------------------------------------------------
 .PHONY: core
 core: twins  ## The core set only (CHARTER §3): can this run beads through the queue?
-	$(MAKE) gate-static
+	$(MAKE) gate-static-product
 	$(call RUN_TESTS_AND_REPORT,make core,$(CORE_PKGS),)
 
 # gate-test-report-probe — the smallest real use of the test step above.
@@ -1141,6 +1221,29 @@ gate-test-report-probe:  ## Smallest real use of the test step (drives scripts/g
 .PHONY: full
 full:  ## THE merge decision: everything in fast over EVERY package, plus the lint allow list, scenario tier, module hygiene
 	$(MAKE) gate-static
+	# The ledger: every commit from the grandfather baseline forward, named and
+	# counted. It REPORTS and never fails. Everything in that range is already
+	# written and most of it arrived by merge, and amending a commit another
+	# lane can see is what this project refuses outright — so there is no legal
+	# repair for a bad message in there. A gate that refuses what cannot be
+	# fixed gets deleted, not obeyed. gate-static above is where enforcement is
+	# MEANT to live — and on main it does not, because --head-only goes advisory
+	# off the message baseline and this ledger call never fails by design, so on
+	# main neither mode blocks anything. An earlier version of this line said
+	# "gate-static above is the enforcement" without that qualifier. Bead
+	# hk-commit-msg-gate-advisory-on-main-ap068 is the record.
+	scripts/commit-msg-gate.sh
+	# The credential scan, and this one FAILS. NOT the same span as the message
+	# ledger above: the two scripts name different baselines. The credential
+	# baseline is the older of the two, so the message ledger's span nests
+	# INSIDE this one (measured 2026-08-12) and this one is by far the wider.
+	# Exact commit counts are not quoted here because they move with every
+	# commit. This one fails where the ledger only reports, because a bad
+	# message on a merged commit has no legal repair and a leaked key has one —
+	# rotate it, and take the value out of the tree before the merge lands — so
+	# refusing here is a demand that can be met. About 5 to 6 seconds over the
+	# two hundred thousand-odd added lines this branch carries.
+	scripts/secret-scan.sh --range
 	$(MAKE) gate-test-compile
 	$(call RUN_TESTS_AND_REPORT,make full,./...,-short)
 	$(MAKE) lint-allow
@@ -1153,6 +1256,24 @@ full:  ## THE merge decision: everything in fast over EVERY package, plus the li
 	$(MAKE) test-subprocess
 	$(MAKE) test-scenario
 	$(MAKE) module-hygiene
+
+# ---------------------------------------------------------------------------
+# full-guarded — the SAME merge decision, run only when the box can answer.
+#
+# Not a third tier. There are still two targets: this one runs `make full` and
+# adds nothing to it. What it adds is a refusal. `make full` has three ways to
+# report a failure that is not in the code and all three are silent — another
+# heavy run sharing the box, a process holding the sidecar lock on the Claude
+# config, or free disk under the floor. The script refuses to start on any of
+# them, samples disk and the lock while the suite runs, and prints FULL_RC so
+# the reader has an exit code that did not come out of a pipeline.
+#
+# The script calls `make full` itself, so the guard must NOT move into `full`.
+# That recurses with no bottom.
+# ---------------------------------------------------------------------------
+.PHONY: full-guarded
+full-guarded:  ## `make full` behind a pre-flight that refuses a busy box, a held config lock or low disk
+	scripts/run-full.sh
 
 # ---------------------------------------------------------------------------
 # lint-allow — THE HOOK for the whole-tree lint verdict.
@@ -1431,10 +1552,15 @@ review-verdict:  ## Cross-check diff-keyed verdict: APPROVE → pass; absent/REQ
 # Pins dev tools into ./.tools/ to avoid polluting the global GOPATH.
 # Fresh-clone setup: make bootstrap  (installs tools)
 #
-# NOTE: git hooks are RETIRED. lefthook (and its self-re-arming `install`)
-# was removed — validation now runs via the agent-driven validation command,
-# not a pre-commit/pre-push/commit-msg hook. scripts/validate-commit-msg.sh
-# and scripts/secret-scan.sh remain callable directly by that command.
+# NOTE: git hooks are RETIRED. lefthook (and its self-re-arming `install`) was
+# removed — validation runs from the two gate targets, not from a
+# pre-commit/pre-push/commit-msg hook. gate-static calls
+# scripts/commit-msg-gate.sh --head-only and scripts/secret-scan.sh --head-only
+# over the commit just made. `make full` adds scripts/commit-msg-gate.sh with no
+# argument (the message ledger, which reports and never fails) and
+# scripts/secret-scan.sh --range (which fails on a finding).
+# scripts/validate-commit-msg.sh stays callable on a message file, and
+# scripts/secret-scan.sh stays callable with no argument, which reads the index.
 # ---------------------------------------------------------------------------
 .PHONY: tools
 tools:  ## Install pinned dev tools into ./.tools/ (gofumpt, gci, golangci-lint, govulncheck, deadcode)

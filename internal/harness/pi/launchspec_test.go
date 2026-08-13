@@ -19,6 +19,7 @@ package pi_test
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -971,10 +972,20 @@ func TestBuildPiModelsJSON_ModelIDExtraction(t *testing.T) {
 	}
 }
 
-// TestBuildPiLaunchSpec_BaseURL_NoInjectionOnResumeTurn verifies that when this is
-// a resume turn (priorSessionID != nil), NO models.json is written and no
-// PI_CODING_AGENT_DIR is injected — even if baseURL is set.
-func TestBuildPiLaunchSpec_BaseURL_NoInjectionOnResumeTurn(t *testing.T) {
+// TestBuildPiLaunchSpec_BaseURL_InjectsDirButNotModelsJSONOnResumeTurn verifies the SPLIT guard
+// on a resume turn (priorSessionID != nil) with baseURL set:
+//
+//   - PI_CODING_AGENT_DIR IS injected, and points at the same per-run pi-agent
+//     dir the initial turn used. That directory holds Pi's session store, so
+//     without the variable a resume looks for its session under the operator
+//     home and dies with "No session found matching '<uuid>'" (hk-6hfev).
+//   - models.json is NOT re-written. The initial turn already wrote it, and
+//     Provider/Model are ignored on a resume turn, so a rewrite would clobber a
+//     good config with one keyed on an empty provider.
+//
+// This test used to assert the opposite of the first bullet and so pinned the
+// defect in place; the models.json half is unchanged and still correct.
+func TestBuildPiLaunchSpec_BaseURL_InjectsDirButNotModelsJSONOnResumeTurn(t *testing.T) {
 	// Not parallel: t.Setenv mutates process env.
 	//nolint:gosec // G101: synthetic environment-variable name for this test only.
 	const apiKeyEnv = "TEST_PI_BASE_URL_RESUME_KEY"
@@ -983,11 +994,24 @@ func TestBuildPiLaunchSpec_BaseURL_NoInjectionOnResumeTurn(t *testing.T) {
 	workDir := t.TempDir()
 	sessionID := "pi-resume-session-id"
 
+	// Stand in for the initial turn's output: a models.json already on disk with
+	// a sentinel body. A resume turn must leave it exactly as it is.
+	piAgentDir := filepath.Join(workDir, ".harmonik", "pi-agent")
+	if err := os.MkdirAll(piAgentDir, 0o700); err != nil {
+		t.Fatalf("seed pi-agent dir: %v", err)
+	}
+	modelsPath := filepath.Join(piAgentDir, "models.json")
+	const sentinel = `{"providers":{"written-by-the-initial-turn":{}}}`
+	if err := os.WriteFile(modelsPath, []byte(sentinel), 0o600); err != nil {
+		t.Fatalf("seed models.json: %v", err)
+	}
+
 	rc := pi.ExportedPiRunCtx{
-		WorkspacePath:    workDir,
-		BeadID:           "hk-z13jz-resume",
-		Provider:         "mylocal",
-		Model:            "mylocal/ornith",
+		WorkspacePath: workDir,
+		BeadID:        "hk-z13jz-resume",
+		// Provider/Model are deliberately EMPTY: they are documented as ignored on
+		// a resume turn, and the daemon does not have to supply them. This is what
+		// makes re-writing models.json here unsafe.
 		APIKeyEnv:        apiKeyEnv,
 		BaseURL:          "http://dgx.local:8551/v1",
 		PriorSessionID:   &sessionID, // resume turn
@@ -999,11 +1023,23 @@ func TestBuildPiLaunchSpec_BaseURL_NoInjectionOnResumeTurn(t *testing.T) {
 		t.Fatalf("ExportedBuildPiLaunchSpec: unexpected error: %v", err)
 	}
 
-	// On a resume turn: no PI_CODING_AGENT_DIR injected.
-	for _, kv := range spec.Env {
-		if strings.HasPrefix(kv, "PI_CODING_AGENT_DIR=") {
-			t.Errorf("PI_CODING_AGENT_DIR injected on resume turn: %q", kv)
-		}
+	// The resume turn MUST carry the session directory.
+	gotDir := findEnvValue(t, spec.Env, "PI_CODING_AGENT_DIR")
+	if gotDir == "" {
+		t.Fatal("PI_CODING_AGENT_DIR absent on resume turn; pi would look for its " +
+			"session under the operator home and exit 1 (hk-6hfev)")
+	}
+	if gotDir != piAgentDir {
+		t.Errorf("PI_CODING_AGENT_DIR = %q; want the per-run pi-agent dir %q", gotDir, piAgentDir)
+	}
+
+	// And it MUST NOT re-write models.json.
+	raw, readErr := os.ReadFile(modelsPath) //nolint:gosec // G304: path is this test's own t.TempDir().
+	if readErr != nil {
+		t.Fatalf("read models.json after resume turn: %v", readErr)
+	}
+	if string(raw) != sentinel {
+		t.Errorf("models.json rewritten on resume turn:\n got: %s\nwant: %s", raw, sentinel)
 	}
 }
 

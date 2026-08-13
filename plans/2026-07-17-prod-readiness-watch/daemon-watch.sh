@@ -10,7 +10,11 @@ LOG="plans/2026-07-17-prod-readiness-watch/WATCH-daemon.log"
 last="up"
 echo "$(date -u +%FT%TZ) WATCH-START admiral daemon watcher armed" >> "$LOG"
 while true; do
-  if harmonik supervise status 2>/dev/null | grep -q 'status:.*running' \
+  # Capture, then match the capture. `supervise status | grep -q` would let the
+  # producer die on SIGPIPE once its output outgrows the pipe buffer, and a
+  # `pipefail` shell would read a healthy daemon as DOWN.
+  sup="$(harmonik supervise status 2>/dev/null)"
+  if grep -q 'status:.*running' <<<"$sup" \
      && harmonik digest >/dev/null 2>&1; then
     if [ "$last" = "down" ]; then
       echo "$(date -u +%FT%TZ) DAEMON-RECOVERED (supervisor+comms back up)" >> "$LOG"

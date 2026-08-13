@@ -130,8 +130,11 @@ func TestRunQueueCancel_NameArg_ArchivesNamedQueue(t *testing.T) {
 	}
 }
 
-// TestRunQueueCancel_AbsentQueue_ExitsZero verifies that cancelling a
-// queue that has no on-disk file exits 0 (nothing to cancel).
+// TestRunQueueCancel_AbsentQueue_ExitsZero verifies that a cancel that names
+// NO queue and finds no default queue exits 0 (nothing to cancel). The caller
+// named nothing, so there is no name to be wrong about. A cancel that DOES name
+// a queue that does not exist is refused instead — see
+// TestRunQueueCancel_UnknownNamedQueue_IsRefused.
 func TestRunQueueCancel_AbsentQueue_ExitsZero(t *testing.T) {
 	t.Parallel()
 
@@ -359,9 +362,14 @@ func TestRunQueueCancel_CorruptStub_ArchivesByName(t *testing.T) {
 	}
 }
 
-// TestRunQueueCancel_QueueIDFlag_NotFound_ExitsZero verifies that --queue-id
-// with a UUID that doesn't match any file exits 0 (nothing to cancel).
-func TestRunQueueCancel_QueueIDFlag_NotFound_ExitsZero(t *testing.T) {
+// TestRunQueueCancel_QueueIDFlag_NotFound_IsRefused verifies that --queue-id
+// with a UUID that matches no file is REFUSED.
+//
+// This test asserted exit 0 and "no active queue found" until hk-wka5o. That
+// was the defect written down: the caller named one specific queue by its id,
+// was told nothing was wrong, and no queue was cancelled. Reversed deliberately
+// — see TestRunQueueCancel_UnknownQueueID_IsRefused for the wording.
+func TestRunQueueCancel_QueueIDFlag_NotFound_IsRefused(t *testing.T) {
 	t.Parallel()
 
 	projectDir := queueCliFixtureTempDir(t)
@@ -372,11 +380,11 @@ func TestRunQueueCancel_QueueIDFlag_NotFound_ExitsZero(t *testing.T) {
 
 	got := cli.RunQueueCancel(context.Background(), []string{"--project", projectDir, "--queue-id", "00000000-dead-7000-beef-000000000000"}, &out, &errOut)
 
-	if got != 0 {
-		t.Errorf("RunQueueCancel --queue-id not-found: exit = %d, want 0", got)
+	if got != 2 {
+		t.Errorf("RunQueueCancel --queue-id not-found: exit = %d, want 2; stdout=%q stderr=%q", got, out.String(), errOut.String())
 	}
-	if !strings.Contains(out.String(), "no active queue found") {
-		t.Errorf("RunQueueCancel --queue-id not-found: stdout %q does not mention 'no active queue found'", out.String())
+	if !strings.Contains(errOut.String(), "no queue with id") {
+		t.Errorf("RunQueueCancel --queue-id not-found: stderr %q does not refuse the id", errOut.String())
 	}
 }
 
@@ -487,4 +495,474 @@ func mustJSONMarshal(t *testing.T, v any) json.RawMessage {
 		t.Fatalf("mustJSONMarshal: %v", err)
 	}
 	return data
+}
+
+// ---------------------------------------------------------------------------
+// hk-wka5o — a cancel aimed at a queue name that does not exist is refused
+// ---------------------------------------------------------------------------
+//
+// `harmonik queue cancel --queue does-not-exist` printed "no active queue
+// found" and exited 0. The name the caller typed was never echoed, so a caller
+// that branches on the exit code was told the queue it asked to stop had
+// nothing wrong with it, and no queue was cancelled.
+//
+// The three sibling verbs already refuse this: `queue pause` and `queue resume`
+// return queue.UnknownQueueError, and `queue recover` returns a queue_not_found
+// recovery rejection. Cancel is checked here against the SAME error value and
+// the same exit code the pause/resume pair use.
+
+// TestRunQueueCancel_UnknownNamedQueue_IsRefused covers both spellings of a
+// caller-supplied name: the --queue flag and the backward-compatible
+// positional. Neither may report success.
+func TestRunQueueCancel_UnknownNamedQueue_IsRefused(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"queue-flag", []string{"--queue", "mian"}},
+		{"positional", []string{"mian"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			projectDir := queueCliFixtureTempDir(t)
+			// One queue that DOES exist, so the refusal has a near-miss to name.
+			cancelFixtureWriteQueue(t, projectDir, "main")
+
+			var out strings.Builder
+			var errOut strings.Builder
+
+			args := append([]string{"--project", projectDir}, tc.args...)
+			got := cli.RunQueueCancel(context.Background(), args, &out, &errOut)
+
+			if got != 2 {
+				t.Errorf("RunQueueCancel %v: exit = %d, want 2 — a queue name that matches nothing is refused, the same as `queue pause`; stdout=%q stderr=%q",
+					tc.args, got, out.String(), errOut.String())
+			}
+			if strings.Contains(out.String(), "archived") {
+				t.Errorf("RunQueueCancel %v: stdout claims an archive happened: %q", tc.args, out.String())
+			}
+			// The message body is queue.UnknownQueueError's, byte for byte with
+			// the one `queue pause` prints. Asserted as literal text so a silent
+			// reword of the shared error shows up here.
+			for _, want := range []string{
+				`no queue named "mian"`,
+				"changed nothing and no queue was cancelled",
+				"queues that exist: main",
+			} {
+				if !strings.Contains(errOut.String(), want) {
+					t.Errorf("RunQueueCancel %v: stderr %q does not contain %q", tc.args, errOut.String(), want)
+				}
+			}
+		})
+	}
+}
+
+// TestRunQueueCancel_UnknownNamedQueue_NoQueuesAtAll pins the empty-project
+// wording. "none are loaded" is the sibling's phrasing for a project that holds
+// no queues, and it must not read as an empty list.
+func TestRunQueueCancel_UnknownNamedQueue_NoQueuesAtAll(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueCancel(context.Background(), []string{"--project", projectDir, "--queue", "mian"}, &out, &errOut)
+
+	if got != 2 {
+		t.Errorf("RunQueueCancel unknown queue in empty project: exit = %d, want 2; stderr=%q", got, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "queues that exist: none are loaded") {
+		t.Errorf("RunQueueCancel unknown queue in empty project: stderr %q does not say no queues are loaded", errOut.String())
+	}
+}
+
+// TestRunQueueCancel_RefusalComesFromTheSharedError checks that cancel's
+// refusal text keeps TRACKING queue.UnknownQueueError's current output. It
+// builds the expected text by calling the renderer, so it cannot tell a
+// rendered string from a byte-identical hand-rolled copy — today they pass it
+// alike. What it catches is the divergence: reword the renderer and this test
+// rewords with it, so any copy left behind in cancel.go fails here.
+//
+// That is the half the literal-text assertions in
+// TestRunQueueCancel_UnknownNamedQueue_IsRefused cannot cover. Those pin the
+// wording as it stands now, which means a reword makes them fail and someone
+// edits them — against whatever cancel prints, copy or not.
+//
+// It compares cancel to cancel on purpose: it is a coupling check, not a
+// cross-verb one. Whether pause and cancel agree as SENTENCES is a property of
+// the renderer, and it is held there —
+// internal/queue TestUnknownQueueErrorVerbsDifferOnlyWhereIntended.
+func TestRunQueueCancel_RefusalComesFromTheSharedError(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	cancelFixtureWriteQueue(t, projectDir, "canary")
+
+	var out strings.Builder
+	var errOut strings.Builder
+	cli.RunQueueCancel(context.Background(), []string{"--project", projectDir, "--queue", "canry"}, &out, &errOut)
+
+	rendered := (&queue.UnknownQueueError{
+		Verb:           "cancel",
+		PastTense:      "cancelled",
+		NormalizedName: "canry",
+		KnownNames:     []string{"canary"},
+	}).Error()
+	if !strings.Contains(errOut.String(), rendered) {
+		t.Errorf("RunQueueCancel refusal text drifted from queue.UnknownQueueError:\n got: %q\nwant substring: %q", errOut.String(), rendered)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// hk-wka5o — a queue_id that matches nothing is refused too
+// ---------------------------------------------------------------------------
+//
+// A uuid is the MOST explicit way a caller can name a target, so it is the last
+// place a silent success belongs. This path used to print "no active queue
+// found (queue_id not found)" and exit 0.
+
+// TestRunQueueCancel_UnknownQueueID_IsRefused pins the refusal and its wording:
+// a uuid is reported as an ID, not as a name.
+func TestRunQueueCancel_UnknownQueueID_IsRefused(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	cancelFixtureWriteQueue(t, projectDir, "canary")
+
+	const missing = "00000000-0000-7000-8000-000000000000"
+
+	var out strings.Builder
+	var errOut strings.Builder
+	got := cli.RunQueueCancel(context.Background(), []string{"--project", projectDir, "--queue-id", missing}, &out, &errOut)
+
+	if got != 2 {
+		t.Errorf("RunQueueCancel --queue-id <no match>: exit = %d, want 2 — a uuid that matches nothing is the most explicit miss there is; stdout=%q stderr=%q",
+			got, out.String(), errOut.String())
+	}
+	if strings.Contains(out.String(), "archived") {
+		t.Errorf("RunQueueCancel --queue-id <no match>: stdout claims an archive happened: %q", out.String())
+	}
+	for _, want := range []string{
+		`no queue with id "` + missing + `"`,
+		"changed nothing and no queue was cancelled",
+		"queues that exist: canary",
+	} {
+		if !strings.Contains(errOut.String(), want) {
+			t.Errorf("RunQueueCancel --queue-id <no match>: stderr %q does not contain %q", errOut.String(), want)
+		}
+	}
+	// A uuid is not a name, and saying "named" of one misreports what the
+	// caller typed back at them.
+	if strings.Contains(errOut.String(), "no queue named") {
+		t.Errorf("RunQueueCancel --queue-id <no match>: a uuid was reported as a queue NAME:\n%s", errOut.String())
+	}
+}
+
+// TestRunQueueCancel_QueueIDThatMatches_StillCancels is the control. The
+// refusal must fire only on a miss.
+func TestRunQueueCancel_QueueIDThatMatches_StillCancels(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	queueFile := cancelFixtureWriteQueue(t, projectDir, "canary")
+
+	// The id cancelFixtureWriteQueue mints for this name.
+	const present = "aaaaaaaa-0000-7000-8000-canary000000"
+
+	var out strings.Builder
+	var errOut strings.Builder
+	got := cli.RunQueueCancel(context.Background(), []string{"--project", projectDir, "--queue-id", present}, &out, &errOut)
+
+	if got != 0 {
+		t.Fatalf("RunQueueCancel --queue-id <match>: exit = %d, want 0; stdout=%q stderr=%q", got, out.String(), errOut.String())
+	}
+	if _, err := os.Stat(queueFile); !os.IsNotExist(err) {
+		t.Errorf("RunQueueCancel --queue-id <match>: queue file still present at %q", queueFile)
+	}
+	if !strings.Contains(out.String(), "archived") {
+		t.Errorf("RunQueueCancel --queue-id <match>: stdout %q does not mention 'archived'", out.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// An empty queue_id from the daemon has two opposite meanings
+// ---------------------------------------------------------------------------
+//
+// Both of these arrive as ok=true with no queue_id, and the CLI answered both
+// with "no active queue found (queue file absent)" and exit 0. One of them is a
+// cancel that really ran, so that line was the exact opposite of the truth and
+// the journal event for it was skipped.
+//
+// The daemon tells them apart with prior_status. HandleQueueCancel
+// (internal/queue/rpc.go) returns a wholly empty QueueCancelResponse when its
+// own Load found nothing, and sets prior_status whenever it archived something.
+
+// TestRunQueueCancel_LiveDaemon_EmptyQueueIDWithPriorStatus covers the archive
+// the CLI used to deny. The queue file carried no queue_id; the daemon archived
+// it anyway and said so with prior_status.
+func TestRunQueueCancel_LiveDaemon_EmptyQueueIDWithPriorStatus(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	cancelFixtureWriteQueue(t, projectDir, "alpha")
+
+	queueCliFixtureStartEchoServer(t, projectDir, func(_ []byte) []byte {
+		return queueCliFixtureSuccessResponse(t, map[string]any{
+			"queue_id":     "",
+			"prior_status": "active",
+		})
+	})
+
+	var out strings.Builder
+	var errOut strings.Builder
+	got := cli.RunQueueCancel(context.Background(), []string{"--project", projectDir, "--queue", "alpha"}, &out, &errOut)
+
+	if got != 0 {
+		t.Fatalf("RunQueueCancel daemon-archived-without-id: exit = %d, want 0; stdout=%q stderr=%q", got, out.String(), errOut.String())
+	}
+	if strings.Contains(out.String(), "no active queue found") {
+		t.Errorf("RunQueueCancel daemon-archived-without-id: the daemon archived the queue and the CLI reported the opposite:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "archived") {
+		t.Errorf("RunQueueCancel daemon-archived-without-id: stdout %q does not report the archive that happened", out.String())
+	}
+	if !strings.Contains(out.String(), "status=active") {
+		t.Errorf("RunQueueCancel daemon-archived-without-id: stdout %q drops the prior status the daemon reported", out.String())
+	}
+}
+
+// TestRunQueueCancel_LiveDaemon_WhollyEmptyResponse covers the other cause: the
+// daemon's own load found nothing, so the queue this command had already loaded
+// was gone by the time the daemon looked. Nothing was archived. Exit 0 is right
+// — the caller asked for the queue not to be running and it is not — but the
+// message has to name the queue and say nothing was archived, because "queue
+// file absent" describes the wrong moment in time.
+func TestRunQueueCancel_LiveDaemon_WhollyEmptyResponse(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	cancelFixtureWriteQueue(t, projectDir, "alpha")
+
+	queueCliFixtureStartEchoServer(t, projectDir, func(_ []byte) []byte {
+		return queueCliFixtureSuccessResponse(t, map[string]any{})
+	})
+
+	var out strings.Builder
+	var errOut strings.Builder
+	got := cli.RunQueueCancel(context.Background(), []string{"--project", projectDir, "--queue", "alpha"}, &out, &errOut)
+
+	if got != 0 {
+		t.Fatalf("RunQueueCancel daemon-found-nothing: exit = %d, want 0; stdout=%q stderr=%q", got, out.String(), errOut.String())
+	}
+	// "daemon-reaped" is the success line's own token. The refusal line below
+	// contains the word "archived" in "nothing was archived", so matching that
+	// word alone would assert nothing.
+	if strings.Contains(out.String(), "daemon-reaped") {
+		t.Errorf("RunQueueCancel daemon-found-nothing: stdout claims an archive that did not happen: %q", out.String())
+	}
+	if !strings.Contains(out.String(), "alpha") {
+		t.Errorf("RunQueueCancel daemon-found-nothing: stdout %q never names the queue the caller asked about", out.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// An EMPTY selector VALUE (hk-r7y5g)
+// ---------------------------------------------------------------------------
+//
+// A selector the caller gave but left empty — `--queue-id=`, `--queue-id ""`,
+// `--queue=`, `--queue ""`, or an empty positional — used to fall through the
+// `!= ""` guards in RunQueueCancel and take the bare-cancel path, whose default
+// is "main". A caller whose shell variable did not expand archived a queue they
+// never named and was told it succeeded.
+//
+// The load-bearing assertion below is NOT the exit code. It is that main.json
+// still EXISTS afterwards. An exit code is a claim about what happened; the
+// surviving file is what happened.
+
+// TestRunQueueCancel_EmptySelectorValue_IsRefused covers all five spellings of
+// an empty selector value. Each must leave every queue file on disk, refuse
+// with exit 2, print nothing that reads as an archive, and name on stderr WHICH
+// selector arrived empty.
+func TestRunQueueCancel_EmptySelectorValue_IsRefused(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		// wantStderr is the whole phrase, not just the flag spelling:
+		// "--queue-id was given an empty value" contains "--queue", so a
+		// bare-flag match would let the two selectors' messages pass for
+		// each other.
+		wantStderr string
+	}{
+		{"queue-id-equals", []string{"--queue-id="}, `--queue-id was given an empty value`},
+		{"queue-id-separate", []string{"--queue-id", ""}, `--queue-id was given an empty value`},
+		{"queue-equals", []string{"--queue="}, `--queue was given an empty value`},
+		{"queue-separate", []string{"--queue", ""}, `--queue was given an empty value`},
+		{"positional-empty", []string{""}, `the queue name argument was empty`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			projectDir := queueCliFixtureTempDir(t)
+			mainPath := cancelFixtureWriteQueue(t, projectDir, "main")
+			betaPath := cancelFixtureWriteQueue(t, projectDir, "beta")
+
+			var out strings.Builder
+			var errOut strings.Builder
+
+			args := append([]string{"--project", projectDir}, tc.args...)
+			got := cli.RunQueueCancel(context.Background(), args, &out, &errOut)
+
+			// The one that matters: no queue was archived. The caller named no
+			// queue successfully, so no queue may be gone.
+			if _, err := os.Stat(mainPath); err != nil {
+				t.Errorf("RunQueueCancel %v: the default queue was archived by a selector the caller never filled in: %v", tc.args, err)
+			}
+			if _, err := os.Stat(betaPath); err != nil {
+				t.Errorf("RunQueueCancel %v: queue %q is gone: %v", tc.args, betaPath, err)
+			}
+			if got != 2 {
+				t.Errorf("RunQueueCancel %v: exit = %d, want 2 — an empty selector value is an argument error, not a request for the default queue; stdout=%q stderr=%q",
+					tc.args, got, out.String(), errOut.String())
+			}
+			if strings.Contains(out.String(), "archived") {
+				t.Errorf("RunQueueCancel %v: stdout claims an archive happened: %q", tc.args, out.String())
+			}
+			if !strings.Contains(errOut.String(), tc.wantStderr) {
+				t.Errorf("RunQueueCancel %v: stderr %q does not name which selector was empty (want %q)", tc.args, errOut.String(), tc.wantStderr)
+			}
+		})
+	}
+}
+
+// TestRunQueueCancel_NoSelectorAtAll_StillExitsZero is the control for the test
+// above, and it pins the boundary the fix must not cross. Giving NO selector is
+// a different act from giving an empty one: a bare `queue cancel` asserts an end
+// state — "main is not running" — and an absent main satisfies it, the way
+// `rm -f` is satisfied by an absent file. Scripts end with a best-effort cancel,
+// so refusing this would break them.
+//
+// TestRunQueueCancel_NoArg_ArchivesMain and TestRunQueueCancel_AbsentQueue_ExitsZero
+// hold the same line from the archive side. This one holds it from the
+// empty-selector side: it also asserts that the refusal wording above never
+// reaches a caller who typed no selector.
+func TestRunQueueCancel_NoSelectorAtAll_StillExitsZero(t *testing.T) {
+	t.Parallel()
+
+	projectDir := queueCliFixtureTempDir(t)
+	// No queue file at all: the absent-main case scripts actually hit.
+
+	var out strings.Builder
+	var errOut strings.Builder
+
+	got := cli.RunQueueCancel(context.Background(), []string{"--project", projectDir}, &out, &errOut)
+
+	if got != 0 {
+		t.Errorf("RunQueueCancel bare: exit = %d, want 0 — a bare cancel asserts an end state and an absent main satisfies it; stdout=%q stderr=%q",
+			got, out.String(), errOut.String())
+	}
+	if strings.Contains(errOut.String(), "empty value") || strings.Contains(errOut.String(), "was empty") {
+		t.Errorf("RunQueueCancel bare: stderr %q refuses a caller who gave no selector at all", errOut.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// hk-r7y5g — the archive target is the file that was FOUND, not the name that
+// file declares about itself
+// ---------------------------------------------------------------------------
+//
+// --queue-id resolves by enumerating .harmonik/queues/*.json and comparing
+// queue_id. The name used for the archive then came out of the LOADED FILE's
+// `name` field, and nothing validates that field: neither queue.Load, which
+// reads <name>.json literally, nor UnmarshalQueue. An empty `name` is the
+// destructive case, because NormaliseQueueName("") returns "main" — so a
+// cancel aimed by uuid at one queue archived the DEFAULT queue, exited 0, and
+// printed the selected queue's id while doing it.
+//
+// This is the same defect as the empty selector value, one layer further in:
+// the value the caller gave was fine, and an empty field on disk supplied the
+// "main" instead.
+
+// TestRunQueueCancel_QueueIDFlag_ArchivesTheFileItFound covers both spellings
+// of a `name` field that does not describe the file it sits in: absent (which
+// normalises to "main") and present but pointing at another file. In both, the
+// caller selected one queue by uuid, so that queue's FILE is the only one
+// allowed to move, and main must still be there afterwards.
+func TestRunQueueCancel_QueueIDFlag_ArchivesTheFileItFound(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		testName string
+		// file is the queue file's basename (without .json) — the name the
+		// caller's uuid actually selects, and the only file that may move.
+		file string
+		// declaredName is the file's own `name` field: the value the resolution
+		// used to trust.
+		declaredName string
+	}{
+		{"empty-name-field", "beta", ""},
+		{"name-disagrees-with-filename", "gamma", "main"},
+	} {
+		t.Run(tc.testName, func(t *testing.T) {
+			t.Parallel()
+
+			projectDir := queueCliFixtureTempDir(t)
+			mainPath := cancelFixtureWriteQueue(t, projectDir, "main")
+
+			queuesDir := filepath.Join(projectDir, ".harmonik", "queues")
+			targetID := "bbbbbbbb-0000-7000-8000-" + tc.file + "00000000"
+			targetPath := filepath.Join(queuesDir, tc.file+".json")
+			content := `{
+  "schema_version": 1,
+  "queue_id": "` + targetID + `",
+  "name": "` + tc.declaredName + `",
+  "status": "active",
+  "groups": []
+}`
+			if err := os.WriteFile(targetPath, []byte(content), 0o644); err != nil { //nolint:gosec // G306: test-only
+				t.Fatalf("WriteFile %q: %v", targetPath, err)
+			}
+
+			var out strings.Builder
+			var errOut strings.Builder
+
+			got := cli.RunQueueCancel(context.Background(), []string{"--project", projectDir, "--queue-id", targetID}, &out, &errOut)
+
+			// The one that matters: the queue the caller never named is still
+			// there. A cancel by uuid may not reach the default queue.
+			if _, err := os.Stat(mainPath); err != nil {
+				t.Errorf("RunQueueCancel --queue-id %s: the default queue was archived by a cancel aimed at %q, whose file declares name %q: %v",
+					targetID, tc.file, tc.declaredName, err)
+			}
+			// And the queue the caller DID name is the one that moved.
+			if _, err := os.Stat(targetPath); !os.IsNotExist(err) {
+				t.Errorf("RunQueueCancel --queue-id %s: %q was selected but its file is still at %q", targetID, tc.file, targetPath)
+			}
+			archives, globErr := filepath.Glob(targetPath + queue.FailedArchiveInfix + "*")
+			if globErr != nil {
+				t.Fatalf("Glob archives: %v", globErr)
+			}
+			if len(archives) != 1 {
+				t.Errorf("RunQueueCancel --queue-id %s: want exactly one archive of %q, got %v", targetID, tc.file, archives)
+			}
+			if got != 0 {
+				t.Errorf("RunQueueCancel --queue-id %s: exit = %d, want 0; stdout=%q stderr=%q", targetID, got, out.String(), errOut.String())
+			}
+			// The report has to agree with the disk. Naming the selected
+			// queue's id while archiving main.json is how this defect read as
+			// a success.
+			if !strings.Contains(out.String(), tc.file+".json"+queue.FailedArchiveInfix) {
+				t.Errorf("RunQueueCancel --queue-id %s: stdout %q does not report an archive of %q", targetID, out.String(), tc.file)
+			}
+			if strings.Contains(out.String(), "main.json"+queue.FailedArchiveInfix) {
+				t.Errorf("RunQueueCancel --queue-id %s: stdout reports archiving the default queue: %q", targetID, out.String())
+			}
+		})
+	}
 }

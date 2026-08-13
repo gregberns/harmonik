@@ -455,7 +455,7 @@ already imported at `workloop.go` package scope; `beadRunOne` is not generic; th
 ```bash
 go build ./internal/... ./cmd/... && go vet ./internal/... ./cmd/...
 go vet -tags scenario ./internal/daemon/...
-gofmt -l internal/daemon | grep -q . && echo FMT-FAIL
+fmtl="$(gofmt -l internal/daemon)"; [ -n "$fmtl" ] && echo "FMT-FAIL: $fmtl"   # capture, do NOT pipe into grep -q
 grep -c 'rbc != nil' internal/daemon/workloop.go                    # must still be 20
 git diff --stat                                                     # 1 new file; workloop.go net ≈ −14
 go test ./internal/daemon -run 'TestM4C7' -count=1

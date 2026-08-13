@@ -19,11 +19,33 @@ make bootstrap      # installs pinned dev tools
 (pins gofumpt, gci, golangci-lint, govulncheck into `.tools/`).
 
 Git hooks are **retired**: lefthook was removed (it re-armed itself on every
-commit). Validation — format/lint gates, secret scan, and commit-message
-trailers — now runs via the agent-driven validation command rather than a
-pre-commit/pre-push/commit-msg hook. The underlying scripts
-(`scripts/validate-commit-msg.sh`, `scripts/secret-scan.sh`) remain callable
-directly.
+commit). Validation — format/lint gates, the secret scan, and commit-message
+trailers — runs from the two gate targets rather than from a
+pre-commit/pre-push/commit-msg hook. `gate-static-product`, which `make fast`,
+`make full` and `make core` all reach, calls
+`scripts/commit-msg-gate.sh --head-only` and
+`scripts/secret-scan.sh --head-only`: both read the commit just made. The gates
+run after the commit, when the ordinary flow leaves nothing staged, so an index
+scope there would read whatever happened to be staged rather than the change
+under test.
+`make full` adds `scripts/secret-scan.sh --range`, which reads every line the
+branch adds on top of the baseline named in that script and FAILS on a finding.
+**That scope narrows when the baseline does not resolve.** When the baseline
+commit is missing, is not an ancestor of `HEAD`, or IS `HEAD`, the scan falls
+back to `HEAD^1..HEAD` and reports clean if that is clean. The baseline is not
+an ancestor of `main`, so on `main` — and on any lane branched from `main` that
+has not merged in a branch carrying the baseline — the range is the tip, not the
+branch. The credential scan's `--head-only` carries the weight there. The
+commit-message gate's does NOT: it goes advisory and exits 0 off the baseline
+line, so on `main` that gate blocks nothing (bead
+`hk-commit-msg-gate-advisory-on-main-ap068`). See
+[`docs/foundation/project-level/build-practices.md`](docs/foundation/project-level/build-practices.md)
+§"Git hooks are retired" for the full statement, and bead `hk-254ea` for the gap.
+`scripts/secret-scan.sh` also runs on its own with no argument. That scope is
+the staged index — the right one before a commit exists, and the reason no gate
+calls it that way. `scripts/commit-msg-gate.sh` with no argument does something
+different: it reads every commit from the baseline forward and reports what it
+finds. `make full` calls it that way, in addition to `--head-only`.
 
 ## The check targets
 
@@ -38,8 +60,16 @@ directly.
 | Target | When to run | What it does |
 |---|---|---|
 | `make fast` | While you work | Format check (gofumpt + gci), `go build ./...`, `go vet ./...`, the tagged vet, the freeze greps (including the allow-list ratchet), `golangci-lint --new-from-rev=HEAD~1`, a compile of every test file, `go test -short` over `FAST_PKGS`, and last the whole-tree lint allow list |
-| `make core` | The hard gate — "does the build work" | `gate-static` plus the core package set (the `CHARTER.md` §3 pipeline: config, branching, event bus, queue, bead-ledger adapter, worktrees, harness registry, work loop, merge) |
+| `make core` | The hard gate — "does the build work" | `gate-static-product` plus the core package set (the `CHARTER.md` §3 pipeline: config, branching, event bus, queue, bead-ledger adapter, worktrees, harness registry, work loop, merge) |
 | `make full` | The merge decision, and what CI runs | Everything in `fast` over EVERY package, the whole-tree lint allow list, the scenario tier, and module hygiene (`go mod tidy` diff, `tools/forbid-import`, `govulncheck`) |
+
+`make core` calls `gate-static-product`, not `gate-static`. The one difference
+is `script-tests`, the self-tests for the shell scripts the gates depend on:
+`gate-static-product` does not run them, by operator decision (D3=v3,
+`internal/daemon/standard-bead.dot`). `make core` is the per-bead commit gate,
+so that gate no longer proves the gate tooling itself fails closed. `make fast`,
+`make full` and CI run `gate-static` and still run `script-tests`, so that proof
+lives there.
 
 Run `make fast` while you work (via `/check`). Run `make full` before anyone
 accepts the work — it is the merge decision. `make fast` is not a merge verdict:
@@ -66,7 +96,7 @@ took 333 s and the added step took 5 s, 3 s and 4 s. The whole target measured
 338 s.
 
 These were formerly wired as pre-commit / pre-push git hooks. Hooks are retired
-and the checks run through the agent-driven validation command instead.
+and the checks run from the two gate targets instead.
 
 > **No fail-open.** `make full` does no package scoping, no retry, and no
 > fail-open. A timeout, an out-of-memory kill, a compile failure, or an exit code

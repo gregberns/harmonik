@@ -143,8 +143,14 @@ write_journal() {
     mv "$temp" "$journal"
 }
 
+# Takes the message as an argument and matches it with a here-string. It used to
+# read stdin from a pipe. Under pipefail that is a veto that can never fire: the
+# `grep -q` leaves on the first match, the process writing into it dies of
+# SIGPIPE, and pipefail hands that death back as the pipeline's status — so a
+# message that plainly asks the operator a question reads as "no question" and
+# the watcher prompts over the top of it. A here-string has no writer to kill.
 asks_operator() {
-    grep -qiE 'requires direction|need (your |operator )?(direction|decision|approval|permission|guidance)|blocked (until|on|by)|which (approach|path|option)|permission to|should I|shall I|do you want|let me know'
+    grep -qiE 'requires direction|need (your |operator )?(direction|decision|approval|permission|guidance)|blocked (until|on|by)|which (approach|path|option)|permission to|should I|shall I|do you want|let me know' <<<"$1"
 }
 
 inject() {
@@ -210,7 +216,7 @@ EOF
         log "completed turn retained without prompt: work state is $state"
         ;;
     remaining)
-        if printf '%s' "$message" | asks_operator; then
+        if asks_operator "$message"; then
             write_journal "$fingerprint" "no-prompt:operator-question" "$count"
             log "completed turn retained without prompt: it asks the operator"
         elif [ "$count" -ge "$max_nudges" ]; then

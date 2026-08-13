@@ -48,21 +48,77 @@ REPO=$(git rev-parse --show-toplevel) || exit 73
 cd "$REPO" || exit 73
 
 S=${HARMONIK_GATE_LOGDIR:-${TMPDIR:-/tmp}/harmonik-gate}
-mkdir -p "$S" || exit 73
 # A log inside the work tree dirties the thing under test. The suite has a
 # detector for an unexpectedly dirty tree, so this would surface as a failure
 # with no relation to the code.
-S_ABS=$(cd "$S" && pwd -P) || exit 73
+#
+# Judge the path BEFORE creating it. This used to `mkdir -p` first and refuse
+# second, so a refused path left the directory standing — inside the work tree,
+# which is the one place the refusal exists to keep clean.
+case "$S" in
+  /*) S_ABS=$S ;;
+  *)  S_ABS=$PWD/$S ;;
+esac
+# `pwd -P` needs a directory that is already there. Resolve the deepest part of
+# the path that exists, then put the missing part back on the end. A symlinked
+# parent still compares correctly that way, and $TMPDIR is a symlink on macOS.
+probe=$S_ABS
+missing=
+while [[ ! -d "$probe" ]]; do
+  case "$probe" in
+    */?*) missing=${probe##*/}${missing:+/$missing}; probe=${probe%/*}; [[ -n "$probe" ]] || probe=/ ;;
+    *)    probe=/; break ;;
+  esac
+done
+probe=$(cd "$probe" && pwd -P) || exit 73
+[[ "$probe" == "/" ]] && probe=
+S_ABS=${probe}${missing:+/$missing}
+[[ -n "$S_ABS" ]] || S_ABS=/
 REPO_ABS=$(cd "$REPO" && pwd -P) || exit 73
 if [[ "$S_ABS" == "$REPO_ABS" || "$S_ABS" == "$REPO_ABS"/* ]]; then
   echo "REFUSED: the log directory $S_ABS is inside the work tree; the suite would test a dirty tree."
   exit 73
 fi
+mkdir -p "$S_ABS" || exit 73
+S=$S_ABS
 LOG=$S/full.log
 DISK=$S/full-disk.log
 
 # --- pre-flight: refuse rather than produce a result nobody can read ---------
-BUSY=$(pgrep -fl "make |go test|golangci" | grep -v "run-full.sh" | grep -v "pgrep")
+# Exclude THIS invocation by pid, never by the text of a command line. The old
+# form ran `pgrep -fl` and grepped "run-full.sh" and "pgrep" back out. macOS
+# pgrep hides the caller's own ancestors, so it looked correct here; procps
+# pgrep on Linux does not, so `make full-guarded` — the parent — matched
+# "make " and the script refused to start on a completely idle box. Its own
+# `make full` child would match the same way. A pid set cannot be fooled by a
+# command line that happens to read like somebody else's run.
+#
+# Three things belong to this invocation: the script, every ancestor of it, and
+# every process in its process group. The process group is what catches a child
+# this script started. Its one blind spot is two guarded runs launched from one
+# non-interactive shell, which share a process group because job control is off
+# there; each would treat the other as its own.
+MYPGID=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')
+MINE=" $$ "
+ANC=$$
+while :; do
+  ANC=$(ps -o ppid= -p "$ANC" 2>/dev/null | tr -d ' ')
+  [[ -n "$ANC" && "$ANC" != 0 && "$ANC" != 1 ]] || break
+  MINE="$MINE$ANC "
+done
+
+# One snapshot, filtered in the shell. A `ps | grep` pipeline puts the grep
+# itself in the snapshot, and that is the self-match this fix removes.
+BUSY=""
+while read -r pid pgid rest; do
+  case "$pid" in '' | *[!0-9]*) continue ;; esac
+  [[ "$MINE" == *" $pid "* ]] && continue
+  [[ -n "$MYPGID" && "$pgid" == "$MYPGID" ]] && continue
+  case "$rest" in
+    *"make "* | *"go test"* | *golangci*) BUSY="$BUSY$pid $rest"$'\n' ;;
+  esac
+done <<< "$(ps -eo pid=,pgid=,args= 2>/dev/null)"
+
 if [[ -n "$BUSY" ]]; then
   echo "REFUSED: another heavy run is on this box; its timing numbers would poison this one."
   echo "$BUSY"
@@ -92,7 +148,15 @@ if [[ -x "$REPO/scripts/leakcheck.sh" ]]; then
   if [[ -n "$LEAKS" ]]; then
     echo "REFUSED: leaked build or test processes are still on this box."
     echo "$LEAKS"
-    echo "Clear them with scripts/leakcheck.sh --kill, then run this again."
+    # NOT "clear them with --kill". This is a report and a human decides what
+    # to do with it. A compiled test binary belonging to a gate that is RUNNING
+    # has the same name shape as a leaked one, so a reap told to run from here
+    # can take out somebody's live run — the same hazard `make leakreap`
+    # carries. Print what was found and where to look, and stop there.
+    echo "Read these before you touch them. Nothing here is safe to kill blind:"
+    echo "  ps -p <pid> -o pid,ppid,pgid,etime,time,%cpu,command"
+    echo "  ps -eo pid,ppid,etime,command | awk '\$2==<pid>'   # its children"
+    echo "Deal with them by hand, then run this again."
     exit 70
   fi
 fi

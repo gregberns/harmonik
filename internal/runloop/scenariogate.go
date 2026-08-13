@@ -3,34 +3,58 @@ package runloop
 // scenariogate.go — pre-merge gate that runs //go:build scenario tests when the
 // committed changes touch scenario-tagged files.
 //
-// SUPERSEDED, AND SCHEDULED FOR DELETION. Read this before you change anything
-// here.
+// SUPERSEDED, AND UNREACHABLE ON THE PRODUCTION PATH. Read this before you
+// change anything here, and read the reachability paragraph before you cite
+// this file as a check that runs.
 //
 // This file was written to keep the daemon in lock-step with a shell gate,
 // scripts/scenario-gate.sh, that the commit_gate node used to run. That script
-// is DELETED. commit_gate now runs `make full`, which runs `go test -short
-// -count=1 ./...` over every package AND the whole tagged scenario tier, and
-// which fails closed at every step. So by the time a run reaches the merge
-// path, the scenario suite has already been run against it by something
-// stricter than this file.
+// is DELETED. commit_gate now runs `make core`, which runs the fixed package
+// list named at CORE_PKGS in the Makefile, without `-short`, and which fails
+// closed at every step. Refs D3=v3.
 //
-// What is left here is a second, weaker copy of a decision that is already
-// made. It is delta-scoped, so it only tests packages the diff touched. It is
-// fail-open on a timeout, a signal kill, a compile failure and an exit code it
-// does not recognise, and it retries a genuine failure once and ALLOWS when the
-// retry passes. Those are the five approve-on-failure paths the shell gate had
-// and the reason that gate was removed.
+// THE OLD REASON TO DELETE THIS FILE DIED WITH THE GATE CHANGE. commit_gate
+// used to run `make full`, which tests every package and then runs the whole
+// tagged scenario tier through the `test-scenario` target. So the scenario
+// suite had already been run against the change, by something stricter than
+// this file, before a run reached the merge path, and this file was redundant.
+// `make core` passes no `-tags=scenario`, so every `//go:build scenario` file
+// is excluded from its build, and `./test/scenario/...` is not in CORE_PKGS at
+// all. The per-bead gate therefore runs NO scenario test. `make full` still
+// runs the tier, but that is the integration-into-main decision and it happens
+// after the bead merged.
 //
-// It is not a hole today, because it can only ALLOW: commit_gate blocks first
-// and this cannot un-block anything. It is dead weight, and the correct next
-// change is to delete it. That change touches:
-//   - this file and scenariogate_test.go
+// THIS FILE DOES NOT FILL THAT GAP, BECAUSE IT DOES NOT RUN. It is unreachable
+// on the production path. runScenarioGateIfNeededVia has exactly one non-test
+// caller, RunBridge.gateHook in runbridge.go, and that hook returns
+// EvGatePassed without ever calling it when SpineArgs.SkipGate is set. There is
+// exactly one non-test WireSpine call site, internal/daemon/workloop.go, and it
+// sets SkipGate: true with no condition on it. Both were re-checked against
+// this tree. The repo had already recorded the same finding next door, in the
+// header of scenariogate_realgotest_test.go.
+//
+// So the five approve-on-failure paths below — fail-open on a timeout, a signal
+// kill, a compile failure and an exit code it does not recognise, plus retry a
+// genuine failure once and ALLOW when the retry passes — cannot fire. They are
+// the paths the deleted shell gate had, and they are the reason it was removed,
+// but nothing reaches them here. Do NOT read this file as the last scenario
+// check in front of a merge. There is no such check.
+//
+// THE GAP IS REAL AND NOTHING FILLS IT. Closing it means putting the scenario
+// tier on the per-bead path: CORE_PKGS covers the scenario-tagged packages, or
+// `make core` carries `-tags=scenario`, or commit_gate runs `test-scenario` as
+// a second step.
+//
+// WHETHER TO DELETE THIS FILE OR TO WIRE IT UP IS A DECISION, NOT A CONCLUSION
+// OF THIS BANNER (hk-bims6). Deleting it removes no live check, and keeping it
+// costs the reader this page and the risk of the claim this banner used to
+// make. Whoever decides should say in the same breath what runs the scenario
+// tier before a merge instead. That deletion touches:
+//   - this file, scenariogate_test.go and scenariogate_realgotest_test.go
 //   - the call in runbridge.go (search for runScenarioGateIfNeededVia)
 //   - runbridge_characterization_test.go, which names it
 //   - scripts/runloop-freeze-gate.sh, which lists this file as required and
 //     lists the symbol as forbidden in internal/daemon
-// It is left standing here only so that removal is its own reviewable change
-// rather than a rider on the gate replacement.
 //
 // Detection: a file is "scenario-touching" when it lives under test/scenario/,
 // internal/scenario/, or contains a //go:build scenario (or legacy // +build
@@ -99,7 +123,7 @@ type scenarioGateResult struct {
 // package(s) ONCE: a real regression fails deterministically on retry (BLOCK); a
 // load-induced flake passes (fail-open, ALLOW).  The shell gate this mirrored
 // is deleted, so the standard-bead.dot D3 lock-step requirement no longer
-// applies: D3 now names `make full`, which retries nothing and blocks on the
+// applies: D3 now names `make core`, which retries nothing and blocks on the
 // first failure.
 //
 // On git/filesystem errors the gate is skipped (conservative: never false-block
@@ -179,7 +203,7 @@ func runScenarioGateOnceVia(ctx context.Context, runner tmux.CommandRunner, wtPa
 //
 // runOnce is injected so this policy is unit-testable without a real `go test`;
 // the production caller supplies runScenarioGateOnce.  The shell gate it once
-// mirrored is deleted, and `make full` — the gate that replaced it — has no
+// mirrored is deleted, and `make core` — the gate that replaced it — has no
 // retry at all. See the SUPERSEDED note at the top of this file.
 func scenarioGateWithRetry(pkgs []string, runOnce func() scenarioGateResult) scenarioGateResult {
 	first := runOnce()

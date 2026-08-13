@@ -172,6 +172,29 @@ type tmuxSubstrate struct {
 	// Bead ref: hk-pcjkp.
 	capResizeMid func()
 
+	// spawnSemWaits counts the times a non-terminal spawn has missed the
+	// fast-path TryAcquire in acquireSpawnSlot and fallen into
+	// awaitSpawnSemHoldingNonTerminal — the bounded wait for a spawnSem slot
+	// that the reserve was supposed to make unnecessary.
+	//
+	// It is a test seam. Production reads it nowhere, and it must not start
+	// deciding anything: the increment is a plain counter on a path that is
+	// already about to block, so it changes no behaviour and costs one atomic
+	// add per slow acquire.
+	//
+	// What it buys is the only way to see this condition from outside the
+	// substrate. Since hk-terminal-reserve-unbounded-wyy6y the wait normally
+	// SUCCEEDS, so a spawn that took the slow path and one that took the fast
+	// path return the same value, and only their latency differs. A test that
+	// tells them apart by outcome cannot; a test that tells them apart by wall
+	// clock is a load-flaky test waiting to happen. The entry count is exact
+	// and load-independent. Without it the raise-order guard against hk-pcjkp
+	// was vacuous — a woken spawn refused capacity it had just been granted
+	// still started, so the test stayed green (hk-6zv97).
+	//
+	// Bead ref: hk-pcjkp (the ordering rule), hk-6zv97 (this counter).
+	spawnSemWaits atomic.Uint64
+
 	// spawnAcquireTimeout bounds how long SpawnWindow waits for a free spawn
 	// slot before treating the launch as failed (hk-4l7zs). A run sitting at
 	// launch_initiated forever (no tmux session, no implementer_phase_complete)
@@ -218,13 +241,20 @@ type tmuxSubstrate struct {
 	// creation by spawnStagger reduces the peak contention window. Zero disables
 	// staggering (the pre-hk-hzj behaviour). Set via WithSpawnStagger.
 	//
-	// lastWindowAt records when callNewWindowBounded last created a window.
-	// Both are accessed only inside callNewWindowBounded while newWindowMu is held,
-	// so they need no additional lock. Set via WithSpawnStagger.
+	// lastWindowAt records when callNewWindowBounded last STOPPED work on a window
+	// creation — either the create call returned, or the caller stopped waiting
+	// for it. What it is never again is the moment a creation STARTED: charging
+	// the creation's own duration to the next window's stagger is the hk-mirga
+	// defect. On the two abandoned paths (the new-window bound fired, or the
+	// caller's ctx was cancelled mid-create) the tmux client runs on past this
+	// stamp, so there the stamp is EARLY and the interval it buys is a floor
+	// rather than proof the tmux server has gone quiet. Both fields are accessed
+	// only inside callNewWindowBounded while newWindowMu is held, so they need no
+	// additional lock.
 	//
-	// Bead ref: hk-hzj.
-	spawnStagger time.Duration
-	lastWindowAt time.Time // guarded by newWindowMu; set to time.Now() each SpawnWindow
+	// Bead refs: hk-hzj, hk-mirga.
+	spawnStagger time.Duration // set via WithSpawnStagger
+	lastWindowAt time.Time     // guarded by newWindowMu; stamped when a creation attempt ends
 
 	// projectHash project-qualifies crew session names per fleet-portability T2:
 	// "harmonik-<projectHash>-crew-<name>". Set via WithCrewProjectHash. Required
@@ -696,11 +726,13 @@ func WithNewWindowTimedOutHook(fn func(waited time.Duration)) TmuxSubstrateOptio
 // on a disk-heavy box; 0 is correct for fast NVMe with low utilisation.
 //
 // The stagger is enforced inside callNewWindowBounded while newWindowMu is held,
-// so consecutive windows are always separated by at least d regardless of how many
-// goroutines are concurrently waiting to spawn. The wait uses the caller's context,
-// so an operator SIGTERM cancels a pending stagger and returns ErrStructural.
+// so at least d passes between one window creation RETURNING and the next one
+// starting, regardless of how many goroutines are concurrently waiting to spawn
+// and regardless of how long a creation itself takes. The wait uses the caller's
+// context, so an operator SIGTERM cancels a pending stagger and returns
+// ErrStructural.
 //
-// Bead ref: hk-hzj.
+// Bead refs: hk-hzj, hk-mirga.
 func WithSpawnStagger(d time.Duration) TmuxSubstrateOption {
 	return func(s *tmuxSubstrate) {
 		if d > 0 {
@@ -1060,6 +1092,11 @@ func (s *tmuxSubstrate) acquireSpawnSlot(ctx context.Context, terminal bool) err
 // Passing that remainder through would turn a bounded wait into the indefinite
 // SpawnWindow block hk-4l7zs removed.
 func (s *tmuxSubstrate) awaitSpawnSemHoldingNonTerminal(ctx context.Context, start time.Time) error {
+	// Count the entry, not the exit: the claim a test needs to hold is that a
+	// spawn never REACHED this wait, and a wait that succeeds leaves no other
+	// trace. See spawnSemWaits (hk-6zv97).
+	s.spawnSemWaits.Add(1)
+
 	unbounded := s.spawnAcquireTimeout <= 0
 	remaining := time.Duration(0)
 	if !unbounded {
@@ -1400,13 +1437,38 @@ func (s *tmuxSubstrate) callNewWindowBounded(ctx context.Context, adapter tmux.A
 	// by spawnStagger gives each agent a head start before the next competes for
 	// the same resources.
 	//
-	// The stagger runs inside newWindowMu so lastWindowAt is updated atomically
-	// with window creation — no separate mutex needed. The wait uses ctx (not
-	// callCtx) so an operator SIGTERM cancels a pending stagger immediately without
-	// being subject to the new-window timeout. The mutex is held during the sleep;
-	// this extends how long newWindowMu is held per call by at most spawnStagger,
-	// which is acceptable since the 60s bound (defaultNewWindowTimeout) already
-	// allows multi-second holds for slow tmux servers.
+	// The interval is measured from the END of the previous creation attempt, so
+	// the stamp below is deferred until after callBoundedTmuxCreate: stamping it
+	// before the create would spend the creation's own duration out of the gap, and
+	// the shortfall grows as tmux slows down — it would shrink the stagger to
+	// nothing exactly when the contention it exists to relieve is worst (hk-mirga).
+	// The deferred stamp is registered AFTER the newWindowMu unlock defer, so LIFO
+	// runs it first and lastWindowAt is still written under newWindowMu.
+	//
+	// The stamp covers all four ways out of the create, and they do not all mean
+	// the same thing. A creation that RETURNED — with a handle, or with an adapter
+	// error — occupied the tmux server for its own duration, so measuring the next
+	// window's gap from that return is as close as this code can get: the stamp
+	// lands after the outcome crosses the result channel, and `tmux new-window`
+	// returning is not the agent inside it finishing its cold start. A failed
+	// creation is still a creation the server did work for. A creation ABANDONED by the
+	// new-window bound, or by the caller's ctx cancelling mid-create, has NOT
+	// finished: callBoundedTmuxCreate stopped waiting, its goroutine and the tmux
+	// client it started run on past the stamp, and the next creation therefore
+	// begins less than spawnStagger after the server truly goes quiet. Nothing
+	// here can learn when that happens, so on those two paths the stamp is
+	// deliberately early and the stagger is a floor, not a promise of an idle
+	// server. It is still strictly more than stamping at the start.
+	//
+	// The one path that stamps NOTHING is a stagger wait cancelled by ctx: it
+	// returns above this point, and no creation was attempted.
+	//
+	// The wait uses ctx (not callCtx) so an operator SIGTERM cancels a pending
+	// stagger immediately without being subject to the new-window timeout. The
+	// mutex is held during the sleep; this extends how long newWindowMu is held per
+	// call by at most spawnStagger, which is acceptable since the 60s bound
+	// (defaultNewWindowTimeout) already allows multi-second holds for slow tmux
+	// servers.
 	if s.spawnStagger > 0 && !s.lastWindowAt.IsZero() {
 		elapsed := time.Since(s.lastWindowAt)
 		if elapsed < s.spawnStagger {
@@ -1420,7 +1482,7 @@ func (s *tmuxSubstrate) callNewWindowBounded(ctx context.Context, adapter tmux.A
 		}
 	}
 	if s.spawnStagger > 0 {
-		s.lastWindowAt = time.Now()
+		defer func() { s.lastWindowAt = time.Now() }()
 	}
 
 	return s.callBoundedTmuxCreate(ctx, boundedCreate{
@@ -1561,13 +1623,17 @@ func (s *tmuxSubstrate) callBoundedTmuxCreate(ctx context.Context, create bounde
 // concurrent attempt legitimately owns, and killing the wrong one is far worse
 // than leaving the right one:
 //
-//   - A failed scheduled crew start re-fires about every 2 seconds
-//     (fireSpawnCrewAction returns before MarkFired, so the job stays due, and the
-//     spawn-crew overlap check only blocks a crew that is presence-online — which
-//     a crew that failed to spawn is not). The crew session name is byte-identical
-//     across those attempts, so a killer armed by the first attempt reaps whichever
-//     later attempt succeeded. The sentinel adversary re-spawns a fixed crew name
-//     on its own cadence with the same exposure.
+//   - A second attempt under a byte-identical name is ordinary here, not exotic.
+//     crewSessionName is a pure function of the project hash and the crew name, so
+//     every attempt at one crew computes the same session name. A failed scheduled
+//     crew start re-fires at its next scheduled boundary (doFireAction records a
+//     failed fire since hk-pbdti, so the retry follows the schedule rather than the
+//     2s poll it used to), the spawn-crew overlap check blocks only a crew that is
+//     presence-online, and an operator running `harmonik crew start` reaches the
+//     same name through the same HandleCrewStart path at any moment. So a killer
+//     armed by the first attempt reaps whichever later attempt succeeded. The
+//     sentinel adversary re-spawns a fixed crew name on its own cadence with the
+//     same exposure.
 //   - It is not needed. SpawnCrewSession's ErrWindowCollision branch ADOPTS an
 //     existing session under that name, so a late crew orphan is what the next
 //     attempt picks up rather than something it trips over. And a run session

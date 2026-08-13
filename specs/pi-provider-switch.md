@@ -59,7 +59,7 @@ DGX/ornith. With no override supplied, resolution yields today's
   seams, the assertions each scenario must make). C6 rides with chani's work.
 - **stilgar** owns the **C5 corpus GATE-WIRING**: scenario fixtures, §10.1
   conformance registration, assertion wiring into the deterministic gates, and the
-  commit-gate (`make full`) pickup. stilgar wires against the contract chani
+  commit-gate (`make core`) pickup. stilgar wires against the contract chani
   designs; chani does not wire the gate.
 
 ---
@@ -502,8 +502,13 @@ Wire-format coupling honored (no provider-from-rc / api-from-h split). (3) Overr
 `apiKeyEnv` re-runs the `buildPiEnv` fail-closed strip keyed on the NEW key — only
 that provider's key injected, siblings `KEY=`. (4) Overridden `baseURL` on an initial
 turn ⇒ `buildPiModelsJSON` generates models.json for the new endpoint; resume turns
-reuse prior session's config (the base_url passthrough block in `pi.BuildLaunchSpec`
-runs only when `PriorSessionID` is nil). (5) The billing guard
+reuse prior session's config. Only the models.json WRITE is initial-turn-only. The
+rest of the base_url passthrough block in `pi.BuildLaunchSpec` — creating the agent
+directory and exporting `PI_CODING_AGENT_DIR` — MUST run on EVERY turn, because pi
+locates its SESSION STORE under that directory (`getSessionsDir()` in pi's own
+`dist/config.js` joins `getAgentDir()` with `sessions`), not only its models.json.
+Withholding it on a resume turn hands pi a session id while hiding the directory the
+session lives in, and pi exits 1 with `No session found matching <uuid>` (hk-6hfev). (5) The billing guard
 (`runPiBillingGuard`, `internal/harness/pi/billingguard.go`, called from
 `pi.BuildLaunchSpec`) refuses launch before agent_ready if the overridden provider's
 key is absent/empty.
@@ -579,8 +584,9 @@ THEIR wire format. Scenario 2: no-label pi argv `--model` = harness-global pi mo
 NOT `sonnet`; counterfactual fails on the leaked model; DOT variant shows tuple
 unchanged. Scenario 3: ornith reasoning bead emits loopback spec + models.json; code
 comment records the live-tunnel operator canary as the separate DoD proof. All three
-hermetic (dummy-key-file + `HOME` temp-dir). The commit gate (`make full`) picks them up
-automatically (internal/daemon always affected); NO YAML scenario added.
+hermetic (dummy-key-file + `HOME` temp-dir). The commit gate (`make core`) picks them up
+automatically because `internal/daemon` is one of the 29 packages named at `CORE_PKGS` in
+the `Makefile` — NOT because the gate runs every package; NO YAML scenario added.
 
 **Live-DGX operator canary (separate, NOT CI — DoD proof):** with the DGX loopback
 tunnel up (`http://127.0.0.1:8551/v1`; srt blocks the LAN IP → loopback only), submit

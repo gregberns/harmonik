@@ -90,7 +90,10 @@ swap_gate() {
   out="$(/Users/gb/go/bin/harmonik version --binary /Users/gb/go/bin/harmonik --contains "$DEPLOY_SHA" 2>&1)"; rc=$?
   printf '%s\n' "$out"
   [ "$rc" -eq 0 ] || { echo "GATE FAIL (exit $rc) — do NOT swap"; return 1; }
-  printf '%s\n' "$out" | grep -qx 'status:   contains' || {
+  # Match the capture directly. `printf '%s\n' "$out" | grep -qx ...` is not safe
+  # just because printf is a builtin: bash forks a subshell for it and that
+  # subshell takes the SIGPIPE when grep -q exits early.
+  grep -qx 'status:   contains' <<<"$out" || {
     echo "GATE FAIL: exit 0 with no 'status:   contains' line — this harmonik predates the check and ignored the flags"; return 1; }
   echo "GATE PASS: installed binary carries $DEPLOY_SHA, built clean"
 }

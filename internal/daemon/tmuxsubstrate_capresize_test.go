@@ -43,8 +43,9 @@ package daemon_test
 //     test for hk-pcjkp. It reads both capacities from INSIDE the window
 //     between the two moves, in both directions. Pre-fix the raise reports a
 //     spawn capacity below the non-terminal cap.
-//   - TestSpawnCapRaise_WokenSpawnsAreNotRefused: the failure a user sees — three
-//     spawns blocked at the cap, the cap raised, and none of them refused.
+//   - TestSpawnCapRaise_WokenSpawnsDoNotWaitForCapacityAlreadyGranted: the
+//     failure a user sees — spawns blocked at the cap, the cap raised, and not
+//     one of them made to queue for the capacity the raise had just granted it.
 //   - TestSpawnCapShrink_TerminalReserveSurvivesInFlightSessions: the hk-6yrs9
 //     incident. Pre-fix the terminal spawn never returns.
 //   - TestSpawnCapShrink_ReserveCountsTerminalSessionsToo: the reserve is
@@ -139,31 +140,49 @@ func TestSpawnCapResize_InvariantHoldsInsideTheResizeWindow(t *testing.T) {
 	}
 }
 
-// TestSpawnCapRaise_WokenSpawnsAreNotRefused is the user-visible half of
-// hk-pcjkp: spawns blocked at a cap of 1, the cap raised to 64, and every one
-// of them must start. Pre-fix the first move wakes them all against a spawn
-// semaphore that still holds the old capacity, and every one past the first was
-// refused with a structural error.
+// TestSpawnCapRaise_WokenSpawnsDoNotWaitForCapacityAlreadyGranted is the
+// user-visible half of hk-pcjkp: spawns blocked at a cap of 1, the cap raised
+// to 64, and not one of them sent to queue for room the raise had already made.
 //
-// THIS GUARD NO LONGER DETECTS THAT REGRESSION (hk-6zv97). Since
-// hk-terminal-reserve-unbounded-wyy6y a woken spawn that misses the fast path
-// waits out its budget instead of being refused, so injecting the wrong raise
-// order leaves this test passing — every spawn still starts, only slower. What
-// it holds today is the weaker claim that the raise does not strand anyone.
-// TestSpawnCapResize_InvariantHoldsInsideTheResizeWindow below still fails on
-// the injected regression, so the ordering rule keeps a guard.
+// The claim is about the SLOW PATH, not about the return value, and that is the
+// repair (hk-6zv97). The original test asserted only that every spawn started.
+// Pre-hk-terminal-reserve-unbounded-wyy6y that discriminated: a spawn woken
+// against the stale spawnSem capacity missed the fast-path TryAcquire and died
+// on a structural error. A missed fast path now waits the slot out instead, so
+// every spawn starts under the wrong raise order too and the guard went
+// vacuous — green with the regression injected straight back into SetSpawnCap.
+//
+// What the order still buys a woken non-terminal spawn is that it never has to
+// wait at all, so that is what this asserts: zero entries into
+// awaitSpawnSemHoldingNonTerminal. Zero is exact and does not move with the
+// load on the box, which a latency bound would. Both halves are checked — every
+// spawn started AND none of them queued — because "nobody waited" alone is a
+// claim any run where nothing happened would also satisfy.
+//
+// Widen the inner bound first and the woken spawns find a spawnSem that already
+// holds cap+1, so every one of them takes the fast path. Widen the outer bound
+// first and they wake against the old capacity: one takes the single free slot
+// and the rest fall into the wait.
 //
 // The mid-resize seam is what makes this deterministic. The window is
 // microseconds wide in production, so without holding it open the test would
-// pass by luck most runs.
-func TestSpawnCapRaise_WokenSpawnsAreNotRefused(t *testing.T) {
+// pass by luck most runs. Five waiters rather than the two that would do: only
+// one free spawn slot exists inside the window, so the guard needs any two of
+// them to reach it while the seam holds the window open, and asking for two of
+// five leaves margin on a loaded box that asking for two of two does not.
+func TestSpawnCapRaise_WokenSpawnsDoNotWaitForCapacityAlreadyGranted(t *testing.T) {
 	t.Parallel()
 
-	const waiters = 3
+	const waiters = 5
 	sub := capResizeFixtureSubstrate(1, 10*time.Second)
 
-	// One session holds the only slot; the waiters below all block on it.
+	// One session holds the only slot; the waiters below all block on it. It
+	// takes the fast path itself, so the slow-path count starts at zero.
 	capResizeFixtureSaturate(t, sub, 1)
+	if got := daemon.ExportedSpawnSemWaits(sub); got != 0 {
+		t.Fatalf("slow-path entries = %d before the resize, want 0 — the fixture "+
+			"itself queued for a slot, so this test cannot attribute a later entry to the raise", got)
+	}
 
 	started := make(chan struct{}, waiters)
 	// Hold the window open until every waiter has entered SpawnWindow, so the
@@ -197,6 +216,14 @@ func TestSpawnCapRaise_WokenSpawnsAreNotRefused(t *testing.T) {
 		case <-deadline:
 			t.Fatal("a blocked spawn never returned after the cap was raised")
 		}
+	}
+
+	if got := daemon.ExportedSpawnSemWaits(sub); got != 0 {
+		t.Errorf("%d of the %d spawns woken by the raise had to queue for a spawn slot; want 0. "+
+			"Raising the cap grants the slot BEFORE it wakes anyone, so a woken spawn that still "+
+			"has to wait was woken against the old capacity — the non-terminal bound moved first "+
+			"and the reserve does not exist inside that window (hk-pcjkp). The spawns all started, "+
+			"because a missed fast path waits the slot out; what they paid is the wait.", got, waiters)
 	}
 }
 

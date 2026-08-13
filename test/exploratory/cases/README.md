@@ -83,6 +83,13 @@ The daemon must be an isolated scratch, never the fleet:
 **Build BEFORE you seed**, or the binary stamps `vcs.modified=true` and every provenance
 check on it is void.
 
+The one deliberate exception is `make core-loop-lt`, which must seed first: its dot fixture has
+to stay in the tree for the whole run, so building first would only move the problem to the next
+rebuild. It buys the exception by making the fixture INVISIBLE to the stamp — a root-anchored
+`/review-loop.dot` in `.gitignore` — and by having `scripts/core-loop-matrix.sh` assert the
+binary's stamp before it prints a verdict. Ordering is not the rule; a clean stamp at build time
+is the rule, and `scripts/scratch-daemon.sh provenance <scratch>` is how you check it (hk-48zdw).
+
 Traps that have produced false results in this library's own history:
 
 - **A case that expects a refusal will PASS when its own command is malformed.** This is the

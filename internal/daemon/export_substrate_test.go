@@ -173,3 +173,22 @@ func ExportedSetCapResizeMid(sub handler.Substrate, fn func()) {
 		ts.capResizeMid = fn
 	}
 }
+
+// ExportedSpawnSemWaits reports how many non-terminal spawns on this substrate
+// have entered the bounded wait for a spawnSem slot — the slow path taken when
+// the fast-path TryAcquire misses because terminal holders have drawn the
+// semaphore down past the reserve.
+//
+// It exists for the hk-pcjkp raise-order guard. A woken spawn that misses the
+// fast path now waits the slot out instead of failing (see
+// awaitSpawnSemHoldingNonTerminal), so the wrong resize order no longer changes
+// what a spawn RETURNS — only how long it takes. This counter is what makes
+// that difference assertable without a stopwatch.
+//
+// Returns 0 when sub is not a *tmuxSubstrate.
+func ExportedSpawnSemWaits(sub handler.Substrate) uint64 {
+	if ts, ok := sub.(*tmuxSubstrate); ok {
+		return ts.spawnSemWaits.Load()
+	}
+	return 0
+}

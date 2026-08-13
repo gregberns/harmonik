@@ -27,8 +27,9 @@
 #
 # An APPROVE (and its config-reviewer twin CLEAN) is held to more than the
 # other verdicts, so that the honest form is always the cheaper thing to write:
-#   - Reviewed-By must name a reviewer skill this repo actually has
-#     (`.claude/skills/*reviewer*`), optionally with a parenthetical qualifier.
+#   - Reviewed-By must be exactly the name of a reviewer skill this repo has
+#     and that git tracks (`.claude/skills/*reviewer*/SKILL.md`). Nothing may
+#     follow the name; detail about the run goes in the verdict's `notes`.
 #   - Reviewed-By must not name the author ("self").
 #   - The JSON must carry the `flags` key that the reviewer skill always emits.
 # None of this proves a reviewer ran — a shell script cannot see session state,
@@ -66,11 +67,19 @@ known_reviewers() {
   root="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel 2>/dev/null || true)"
   [[ -z "$root" ]] && root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd || true)"
   skills="${root}/.claude/skills"
+  # A reviewer identity has to be one git tracks. The directory alone is not
+  # enough: this reads the working tree, so an untracked `mkdir` beside the real
+  # skills would mint a name the validator then trusts, and minting a reviewer
+  # is the exact act the approval rule exists to prevent. Requiring the skill to
+  # be tracked means a new reviewer arrives the way anything else does — as a
+  # diff somebody can decline.
   if [[ -n "$root" && -d "$skills" ]]; then
-    local d
+    local d name
     for d in "$skills"/*reviewer*; do
       [[ -d "$d" ]] || continue
-      found+="$(basename "$d")"$'\n'
+      name="$(basename "$d")"
+      git -C "$root" ls-files --error-unmatch -- ".claude/skills/${name}/SKILL.md" >/dev/null 2>&1 || continue
+      found+="${name}"$'\n'
     done
   fi
   if [[ -z "$found" ]]; then
@@ -106,9 +115,24 @@ check_approval_identity() {
     return
   fi
 
-  # Drop one trailing parenthetical qualifier, then compare the bare name.
-  base="$(printf '%s\n' "$value" | sed -E 's/[[:space:]]*\([^()]*\)[[:space:]]*$//')"
-  base="${base%"${base##*[![:space:]]}"}"
+  # The whole value must be the reviewer's name, with nothing after it.
+  #
+  # This used to drop one trailing parenthetical before comparing, so that
+  # `agent-reviewer (codex harness)` could carry a note about which harness ran.
+  # The affordance cost more than it bought. Everything inside the parentheses
+  # was free text nobody checked, which meant the two rules above could be
+  # answered and defeated in the same line: `agent-reviewer (myself)` passed the
+  # self-authorship rule that exists to stop exactly that, and
+  # `agent-reviewer (Kierkegaard)` read to a human as an attribution to
+  # Kierkegaard while satisfying a check that asked for a reviewer this repo has.
+  # Both were measured passing before this changed.
+  #
+  # A name with nothing after it is worth more than a name with a comment after
+  # it: it is one exact-match grep to audit, and there is no room left in the
+  # line to say something the audit cannot see. Detail about the run belongs in
+  # the verdict's own `notes`, where it is inside the JSON the reviewer emits
+  # rather than beside it.
+  base="$value"
 
   # Lower-cased with tr, not with ${x,,}: this script has to run under the
   # bash 3.2 that ships with macOS as well as a modern one.
@@ -126,7 +150,8 @@ check_approval_identity() {
   if [[ "$matched" != true ]]; then
     err "the ${verdict_name} verdict must name a reviewer skill this repo has; got '${value}'."
     err "  Known reviewers: $(known_reviewers | tr '\n' ' ')"
-    err "  A qualifier in parentheses is fine: 'agent-reviewer (codex harness)'."
+    err "  Write the name alone. A qualifier after it is no longer accepted:"
+    err "  put which harness ran, or when, in the verdict's own \"notes\" field."
     err "  If no reviewer was reached, record that instead: \"verdict\": \"NOT_REVIEWED\"."
   fi
 }

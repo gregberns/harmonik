@@ -141,16 +141,70 @@ Reviewed-By: implement_claim_chain
 Review-Verdict: {"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"Looks right."}'
 
 # ---------------------------------------------------------------------------
-# CASE 5 — a qualifier after a real reviewer name is fine.
+# CASE 5 — a qualifier after a real reviewer name is refused.
 #
-# The reviewer runs on more than one harness and sessions like to say which.
-# Refusing the qualifier would push authors to strip context off a true
-# statement, so the bar is on the name, not on the punctuation after it.
+# This case asserted the opposite until 2026-08-12, on the reasoning that the
+# reviewer runs on more than one harness and refusing the qualifier would push
+# authors to strip context off a true statement. What the affordance actually
+# bought was a span of free text that no rule read, sitting on the one line the
+# approval rules are written about — so the rules could be answered and
+# defeated in the same breath. Both of the next two cases were measured passing
+# before this changed.
+#
+# The context has somewhere better to go: `notes`, inside the JSON the reviewer
+# emits rather than beside it.
 # ---------------------------------------------------------------------------
-expect_pass "a real reviewer name with a parenthetical qualifier passes" \
+expect_fail "a qualifier after a real reviewer name is refused" \
+    "must name a reviewer skill this repo has" \
 'fix(daemon): honor run_id in the worktree path
 
 Reviewed-By: agent-reviewer (codex harness, fresh context)
+Review-Verdict: {"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"Checked against the workspace spec."}'
+
+# ---------------------------------------------------------------------------
+# CASE 5a — a qualifier cannot smuggle in a reviewer this repo does not have.
+#
+# 27 commits on this branch carry an APPROVE from a reviewer named nowhere in
+# the repository. Written bare, that name is refused. Written after a real one
+# it used to pass, and it read to a human as an attribution to the name in the
+# parentheses.
+# ---------------------------------------------------------------------------
+expect_fail "a qualifier cannot smuggle in an unknown reviewer" \
+    "must name a reviewer skill this repo has" \
+'fix(daemon): honor run_id in the worktree path
+
+Reviewed-By: agent-reviewer (Kierkegaard)
+Review-Verdict: {"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"Checked against the workspace spec."}'
+
+# ---------------------------------------------------------------------------
+# CASE 5b — an author saying the approval is their own no longer passes.
+#
+# This is the sharper of the two, and it is worth saying exactly which rule
+# catches it, because the obvious answer is wrong. The self-authorship check is
+# a word match on "self", and "myself" does not match it — the letter before
+# "self" is a letter, so the word boundary fails. That check never saw this
+# line. What refuses it is the name rule: the value is not exactly a reviewer
+# this repo has.
+#
+# So the self-authorship check is narrower than its name suggests, and the
+# exact-name rule is what closes the gap around it. Assert the reason and not
+# only the exit code, or this case would read as evidence for a check that did
+# not run.
+# ---------------------------------------------------------------------------
+expect_fail "an author claiming their own approval in a qualifier is refused" \
+    "must name a reviewer skill this repo has" \
+'fix(daemon): honor run_id in the worktree path
+
+Reviewed-By: agent-reviewer (myself)
+Review-Verdict: {"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"Checked against the workspace spec."}'
+
+# ---------------------------------------------------------------------------
+# CASE 5c — the bare reviewer name, which is now the only accepted form.
+# ---------------------------------------------------------------------------
+expect_pass "a bare reviewer name passes" \
+'fix(daemon): honor run_id in the worktree path
+
+Reviewed-By: agent-reviewer
 Review-Verdict: {"schema_version":1,"verdict":"APPROVE","flags":[],"notes":"Checked against the workspace spec."}'
 
 # ---------------------------------------------------------------------------

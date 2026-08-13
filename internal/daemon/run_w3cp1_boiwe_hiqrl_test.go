@@ -87,8 +87,28 @@ func awaitWorkLoopExit(t *testing.T, workDone context.Context, loopDone <-chan e
 				drained, workDone.Err())
 		}
 	case <-time.After(workLoopDrainBudget + workLoopExitGrace):
-		t.Fatalf("runWorkLoop did not return within %s after %s",
+		// Report, then JOIN before unwinding. t.Fatalf here would leave the loop
+		// running while this test unwinds, and the project dir is a t.TempDir, so
+		// cleanup then deletes the tree out from under a live loop. The loop's
+		// shutdown writes into that tree, so the failure surfaces as
+		// "CancelQueueOnShutdown: persist ... no such file or directory" in
+		// WHICHEVER TEST RUNS NEXT — which reads as a queue defect and has sent
+		// readers into internal/queue more than once. Refs hk-33e6p.
+		t.Errorf("runWorkLoop did not return within %s after %s",
 			workLoopDrainBudget+workLoopExitGrace, drained)
+		select {
+		case <-loopDone:
+			// Late but clean: nothing is running now, so cleanup is safe and the
+			// only failure is the one reported above.
+		case <-time.After(workLoopExitGrace):
+			// The loop is genuinely wedged, so joining is not available and the
+			// deletion below cannot be made safe. Say so here, because the next
+			// reader's alternative is to blame the package that reports the I/O
+			// error rather than the test that caused it.
+			t.Errorf("runWorkLoop still had not returned %s later; the project dir is about to be deleted under a running loop, so treat any persist or no-such-file error in a LATER test in this package as fallout from THIS failure, not as a defect of its own",
+				workLoopExitGrace)
+		}
+		t.FailNow()
 	}
 }
 

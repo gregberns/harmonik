@@ -819,8 +819,20 @@ func TestWorkLoop_TwoConcurrentBeads(t *testing.T) {
 // CloseBead.  All other methods delegate to the inner stubBeadLedger so the
 // normal claim/reopen recording is available.
 type closeErrFixtureLedger struct {
+	mu       sync.Mutex
 	inner    *stubBeadLedger
 	closeErr error
+
+	// closeCallCount counts CloseBead invocations. Without it this fixture cannot
+	// tell "the close failed" from "the close was never reached", and for a long
+	// time it was the second while claiming to test the first (hk-vzxg5).
+	closeCallCount int
+}
+
+func (c *closeErrFixtureLedger) getCloseCallCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.closeCallCount
 }
 
 func (c *closeErrFixtureLedger) Ready(ctx context.Context) ([]core.BeadRecord, error) {
@@ -836,6 +848,9 @@ func (c *closeErrFixtureLedger) ClaimBead(ctx context.Context, d string, cfg brc
 }
 
 func (c *closeErrFixtureLedger) CloseBead(_ context.Context, _ string, _ brcli.TimeoutConfig, _ core.RunID, _ core.TransitionID, _ core.BeadID, _ bool) error {
+	c.mu.Lock()
+	c.closeCallCount++
+	c.mu.Unlock()
 	return c.closeErr
 }
 
@@ -846,6 +861,14 @@ func (c *closeErrFixtureLedger) ReopenBead(ctx context.Context, d string, cfg br
 // TestWorkLoop_CloseBeadError_EmitsRunFailed verifies that when CloseBead
 // returns an error the work loop emits run_failed (not run_completed) so that
 // JSONL and bead state remain consistent (hk-wfbxf: no split-brain).
+//
+// THE HANDLER MUST COMMIT (hk-vzxg5). This test used to run `sh -c "exit 0"`,
+// which exits clean without advancing HEAD, so the run failed its pre-close guard
+// and CloseBead was never called. The run_failed this test waited for was real
+// but came from the guard, not from closeErr -- so the test passed without ever
+// exercising the behavior it names. The pre-commit WorktreeFactory is not enough
+// on its own: the commit has to come from the handler, inside the run. The
+// closeCallCount assertion below is what keeps that honest.
 func TestWorkLoop_CloseBeadError_EmitsRunFailed(t *testing.T) {
 	t.Parallel()
 
@@ -853,8 +876,12 @@ func TestWorkLoop_CloseBeadError_EmitsRunFailed(t *testing.T) {
 	workloopFixtureGitRepo(t, projectDir)
 
 	const beadID = core.BeadID("test-bead-closeerr-001")
+	// labels is load-bearing here -- see stubBeadLedger.labels. Unlabelled selects
+	// the reviewed graph, whose commit gate cannot pass in this fixture repo, so
+	// the run reopens and retries and never reaches a close (hk-vzxg5).
 	inner := &stubBeadLedger{
-		ready: []core.BeadID{beadID},
+		ready:  []core.BeadID{beadID},
+		labels: workloopFixtureSingleLabels,
 	}
 	ledger := &closeErrFixtureLedger{
 		inner:    inner,
@@ -862,13 +889,14 @@ func TestWorkLoop_CloseBeadError_EmitsRunFailed(t *testing.T) {
 	}
 	collector := &stubEventCollector{}
 
-	// Handler exits 0 so the loop attempts CloseBead.
+	// Handler commits and exits 0, so the run clears its pre-close guard and the
+	// loop actually attempts CloseBead.
 	deps := daemon.ExportedTestRuntime(daemon.TestRuntimeParams{
 		BrAdapter:        ledger,
 		Bus:              collector,
 		ProjectDir:       projectDir,
 		HandlerBinary:    "/bin/sh",
-		HandlerArgs:      []string{"-c", "exit 0"},
+		HandlerArgs:      []string{"-c", "git commit --allow-empty -m 'closeerr: handler commit' >/dev/null 2>&1; exit 0"},
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		WorktreeFactory:  workloopFixturePreCommitWorktreeFactory,
@@ -885,21 +913,34 @@ func TestWorkLoop_CloseBeadError_EmitsRunFailed(t *testing.T) {
 		daemon.ExportedRunWorkLoop(ctx, deps)
 	}()
 
-	// Poll until a run_failed event is emitted, bounded by the context.
+	// Poll until CloseBead has been attempted AND the run has reached a terminal --
+	// EITHER terminal. Waiting only for run_failed makes a regression report as a
+	// 60-second timeout instead of as the assertion below, which says what went
+	// wrong. Waiting on the terminal alone is what let this test pass on a run that
+	// never reached CloseBead at all.
 	for {
-		types := collector.eventTypes()
-		for _, et := range types {
-			if et == string(core.EventTypeRunFailed) {
-				goto found
+		if ledger.getCloseCallCount() > 0 {
+			types := collector.eventTypes()
+			for _, et := range types {
+				if et == string(core.EventTypeRunCompleted) || et == string(core.EventTypeRunFailed) {
+					goto found
+				}
 			}
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatalf("timed out waiting for run_failed event; got events: %v", collector.eventTypes())
+			t.Fatalf("timed out waiting for a close attempt + run terminal; close attempts=%d, events: %v",
+				ledger.getCloseCallCount(), collector.eventTypes())
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
 found:
+
+	// The reach check: prove the terminal above came from the close error and not
+	// from a guard that failed the run before CloseBead was ever called.
+	if n := ledger.getCloseCallCount(); n == 0 {
+		t.Fatalf("hk-vzxg5: CloseBead was never called, so closeErr never fired and this test measured nothing")
+	}
 
 	cancel()
 	awaitLoopTeardown(t, waitDone, "work loop")

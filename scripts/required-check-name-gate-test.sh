@@ -1153,6 +1153,177 @@ printf 'name: CI\non:\n  pull_request:\njobs:\n  check:\n    name: check (Tier 2
 expect "a tab left of the block content is still refused" 1 "$tmp/tabshallow.yml" \
   "a tab is used for indentation"
 
+# ----------------------------------- the block scalar indentation indicator
+# YAML's indentation indicator is ONE digit and that digit is 1 to 9. Every
+#    fixture below was put to libyaml before it was written here. libyaml is
+#    a good oracle because GitHub's parser was PORTED from it, not because it
+#    is the library this chain runs — it is not. GitHub's runner and its
+#    server-side workflow parser are .NET, and the YAML goes through
+#    YamlDotNet, a C# port of libyaml, which is why the behaviours agree.
+#    That is inferred from the porting relationship. No fixture here measures
+#    GitHub's own parser, which a test cannot reach.
+#    libyaml is also ONE oracle: PyYAML's CLoader and Ruby's Psych are two
+#    bindings of it, not two implementations, so they cannot disagree and
+#    their agreement is not independent confirmation.
+#
+#    Measured against the reader as SHIPPED, five of the six refusals below
+#    were called fine — `|0`, `|10`, `|12`, `>0` and `|٢` each exited 0 with
+#    the gate reporting the required context. GitHub refuses every one of
+#    those files outright, so no run is created and the required context is
+#    pending forever. That is the wedge direction, and the gate that exists to
+#    catch a context that never arrives was itself producing one. The sixth,
+#    `|²`, exited 1 with a raw traceback — also wrong, but loud.
+#
+#    The refusals share one reason string because they are one rule. The exit
+#    code and the passing twins are what tell them apart.
+
+# `|0`. libyaml: "found an indentation indicator equal to 0". The reader read
+#    the digit, then threw it away, because 0 is falsy and the line that used
+#    it tested truthiness rather than `is not None`. It then auto-detected the
+#    indent, read the file happily, and said ok.
+cat >"$tmp/indic-zero.yml" <<'YML'
+name: CI
+on:
+  pull_request:
+jobs:
+  check:
+    name: check (Tier 2)
+    runs-on: ubuntu-latest
+    steps:
+      - run: |0
+          make full
+YML
+expect "an indentation indicator of 0 is refused, not quietly ignored" 1 "$tmp/indic-zero.yml" \
+  "the block scalar header '|0' is not understood"
+
+# `|10`. The bead's second route to the same wrong state: libyaml reads one
+#    digit and then wants a comment or a line break, so the second digit ends
+#    the file. The reader looped over the digits and let each overwrite the
+#    last, so `|10` also arrived at 0 and was discarded by the same falsy test.
+cat >"$tmp/indic-ten.yml" <<'YML'
+name: CI
+on:
+  pull_request:
+jobs:
+  check:
+    name: check (Tier 2)
+    runs-on: ubuntu-latest
+    steps:
+      - run: |10
+          make full
+YML
+expect "a two-digit indentation indicator ending in 0 is refused" 1 "$tmp/indic-ten.yml" \
+  "the block scalar header '|10' is not understood"
+
+# `|12`. The same two-digit rule with no 0 anywhere in it. Without this one,
+#    refusing the digit 0 alone would satisfy both assertions above and leave
+#    multi-digit headers reading as fine — `|12` would have become 2, which is
+#    a plausible indent, so it would have been read and passed.
+cat >"$tmp/indic-twelve.yml" <<'YML'
+name: CI
+on:
+  pull_request:
+jobs:
+  check:
+    name: check (Tier 2)
+    runs-on: ubuntu-latest
+    steps:
+      - run: |12
+          make full
+YML
+expect "a two-digit indicator with no 0 in it is refused too" 1 "$tmp/indic-twelve.yml" \
+  "the block scalar header '|12' is not understood"
+
+# A superscript two — category No, a NON-decimal digit. str.isdigit() is true
+#    for it and int() then raises ValueError, which is not a YamlError, so it
+#    escaped the reader as a raw traceback — the failure hk-xj18v names,
+#    arriving by another route. THIS HALF of the Unicode class fails loud; the
+#    decimal half in the next fixture fails silent, which is worse, so do not
+#    read "loud" as a description of Unicode digits in general.
+#    Loud is still wrong: the header promises that a file the reader cannot
+#    read is refused with a reason. The exit code alone cannot see this,
+#    because a traceback also exits 1, so the reason string is the assertion
+#    here — the traceback path never prints it.
+cat >"$tmp/indic-unicode.yml" <<'YML'
+name: CI
+on:
+  pull_request:
+jobs:
+  check:
+    name: check (Tier 2)
+    runs-on: ubuntu-latest
+    steps:
+      - run: |²
+          make full
+YML
+expect "a Unicode digit indicator is refused with a reason, not a traceback" 1 "$tmp/indic-unicode.yml" \
+  "the block scalar header '|²' is not understood"
+
+# An Arabic-Indic two — category Nd, a DECIMAL digit, and the half of the
+#    Unicode class that the exit code can see. isdigit() is true AND int()
+#    returns 2 with no error at all, so the shipped reader took the 2, read
+#    the file and reported the required context: exit 0, no traceback, on a
+#    workflow libyaml refuses. Devanagari, fullwidth and N'Ko two were
+#    measured and behave identically; one stands for the set.
+#    This fixture is why the section is not pinned by prose alone. Without it
+#    the "ASCII digits only" rule rests on the reason string of the `|²` case,
+#    and a traceback exits 1 exactly as a refusal does — so rewording the
+#    message later could retire the rule with the suite still green. Here the
+#    EXIT CODE carries it, and that survives any rewording.
+cat >"$tmp/indic-arabic.yml" <<'YML'
+name: CI
+on:
+  pull_request:
+jobs:
+  check:
+    name: check (Tier 2)
+    runs-on: ubuntu-latest
+    steps:
+      - run: |٢
+          make full
+YML
+expect "a Unicode decimal digit is refused, not silently read as 2" 1 "$tmp/indic-arabic.yml" \
+  "the block scalar header '|٢' is not understood"
+
+# `>0` is the same header on a folded scalar. One line reads the indicator for
+#    both styles, so this says the rule is about the indicator and not about
+#    `|`, and it goes red if somebody ever splits the two paths and fixes one.
+cat >"$tmp/indic-folded-zero.yml" <<'YML'
+name: CI
+on:
+  pull_request:
+jobs:
+  check:
+    name: check (Tier 2)
+    runs-on: ubuntu-latest
+    steps:
+      - run: >0
+          make full
+YML
+expect "a folded scalar gets the same indicator rule as a literal one" 1 "$tmp/indic-folded-zero.yml" \
+  "the block scalar header '>0' is not understood"
+
+# The passing twin. Refusing every indicator would satisfy all six refusals
+#    above, and the reader would then refuse ordinary legal workflows. libyaml
+#    accepts this file and reads the step as ' make full\n' — the leading space
+#    is content, because `|1` fixes the column one past the key's indent — and
+#    this reader produces the same string. `|2` has a second twin of its own in
+#    the tab section above, which is what says the digit FIXES the column
+#    rather than merely being tolerated.
+cat >"$tmp/indic-one.yml" <<'YML'
+name: CI
+on:
+  pull_request:
+jobs:
+  check:
+    name: check (Tier 2)
+    runs-on: ubuntu-latest
+    steps:
+      - run: |1
+          make full
+YML
+expect "a legal one-digit indicator is still read and still passes" 0 "$tmp/indic-one.yml"
+
 # ------------------------------------------------ say only what can be seen
 # A job that calls a local composite action may well run the command inside
 #    it. "It runs no step that invokes make full" is a stronger claim than a
@@ -1177,4 +1348,25 @@ expect "the reusable-workflow refusal names the composed context" 1 "$tmp/reusab
   "<job name> / <child job name>"
 
 echo "required-check-name-gate-test: $(( PASS + FAIL )) assertions, ${FAIL} failed"
+
+# A count floor, for the same reason scripts/secret-scan-test.sh and
+# scripts/gate-fails-closed-test.sh carry one: a run that stopped early reports
+# "0 failed" and exits 0, which reads exactly like a clean pass. A fixture that
+# matches nothing prints ok and exits 0 too, so the number of assertions that
+# RAN is the only thing that says the suite did its work.
+#
+# The floor is the number this file runs today, with no slack. Slack lets
+# deleted assertions pass unseen, which is what the floor exists to stop. Raise
+# it deliberately when you add a case, and read the number the file prints
+# rather than counting `expect` lines: a refusal with a reason is TWO
+# assertions, one for the exit code and one for the reason.
+#
+# The number has one name. Were it written twice — once in the test and once
+# in the message — an edit to one would leave the other stale, and the refusal
+# would go on naming the count it just refused as the count it wanted.
+ASSERTION_FLOOR=141
+if [ $(( PASS + FAIL )) -lt "$ASSERTION_FLOOR" ]; then
+  echo "required-check-name-gate-test: only $(( PASS + FAIL )) assertions ran; this file expects ${ASSERTION_FLOOR}" >&2
+  exit 1
+fi
 [ "$FAIL" -eq 0 ] || exit 1

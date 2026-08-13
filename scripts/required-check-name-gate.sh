@@ -38,8 +38,9 @@
 #
 #   It reads: block mappings and block sequences at any depth; plain, single-
 #   quoted and double-quoted scalars; literal (`|`) and folded (`>`) block
-#   scalars with `-`/`+` chomping and an explicit indent digit; flow sequences
-#   `[a, b]` and flow mappings `{a: b}`; `#` comments; a single leading `---`.
+#   scalars with `-`/`+` chomping and an explicit indent digit 1-9; flow
+#   sequences `[a, b]` and flow mappings `{a: b}`; `#` comments; a single
+#   leading `---`.
 #   It resolves `true`/`false` to booleans and `null`/`~`/empty to nothing, and
 #   leaves every other scalar a string. It deliberately does NOT resolve the
 #   key `on` to the boolean true, which YAML 1.1 does and which would hide
@@ -560,18 +561,68 @@ class Reader(object):
         rest = _COMMENT_SPLIT.split(header[1:], 1)[0].strip()
         chomp = ""
         explicit = None
+        # An indentation indicator is ONE digit, and that digit is 1 to 9.
+        # Reading a wider set makes this gate fail OPEN, which is the one
+        # direction that matters here:
+        #   `|0`  libyaml refuses it — "found an indentation indicator equal
+        #         to 0". This reader used to accept it and then discard it,
+        #         because `0` is falsy and the line below tested truthiness.
+        #   `|10` libyaml reads one digit and then wants a comment or a line
+        #         break, so the second digit ends the file. This reader used to
+        #         let each digit overwrite the last, so `|10` also arrived at 0
+        #         and was discarded by the same falsy test.
+        #   an Arabic-Indic two, and every other Unicode DECIMAL digit
+        #         (category Nd: Devanagari, fullwidth, N'Ko, and the rest).
+        #         str.isdigit() is true AND int() returns 2 — no error at all.
+        #         The shipped reader took the 2, read the file and said ok,
+        #         exit 0, while libyaml refuses the file. So this was a SILENT
+        #         fail-open, the same direction as `|0` and the worse of the
+        #         two Unicode halves.
+        #   a superscript two, and the other NON-decimal digits (category No).
+        #         isdigit() is true but int() raises ValueError, which is not a
+        #         YamlError, so it escaped this reader as a traceback rather
+        #         than as a refusal with a reason. That half failed loud.
+        # libyaml reads ASCII digits only. GitHub refuses every one of these
+        # files, so no run is created and the required context stays pending
+        # for ever — the wedge this gate exists to catch, arriving through a
+        # file the gate called fine.
+        #
+        # Testing the accepted set directly refuses all of them in one place, and
+        # never calls int() on a character that cannot survive it. An
+        # isdigit() test with the three cases repaired afterwards would need
+        # three guards to say one rule, and would leave the isdigit()/int()
+        # pair in the code for a later edit to widen again.
+        #
+        # This branch is TIGHTER than libyaml in one known place and LOOSER in
+        # another. Tighter: `|2#x` starts a comment with no space in front of
+        # it, libyaml takes it, and this reader refuses it. THAT is why the
+        # message below does not say that everything it refuses is a file
+        # GitHub would refuse — `|2#x` is refused here and accepted there. It
+        # fails closed, and it refused this before the indicator rule was
+        # tightened, so it is not a new divergence. Looser: `| 2` and `|--`
+        # are refused by libyaml and still read here. That is a separate gap,
+        # filed as hk-jkqir, deliberately not closed in this change.
         for ch in rest:
             if ch in "+-":
                 chomp = ch
-            elif ch.isdigit():
+            elif ch in "123456789" and explicit is None:
                 explicit = int(ch)
             else:
-                self.err("the block scalar header '%s' is not understood" % header)
+                # State the accepted set, not the rule the author probably
+                # broke. `|2#x` reaches here and breaks no digit rule, so a
+                # message about digits would send that reader the wrong way.
+                self.err("the block scalar header '%s' is not understood; this "
+                         "reader accepts a chomping indicator (+ or -) and at "
+                         "most one indentation digit, 1 to 9" % header)
         raw = []
         # An explicit indicator fixes the content indent in the header, before
         # any content line is read. With no indicator it is not fixed until the
-        # first non-empty line, and it is that line's SPACES that fix it.
-        content_indent = indent + explicit if explicit else None
+        # first non-empty line, and it is that line's SPACES that fix it. The
+        # test is `is not None`, not truthiness: 0 is refused above so the two
+        # agree today, but they stop agreeing the moment anybody widens the
+        # accepted set, and then `indent + 0` is a real column rather than
+        # "not fixed yet".
+        content_indent = indent + explicit if explicit is not None else None
         while self.i < len(self.lines):
             line = self.lines[self.i]
             blank = line.strip() == ""

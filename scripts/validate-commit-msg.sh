@@ -122,6 +122,55 @@ known_reviewers() {
   printf '%s' "$found"
 }
 
+# check_not_self_authored — the author may not be the reviewer, on any verdict
+# that claims a reviewer read the change.
+#
+# Reads the global REVIEWED_BY. A trailer naming the author records a review
+# nobody independent performed, and that is as true of a REQUEST_CHANGES as of
+# an APPROVE: both assert a reviewer read the change. The audit everyone relies
+# on is a `git log --grep` for the trailer key and a name, and it does not read
+# the verdict value either.
+#
+# This lived inside check_approval_identity and so ran on approvals only, which
+# left `Reviewed-By: self` passing with a REQUEST_CHANGES or a DRIFT verdict.
+# The count of commits that were actually reaching this gap, and the command
+# that re-derives it, live with the test case that pins the behaviour —
+# scripts/validate-commit-msg-test.sh, CASE 12a. One owner per count.
+#
+# WHAT THIS IS: a substring probe for the token `self`, and no more than that.
+# It catches an author who says plainly that the review is their own. It does
+# NOT catch `myself`, `the author`, or `agent-reviewer (myself)` — the last of
+# which check_approval_identity's own header records as having defeated this
+# same regex, and which is refused on an approval by the exact-name rule and
+# NOT refused here. A word check cannot prove a reviewer ran; it can only
+# refuse the ones who write down that none did.
+#
+# ONLY THE SELF TEST MOVES, and the narrowness is the point. The exact-name
+# rule stays on approvals: a non-approving verdict may name a reviewer this
+# repo does not ship, CASE 12 of the test suite pins that on purpose, and
+# refusing those would make the honest verdicts the expensive ones to write —
+# which is the pressure that produces a fabricated approval in the first place.
+#
+# NOT_REVIEWED is not held to this rule. It has its own, check_no_reviewer_named:
+# a verdict that says no reviewer was reached has no reviewer to name.
+#
+# Returns 1 when it refuses, so a caller can stop instead of piling a second
+# complaint about the same line on top of this one.
+check_not_self_authored() {
+  local verdict_name="$1" value
+  value="${REVIEWED_BY#Reviewed-By:}"
+  value="${value#"${value%%[![:space:]]*}"}"   # trim leading space
+  value="${value%"${value##*[![:space:]]}"}"   # trim trailing space
+
+  if printf '%s\n' "$value" | grep -qiE '(^|[^a-z])self([^a-z]|$)'; then
+    err "the ${verdict_name} verdict must not be self-authored (Reviewed-By: ${value})."
+    err "  The rule is: quote the reviewer's verdict, never author your own."
+    err "  If no reviewer was reached, record that instead: \"verdict\": \"NOT_REVIEWED\"."
+    return 1
+  fi
+  return 0
+}
+
 # check_approval_identity — the extra bar an APPROVE / CLEAN has to clear.
 #
 # Reads the global REVIEWED_BY (the whole `Reviewed-By:` line). An approval must
@@ -129,9 +178,11 @@ known_reviewers() {
 # `agent-reviewer` passes, `agent-reviewer (codex harness)` and `Codex reviewer`
 # do not. Detail about the run belongs in the verdict's `notes`. The
 # parenthetical used to pass, which meant `agent-reviewer (myself)` read as an
-# approval by a real reviewer. And the value must not name the author: the rule
-# says do not author your own approval, so a value that says "self" is refused
-# here.
+# approval by a real reviewer. The value must not name the author either — but
+# that rule is no longer HERE, because it is not particular to an approval.
+# check_not_self_authored above holds it and every verdict that claims a review
+# is held to it; this function calls it before the exact-name rule and stops
+# if it refuses. (The empty-value check runs earlier still.)
 #
 # This proves the name is a real reviewer. It cannot prove that reviewer ran.
 check_approval_identity() {
@@ -145,12 +196,7 @@ check_approval_identity() {
     return
   fi
 
-  if printf '%s\n' "$value" | grep -qiE '(^|[^a-z])self([^a-z]|$)'; then
-    err "the ${verdict_name} verdict must not be self-authored (Reviewed-By: ${value})."
-    err "  The rule is: quote the reviewer's verdict, never author your own approval."
-    err "  If no reviewer was reached, record that instead: \"verdict\": \"NOT_REVIEWED\"."
-    return
-  fi
+  check_not_self_authored "$verdict_name" || return
 
   # The whole value must be the reviewer's name, with nothing after it.
   #
@@ -1134,16 +1180,24 @@ PY_FALLBACK
             check_no_reviewer_named
             ;;
           REQUEST_CHANGES|DRIFT_MINOR|DRIFT_MAJOR)
-            # OK — these may land in commits, and they may name a reviewer.
-            # `Reviewed-By: agent-reviewer` with a REQUEST_CHANGES or a DRIFT
-            # verdict is a TRUE statement: the reviewer ran and declined. It is
-            # the common shape in this history, not an edge case. No count
-            # here on purpose: a count of commits by verdict goes up with
+            # These land in commits, and they may name a reviewer this repo
+            # does not ship. `Reviewed-By: agent-reviewer` with a
+            # REQUEST_CHANGES or a DRIFT verdict is a TRUE statement: the
+            # reviewer ran and declined. It is the common shape in this
+            # history, not an edge case, and `Codex independent review` is a
+            # legitimate value here where it is refused on an approval. No
+            # count here on purpose: a count of commits by verdict goes up with
             # every commit of that shape, including the ones that write the
             # count down. The measurement has one owner and it carries the
             # command that re-derives it — scripts/validate-commit-msg-test.sh,
             # at the case that pins this arm (search for `commits carry`).
-            # Nothing here to check.
+            #
+            # ONE THING IS CHECKED, and it is the one the verdict value cannot
+            # excuse. Naming the author as the reviewer records a review that
+            # nobody independent performed, and a REQUEST_CHANGES asserts a
+            # reviewer read the change exactly as an APPROVE does. This arm
+            # enforced nothing at all until that was measured passing.
+            check_not_self_authored "$VERDICT_FIELD"
             ;;
           BLOCK)
             err "BLOCK verdict must not be committed (fix first)."

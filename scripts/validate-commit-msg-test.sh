@@ -306,6 +306,123 @@ Reviewed-By: Codex independent review
 Review-Verdict: {"schema_version":1,"verdict":"REQUEST_CHANGES","flags":["missing-tests"],"notes":"No test covers the truncated-read path."}'
 
 # ---------------------------------------------------------------------------
+# CASE 12a — a non-approving verdict may not name the author either.
+#
+# CASE 12 above says this arm accepts a reviewer name the repo does not ship,
+# and that is right. It is not a licence to name YOURSELF. A REQUEST_CHANGES
+# trailer asserts that a reviewer read the change, the same claim an APPROVE
+# makes, and the audit that counts reviewed commits is a grep for the trailer
+# key and a name — it never reads the verdict value.
+#
+# THE COUNT, AND IT IS SMALL — say the small one. Over `main..HEAD`, 986 commits
+# carry a `Reviewed-By:` line and 128 of those values name the author. But 119
+# of the 128 sit on APPROVE or CLEAN, where the exact-name rule already refused
+# the value before this case existed. Only 9 sat on the arm this case pins:
+# 8 DRIFT_MINOR and 1 REQUEST_CHANGES, six of the eight reading
+# `self (agent-config-reviewer …)`. Quoting 128 here would have made the gap
+# look fourteen times larger than it is. This recipe prints the commit total,
+# the Reviewed-By total, the self-naming total and the split by verdict — the
+# 119 and the 9 are sums of that split. It does NOT re-derive the
+# `six of the eight` clause above, which needs the reviewer VALUES and not
+# their counts: for that one, print `v, rev` in place of `cnt[v]++` — printing
+# the bare value drops the verdict label, which leaves `of the eight` to
+# inference. The recipe is meant to be pasted whole and to run as written:
+#
+#   git log main..HEAD --format='%x02%H%n%B' | awk -v RS='\002' '
+#   NR>1 {
+#     rev=""; ver=""
+#     n=split($0, L, "\n")
+#     for (i=1; i<=n; i++) {
+#       if (rev=="" && L[i] ~ /^Reviewed-By:/)    rev=L[i]
+#       if (ver=="" && L[i] ~ /^Review-Verdict:/) ver=L[i]
+#     }
+#     total++
+#     if (rev=="") next
+#     carry++
+#     if (tolower(rev) !~ /(^|[^a-z])self([^a-z]|$)/) next
+#     selfn++
+#     v="(none)"
+#     if (match(ver, /"verdict"[ ]*:[ ]*"[A-Z_]+"/)) {
+#       s=substr(ver, RSTART, RLENGTH); match(s, /[A-Z_]+"$/)
+#       v=substr(s, RSTART, RLENGTH-1)
+#     }
+#     cnt[v]++
+#   }
+#   END {
+#     printf "commits %d / carry Reviewed-By %d / self-naming %d\n", total, carry, selfn
+#     for (k in cnt) printf "  %-16s %d\n", k, cnt[k]
+#   }'
+#
+# It takes the FIRST `^Reviewed-By:` per commit, keeps the values matching
+# /(^|[^a-z])self([^a-z]|$)/ case-folded, and groups them by the `verdict` field
+# of that commit's `^Review-Verdict:` line.
+#
+# SAY WHEN THE COUNT WAS TAKEN, because `main..HEAD` is machine-local and moves
+# under you: measured 2026-08-13 at 6576ba60c, it printed 1187 commits, 986
+# carrying the line, 128 self-naming, split {APPROVE 116, CLEAN 3,
+# DRIFT_MINOR 8, REQUEST_CHANGES 1}. A later run that disagrees is not
+# evidence this comment was wrong — re-read it against that revision first.
+#
+# A SEPARATE TRAP, worth spelling out because it is silent: awk above does its
+# own matching, but any hand variant of this that reaches for `grep` should say
+# /usr/bin/grep. A grep that does not match this pattern returns 0, and a 0 here
+# reads as "nothing to fix" rather than as a broken command — the same shape of
+# failure as the recipe that could not match at all. An earlier session recorded
+# an interactive `grep` resolving to ugrep and producing exactly that 0; no ugrep
+# is installed on this machine and that specific cause was NOT reproducible here,
+# so treat the tool name as unconfirmed and the rule as cheap either way. The
+# validator itself is unaffected, and that half IS confirmed: it runs under
+# non-interactive bash, which does not see an interactive shell's alias.
+#
+# WHAT THE 128 ACTUALLY SHOW, which is worth more than the 9: most are not a
+# bare `self` but a sentence — `agent-reviewer (self-applied — no Agent tool
+# available in this session)` and its variants. They say the author followed a
+# harness instruction not to spawn a sub-agent, applied the reviewer's own
+# checklist to their work, and recorded it honestly. That is a real thing to
+# have done. It is also not an independent review, and NOT_REVIEWED is the
+# verdict for it.
+#
+# HOW THESE TWO CASES DISCRIMINATE. Take the check out of the arm and both go
+# RED. Replace it with the WIDER exact-name rule and both stay green — CASE 12
+# and the DRIFT case are what go red there. So the pair pins the narrow rule,
+# and it takes all four cases together to say which rule this arm holds.
+# ---------------------------------------------------------------------------
+expect_fail "a self-authored REQUEST_CHANGES is refused" \
+    "must not be self-authored" \
+'fix(workspace): widen the verdict read retry
+
+Reviewed-By: self
+Review-Verdict: {"schema_version":1,"verdict":"REQUEST_CHANGES","flags":["missing-tests"],"notes":"No test covers the truncated-read path."}'
+
+expect_fail "a self-review dressed as a harness name is refused on a DRIFT verdict" \
+    "must not be self-authored" \
+'chore(agents): sync the skill registry
+
+Reviewed-By: Codex self-review
+Review-Verdict: {"schema_version":1,"verdict":"DRIFT_MAJOR","flags":["skill-registry-drift"],"notes":"The embed and the checked-in copy disagree."}'
+
+# ---------------------------------------------------------------------------
+# CASE 12b — the flags key stays OPTIONAL on the non-approving verdicts.
+#
+# `APPROVE|CLEAN)` holds two requirements, not one: the reviewer identity, and
+# a `flags` key that is present and an array. Only the identity half was
+# pinned against a widened arm. All five cases for REQUEST_CHANGES, DRIFT_MINOR
+# and DRIFT_MAJOR happened to carry a `flags` key, so moving the flags block
+# out of the approval arm onto every verdict left this suite green while an
+# honest non-approving commit that omits `flags` started being refused.
+#
+# That direction is the failure this whole file exists to stop: make the
+# honest verdicts the expensive ones to write and the author drifts back
+# toward APPROVE. NOT_REVIEWED's exemption is pinned by CASE 2. This pins the
+# other three. Refs hk-rdjxx.
+# ---------------------------------------------------------------------------
+expect_pass "a non-approving verdict needs no flags key" \
+'fix(workspace): widen the verdict read retry
+
+Reviewed-By: agent-reviewer
+Review-Verdict: {"schema_version":1,"verdict":"REQUEST_CHANGES","notes":"No test covers the truncated-read path."}'
+
+# ---------------------------------------------------------------------------
 # CASE 13 — the config-reviewer CLEAN verdict is held to the approval bar too.
 #
 # CLEAN is that reviewer's "nothing to fix", so it carries the same claim an
@@ -2120,15 +2237,23 @@ expect_at "core.commentChar=auto strips nothing, even under strip" \
 # "checked everything and found nothing wrong" from "checked nothing"
 # (see LIVE_SCOPE_FLOOR and case 10 in scripts/commit-msg-gate-test.sh).
 #
-# Measured now, with the floor in place: a full run is 175 assertions and a run
-# with jq hidden from PATH is 138, so the floor has to sit between them. It is
+# Measured now, with the floor in place: a full run is 178 assertions and a run
+# with jq hidden from PATH is 141, so the floor has to sit between them. It is
 # set at 165 — close enough under the full count to be a real ratchet on
-# deleting cases, and far enough over 138 that a silent skip cannot clear it.
+# deleting cases, and far enough over 141 that a silent skip cannot clear it.
 #
 # BOTH NUMBERS MOVE WHENEVER A CASE IS ADDED, and they moved together when the
-# last two arrived (173 and 136 before them). Re-measure the pair rather than
+# last three arrived (175 and 138 before them). Re-measure the pair rather than
 # adjusting one — the floor's whole job is to sit between them, and a stale
 # reading of either half hides whether it still does.
+#
+# HOW TO RE-MEASURE THE SECOND HALF, because getting it wrong is easy and
+# silent. Build a PATH holding symlinks to every executable EXCEPT jq and run
+# the suite under `bash`, not zsh: zsh's `command -v` returns alias text rather
+# than a path, which produced a directory of broken symlinks and a reading that
+# meant nothing. The jq-hidden run is SUPPOSED to end in one failure — this
+# floor firing — so `141 assertions, 1 failures` is the right result there and
+# a green run would mean the PATH still had jq in it.
 #
 # THE SELF-SKIP ITSELF IS RIGHT AND STAYS. A battery that compares two parsers
 # cannot run with one parser installed, and pretending otherwise would make it

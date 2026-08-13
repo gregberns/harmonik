@@ -178,6 +178,19 @@ func TestQuitOnCommit_ReseedEnterRescuesTheSwallowedSubmit(t *testing.T) {
 	*daemon.ExportedImplementerReseedGrace = 50 * time.Millisecond
 	t.Cleanup(func() { *daemon.ExportedImplementerReseedGrace = origGrace })
 
+	// Shrink the poll interval too, for the "exactly 1" assertion below rather
+	// than for the reseed itself. The reseed is due long before tick 1 at any
+	// poll setting, but a regression that RE-fires it on a later tick can only
+	// be caught if later ticks happen. At the production 500ms poll this
+	// test's 1500ms context holds about 3 ticks, so "one-shot by design" was
+	// checked against almost no opportunity to repeat. At 25ms it holds tens of
+	// them. Measured, with the one-shot latch deleted from the production
+	// branch: 2 firings at the 500ms poll, 32-49 at 25ms. (Not the ~60 the
+	// arithmetic suggests — every tick pays for a git subprocess.)
+	origPoll := *daemon.ExportedCommitPollInterval
+	*daemon.ExportedCommitPollInterval = 25 * time.Millisecond
+	t.Cleanup(func() { *daemon.ExportedCommitPollInterval = origPoll })
+
 	rec := &prrRecorder{}
 	briefDelivered := make(chan struct{})
 	close(briefDelivered) // brief is on the pane; the submit Enters were swallowed
@@ -216,8 +229,26 @@ func TestQuitOnCommit_NoReseedEnterOnceCommitLands(t *testing.T) {
 	// returning on commit detection first — which is the property under test.
 	// Verified by mutation: deleting the return after commit detection turns
 	// this red, and it stays green 5/5 unmutated.
+	//
+	// The grace figure alone does not make the test sound. What makes it sound
+	// is the RATIO of the grace to the commit poll interval, so the poll is
+	// pinned here as well. Both checks live in the same poll tick and the
+	// reseed check runs FIRST, so the commit must be seen on a tick that lands
+	// before the grace expires. The loop has no immediate first probe: tick 1
+	// lands one poll interval after two pre-loop git forks (rev-parse and
+	// status --porcelain). At the production 500ms poll tick 1 must still land
+	// inside the 700ms grace and has already spent 500ms of it, which leaves the
+	// forks about 200ms — a ratio of 1.4x, where
+	// production runs 150x (75s grace over a 500ms poll). That is a false red
+	// waiting for a slow or loaded machine, not a real one. A 25ms poll
+	// restores a 28x ratio: the forks would have to take about 675ms to push
+	// tick 1 past the grace.
 	*daemon.ExportedImplementerReseedGrace = 700 * time.Millisecond
 	t.Cleanup(func() { *daemon.ExportedImplementerReseedGrace = origGrace })
+
+	origPoll := *daemon.ExportedCommitPollInterval
+	*daemon.ExportedCommitPollInterval = 25 * time.Millisecond
+	t.Cleanup(func() { *daemon.ExportedCommitPollInterval = origPoll })
 
 	// Land a second commit so HEAD != initialSHA on the first poll.
 	cmd := exec.CommandContext(t.Context(), "git", "commit", "-q", "--allow-empty", "-m", "implementer work")

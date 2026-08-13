@@ -370,10 +370,30 @@ func runCommsSendSubcommand(subArgs []string) int {
 	fmt.Println(result.EventID)
 
 	// A directed send to a name nobody uses is recorded and read by nobody, and
-	// it looked exactly like a delivered one. Say so (hk-rtqmu).
-	if to != "*" && !commsRecipientKnown(absProject, to) {
+	// it looked exactly like a delivered one. Say so (hk-rtqmu) AND exit
+	// non-zero (hk-zj9nw): the warning below is written for a human reading
+	// stderr, and the caller that needs it most is a script or an agent
+	// branching on the exit code, which was told the message was delivered.
+	//
+	// `harmonik wake --agent <name>` already answers this same question — a
+	// name that matches nothing — with exit 1 and a stderr line, and two
+	// sibling surfaces cannot disagree about whether reaching nobody succeeded.
+	//
+	// The two known-sets are NOT the same list and are not meant to be: wake
+	// reaches a tmux pane, send reaches a mailbox, so `operator` is addressable
+	// here (commsAlwaysAddressable) and is not a wake target, while `captain`
+	// and `watch` are wake builtins. The surfaces agree on a name NEITHER of
+	// them knows, which is the case this exit code is about.
+	//
+	// THE SEND IS STILL ACCEPTED and the message is still durably recorded: the
+	// daemon has already answered by the time this check runs, so mail-before-
+	// boot still works and a crew that boots an hour later still reads it on its
+	// first recv. Only the answer to the caller changes.
+	undelivered := to != "*" && !commsRecipientKnown(absProject, to)
+	if undelivered {
 		fmt.Fprintf(os.Stderr, "harmonik comms send: WARNING: no agent named %q is known in this project. The name is not in the presence registry, not in the crew registry and not in the agent manifests.\n", to)
 		fmt.Fprintf(os.Stderr, "harmonik comms send: The message is recorded and nobody has received it. It waits until an agent runs `harmonik comms recv --agent %s`.\n", to)
+		fmt.Fprintf(os.Stderr, "harmonik comms send: Exiting 1 because nobody received it. The event id above is real and the message is durable.\n")
 	}
 
 	// Directed sends wake the recipient by default so durable delivery is also
@@ -385,6 +405,9 @@ func runCommsSendSubcommand(subArgs []string) int {
 		}
 	}
 
+	if undelivered {
+		return 1
+	}
 	return 0
 }
 
@@ -407,6 +430,15 @@ var commsAlwaysAddressable = []string{"operator"}
 // break mail-before-boot, which is a real workflow on the channel that carries
 // epic assignments. So the repair is to stop the send from LOOKING delivered,
 // not to stop it (hk-rtqmu).
+//
+// The CALLER is nonetheless told, with exit 1, that nobody received it
+// (hk-zj9nw). Accepting the send and reporting success are separate acts, and
+// hk-rtqmu treated them as one: it fixed the stderr text and left the exit code
+// at 0, so every caller that is not a human reading stderr still read the send
+// as delivered. `harmonik wake --agent <name>` already exits 1 for a name that
+// matches nothing (checkWakeTarget), and the two surfaces have to agree. The
+// message stays durable either way — the exit code reports who received it, not
+// whether it was recorded.
 //
 // Three sources, because a name can be legitimate through any one of them:
 //
@@ -626,7 +658,9 @@ VERBS
 
 EXIT CODES
   0   Success
-  1   Argument error or op rejected
+  1   Argument error, op rejected, or -- on send -- the recipient is a name
+      this project does not know. The message is still recorded; nobody has
+      received it. See "harmonik comms send --help".
   2   Unrecognised verb
   17  Daemon not running (send/recv/join/leave)
 
@@ -673,14 +707,25 @@ FLAGS
   <body> | -      Message body as trailing args (joined by space) or "-" to read stdin.
 
 UNKNOWN RECIPIENTS
-  A --to name this project does not use is still accepted, because an agent
-  that starts later reads the whole backlog on its first recv. The send warns
-  on stderr instead, and the warning says that nobody has received the message
-  yet. Exit code 0 means "recorded", not "delivered".
+  A --to name this project does not use is still ACCEPTED and the message is
+  still durably recorded, because an agent that starts later reads the whole
+  backlog on its first recv. The event id is printed on stdout as always. But
+  nobody has received it yet, so the send warns on stderr AND exits 1. A caller
+  that branches on the exit code must not read that send as delivered. A name
+  counts as known through the crew registry, .harmonik/agents/, or the presence
+  registry; "operator" is always addressable and --broadcast is never checked.
+
+  "harmonik wake --agent <name>" exits 1 for a name that matches nothing too,
+  but the two surfaces do NOT share one list and are not meant to. wake reaches
+  a tmux pane and send reaches a mailbox, so "operator" is addressable here and
+  is not a wake target, while "captain" and "watch" are wake builtins. The two
+  agree only on a name NEITHER of them knows.
 
 EXIT CODES
-  0   Success (event_id printed to stdout)
-  1   Argument error or daemon rejected the op
+  0   Success: recorded AND the recipient is a name this project knows
+      (event_id printed to stdout)
+  1   Argument error, daemon rejected the op, or the message was recorded but
+      the recipient is a name nobody uses (see UNKNOWN RECIPIENTS)
   17  Daemon not running (socket missing or ECONNREFUSED)
 
 EXAMPLES

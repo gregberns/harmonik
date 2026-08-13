@@ -12,6 +12,7 @@ package main
 
 import (
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -43,6 +44,11 @@ func TestCommsSend_PrintsMintedEventIDOnStdout(t *testing.T) {
 		"ok":     true,
 		"result": map[string]any{"event_id": minted},
 	}))
+	// Declare the recipient. A send to a name this project knows nothing about
+	// exits 1 (hk-zj9nw), and this test is about the stdout of a DELIVERED send.
+	if err := os.MkdirAll(filepath.Join(d.Dir, ".harmonik", "agents", "alice"), 0o750); err != nil {
+		t.Fatalf("declare recipient alice: %v", err)
+	}
 
 	var code int
 	out, _ := captureStd(t, func() {

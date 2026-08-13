@@ -248,6 +248,16 @@ core-loop-lt: build-all  ## WS4-5 forced LT gate: inits scratch from LOCAL check
 	bash scripts/scratch-daemon.sh init "$(LT_SCRATCH)" --source "$(CURDIR)" --rev "$$(git -C "$(CURDIR)" rev-parse HEAD)"
 	@# Seed the fixture beads into the fresh scratch DB + emit the cell->bead_id map so the
 	@# scoped cell launches (isolates origin + pre-creates the pi landing branch).
+	@#
+	@# SEED BEFORE BUILD IS DELIBERATE, and it is safe only because of two things
+	@# (hk-48zdw). The seed writes an untracked review-loop.dot into the scratch
+	@# root, and the matrix step below builds after it, so this ordering used to
+	@# stamp vcs.modified=true on the gate binary and void every run. Reordering to
+	@# build-then-seed does NOT fix that: the file has to stay in the tree for the
+	@# whole run, so any rebuild the daemon triggers would dirty the stamp again.
+	@# What fixes it is that the file is IGNORED (root-anchored /review-loop.dot in
+	@# .gitignore, invisible to Go's stamp), and that the matrix step now asserts
+	@# the binary's stamp before it grades anything. Do not "tidy" this order.
 	bash scripts/core-loop-seed.sh "$(LT_SCRATCH)" "$(LT_SEED_MAP)"
 	@# Run the scoped matrix: MATRIX_SEED_MAP wires per-cell seeds; --harnesses/--substrates
 	@# scope to pi:local; --assert --gate --json keep the forced zero-PENDING gate + JSON grid.

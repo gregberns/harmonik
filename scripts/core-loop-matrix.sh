@@ -57,6 +57,16 @@
 # EXIT (default, lenient): 0 iff no red cell. PENDING/SKIP are printed loud and counted but do
 #   not flip the exit on their own. EXIT (--gate, forced LT): 0 iff EVERY cell is green — any
 #   red OR pending OR skip → non-zero (the T9 zero-PENDING gate; a partial matrix never passes).
+#
+# PROVENANCE IS PART OF THE VERDICT (hk-48zdw). Before it runs anything, and again beside
+#   the grid, this runner asks `scratch-daemon.sh provenance` whether the scratch binary
+#   carries a Go vcs stamp that names the pinned commit with vcs.modified=false. The WORSE
+#   of the two answers is the one that stands — a later `clean` never clears an earlier
+#   refusal, because the cells were graded by the binary that refusal named. It is not
+#   advice: `all_green` is false and --gate exits non-zero for any answer but `clean`, and
+#   the answer is printed on the `MATRIX_PROVENANCE` line and in the `provenance` field of
+#   MATRIX_JSON. A green grid from a binary that cannot name its commit is not a pass, and
+#   this runner used to print exactly that.
 
 set -euo pipefail
 
@@ -353,6 +363,100 @@ else
     log "reusing already-up scratch daemon at $SCRATCH (--no-cycle)"
 fi
 
+# ---- provenance: the binary this grid grades must name its own commit ------
+# WHY THIS IS HERE AND NOT IN A README. This runner used to print an all-green
+# grid, and BATCH_SUMMARY used to print a bare commit hash beside it, for a
+# binary the Go toolchain had stamped vcs.modified=true. The assessor contract
+# reads a bare hash as "clean" and treats a dirty stamp exactly as +local-edits —
+# no result from such a binary is an audit of that commit. So the two truths sat
+# twenty-five lines apart in one log, and the run read as a valid PASS. It was
+# not a rare accident either: scripts/core-loop-seed.sh writes an untracked
+# review-loop.dot into the tree before the build, Go's stamp counts untracked
+# files, and the gate therefore dirtied itself on EVERY run (hk-48zdw).
+#
+# A gate has to assert its own provenance. `scratch-daemon.sh provenance` is that
+# assertion with an exit code on it: 0 only when the built binary carries a Go
+# vcs stamp naming the pinned commit with vcs.modified=false.
+#
+# IT IS READ TWICE, ON PURPOSE. Once here, so a void run costs seconds instead of
+# a full matrix of real agents; once again beside the verdict, because the claim
+# being made is about the binary that actually ran, and a matrix run is minutes of
+# real agents editing this tree. `batch` itself never rebuilds — it calls cmd_up,
+# which refuses a binary whose recorded revision is not the pin — so the second
+# read is for the case where something ELSE replaced the binary. Do not read it as
+# a re-measurement that can clear the first: the token is monotonic (below) and a
+# later `clean` is recorded and ignored.
+#
+# WHAT EACH MODE DOES WITH IT.
+#   --gate (the LT leg)  refuses. The gate exists to produce a result an assessor
+#                        may fold into a PASS, and there is no such result here.
+#   default (lenient)    reports. scripts/scratch-daemon.sh deliberately keeps the
+#                        edit-and-cycle developer loop working on a modified tree,
+#                        and failing that loop here would delete it. But the JSON
+#                        this run emits still carries all_green:false and the
+#                        provenance token, so a lenient run cannot be quoted as a
+#                        clean one either.
+#
+# PROVENANCE_TOKEN starts at `unchecked`, which is not `clean`, so any path that
+# reaches the verdict without reading the stamp fails the same way a dirty one does.
+#
+# THE TOKEN IS MONOTONIC — it may only ever get WORSE (hk-48zdw). The stamp is read
+# twice, and without this rule the second reading simply overwrote the first. Two
+# ways that hands back a `clean` nobody earned:
+#   - lenient mode does not stop on a bad pre-flight, so a run whose FIRST reading
+#     said `dirty` grades every cell with the binary that reading refused. If
+#     anything cleans the tree and rebuilds before the second reading, the run then
+#     reports `clean`, and the cell verdicts it reports were never audited.
+#   - a `provenance` that prints a clean line and THEN exits non-zero used to leave
+#     the token at `clean`, because only the return value carried the refusal and
+#     nothing downstream reads the return value. `all_green` and --gate both key on
+#     the token alone, so the token has to carry it.
+# A later `clean` is therefore recorded and ignored, never adopted.
+PROVENANCE_TOKEN="unchecked"
+PROVENANCE_LINE="provenance was never read"
+PROVENANCE_FRESH_TOKEN="unchecked"   # what the LAST read alone said (for reporting)
+PROVENANCE_READS=0
+
+read_provenance() {
+    local out status fresh_token fresh_line
+    out="$("$SCRATCH_DAEMON" provenance "$SCRATCH" 2>&1)"; status=$?
+    # The token, not the exit code, is what the verdict keys on: a subcommand this
+    # scratch-daemon.sh is too old to have exits non-zero with no token at all, and
+    # that must read as "not proven", never as "no news is good news".
+    fresh_token="$(awk '$1=="SCRATCH_PROVENANCE" && t=="" {t=$2} END {print (t==""?"unreadable":t)}' <<<"$out")"
+    fresh_line="$(awk '$1=="SCRATCH_PROVENANCE" && l=="" {l=$0} END {print l}' <<<"$out")"
+    [ -n "$fresh_line" ] || fresh_line="SCRATCH_PROVENANCE $fresh_token (no machine-readable line; '$SCRATCH_DAEMON provenance' exited $status)"
+    # A clean line from a command that then refused is not a clean answer. The two
+    # halves disagree about one binary and only the pessimistic half may be believed.
+    if [ "$status" -ne 0 ] && [ "$fresh_token" = "clean" ]; then
+        fresh_line="SCRATCH_PROVENANCE inconsistent ('$SCRATCH_DAEMON provenance' printed a clean line and then exited $status) — $fresh_line"
+        fresh_token="inconsistent"
+    fi
+    PROVENANCE_TEXT="$out"
+    PROVENANCE_FRESH_TOKEN="$fresh_token"
+    if [ "$PROVENANCE_READS" -eq 0 ] || [ "$fresh_token" != "clean" ] || [ "$PROVENANCE_TOKEN" = "clean" ]; then
+        PROVENANCE_TOKEN="$fresh_token"
+        PROVENANCE_LINE="$fresh_line"
+    else
+        log "provenance now reads clean, but an earlier read of this run said '$PROVENANCE_TOKEN' — keeping the earlier one. Every cell above was graded by the binary that reading refused."
+    fi
+    PROVENANCE_READS=$((PROVENANCE_READS + 1))
+    # The CUMULATIVE token is the verdict, so that is what the caller is told.
+    [ "$PROVENANCE_TOKEN" = "clean" ]
+}
+
+if read_provenance; then
+    log "$PROVENANCE_LINE"
+else
+    printf '%s\n' "${PROVENANCE_TEXT:-}" >&2
+    if [ "$GATE" -eq 1 ]; then
+        die "--gate: the scratch binary cannot prove it is the pinned commit (provenance=$PROVENANCE_TOKEN).
+  Nothing this run could print would be an audit of that commit, so it stops before running the matrix.
+  The message above says what is wrong with the binary and what to do about it."
+    fi
+    log "WARNING: provenance=$PROVENANCE_TOKEN — this run cannot be quoted as an audit of the pinned commit (all_green will be false)"
+fi
+
 # ---- iterate the matrix ---------------------------------------------------
 # Grid rows accumulate as: cell<TAB>verdict<TAB>detail  (verdict ∈ green|red|pending|skip)
 GRID=()
@@ -613,6 +717,20 @@ done
 echo "--------------------------------------------------------"
 echo "green=$n_green red=$n_red pending=$n_pending skip=$n_skip"
 echo "MATRIX_SUMMARY green=$n_green red=$n_red pending=$n_pending skip=$n_skip"
+# Re-read the stamp of the binary that actually ran, and print it WITH the grid.
+# The grid and the provenance used to live in different parts of the log, which is
+# how a dirty binary got a green verdict quoted off it.
+#
+# The token is monotonic, so this read can only make the verdict worse. When the
+# fresh read is clean and the verdict is not, read_provenance has already said why,
+# and dumping its (clean) output here would read as a contradiction, so it is not.
+if ! read_provenance && [ "$PROVENANCE_FRESH_TOKEN" != "clean" ]; then
+    printf '%s\n' "${PROVENANCE_TEXT:-}" >&2
+fi
+echo "MATRIX_PROVENANCE $PROVENANCE_TOKEN ($PROVENANCE_LINE)"
+if [ "$PROVENANCE_TOKEN" != "clean" ]; then
+    echo "MATRIX_PROVENANCE VOID — no cell verdict above is an audit of the pinned commit; this run cannot pass."
+fi
 echo "========================================================"
 
 # ---- T3 (hk-9cw6q): red-cell → deduped fleet bead -------------------------
@@ -646,14 +764,20 @@ if [ "$JSON" -eq 1 ]; then
         done | jq -cs '.'
     )"
     all_green="false"
-    [ "$n_red" -eq 0 ] && [ "$n_pending" -eq 0 ] && [ "$n_skip" -eq 0 ] && all_green="true"
+    # Provenance is a term of all_green, not a note beside it. The assessor folds
+    # this field; a true here on a binary that cannot name its commit is the exact
+    # false PASS hk-48zdw was filed for.
+    [ "$n_red" -eq 0 ] && [ "$n_pending" -eq 0 ] && [ "$n_skip" -eq 0 ] \
+        && [ "$PROVENANCE_TOKEN" = "clean" ] && all_green="true"
     jq -cn \
         --argjson cells "${cells_json:-[]}" \
         --argjson green "$n_green" --argjson red "$n_red" \
         --argjson pending "$n_pending" --argjson skip "$n_skip" \
         --argjson gate "$GATE" --argjson all_green "$all_green" \
+        --arg prov "$PROVENANCE_TOKEN" --arg provline "$PROVENANCE_LINE" \
         '{summary:{green:$green, red:$red, pending:$pending, skip:$skip},
-          gate:($gate==1), all_green:$all_green, cells:$cells}' \
+          gate:($gate==1), all_green:$all_green,
+          provenance:{status:$prov, detail:$provline}, cells:$cells}' \
         | sed 's/^/MATRIX_JSON /'
 fi
 
@@ -662,7 +786,8 @@ fi
 # EVERY cell is green — any red OR pending OR skip fails (the T9 zero-PENDING gate), so the
 # assessor's forced-local LT leg never mistakes a partial matrix for a pass.
 if [ "$GATE" -eq 1 ]; then
-    [ "$n_red" -eq 0 ] && [ "$n_pending" -eq 0 ] && [ "$n_skip" -eq 0 ]
+    [ "$n_red" -eq 0 ] && [ "$n_pending" -eq 0 ] && [ "$n_skip" -eq 0 ] \
+        && [ "$PROVENANCE_TOKEN" = "clean" ]
 else
     [ "$had_red" -eq 0 ]
 fi

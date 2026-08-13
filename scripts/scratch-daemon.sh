@@ -42,6 +42,9 @@
 #   ./scripts/scratch-daemon.sh build  <scratch-path>
 #   ./scripts/scratch-daemon.sh up     <scratch-path>
 #   ./scripts/scratch-daemon.sh status <scratch-path>
+#   ./scripts/scratch-daemon.sh provenance <scratch-path>  # exit 0 ONLY if the built binary can
+#                             prove it is the pinned commit (Go vcs stamp names the pin, vcs.modified=false).
+#                             Fails closed: no binary, no pin, no stamp and an unreadable stamp all refuse.
 #   ./scripts/scratch-daemon.sh down   <scratch-path>
 #   ./scripts/scratch-daemon.sh cycle  <scratch-path>   # down + build + up (the fast loop)
 #   ./scripts/scratch-daemon.sh batch  <scratch-path> <name> --beads id1,id2,...  # submit + structured pass/fail
@@ -1135,6 +1138,92 @@ cmd_status() {
 }
 
 # ---------------------------------------------------------------------------
+# Subcommand: provenance  (READ-ONLY — a verdict, not a report)
+#
+# `status` PRINTS the binary's stamp beside the tree measurement. A caller that
+# wants a decision has to read that prose and act on it, and that is exactly what
+# stopped happening: `make core-loop-lt` printed a DIRTY stamp in the middle of a
+# wall of toolchain output and then printed an all-green grid twenty-five lines
+# later, so an assessor following its contract to the letter recorded a PASS from
+# a binary that could not name its own commit (hk-48zdw).
+#
+# This subcommand is the same fact with an EXIT CODE on it, so a gate can refuse
+# instead of a human having to notice. Exit 0 means one thing only: the binary
+# carries a Go vcs stamp, that stamp names the commit `init --rev` pinned, and it
+# says the tree was clean. Everything else exits non-zero with a named reason.
+#
+# IT FAILS CLOSED. A missing binary, a missing pin, an unreadable stamp, a
+# toolchain that cannot answer — none of them is "probably fine". Each is a state
+# in which nothing can say which code this binary holds, which is the same
+# position a caller is in when the answer is `dirty`, so all of them refuse.
+#
+# WHY THE Go TOOLCHAIN AND NOT THE BINARY ITSELF. `harmonik version --binary`
+# answers the same question, and `status` names it for the operator. But the
+# binary under audit is the thing in doubt here, so asking it about itself puts
+# the code that might be wrong in charge of the verdict. `go version -m` reads
+# the same embedded `vcs.revision` / `vcs.modified` settings from outside the
+# artefact, through binary_vcs, so the two cannot disagree and neither can be
+# talked round by what got compiled in.
+#
+# EXACT MATCH, NOT ANCESTRY. `version --binary --contains` accepts any commit the
+# binary's revision descends from, which is right for "is the fix in this
+# deployed binary". A scratch is pinned to ONE commit and grades ONE commit, so
+# here the binary's revision must BE the pin.
+#
+# STDOUT CARRIES ONE MACHINE-READABLE LINE, in both directions:
+#   SCRATCH_PROVENANCE <token> revision=<binary-rev> modified=<flag> pinned=<pin>
+# tokens: clean | dirty | revision-mismatch | no-stamp | no-binary | not-pinned
+# ---------------------------------------------------------------------------
+cmd_provenance() {
+    local scratch bin want vcs vcs_rev vcs_mod
+    scratch="$(guard_path "${1:-}")"
+    bin="$(scratch_bin "$scratch")"
+    want="$(audit_revision "$scratch")"
+
+    if [ -z "$want" ]; then
+        echo "SCRATCH_PROVENANCE not-pinned revision= modified= pinned="
+        die "$scratch carries no audit revision, so there is no commit for the binary to prove it is.
+  Fix: rm -rf '$scratch' && $0 init '$scratch' --rev <commit-ish>"
+    fi
+    if [ ! -f "$bin" ]; then
+        echo "SCRATCH_PROVENANCE no-binary revision= modified= pinned=$want"
+        die "no scratch binary at $bin, so nothing can be audited.
+  Fix: $0 build '$scratch'"
+    fi
+
+    vcs="$(binary_vcs "$bin")"
+    if [ -z "$vcs" ]; then
+        echo "SCRATCH_PROVENANCE no-stamp revision= modified= pinned=$want"
+        die "$bin carries no readable Go vcs stamp, so it cannot name the commit it was built from.
+  'harmonik version --binary' reports no-vcs-stamp (exit 4) for this file. A build with -buildvcs=false,
+  a stripped binary, or a 'go' the toolchain could not run all land here.
+  Fix: $0 build '$scratch' with a working Go toolchain, then re-check."
+    fi
+    vcs_rev="${vcs%% *}"
+    vcs_mod="${vcs##* }"
+
+    if [ "$vcs_rev" != "$want" ]; then
+        echo "SCRATCH_PROVENANCE revision-mismatch revision=$vcs_rev modified=$vcs_mod pinned=$want"
+        die "$bin was built from $vcs_rev, but this scratch is pinned to $want.
+  A result from this binary is a result about code nobody asked for.
+  Fix: $0 build '$scratch' (build drops a binary from another revision), or re-init at the revision you meant."
+    fi
+    if [ "$vcs_mod" != "false" ]; then
+        echo "SCRATCH_PROVENANCE dirty revision=$vcs_rev modified=$vcs_mod pinned=$want"
+        die "$bin was built from a tree Go stamped vcs.modified=$vcs_mod, so it cannot prove it is $want.
+  'harmonik version --binary $bin --contains $want' reports contains-dirty and exits 3, and the assessor
+  contract treats such a binary exactly as +local-edits: no result from it is an audit of that commit.
+  What dirties a tree is anything git can see, INCLUDING untracked files, so this is what to look at first:
+      git -C '$scratch' status --porcelain --untracked-files=all
+  Fix: remove or ignore what that lists, then rebuild — $0 build '$scratch'.
+  If the edit is deliberate, this scratch is not auditing $want any more, and no gate may report it as such."
+    fi
+
+    echo "SCRATCH_PROVENANCE clean revision=$vcs_rev modified=$vcs_mod pinned=$want"
+    echo "[scratch-daemon] provenance: OK — $bin carries vcs.revision=$vcs_rev vcs.modified=false, which is the pinned $want"
+}
+
+# ---------------------------------------------------------------------------
 # Subcommand: down  (SAFE — kills ONLY the scratch daemon)
 # ---------------------------------------------------------------------------
 cmd_down() {
@@ -1362,6 +1451,43 @@ cmd_batch() {
             # the pinned commit it differs from.
             echo "[scratch-daemon] WARNING: this batch runs a binary labelled '$live_binrev', not a clean build of $batch_rev. No result below is an audit of that commit." >&2
             batch_rev="$live_binrev"
+        fi
+        # THE BINARY GETS THE LAST WORD ON ITS OWN LABEL (hk-48zdw).
+        #
+        # Everything above derives the label from local_edits, and local_edits
+        # EXCLUDES the paths this harness and `harmonik init` write — review-loop.dot
+        # among them. Go's stamp has no exclusion list and never will, so the two can
+        # disagree about one tree, and when they disagree the label is the optimistic
+        # one. That is the defect: BATCH_SUMMARY ended `revision=<bare sha>` for a
+        # binary the toolchain had stamped vcs.modified=true, and the assessor
+        # contract reads a bare sha as "built from a clean tree". The two truths sat
+        # in one log and the friendlier one was the machine-readable one.
+        #
+        # This LABELS rather than refuses, which is the same trade build_stamp makes
+        # and for the same reason: `batch` also serves the edit-and-cycle developer
+        # loop documented in docs/scratch-daemon-runbook.md. The REFUSAL lives in
+        # core-loop-matrix.sh --gate, which asks `provenance` for a verdict and stops.
+        # What this guarantees is narrower and still worth having: the revision on
+        # the BATCH_SUMMARY line, and on every row of the results artifact `feedback`
+        # reads, is a bare commit hash ONLY when the binary can prove it is that
+        # commit. Every other state gets a suffix that is not a commit and cannot be
+        # mistaken for one.
+        local bin_vcs bin_rev bin_mod
+        bin_vcs="$(binary_vcs "$(scratch_bin "$scratch")")"
+        if [ -z "$bin_vcs" ]; then
+            echo "[scratch-daemon] WARNING: $(scratch_bin "$scratch") carries no readable Go vcs stamp, so nothing outside the binary can say which commit it holds. 'harmonik version --binary' reports no-vcs-stamp (exit 4) for it." >&2
+            batch_rev="${batch_rev}+no-vcs-stamp"
+        else
+            bin_rev="${bin_vcs%% *}"
+            bin_mod="${bin_vcs##* }"
+            if [ "$bin_rev" != "${batch_rev%%+*}" ]; then
+                echo "[scratch-daemon] WARNING: Go stamped this binary vcs.revision=$bin_rev, but this batch is labelled ${batch_rev%%+*}. No result below is an audit of ${batch_rev%%+*}." >&2
+                batch_rev="${bin_rev}+revision-mismatch"
+            elif [ "$bin_mod" != "false" ]; then
+                echo "[scratch-daemon] WARNING: Go stamped this binary vcs.modified=$bin_mod, so 'harmonik version --binary <bin> --contains ${batch_rev%%+*}' reports contains-dirty and exits 3. No result below is an audit of that commit." >&2
+                echo "[scratch-daemon]   What dirties a tree is anything git can see, INCLUDING untracked files: git -C '$scratch' status --porcelain --untracked-files=all" >&2
+                batch_rev="${batch_rev}+dirty-stamp"
+            fi
         fi
     fi
     echo "[scratch-daemon] batch '$name' — revision: $batch_rev"
@@ -1788,6 +1914,7 @@ main() {
         build)  cmd_build  "$@";;
         up)     cmd_up     "$@";;
         status) cmd_status "$@";;
+        provenance) cmd_provenance "$@";;
         down)   cmd_down   "$@";;
         cycle)  cmd_cycle  "$@";;
         batch)  cmd_batch  "$@";;

@@ -174,3 +174,58 @@ zz_reachability_gate_canary_test.go
 # the old one and renames it into place. A killed run leaks the staged copy,
 # where it shows up as an untracked file and trips the dirty-tree detector.
 scripts/.reachability.baseline.tmp.*
+
+# The live-verify gate's dot fixture, at the PROJECT ROOT only.
+# scripts/core-loop-seed.sh copies specs/examples/review-loop.dot to the root of
+# the SCRATCH clone so the dot cell's `dot:review-loop` label resolves
+# (resolveWorkflowRef tier-1 reads <projectDir>/review-loop.dot). That copy must
+# stay untracked, because a TRACKED copy would be reverted mid-run and later dot
+# cells would leak to a claude reviewer. Do NOT repeat the older reason for that,
+# which said the daemon runs `git reset --hard HEAD` on the project dir after
+# every landing: hk-7qmpp removed the tree-wide reset. The live path is
+# internal/runmerge/merge.go commitFinalizeWorkingTree -> refreshMergedPaths,
+# a `git restore` scoped to the merged commit's own paths. An ignored root file
+# survives that too, and more surely than it survived the reset.
+#
+# Untracked alone was not enough. Go's build stamp counts untracked files, so every
+# `make core-loop-lt` built its gate binary with vcs.modified=true, `harmonik
+# version --binary --contains <rev>` refused it with exit 3, and the assessor
+# contract reads that as voiding the whole leg — measured on a real run at
+# 1b41ad021, where `?? review-loop.dot` was the ONLY difference in the whole tree.
+# An IGNORED file is invisible to the stamp, is still untouched by `reset --hard`
+# (tracked-only), and now also survives `git clean -fd` (which honours .gitignore).
+#
+# Root-anchored on purpose — but NOT to protect the tracked copies at
+# specs/examples/review-loop.dot and internal/workflow/dot/testdata/review-loop.dot.
+# Those are safe either way. Git does not apply .gitignore to a file it already
+# tracks, so an unanchored pattern would not have hidden them; measured in both
+# directions. The anchor earns its place for a different reason: it confines the
+# rule to the one path the seed writes, so a NEW and untracked review-loop.dot
+# dropped anywhere else in the tree stays visible instead of going silently
+# ignored.
+#
+# This rule only helps a commit that CONTAINS it. scratch-daemon.sh init pins the
+# scratch to --rev, so auditing any earlier commit still builds a dirty binary.
+# That is why the gate-side stamp assertion is not optional.
+# Refs hk-48zdw.
+/review-loop.dot
+
+# Agent scratch at the PROJECT ROOT only. Sessions are told to snapshot a file to
+# tmp/SAFE/ before letting a sub-agent near the tree, and to redirect every gate
+# run to tmp/<name>.log and read the EXIT= line back out of it. Both are good
+# habits and neither was ignored, so both dirtied the tree.
+#
+# Two ways that has cost real time, on 2026-08-13 alone:
+#   - A snapshot saved as tmp/SAFE/<name>.go was picked up by `go build ./...`,
+#     which compiled a second copy of a package's symbols. `make fast` went red
+#     in gate-static-product for every session on the box, and the failure named
+#     a package nobody had edited. THIS RULE DOES NOT FIX THAT, and do not read
+#     it as protection: `go build ./...` walks an ignored directory just the
+#     same, measured. The only fix is to not give a scratch file a .go suffix.
+#   - Untracked files count toward Go's build stamp, so scratch under tmp/ marks
+#     any binary built beside it vcs.modified=true. That is the same defect as
+#     the /review-loop.dot rule above (hk-48zdw): a binary that cannot prove
+#     which commit it is, and an assessor contract that voids the whole result.
+#
+# Root-anchored so it cannot hide a tmp/ directory inside a package's testdata.
+/tmp/

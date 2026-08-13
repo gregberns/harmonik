@@ -325,42 +325,34 @@ check_no_reviewer_named() {
   # everything else, where narrow fails CLOSED.
   wide="$(printf '%s\n' "$STRIPPED" | grep -E 'Reviewed-By:' || true)"
 
-  # Fold case, and join every `Reviewed-By:` line into one string.
+  # Fold case. The haystack stays MULTI-LINE on purpose, and every step below
+  # this one is written to work on a multi-line value.
   #
-  # THE JOIN CHANGES NO OUTCOME, AND THAT IS A PROOF RATHER THAN A SAMPLE.
+  # There used to be a `| tr '\n' ' '` here joining the `Reviewed-By:` lines
+  # into one string, and it changed no outcome — by proof, not by sampling.
   # `known_reviewers` refuses any name that does not match `^[A-Za-z0-9._-]+$`,
-  # so no name it can ever return holds a space or a newline — nor do the two
-  # hardcoded fallbacks. The match below asks for exactly one `[!a-z0-9]`
-  # character in front of the name, and a space and a newline are BOTH in that
-  # class. Putting one where the other was can therefore neither create nor
-  # destroy a match, for every name the list can produce and not just today's.
+  # so no name it can ever return holds a space or a newline, and neither do
+  # the two hardcoded fallbacks. The match below asks for exactly one
+  # `[!a-z0-9]` character in front of the name, and a space and a newline are
+  # BOTH in that class. Substituting one for the other could therefore neither
+  # create nor destroy a match, for every name the list can produce and not
+  # just today's two. Documenting a dead line is worse than deleting it, so it
+  # is gone; the proof is kept because it is also the reason nothing
+  # below needs the lines joined.
   #
-  # Measured as well, because a proof about a script should still be run:
-  # delete the `| tr '\n' ' '` from the assignment under this comment, in a
-  # scratch copy of the tree rather than in place, and run
-  # `scripts/validate-commit-msg-test.sh`. On 2026-08-13 it reported the same
-  # assertion count and zero failures either way — 173 and 173 that day. The
-  # count rises whenever anybody adds an assertion, so the two runs AGREEING is
-  # the claim here; the number is not.
-  #
-  # The line is therefore dead, and a dead line documented is worse than a dead
-  # line deleted. Removing it is filed as hk-uf0ww rather than done here,
-  # because this commit changes comments only. Delete the leading pad below by
-  # mistake instead and the suite will not tell you — that guard is real and
-  # untested, which is hk-bb17z.
-  #
-  # Three better-sounding reasons are all wrong, which is why the honest one is
-  # written down. It is NOT what lets a name on the second trailer line be
-  # found — the pattern match below crosses a newline on its own, measured. It
-  # does NOT reassemble a name split ACROSS two lines: the newline becomes a
-  # space, so `agent-` and `reviewer` stay two words and nothing here matches
-  # them (not a hole — the audit grep does not match that shape either). And it
-  # is NOT needed to give the padding and the key-strip below a single string
-  # to work on; both do the same thing to a multi-line value.
+  # Three better-sounding reasons for the join were all wrong, and they are
+  # written down so nobody puts it back for one of them. It was NOT what let a
+  # name on the second trailer line be found — the pattern match below crosses
+  # a newline on its own, measured. It did NOT reassemble a name split ACROSS
+  # two lines: the newline became a space, so `agent-` and `reviewer` stayed
+  # two words and nothing here matched them (not a hole — the audit grep does
+  # not match that shape either). And it was NOT needed to hand the padding and
+  # the key-strip below a single string; both do the same thing to a multi-line
+  # value.
   #
   # tr, not ${x,,}: this script has to run under the bash 3.2 that ships with
   # macOS.
-  hay="$(printf '%s' "$wide" | tr '[:upper:]' '[:lower:]' | tr '\n' ' ')"
+  hay="$(printf '%s' "$wide" | tr '[:upper:]' '[:lower:]')"
 
   # Drop the trailer keys themselves, so the key text can never be part of a
   # match. This changes no outcome, and the reason is structural rather than a
@@ -375,9 +367,15 @@ check_no_reviewer_named() {
   hay="${hay//reviewed-by:/ }"
 
   # Pad the front, so a name at the very START of the text has a boundary
-  # character before it and needs no second pattern. The trailing space is
-  # symmetry only — the match below requires a boundary BEFORE the name and
-  # none after it, so nothing ever reads the end of this string.
+  # character before it and needs no second pattern. This one space is
+  # load-bearing: delete it and a reviewer name sitting at index 0 stops
+  # matching, and the check accepts the contradiction it exists to refuse.
+  # `scripts/validate-commit-msg-test.sh` pins it — search that file for
+  # "at the very start of the haystack", which is the case that goes red.
+  #
+  # The trailing space is symmetry only. The match below requires a boundary
+  # BEFORE the name and none after it, so nothing ever reads the end of this
+  # string, and deleting it leaves the suite green.
   padded=" ${hay} "
 
   while IFS= read -r known; do

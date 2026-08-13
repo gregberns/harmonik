@@ -924,17 +924,21 @@ Review-Verdict: {"schema_version":1,"verdict":"DRIFT_MINOR","flags":["skill-regi
 # bar. Measured on `Reviewed-By: decompose_queue_specs`, a name this repo does
 # not have: under CLEAN it is refused, under DRIFT_MAJOR it passes.
 #
-# ONLY THE FIRST HALF OF THAT IS PINNED. CASE 13 holds the CLEAN half — its two
-# cases are both CLEAN, one naming the real config reviewer and one naming
-# `decompose_queue_specs`. NO case anywhere in this file runs a DRIFT verdict
-# against an unknown reviewer, so nothing here would notice if that branch
-# widened onto the DRIFT arm tomorrow. The two DRIFT cases in this block name
-# the REAL reviewer and pass for that reason; they do not test the boundary.
-# The missing assertion is filed as hk-139fq rather than added here, because
-# this commit changes comments only. An earlier draft of this very paragraph
-# cited CASE 13 for both halves, which is the construction this commit exists
-# to delete — a measurement that is correct attached to a citation that does
-# not carry it.
+# BOTH HALVES ARE PINNED NOW, AND IN TWO DIFFERENT PLACES. CASE 13 holds the
+# CLEAN half: two cases, both CLEAN, one naming the real config reviewer and
+# one naming `decompose_queue_specs` and refused for it. The DRIFT half is the
+# last case in this block — the same unknown name under DRIFT_MAJOR, expected
+# to PASS. Together they pin the `APPROVE|CLEAN)` arm from both sides, so a
+# reader can cite one case for one half and neither claim outruns its evidence.
+#
+# Until that case existed only the CLEAN side was held. The two DRIFT cases
+# above it both name the REAL reviewer, so they pass on the approval arm's
+# behaviour as much as on their own and cannot discriminate the boundary; if
+# `APPROVE|CLEAN)` widened onto the DRIFT arm tomorrow, nothing here would have
+# gone red and honest non-approving commits would start being refused. An
+# earlier draft of this paragraph cited CASE 13 for both halves anyway, which
+# is a measurement that is correct attached to a citation that does not carry
+# it.
 #
 # This note used to count CLEAN among the four, which put one verdict on both
 # sides of the line the whole section is drawing.
@@ -942,6 +946,18 @@ expect_pass "DRIFT_MAJOR naming the real config reviewer still passes" \
 'chore(agents): sync the skill registry
 
 Reviewed-By: agent-config-reviewer
+Review-Verdict: {"schema_version":1,"verdict":"DRIFT_MAJOR","flags":["enforced-config-drift"],"notes":"The linter config and the idiom list disagree; this needs acknowledgment before the pass advances.","proposed_diff":"-a\n+b"}'
+
+# THE OTHER SIDE OF THE `APPROVE|CLEAN)` BOUNDARY. Same unknown name CASE 13
+# refuses under CLEAN, here under DRIFT_MAJOR, and it must PASS: a reviewer who
+# declined has not been minted as an approver, so a non-approving verdict may
+# name anyone. This goes red if that branch ever widens onto the DRIFT arm —
+# which would make the honest verdicts the expensive ones to write and push the
+# author back toward APPROVE, the failure this whole file exists to prevent.
+expect_pass "DRIFT_MAJOR may name a reviewer outside the known set" \
+'chore(agents): sync the skill registry
+
+Reviewed-By: decompose_queue_specs
 Review-Verdict: {"schema_version":1,"verdict":"DRIFT_MAJOR","flags":["enforced-config-drift"],"notes":"The linter config and the idiom list disagree; this needs acknowledgment before the pass advances.","proposed_diff":"-a\n+b"}'
 
 # ---------------------------------------------------------------------------
@@ -1132,6 +1148,61 @@ do
     expect_pass "a name the audit does not count, '${prefixed}', is still accepted" \
         "$(not_reviewed_msg "$prefixed")"
 done
+
+# ---------------------------------------------------------------------------
+# THE LEADING PAD IS THE OTHER HALF OF THAT BOUNDARY, AND IT HAD NO CASE.
+#
+# The prefixed control loop directly above pins the boundary REQUIREMENT — the
+# `[!a-z0-9]` in `*[!a-z0-9]"$known_lc"*` — by demanding that `xxagent-reviewer`
+# still PASS, which it cannot if the pattern matches the name anywhere. (The
+# suffixed loop before it pins the opposite thing: that no such character is
+# required AFTER the name.) Neither pins what SUPPLIES that character when the
+# name sits at index 0 of the folded haystack, which is the one leading space
+# in `padded=" ${hay} "`.
+#
+# Measured in a detached worktree at 6dbeb5c5a: delete that single space and
+# this file still reported all 173 assertions it held that day passing, while
+# the message below — refused before the mutation — exited 0. The count is
+# pinned to a commit rather than to a date, so it stays re-derivable: take the
+# file back with `git show 6dbeb5c5a:scripts/validate-commit-msg-test.sh` and
+# run it. (`git log` alone cannot produce an assertion count — it is the
+# shorthand the 120/69 block uses for the durability discipline, not a command
+# that answers this.) The claim is that a green suite said nothing about the
+# guard.
+#
+# THE TWO SPACES ARE TOLD APART BY TWO DIFFERENT MUTATIONS, not by one reading.
+# Delete the LEADING space and this case is the only failure in the file.
+# Delete the TRAILING one and everything stays green, this case included — it
+# is inert, and provably so rather than by sampling: the pattern ends in `*`,
+# so nothing ever reads the end of the string. Do not expect this case to
+# notice the trailing space; nothing does, and nothing needs to.
+#
+# THIS SHAPE DOES NOT ANSWER THE AUDIT GREP, AND SAYING SO IS THE POINT.
+# `git log --grep 'Reviewed-By: agent-reviewer'` does not count
+# `agent-reviewer Reviewed-By: none` — the name is in front of the key, not
+# after it. Nor could any case do better, and the reason is structural rather
+# than a gap in imagination: the key-strip above replaces `reviewed-by:` with a
+# SPACE, so every occurrence the audit DOES count arrives with a boundary
+# already in front of it and matches with the pad or without it. A name reaches
+# index 0 only when the first `Reviewed-By:` line STARTS with it, which is
+# exactly the shape that grep walks past.
+#
+# So this belongs with the six over-refusals in the decoration set, and shares
+# their first reason: it is what the check does. The second reason is its own —
+# the rule it keeps is positional consistency, that a reviewer name inside a
+# `Reviewed-By:` line is refused wherever in the line it sits. Without the pad,
+# index 0 alone is exempt, nothing in the check says so, and an author who
+# finds that hole gets a commit the contradiction check was written to refuse.
+# ---------------------------------------------------------------------------
+expect_fail "a reviewer name at the very start of the haystack is still refused" \
+    "must not name a reviewer this repo has" \
+'fix(scope): a perfectly ordinary subject
+
+Body text here.
+
+agent-reviewer Reviewed-By: none
+Reviewed-By: none — no reviewer was reached
+Review-Verdict: {"schema_version": 1, "verdict": "NOT_REVIEWED", "flags": ["no-reviewer-reached"], "notes": "No reviewer was reached."}'
 
 # ---------------------------------------------------------------------------
 # THE CAPTURE MUST NOT BE NARROWER THAN THE AUDIT IT DEFENDS.
@@ -2049,10 +2120,15 @@ expect_at "core.commentChar=auto strips nothing, even under strip" \
 # "checked everything and found nothing wrong" from "checked nothing"
 # (see LIVE_SCOPE_FLOOR and case 10 in scripts/commit-msg-gate-test.sh).
 #
-# Measured now, with the floor in place: a full run is 173 assertions and a run
-# with jq hidden from PATH is 136, so the floor has to sit between them. It is
+# Measured now, with the floor in place: a full run is 175 assertions and a run
+# with jq hidden from PATH is 138, so the floor has to sit between them. It is
 # set at 165 — close enough under the full count to be a real ratchet on
-# deleting cases, and far enough over 136 that a silent skip cannot clear it.
+# deleting cases, and far enough over 138 that a silent skip cannot clear it.
+#
+# BOTH NUMBERS MOVE WHENEVER A CASE IS ADDED, and they moved together when the
+# last two arrived (173 and 136 before them). Re-measure the pair rather than
+# adjusting one — the floor's whole job is to sit between them, and a stale
+# reading of either half hides whether it still does.
 #
 # THE SELF-SKIP ITSELF IS RIGHT AND STAYS. A battery that compares two parsers
 # cannot run with one parser installed, and pretending otherwise would make it

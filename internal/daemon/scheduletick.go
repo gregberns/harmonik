@@ -22,6 +22,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -238,35 +239,52 @@ func overlapBlocks(ctx context.Context, port schedulePort, job schedule.Schedule
 	}
 }
 
-// doFireAction performs the action and records the fire. On a command action it
-// records the spawned pid; on spawn-crew it records pid 0. LastFire is set to
-// nowUTC (RFC3339 UTC).
+// doFireAction performs the action, records the fire, and then reports the
+// action's error. It records the spawned pid for a command action and pid 0 for
+// spawn-crew, comms-send, and an unrecognised kind. LastFire is set to nowUTC
+// (RFC3339 UTC).
+//
+// The fire is recorded whether the action succeeded or failed, and that ordering
+// is the whole point of the function (hk-pbdti). LastFire is the only thing that
+// makes a due job stop being due: schedule.Decide's interval branch returns
+// Fire:true unconditionally while LastFire is empty (decideInterval's !hadLast
+// case), and its daily branch returns Fire:true until LastFire is at or past the
+// most-recent scheduled instant. An action that ran, failed, and recorded nothing
+// therefore stayed due, and the work loop re-ran it every workloopPollInterval
+// (2s), with no backoff and no cap, for as long as the failure lasted — measured
+// at 50 attempts in 50 ticks. It hit every action kind, because each case and the
+// default returned before the record. A scheduled job's retry cadence is its
+// schedule; the job now waits for its next boundary.
+//
+// The action error is still returned, so fireScheduledJob and the run-now path
+// still log it. Recording the fire changes WHEN the job runs again, not WHETHER
+// the operator is told it failed — for a comms-send action that stderr line is
+// the only sign the message reached nobody. When MarkFired also fails, the two
+// errors are joined so the recording failure does not swallow the action's.
+//
+// The overlap-skip path never reaches here: fireScheduledJob returns as soon as
+// overlapBlocks reports a skip, so a skipped fire still records nothing and
+// LastFire still does not advance.
 func doFireAction(ctx context.Context, port schedulePort, job schedule.ScheduledJob, nowUTC time.Time) error {
 	var firedPID int
+	var fireErr error
 	switch job.Action.Kind {
 	case schedule.ActionKindCommand:
-		pid, err := fireCommandAction(port, job)
-		if err != nil {
-			return err
-		}
-		firedPID = pid
+		// A failed start yields pid 0, which is the right record for the skip
+		// overlap policy: overlapBlocks treats only LastPID > 0 as a prior run that
+		// may still be alive, so a start that produced no process blocks nothing.
+		firedPID, fireErr = fireCommandAction(port, job)
 	case schedule.ActionKindSpawnCrew:
-		if err := fireSpawnCrewAction(ctx, port, job); err != nil {
-			return err
-		}
-		firedPID = 0
+		fireErr = fireSpawnCrewAction(ctx, port, job)
 	case schedule.ActionKindCommsSend:
-		if err := fireCommsSendAction(ctx, port, job); err != nil {
-			return err
-		}
-		firedPID = 0
+		fireErr = fireCommsSendAction(ctx, port, job)
 	default:
-		return fmt.Errorf("unknown action kind %q", job.Action.Kind)
+		fireErr = fmt.Errorf("unknown action kind %q", job.Action.Kind)
 	}
 	if _, err := port.store.MarkFired(job.ID, nowUTC.Format(time.RFC3339), firedPID); err != nil {
-		return fmt.Errorf("mark fired: %w", err)
+		return errors.Join(fireErr, fmt.Errorf("mark fired: %w", err))
 	}
-	return nil
+	return fireErr
 }
 
 // fireCommandAction spawns Argv as a fresh detached process. Its environment is

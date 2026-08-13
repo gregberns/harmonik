@@ -1623,13 +1623,17 @@ func (s *tmuxSubstrate) callBoundedTmuxCreate(ctx context.Context, create bounde
 // concurrent attempt legitimately owns, and killing the wrong one is far worse
 // than leaving the right one:
 //
-//   - A failed scheduled crew start re-fires about every 2 seconds
-//     (fireSpawnCrewAction returns before MarkFired, so the job stays due, and the
-//     spawn-crew overlap check only blocks a crew that is presence-online — which
-//     a crew that failed to spawn is not). The crew session name is byte-identical
-//     across those attempts, so a killer armed by the first attempt reaps whichever
-//     later attempt succeeded. The sentinel adversary re-spawns a fixed crew name
-//     on its own cadence with the same exposure.
+//   - A second attempt under a byte-identical name is ordinary here, not exotic.
+//     crewSessionName is a pure function of the project hash and the crew name, so
+//     every attempt at one crew computes the same session name. A failed scheduled
+//     crew start re-fires at its next scheduled boundary (doFireAction records a
+//     failed fire since hk-pbdti, so the retry follows the schedule rather than the
+//     2s poll it used to), the spawn-crew overlap check blocks only a crew that is
+//     presence-online, and an operator running `harmonik crew start` reaches the
+//     same name through the same HandleCrewStart path at any moment. So a killer
+//     armed by the first attempt reaps whichever later attempt succeeded. The
+//     sentinel adversary re-spawns a fixed crew name on its own cadence with the
+//     same exposure.
 //   - It is not needed. SpawnCrewSession's ErrWindowCollision branch ADOPTS an
 //     existing session under that name, so a late crew orphan is what the next
 //     attempt picks up rather than something it trips over. And a run session

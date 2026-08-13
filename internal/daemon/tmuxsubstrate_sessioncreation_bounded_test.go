@@ -19,9 +19,11 @@ package daemon
 // creating the session after the caller has been told creation failed. The
 // substrate must NAME that session, so an operator has somewhere to look, and it
 // must NOT kill it. It cannot tell a late orphan from a session a concurrent
-// attempt legitimately owns, and the concurrent attempt is the common case — a
-// failed scheduled crew start re-fires about every 2 seconds under a
-// byte-identical session name.
+// attempt legitimately owns, and a second attempt on a byte-identical name is
+// ordinary here: crewSessionName is a pure function of the project hash and the
+// crew name, so a scheduled crew start that fails re-fires on the same name at
+// its next boundary, and an operator running `harmonik crew start` reaches the
+// same name through the same HandleCrewStart path at any moment.
 //
 // # Helper prefix
 //
@@ -271,11 +273,13 @@ func TestAbandonedSessionCreationNamesTheSessionInItsError(t *testing.T) {
 // name.
 //
 // Killing it looks tidy and is wrong. The substrate cannot tell a session its own
-// abandoned call created from one a concurrent attempt legitimately owns, and
-// concurrent attempts are the norm rather than the exception: a scheduled crew
-// start that fails re-fires about every 2 seconds under a byte-identical name,
-// because fireSpawnCrewAction returns before MarkFired and the spawn-crew overlap
-// check only blocks a crew that is presence-online. A killer armed by the first
+// abandoned call created from one a concurrent attempt legitimately owns, and a
+// second attempt on the same name is ordinary rather than exotic: crewSessionName
+// is a pure function of the project hash and the crew name, a scheduled crew
+// start that fails re-fires on that name at its next boundary (doFireAction
+// records the failed fire since hk-pbdti, so the retry follows the schedule
+// rather than the 2s poll), and the spawn-crew overlap check blocks a second
+// attempt only while the crew is presence-online. A killer armed by the first
 // attempt reaps whichever later attempt finally succeeded. SpawnCrewSession's
 // ErrWindowCollision branch already adopts an existing session under that name,
 // so leaving it alone is both safer and sufficient.
@@ -298,8 +302,9 @@ func TestAbandonedSessionCreationLeavesTheSessionForTheNextAttemptToAdopt(t *tes
 	boundedCreationAssertTimeout(t, got.err)
 
 	// The tmux server was slow, not dead: it finishes creating the session after
-	// the caller has already been told the creation failed. Stand in for the
-	// scheduled retry that lands moments later and adopts that session.
+	// the caller has already been told the creation failed. Stand in for the next
+	// attempt on this name — the schedule's next boundary, or an operator — which
+	// adopts that session.
 	close(adapter.release)
 
 	// Wait out a full creation bound — the window in which a background killer
@@ -307,8 +312,8 @@ func TestAbandonedSessionCreationLeavesTheSessionForTheNextAttemptToAdopt(t *tes
 	// the name the retry is about to adopt.
 	time.Sleep(boundedCreationBound * 2)
 	if adapter.killedSession(sessName) {
-		t.Errorf("crew session %q was killed after the creation bound fired: a scheduled crew "+
-			"start re-fires under this exact name every ~2s, so this kills whichever retry succeeded",
-			sessName)
+		t.Errorf("crew session %q was killed after the creation bound fired: the next attempt on "+
+			"this exact name — the schedule's next boundary, or an operator — adopts it, so this "+
+			"kills whichever attempt finally succeeded", sessName)
 	}
 }

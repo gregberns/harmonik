@@ -160,10 +160,116 @@ commit_in_scratch 'fix(gate): a refused message on a merged side branch
 Reviewed-By: self
 Review-Verdict: {"schema_version": 1, "verdict": "APPROVE", "flags": [], "notes": "approved"}' side.txt
 git -C "$scratch" checkout -q -
-git -C "$scratch" merge -q --no-ff -m 'Merge branch mergetip' mergetip
+# The merge declares itself trivial. A merge is no longer exempt from the
+# review-trailer rules -- it lands, so it answers for itself -- and this case is
+# about WHICH commit the gate reads, not about what a merge owes a reviewer.
+git -C "$scratch" merge -q --no-ff -m 'Merge branch mergetip
+
+Trivial: true' mergetip
 ( cd "$scratch" && COMMIT_MSG_GATE_BASELINE="$first" bash "$GATE" --head-only ) >"$tmp/merge.out" 2>&1
 check "a merge tip is judged on its own message, not an ancestor's" 0 "$?"
 check_says "exactly one commit was read" "1 commits checked" "$tmp/merge.out"
+
+# 8d. THE COMMENT LINES GIT ACTUALLY KEEPS. This is the only place the defect
+#     could be seen: it is a difference between the stored message and the
+#     validator's view of it, so a fixture file cannot show it.
+#
+#     `git commit -F` — the spelling AGENTS.md mandates — gets cleanup mode
+#     `whitespace`, which does NOT remove comment lines. The validator stripped
+#     every `#` line anyway, so a fabricated trailer written on one landed in
+#     the commit while being invisible to every check. Measured against the
+#     unfixed validator, through this gate, on this exact commit: the audit
+#     grep counted it and the gate exited 0.
+#
+#     BOTH HALVES ARE ASSERTED, and the first is not decoration. "The gate
+#     refuses it" is satisfied by a validator that refuses everything, and it
+#     is also satisfied by a fixture that has drifted into a shape the audit no
+#     longer counts — at which point the case still passes and guards nothing.
+#     The property is agreement with the audit, so the audit is measured.
+#
+#     `<sha>^!` scopes the grep to the ONE commit. `git log -1 --grep` does
+#     not: it walks ANCESTORS and returns the newest match, so it answers yes
+#     for a commit whose own message is clean. That mistake was made here once.
+commit_in_scratch 'fix(gate): a fabricated approval hidden behind a comment line
+
+Reviewed-By: none — no reviewer was reached for this commit
+# Reviewed-By: agent-reviewer
+Review-Verdict: {"schema_version": 1, "verdict": "NOT_REVIEWED", "flags": [], "notes": "self-test fixture"}'
+hash_sha=$(git -C "$scratch" rev-parse HEAD)
+hash_audit_hits="$(git -C "$scratch" log "${hash_sha}^!" --grep 'Reviewed-By: agent-reviewer' --format=%H)"
+hash_audited=0
+[ -n "$hash_audit_hits" ] && hash_audited=1
+check "the audit grep counts the #-hidden trailer as reviewed work" 1 "$hash_audited"
+( cd "$scratch" && COMMIT_MSG_GATE_BASELINE="$first" bash "$GATE" --head-only ) >"$tmp/hashline.out" 2>&1
+check "a real commit with a #-prefixed fabricated trailer is refused" 1 "$?"
+check_says "the refusal names the reviewer the comment line minted" "must not name a reviewer this repo has" "$tmp/hashline.out"
+
+# 8e. THE SAME STRIP RELOCATED THE SUBJECT. With the `#` line dropped, the
+#     subject rules landed on line 2. The stored subject here is 137
+#     characters, nearly twice the ceiling this repo pins at 72, and the line
+#     the validator read instead is a clean 57. Against the unfixed validator
+#     this commit exited 0.
+#
+#     The stored length is measured rather than assumed, for the same reason as
+#     above: if the fixture ever stops being over the ceiling, this case must
+#     go red rather than pass on a subject that was never long.
+hash_long=$(printf '%*s' 130 '' | tr ' ' 'x')
+commit_in_scratch "# fix: ${hash_long}
+
+fix(gate): the short valid subject the strip read instead
+
+Reviewed-By: none — no reviewer was reached for this commit
+Review-Verdict: {\"schema_version\": 1, \"verdict\": \"NOT_REVIEWED\", \"flags\": [], \"notes\": \"self-test fixture\"}"
+reloc_subject=$(git -C "$scratch" log -1 --format=%s HEAD)
+check "git stores the # line as the subject, over the ceiling" 137 "${#reloc_subject}"
+( cd "$scratch" && COMMIT_MSG_GATE_BASELINE="$first" bash "$GATE" --head-only ) >"$tmp/reloc.out" 2>&1
+check "a real commit whose stored subject is a # line is refused" 1 "$?"
+check_says "the refusal measures the line git stored, not the one under it" "subject line is 137 chars; max is 72" "$tmp/reloc.out"
+
+# 8f. The control. A normal `git commit -F` message with no comment line in it
+#     must behave exactly as it did before any of this — otherwise the fix has
+#     traded a fail-open for a build nobody can green.
+commit_in_scratch "$good_msg"
+( cd "$scratch" && COMMIT_MSG_GATE_BASELINE="$first" bash "$GATE" --head-only ) >"$tmp/nohash.out" 2>&1
+check "a message with no comment line is unaffected" 0 "$?"
+
+# 8g. ONE GIT SETTING USED TO TURN THIS GATE OFF.
+#
+#     The gate reads a message git has ALREADY STORED. The validator, left to
+#     itself, resolves the cleanup mode from `commit.cleanup` — a setting that
+#     describes the NEXT commit, not the one being judged. So setting
+#     `commit.cleanup=strip` made the validator strip comment lines out of
+#     messages that were written and stored long before the setting existed,
+#     and every fabricated `# Reviewed-By:` trailer already in the range went
+#     invisible again. Measured on this scratch repository: 0 rejected with the
+#     setting and 1 rejected with `COMMIT_MSG_CLEANUP=verbatim` on the same
+#     commit. The gate now sets that mode itself, because a stored message has
+#     nothing left to clean up.
+#
+#     The stored message is measured rather than assumed. If the fixture ever
+#     stops carrying the comment line, this case must go red rather than pass
+#     on a commit that never had one.
+commit_in_scratch 'fix(gate): a fabricated approval the strip setting used to hide
+
+Reviewed-By: none — no reviewer was reached for this commit
+# Reviewed-By: agent-reviewer
+Review-Verdict: {"schema_version": 1, "verdict": "NOT_REVIEWED", "flags": [], "notes": "self-test fixture"}'
+git -C "$scratch" log -1 --format=%B HEAD >"$tmp/strip.msg"
+strip_stored=0
+grep -qF '# Reviewed-By: agent-reviewer' "$tmp/strip.msg" && strip_stored=1
+check "git stored the comment line, so there is something to hide" 1 "$strip_stored"
+
+git -C "$scratch" config commit.cleanup strip
+( cd "$scratch" && COMMIT_MSG_GATE_BASELINE="$first" bash "$GATE" --head-only ) >"$tmp/strip.out" 2>&1
+check "commit.cleanup=strip does not blind the gate to a stored # trailer" 1 "$?"
+check_says "the refusal still names the reviewer the comment line minted" "must not name a reviewer this repo has" "$tmp/strip.out"
+
+# The control. Under the same setting an ordinary message must still pass,
+# or the fix has traded a fail-open for a gate that refuses everything.
+commit_in_scratch "$good_msg"
+( cd "$scratch" && COMMIT_MSG_GATE_BASELINE="$first" bash "$GATE" --head-only ) >"$tmp/stripok.out" 2>&1
+check "under commit.cleanup=strip a clean message still passes" 0 "$?"
+git -C "$scratch" config --unset commit.cleanup
 
 # 9. The live assertion on this repository. It must check a non-empty scope —
 #    a gate whose scope has silently emptied is the defect, not a pass.

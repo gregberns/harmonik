@@ -178,7 +178,19 @@ rejected=0
 while read -r sha; do
   [ -n "$sha" ] || continue
   git log -1 --format=%B "$sha" >"$msgfile"
-  if ! bash "$VALIDATOR" "$msgfile" >"$report" 2>&1; then
+  # `verbatim`, and it is not a preference. What `git log --format=%B` hands
+  # back is the message git ALREADY STORED. Every cleanup rule ran before the
+  # commit was written, so there is nothing left for a cleanup mode to remove
+  # and a `#` line in here is text a reader and the audit grep both see.
+  #
+  # Without this the validator resolved the mode from `commit.cleanup`, which
+  # belongs to the commit that has not been made yet. Measured on a repository
+  # with `commit.cleanup=strip` set: a real commit carrying
+  # `# Reviewed-By: agent-reviewer` in its stored message was reported as 0
+  # rejected, and the same commit with `COMMIT_MSG_CLEANUP=verbatim` was
+  # rejected. One setting, in a config file nobody reads at commit time, turned
+  # the whole gate off for the fabricated trailers it exists to find.
+  if ! COMMIT_MSG_CLEANUP=verbatim bash "$VALIDATOR" "$msgfile" >"$report" 2>&1; then
     rejected=$(( rejected + 1 ))
     echo "commit-msg-gate: REJECTED ${sha:0:9}  $(git log -1 --format=%s "$sha")" >&2
     sed 's/^/    /' "$report" >&2

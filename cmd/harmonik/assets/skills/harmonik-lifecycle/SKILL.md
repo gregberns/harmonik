@@ -220,8 +220,12 @@ tool that crosses the integration→main boundary the daemon **never** auto-merg
 Cherry-picks the given reviewed SHA(s) onto the target branch in a **temp
 worktree** rooted at the fetched `origin/<target>` tip, runs a **build gate**
 (`go build ./... && go vet ./...`, only when `go.mod` is present in the
-worktree), and pushes **race-safely** with up to **3** non-fast-forward rebase
-retries (`maxPromotePushAttempts`). The cherry-pick uses `-x` (records
+worktree), and pushes **race-safely** with up to **3** retries
+(`maxPromotePushAttempts`) on any refusal `runmerge.IsRetryablePushRejection`
+accepts. That includes a lost compare-and-swap race, whose wording is
+`[remote rejected] ... (failed to update ref)` and is not a non-fast-forward.
+Refusals that never clear — a declined hook, a shallow update, a prohibited
+deletion — are deliberately excluded and fail at once. The cherry-pick uses `-x` (records
 provenance). Each cherry-pick is then amended with a **`Harmonik-Bead-ID:`
 trailer** — from `--bead`, else auto-detected from a `(hk-xxx)` parenthetical in
 the source commit's subject — which is what lets `harmonik reconcile` auto-close
@@ -298,7 +302,7 @@ go build ./...
 go test -short ./...
 git checkout -
 
-# 3. Promote race-safely (cherry-pick -x, 3 non-ff retries, build gate):
+# 3. Promote race-safely (cherry-pick -x, 3 retries on a retryable refusal, build gate):
 harmonik promote --project $HARMONIK_PROJECT <sha>
 
 # 4. Close the bead (or let harmonik reconcile do it automatically):

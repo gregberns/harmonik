@@ -64,8 +64,8 @@ func TestIsRetryablePushRejection(t *testing.T) {
 		{"empty", "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := isRetryablePushRejection(tc.pushOut); got != tc.want {
-				t.Fatalf("isRetryablePushRejection(%q) = %v, want %v", tc.pushOut, got, tc.want)
+			if got := IsRetryablePushRejection(tc.pushOut); got != tc.want {
+				t.Fatalf("IsRetryablePushRejection(%q) = %v, want %v", tc.pushOut, got, tc.want)
 			}
 		})
 	}

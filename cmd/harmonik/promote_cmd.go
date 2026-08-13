@@ -6,8 +6,9 @@ package main
 //
 //  1. push-mode: `harmonik promote <sha>...`
 //     Cherry-picks the given reviewed SHA(s) onto the target branch in a temp
-//     worktree, runs a build gate, and pushes race-safely with up to 3 non-ff
-//     rebase retries. Formalises the captain bypass-SOP.
+//     worktree, runs a build gate, and pushes race-safely with up to 3
+//     fetch-and-rebase retries on a retryable push refusal (see
+//     runmerge.IsRetryablePushRejection). Formalises the captain bypass-SOP.
 //
 //  2. PR-mode: `harmonik promote --pr`
 //     Opens a PR from --from (default "integration") onto the target branch via
@@ -43,6 +44,7 @@ import (
 	"strings"
 
 	"github.com/gregberns/harmonik/internal/branching"
+	"github.com/gregberns/harmonik/internal/runmerge"
 )
 
 // beadIDInSubjectRE matches a harmonik bead ID parenthetical anywhere in a
@@ -358,13 +360,15 @@ func runPromotePushDryRun(ctx context.Context, projectDir, target string, cfg pr
 	} else {
 		fmt.Printf("harmonik promote (dry-run): would skip the build gate because this project has no go.mod\n")
 	}
-	fmt.Printf("harmonik promote (dry-run): would push: git push origin HEAD:%s (with up to %d non-ff retries)\n",
+	fmt.Printf("harmonik promote (dry-run): would push: git push origin HEAD:%s (with up to %d retries on a retryable refusal)\n",
 		target, maxPromotePushAttempts)
 	return 0
 }
 
 // runPromotePush implements push-mode: cherry-pick SHA(s) into a temp worktree
-// at origin/<target>, run build gate, race-safe push (up to 3 retries on non-ff).
+// at origin/<target>, run build gate, race-safe push (up to 3 retries on any
+// refusal runmerge.IsRetryablePushRejection accepts, which includes a lost
+// compare-and-swap race, not only a non-fast-forward).
 func runPromotePush(ctx context.Context, projectDir, target string, cfg promoteConfig) int {
 	if cfg.dryRun {
 		return runPromotePushDryRun(ctx, projectDir, target, cfg)
@@ -514,18 +518,21 @@ func runPromotePush(ctx context.Context, projectDir, target string, cfg promoteC
 			return 0
 		}
 
-		pushOutStr := string(pushOut)
-		isNonFF := strings.Contains(pushOutStr, "non-fast-forward") ||
-			strings.Contains(pushOutStr, "[rejected]")
-
-		if !isNonFF || attempt >= maxPromotePushAttempts {
+		// One predicate decides whether a refused push is worth another
+		// attempt, and it lives in internal/runmerge (hk-z0bms). This used to
+		// be a hand-written copy of the two-token test that missed a lost
+		// concurrent push — git tells the loser "[remote rejected] ... (failed
+		// to update ref)", which does not contain "[rejected]" — so promote
+		// gave up on the exact race its own retry loop exists to recover from.
+		if !runmerge.IsRetryablePushRejection(string(pushOut)) || attempt >= maxPromotePushAttempts {
 			fmt.Fprintf(os.Stderr, "harmonik promote: push failed (attempt %d/%d): %v\n%s\n",
 				attempt, maxPromotePushAttempts, pushErr, pushOut)
 			return 4
 		}
 
-		// Non-ff: fetch, rebase cherry-picks onto new remote tip, retry.
-		fmt.Fprintf(os.Stderr, "harmonik promote: non-fast-forward push (attempt %d/%d); fetching and rebasing\n",
+		// Recoverable refusal (stale target, or a lost push race): fetch, rebase
+		// the cherry-picks onto the new remote tip, and try again.
+		fmt.Fprintf(os.Stderr, "harmonik promote: push refused as retryable (attempt %d/%d); fetching and rebasing\n",
 			attempt, maxPromotePushAttempts)
 
 		retryFetchCmd := exec.CommandContext(ctx, "git", "fetch", "origin", target)

@@ -36,9 +36,9 @@ jobs:
     # purpose: it is the string GitHub matches, so it costs nothing to keep and
     # a merge to change. To retire it, edit branch protection and this line in
     # the same window, or main is unprotected in between.
-    # A gate that holds this name and the protection setting in agreement is
-    # being written; until it lands, this comment is the only thing guarding
-    # the name, and a comment is not a guard.
+    # scripts/required-check-name-gate.sh holds this name and the protection
+    # setting in agreement, and checks the eight other ways a job can stop
+    # reporting the context without its name changing at all.
     name: check (Tier 2)
     runs-on: ubuntu-latest
     steps:

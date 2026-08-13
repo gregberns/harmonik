@@ -895,6 +895,7 @@ script-tests:  ## Self-tests for the shell the gate depends on
 	scripts/lint-changed-test.sh
 	scripts/changed-func-coverage-test.sh
 	scripts/queue-daemon-count-test.sh
+	scripts/required-check-name-gate-test.sh
 	scripts/commit-msg-gate-test.sh
 	scripts/secret-scan-test.sh
 	scripts/pipefail-grepq-gate-test.sh
@@ -921,6 +922,7 @@ freeze-gates:  ## Subsystem freeze / ratchet greps (structural, sub-second each)
 	scripts/workloop-scheduler-freeze-gate.sh
 	scripts/queue-status-writer-ratchet.sh
 	scripts/lint-allow-ratchet.sh
+	scripts/required-check-name-gate.sh
 	scripts/pipefail-grepq-gate.sh
 
 # gate-static — everything fast and full share that runs no test.

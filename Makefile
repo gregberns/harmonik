@@ -1171,6 +1171,24 @@ full:  ## THE merge decision: everything in fast over EVERY package, plus the li
 	$(MAKE) module-hygiene
 
 # ---------------------------------------------------------------------------
+# full-guarded — the SAME merge decision, run only when the box can answer.
+#
+# Not a third tier. There are still two targets: this one runs `make full` and
+# adds nothing to it. What it adds is a refusal. `make full` has three ways to
+# report a failure that is not in the code and all three are silent — another
+# heavy run sharing the box, a process holding the sidecar lock on the Claude
+# config, or free disk under the floor. The script refuses to start on any of
+# them, samples disk and the lock while the suite runs, and prints FULL_RC so
+# the reader has an exit code that did not come out of a pipeline.
+#
+# The script calls `make full` itself, so the guard must NOT move into `full`.
+# That recurses with no bottom.
+# ---------------------------------------------------------------------------
+.PHONY: full-guarded
+full-guarded:  ## `make full` behind a pre-flight that refuses a busy box, a held config lock or low disk
+	scripts/run-full.sh
+
+# ---------------------------------------------------------------------------
 # lint-allow — THE HOOK for the whole-tree lint verdict.
 #
 # `make full` lints the WHOLE tree, not only the changed lines, and fails when a

@@ -532,6 +532,12 @@ type concurrentFixtureLedger struct {
 	// ClaimBead calls.
 	peakInFlight int
 
+	// reopened counts ReopenBead calls. It feeds no assertion — a reopen is
+	// legitimate and the test must not fail on one. It is logged, so a retry
+	// rate that climbs stays visible instead of being silently absorbed.
+	// Refs hk-twoconcurrentbeads-retry-assertion-06hlw.
+	reopened int
+
 	// closed records IDs of beads that have been closed.
 	closed []core.BeadID
 
@@ -588,14 +594,34 @@ func (c *concurrentFixtureLedger) ReopenBead(_ context.Context, _ string, _ brcl
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.inFlight--
+	c.reopened++
 	c.ready = append(c.ready, beadID)
 	return nil
+}
+
+func (c *concurrentFixtureLedger) reopenedCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.reopened
 }
 
 func (c *concurrentFixtureLedger) closedCount() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return len(c.closed)
+}
+
+// distinctClosed counts the distinct beads closed, which is what "both beads
+// finished" means. closedCount counts calls and cannot tell one bead closed
+// twice from two beads closed once.
+func (c *concurrentFixtureLedger) distinctClosed() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	seen := make(map[core.BeadID]struct{}, len(c.closed))
+	for _, id := range c.closed {
+		seen[id] = struct{}{}
+	}
+	return len(seen)
 }
 
 func (c *concurrentFixtureLedger) peak() int {
@@ -630,6 +656,11 @@ func TestWorkLoop_TwoConcurrentBeads(t *testing.T) {
 	collector := &stubEventCollector{}
 	var runEnvMu sync.Mutex
 	runEnvProjectDirs := make(map[string]string)
+	// runEnvCalls counts every trip through the worktree factory. The map keys on
+	// run ID, so it silently collapses two runs that share one — which is the
+	// defect this test exists to catch. Counting the calls separately is what
+	// makes that collapse visible.
+	runEnvCalls := 0
 
 	// Handler: sleep briefly so both goroutines are simultaneously in-flight,
 	// then exit 0 so both beads are closed.
@@ -647,6 +678,7 @@ func TestWorkLoop_TwoConcurrentBeads(t *testing.T) {
 		// order the node's no-advance guard accepts.
 		WorktreeFactory: func(ctx context.Context, gotProjectDir, runID, headSHA string) (string, func(), error) {
 			runEnvMu.Lock()
+			runEnvCalls++
 			runEnvProjectDirs[runID] = gotProjectDir
 			runEnvMu.Unlock()
 			return daemon.ExportedProductionWorktreeFactory(ctx, gotProjectDir, runID, headSHA)
@@ -694,13 +726,65 @@ func TestWorkLoop_TwoConcurrentBeads(t *testing.T) {
 	if n := ledger.closedCount(); n != 2 {
 		t.Errorf("closedCount = %d; want 2", n)
 	}
+	// closedCount counts CloseBead CALLS. Two calls against one bead would pass
+	// it while the other bead never ran, so name the beads.
+	if got := ledger.distinctClosed(); got != 2 {
+		t.Errorf("distinct beads closed = %d; want 2 (both beads, not one bead twice)", got)
+	}
 
 	// The worktree port is the first run-path consumer of ProjectDir and RunID.
 	// Both concurrent runs must keep the shared directory and distinct identities.
+	//
+	// ONE IDENTITY PER DISPATCH is the property, and it is stated without
+	// predicting how many dispatches there will be. The assertion used to be
+	// `!= 2`, which also encoded "no run is ever retried" — something the work
+	// loop never promised. Both runs push to the fixture's single shared bare
+	// repo, so under load one can lose the refs/heads/main lock race, fail, get
+	// reopened and be dispatched again; the scheduler mints a fresh run ID per
+	// dispatch, so that retry is a third distinct ID. Measured at about 2.5%
+	// under concurrent load and clean in isolation: the test failed correct
+	// behaviour. A red gate on good code teaches people to re-run until green,
+	// which is how a real failure gets re-run away too.
+	//
+	// Comparing the map size against the call count needs no theory about how
+	// many runs there should be, so no retry and no reopen can make it wrong.
+	// Two earlier candidates were worse. `>= 2` alone stops measuring identity
+	// at all. `2 + reopens` predicts the dispatch count from the ledger, and the
+	// loop does not guarantee that sum: several paths reopen a bead BEFORE the
+	// worktree port is reached (see refuseRunPlan in workloop_runplan.go, and
+	// the codesync and Submit failure paths in beadRunOne). None of them is
+	// reachable through this fixture today, so that version passed; each is a
+	// way it could have become a NEW false red later.
+	//
+	// THE PREMISE, because it is invisible and a later change could break it:
+	// the factory is entered exactly once per dispatch. rp.Worktree.Create has
+	// one call site and nothing between it and this closure retries. Wrap that
+	// call in a retry and this assertion starts failing while the comment above
+	// still reads as reassuring.
+	//
+	// What this no longer catches, honestly. A regression that reopens a run
+	// which actually succeeded and dispatches it again is invisible here,
+	// because the extra dispatch brings its own distinct identity; the old
+	// `!= 2` did catch that, at the price of failing correct code one run in
+	// forty. And neither assertion below can say that EACH bead reached the
+	// factory: one bead dispatched twice, with the other closed without ever
+	// provisioning, would satisfy both. The factory is handed a run ID and no
+	// bead ID, so the test cannot tell which bead owns a dispatch. That gap is
+	// older than this change — `!= 2` had it too, and distinctClosed narrows it.
+	// Refs hk-twoconcurrentbeads-retry-assertion-06hlw.
 	runEnvMu.Lock()
 	defer runEnvMu.Unlock()
-	if len(runEnvProjectDirs) != 2 {
-		t.Errorf("distinct RunEnv.RunID count = %d; want 2", len(runEnvProjectDirs))
+	if reopens := ledger.reopenedCount(); reopens > 0 {
+		// The old assertion made a retry visible by failing. Keep the signal
+		// without the false red: a retry rate that climbs is worth seeing.
+		t.Logf("a run was retried %d time(s); each retry mints one more run ID", reopens)
+	}
+	if runEnvCalls < 2 {
+		t.Errorf("worktree factory calls = %d; want at least 2 (one per bead)", runEnvCalls)
+	}
+	if len(runEnvProjectDirs) != runEnvCalls {
+		t.Errorf("distinct RunEnv.RunID count = %d; want %d (one identity per dispatch); two dispatches shared an ID",
+			len(runEnvProjectDirs), runEnvCalls)
 	}
 	for runID, gotProjectDir := range runEnvProjectDirs {
 		if gotProjectDir != projectDir {

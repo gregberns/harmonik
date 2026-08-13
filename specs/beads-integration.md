@@ -8,10 +8,10 @@ requirement-prefix: BI
 status: draft
 spec-category: foundation-cross-cutting
 spec-shape: requirements-first
-version: 0.9.5
+version: 0.9.6
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-08-12
+last-updated: 2026-08-13
 depends-on:
   - architecture
   - execution-model
@@ -226,6 +226,17 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 #### BI-010a — Status-mapping table
 
 The following table binds harmonik run-level events to Beads coarse-status transitions. Every harmonik-driven Beads write MUST be classified by this table; writes outside the table are FORBIDDEN per BI-INV-001.
+
+> **Scoping note (added 2026-08-13, hk-jqz61).** This table CLASSIFIES writes; it does NOT order
+> them against the run terminal event. The `Harmonik trigger` column names the run-level event a
+> write is bound to, and the `Caller` column's "daemon (terminal-event handler)" names the component
+> that performs the write — neither says the event is emitted before the write happens. Ordering is
+> owned by [execution-model.md §4.3 EM-015b] and stated in full at [execution-model.md §4.12 EM-052]
+> steps 6-8 and §4.12.EM-053 steps 1-3: a run's truth-claim `close` or `reopen` PRECEDES that run's
+> terminal event, so the event type can carry the write's result (a failed close yields `run_failed`,
+> not `run_completed`). This note is here because EM-015b once cited BI-010 for the opposite order —
+> a rule no text in §4.4 has ever stated — and the trigger/caller columns are the phrasing a reader
+> would most plausibly re-derive it from.
 
 | Harmonik trigger | Beads transition | Op | Caller |
 |---|---|---|---|
@@ -1137,6 +1148,7 @@ Default-if-unresolved: corruption manifests as parse errors on multiple `br` com
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-08-13 | 0.9.6 | agent (lane alpha, hk-jqz61) | **BI-010a gains a scoping note stating that the status-mapping table classifies writes and does not order them against the run terminal event. No BI obligation changes; no table row is edited.** [execution-model.md §4.3 EM-015b] carried a MUST requiring the terminal-transition bead write to follow the terminal event, and cited §4.4 BI-010 as its source. It is not a rule this section states: BI-010 gives the conditions under which each write is legal in terms of run STATE, and BI-010a binds writes to triggers for classification under BI-INV-001. The nearest thing to an ordering claim here is presentational — the `Harmonik trigger` column names a run event and the `Caller` column reads "daemon (terminal-event handler)" — and the note names that phrasing explicitly so the retired rule is not re-derived from it. EM-015b is corrected in the companion [execution-model.md] v0.11.0 to require the truth-claim `close`/`reopen` to PRECEDE the terminal event, matching EM-052/EM-053, [run-state-machine.md §7 RSM-021], and the shipped daemon. The activity-marker `reset` of [process-lifecycle.md §PL-006h] is explicitly outside that ordering and its row in this table is unaffected. No requirement IDs added, renumbered, or retired. Refs: hk-jqz61. |
 | 2026-08-12 | 0.9.5 | agent (hk-rern1) | **BI-013c AMENDED — NOT additive. `closed` and `tombstone` are removed from the `deferred-for-ledger-dep` trigger list and pointed at [queue-model.md §3.2b QM-002b Class A], which supersedes BI-013c for them.** Say the shape of this plainly: BI-013c's own MUST named `closed` and `tombstone` and prescribed a disposition for them, so this is a normative sentence being narrowed, not a gap being filled. It is done anyway because the two specs gave two answers for one observation and this spec's answer was the worse one. A finished bead never moves again, so holding its item at `deferred-for-ledger-dep` postpones the same correction until the next daemon start runs Class A over it; and the disposition the daemon actually shipped, `failed`, parks the queue permanently, because [queue-model.md §8.3b QM-052b] refuses to recover a queue whose bead is not `open`. **Nothing observable changed:** the shipped daemon has never written `deferred-for-ledger-dep` at this site — `failed` before hk-rern1, `completed` after — so this records reality rather than altering it. `deferred` (the non-terminal status) is untouched: it can still change, so holding the item remains right for it. The surviving clause's `per [queue-model.md §6 QM-022]` citation is left exactly as found and is NOT repaired here — QM-022 is §6.3 no-double-dispatch, a submit-time validation rule with no item-disposition content, so it does not anchor that sentence either. Recorded as a separate defect, not fixed under this bead. No BI IDs added, renumbered, or retired. Refs: hk-rern1, hk-nsion. |
 | 2026-08-04 | 0.9.4 | agent (operator direction) | **BI-024a becomes an existence check. The version pin is no longer a runtime gate.** BI-024a retitled from "`br --version` handshake" to "`br` existence check". It now asserts one thing: `br` is present and runnable. It MUST NOT parse the `br --version` output, MUST NOT compare it against BI-024's pinned version, and MUST pass on ANY output when `br` exits zero. Startup still fails with exit code 8 when `br` cannot be executed or exits non-zero; the emitted `failure_mode` changes from `br-version-incompatible` to `br-unavailable`, which is what the condition now is. **Two rules retired.** The comparison against the pin: the fleet ran 754 beads on br 0.2.10 while pinned at 0.1.45 with no adapter failure, and the pin caused every restart failure in that window. The regex parse `br\s+(\d+)\.(\d+)\.(\d+)(?:[-.][a-zA-Z0-9]+)?`: a `br` build whose banner did not match blocked startup outright, observed 2026-08-04 with a build reporting `0.0.0`. A parse that can fail is a parse that can block, and nothing read the parsed value after the comparison stopped being fatal. **BI-024 amended:** the pinned version is a record of what the release was tested against, not a gate; the maintainer duty to verify before bumping survives unchanged. **BI-026 amended:** clarified that it is a release-engineering duty on the maintainer that no startup check enforces, and that "remain pinned" means the operator does not upgrade the installed `br`. **BI-031b amended:** dropped the claim that the version handshake prevents schema drift; a `BrSchemaMismatch` at call time is now the first and only signal. **OQ-BI-011** marked moot — no window is left to widen. **OQ-BI-014** default-if-unresolved corrected. **§10.2** gains the three existence-check test obligations, including the explicit obligation to test output the retired regex rejected. Adapter: `CheckBrVersion` becomes `CheckBrRunnable` and returns the raw banner for logging; `ErrBrVersionMismatch` deleted. |
 | 2026-08-02 | 0.9.3 | agent (codename:event-payload-ownership) | **Step 13 no-review compatibility.** BI-009a now defines two legacy no-review inputs: `workflow:single` and tier-0 queue-item `workflow_mode=single`. Both resolve the registered `no-review-bead` version `1.0` graph to `dot`, with distinct `workflow_selection_source` values. The raw queue value remains for audit. The stale `review_bypassed` reference is retired. |

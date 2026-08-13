@@ -76,16 +76,28 @@ type SubstrateSpawn struct {
 
 	// Terminal, when true, marks this spawn as a terminal/consolidate node that
 	// must not be starved by ordinary non-terminal sessions. The substrate
-	// reserves one slot in the spawn semaphore exclusively for terminal spawns so
-	// that a consolidate node can always acquire a slot even when the configured
-	// cap is fully occupied by non-terminal (implementer/reviewer) sessions.
+	// reserves one slot in the spawn semaphore for terminal spawns so that a
+	// consolidate node can acquire a slot even when the configured cap is fully
+	// occupied by non-terminal (implementer/reviewer) sessions.
 	//
-	// Set for consolidate-style join nodes in DOT workflows (detected via
-	// isConsolidateJoinNode in dot_cascade.go, hk-x882o) and for the
-	// single-mode implementer spawn (workloop.go single-mode dispatch, hk-wnqos).
-	// Ordinary DOT per-axis reviewer spawns leave this false.
+	// The reserve is ONE slot, and the population it serves is one consolidate
+	// node per in-flight run, so two parallel runs can already over-subscribe it
+	// (hk-terminal-reserve-unbounded-wyy6y). In that state an ordinary spawn
+	// waits on the same semaphore for the rest of its acquire budget and can win
+	// a freed slot ahead of a queued terminal spawn, because the wait has no
+	// ordering. Read the reserve as a slot terminal spawns cannot be crowded out
+	// of for long, not as one they always get first.
 	//
-	// Beads: hk-x882o (DOT consolidate), hk-wnqos (single-mode).
+	// Set for consolidate-style join nodes in DOT workflows, and only there:
+	// isConsolidateJoinNode in internal/daemon/dot_cascade_helpers.go decides it,
+	// and dot_cascade_core.go is the one production caller that passes it
+	// through. Ordinary DOT per-axis reviewer spawns leave this false.
+	//
+	// It is no longer set for the single-mode implementer spawn. Single mode now
+	// runs the registered no-review-bead.dot, which holds one agentic node and no
+	// reviewer, so a join node cannot occur in it.
+	//
+	// Beads: hk-x882o (DOT consolidate). hk-wnqos (single-mode) is historical.
 	Terminal bool
 }
 

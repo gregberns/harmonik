@@ -175,9 +175,9 @@ type ConcurrentMergeResult struct {
 // asserts the concurrency-merge properties (see ConcurrentMergeConfig). It
 // returns the observed result for further caller-side assertions.
 //
-// The helper is NOT t.Parallel-safe with respect to itself if multiple
-// invocations share the HARMONIK_CLAUDE_CONFIG_PATH env (it sets and unsets it
-// via t.Cleanup); run invocations serially within a test.
+// The helper is NOT t.Parallel-safe: it redirects HARMONIK_CLAUDE_CONFIG_PATH,
+// which is process-wide, through t.Setenv. Run invocations serially within a
+// test; calling it from a parallel test panics rather than leaking.
 func RunConcurrentMerge(t *testing.T, cfg ConcurrentMergeConfig) ConcurrentMergeResult {
 	t.Helper()
 
@@ -247,14 +247,16 @@ func RunConcurrentMerge(t *testing.T, cfg ConcurrentMergeConfig) ConcurrentMerge
 	if claudeConfigPath == "" {
 		claudeConfigPath = filepath.Join(t.TempDir(), ".claude.json")
 	}
-	if err := os.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", claudeConfigPath); err != nil {
-		t.Fatalf("RunConcurrentMerge: Setenv HARMONIK_CLAUDE_CONFIG_PATH: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := os.Unsetenv("HARMONIK_CLAUDE_CONFIG_PATH"); err != nil {
-			t.Logf("RunConcurrentMerge: Unsetenv HARMONIK_CLAUDE_CONFIG_PATH: %v", err)
-		}
-	})
+	// t.Setenv, not Setenv-plus-Unsetenv. The variable is process-wide and this
+	// helper does not own it: hermetic.Main sets it once before m.Run so that no
+	// test in the binary can reach the operator's real ~/.claude.json. Unsetting
+	// it on cleanup DELETED that protection for every test that ran afterwards,
+	// and those tests then seeded trust entries into the real user config, one
+	// per throwaway worktree, with nothing to remove them. t.Setenv restores the
+	// previous value instead of removing the variable. It panics under
+	// t.Parallel, which is the correct alarm here: this helper is already
+	// documented as serial-only.
+	t.Setenv("HARMONIK_CLAUDE_CONFIG_PATH", claudeConfigPath)
 
 	daemonCfg := daemon.Config{
 		ProjectDir:            projectDir,

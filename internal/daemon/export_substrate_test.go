@@ -148,3 +148,28 @@ func ExportedNewPerRunSubstrateWithSandbox(sub handler.Substrate, cfg *SrtSpawnC
 	prs.sandboxSpawn = cfg
 	return prs
 }
+
+// ExportedSpawnSemCapacity exposes the TOTAL spawn-semaphore capacity of a
+// substrate returned by NewTmuxSubstrate — the non-terminal cap plus the slot
+// reserved for terminal spawns. ExportedSpawnCapSize reports only the
+// non-terminal half, so it cannot see whether the reserve survived a resize,
+// which is the whole subject of the hk-6yrs9 / hk-pcjkp tests.
+// Returns 0 when sub is not a *tmuxSubstrate or has no cap configured.
+func ExportedSpawnSemCapacity(sub handler.Substrate) int {
+	if ts, ok := sub.(*tmuxSubstrate); ok && ts.spawnSem != nil {
+		return ts.spawnSem.Capacity()
+	}
+	return 0
+}
+
+// ExportedSetCapResizeMid installs a function that runs between the two
+// capacity moves of SetSpawnCap, so a test can hold that window open. The
+// window is microseconds wide in production, and hk-pcjkp — a spawn refused
+// while the two bounds disagree — cannot be reproduced from outside the
+// substrate without it. Call before any concurrent spawn starts. No-op when
+// sub is not a *tmuxSubstrate.
+func ExportedSetCapResizeMid(sub handler.Substrate, fn func()) {
+	if ts, ok := sub.(*tmuxSubstrate); ok {
+		ts.capResizeMid = fn
+	}
+}

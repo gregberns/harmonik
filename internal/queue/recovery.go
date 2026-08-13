@@ -223,23 +223,49 @@ func (e *ResumeRefusedError) Error() string {
 //
 // Spec ref: specs/queue-model.md §8.3 QM-052, §8.5 QM-054.
 type UnknownQueueError struct {
-	// Verb is the operator verb that was refused ("pause", "resume").
+	// Verb is the operator verb that was refused ("pause", "resume", "cancel").
 	Verb string
 
-	// NormalizedName is the queue name the operator aimed at.
+	// PastTense is how Verb reads after "no queue was". Optional: an empty
+	// value renders as Verb+"d", which is right for "pause" and "resume" and
+	// wrong for "cancel". Callers whose verb does not take a bare "d" set it.
+	PastTense string
+
+	// NormalizedName is the queue name the operator aimed at. Empty when the
+	// operator aimed at a QueueID instead.
 	NormalizedName string
+
+	// QueueID is the queue_id the operator aimed at, set INSTEAD of
+	// NormalizedName when the caller identified the queue by id rather than by
+	// name (`harmonik queue cancel --queue-id`). The message then reads "no
+	// queue with id" rather than "no queue named", because a uuid is not a name
+	// and describing one as a name misreports what the caller typed back at
+	// them — which is the whole job of this error.
+	QueueID string
 
 	// KnownNames are the queues that exist right now, sorted. May be empty.
 	KnownNames []string
 }
 
 // Error names the queue that does not exist and the ones that do.
+//
+// The trailer lists NAMES even when the caller aimed at an id. "Which queues
+// exist" is the same fact either way, a list of uuids is unreadable, and the
+// name is what every other verb takes.
 func (e *UnknownQueueError) Error() string {
 	known := "none are loaded"
 	if len(e.KnownNames) > 0 {
 		known = strings.Join(e.KnownNames, ", ")
 	}
+	past := e.PastTense
+	if past == "" {
+		past = e.Verb + "d"
+	}
+	target := fmt.Sprintf("no queue named %q", e.NormalizedName)
+	if e.QueueID != "" {
+		target = fmt.Sprintf("no queue with id %q", e.QueueID)
+	}
 	return fmt.Sprintf(
-		"no queue named %q: %s changed nothing and no queue was %sd; queues that exist: %s",
-		e.NormalizedName, "`harmonik queue "+e.Verb+"`", e.Verb, known)
+		"%s: %s changed nothing and no queue was %s; queues that exist: %s",
+		target, "`harmonik queue "+e.Verb+"`", past, known)
 }

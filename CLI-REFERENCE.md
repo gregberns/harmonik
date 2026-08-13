@@ -231,7 +231,7 @@ harmonik handler status --type claude-code --format json
 
 **Verb `--help`:** `harmonik queue submit --help`, `harmonik queue dry-run --help`, and `harmonik queue append --help` now print the `harmonik queue` help and exit 0 — `--help` is intercepted as the first sub-arg before the value is read as a queue-file path. (Earlier builds swallowed `--help` as a filename and errored with `cannot read "--help"`; that is fixed — documented from source, takes effect after the next daemon rebuild if your installed binary predates the fix.) `harmonik queue status --help` ignores the arg and just runs (`(no queue active)`, exit 0).
 
-**Exit codes:** 0 success (JSON to stdout) · 1 validation error (JSON error body) · 2 transport/protocol error or unrecognised verb (also: usage error from `set-concurrency`) · 17 daemon not running.
+**Exit codes:** 0 success (JSON to stdout) · 1 validation error (JSON error body) · 2 transport/protocol error or unrecognised verb (also: usage error from `set-concurrency`, and a selector that matches no queue — `pause`, `resume` and `cancel` all refuse a name nothing matches, and `cancel --queue-id` refuses a uuid nothing matches, rather than report a success that changed nothing; `cancel` also refuses a selector GIVEN EMPTY, which an unexpanded shell variable produces and which used to archive the main queue at exit 0) · 17 daemon not running.
 
 **Examples**
 ```bash

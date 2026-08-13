@@ -31,15 +31,41 @@ package daemon_test
 //     stagger is sleeping, SpawnWindow returns an ErrStructural error promptly.
 //   - SpawnStagger_ZeroDisablesStagger: with spawnStagger=0 (the default), N
 //     concurrent SpawnWindow calls complete without inter-call delay.
+//   - SpawnStagger_FullIntervalSurvivesSlowWindowCreation: the interval is
+//     measured from the END of a window creation, so a creation that takes real
+//     time does not eat into it (hk-mirga, below).
+//   - SpawnStagger_FailedWindowCreationStillStartsTheInterval: a creation that
+//     comes back with an error still occupied the tmux server, so it still
+//     starts the interval.
 //
-// # Helper prefix
+// # The interval is measured from the end of a creation (hk-mirga)
 //
-// Helpers use the prefix "hkhzjStagger" per implementer-protocol.md §Helper-prefix
-// discipline (namespaced by bead id + purpose).
+// callNewWindowBounded originally stamped lastWindowAt BEFORE calling the
+// adapter, so the wait was charged the creation's own duration: the QUIET gap
+// delivered — from one `tmux new-window` returning to the next one starting —
+// was spawnStagger MINUS the creation time, and it reached zero once a creation
+// took longer than the stagger. The stagger therefore weakened exactly as tmux
+// slowed down, which is the load it exists to relieve.
 //
-// # Bead
+// The four tests above could not see it. Each of them measures either the delay
+// a caller experiences or the interval between two call STARTS, and start-to-start
+// pacing was max(createDuration, stagger) before the fix and createDuration +
+// stagger after it — never below stagger either way. They also drive an adapter
+// that returns instantly, so there was no creation duration for the defect to
+// spend. Both new tests set createDelay, and the QUIET gap is what they assert.
+//
+// # Helpers
+//
+// The "hkhzjStagger" prefix on the older helpers is a per-bead naming rule that
+// implementer-protocol.md §"Where tests go" has since RETRACTED — it produced
+// bead-named files and duplicate fakes. New helpers here are named after the
+// behaviour they serve (staggerQuietGap), and new tests extend the fake above
+// rather than declaring a second one.
+//
+// # Beads
 //
 //   - hk-hzj (agent_ready_timeout recurs under concurrent dispatch burst).
+//   - hk-mirga (the stagger was measured from the start of a creation).
 
 import (
 	"context"
@@ -54,11 +80,21 @@ import (
 )
 
 // hkhzjStaggerAdapter is a concurrency-safe fake tmux adapter for the stagger
-// tests. NewWindowIn always succeeds immediately; it records the timestamp of
-// each call so tests can verify inter-call intervals.
+// tests. It records when each NewWindowIn call was entered and when it returned,
+// so tests can verify both the interval between call starts and the quiet gap
+// between one creation returning and the next starting.
+//
+// The zero value creates windows instantly and successfully — the shape the
+// first four tests want. createDelay makes a creation take real time, which is
+// what the quiet gap needs in order to be measurable at all; outcomeErr makes
+// the creation fail while still taking that time.
 type hkhzjStaggerAdapter struct {
-	mu        sync.Mutex
-	callTimes []time.Time
+	createDelay time.Duration
+	outcomeErr  error
+
+	mu          sync.Mutex
+	callTimes   []time.Time
+	returnTimes []time.Time
 }
 
 func (a *hkhzjStaggerAdapter) ProbeTmux(_ context.Context) error { return nil }
@@ -70,11 +106,22 @@ func (a *hkhzjStaggerAdapter) ListWindows(_ context.Context, _ string) ([]string
 	return nil, nil
 }
 
-func (a *hkhzjStaggerAdapter) NewWindowIn(_ context.Context, params tmux.NewWindowIn) tmux.Outcome {
+func (a *hkhzjStaggerAdapter) NewWindowIn(_ context.Context, _ tmux.NewWindowIn) tmux.Outcome {
+	entered := time.Now()
+	time.Sleep(a.createDelay)
 	a.mu.Lock()
-	a.callTimes = append(a.callTimes, time.Now())
+	a.callTimes = append(a.callTimes, entered)
+	// Taken as late as this call can take it. The substrate stamps lastWindowAt a
+	// few microseconds LATER — after the outcome crosses the channel in
+	// callBoundedTmuxCreate — so a gap measured from here is at most that much
+	// generous, and the shortfall these tests hunt is three orders of magnitude
+	// bigger.
+	a.returnTimes = append(a.returnTimes, time.Now())
 	n := len(a.callTimes)
 	a.mu.Unlock()
+	if a.outcomeErr != nil {
+		return tmux.Outcome{Err: a.outcomeErr}
+	}
 	return tmux.Outcome{Handle: tmux.WindowHandle("stagger-session:win" + string(rune('a'+n%26)))}
 }
 func (a *hkhzjStaggerAdapter) KillWindow(_ context.Context, _ tmux.WindowHandle) error { return nil }
@@ -265,5 +312,112 @@ func TestSpawnStagger_ZeroDisablesStagger(t *testing.T) {
 	adapter.mu.Unlock()
 	if nCalls != n {
 		t.Errorf("SpawnStagger_ZeroDisablesStagger FAIL: expected %d NewWindowIn calls, got %d", n, nCalls)
+	}
+}
+
+// staggerQuietGap returns the quiet interval the substrate left between two
+// window creations: from the moment creation 1 returned to the moment creation 2
+// started. That is the interval the stagger exists to buy — the head start one
+// agent gets before the next window is created and the next cold start begins.
+//
+// It also fails the test unless the fake really spent wantCreateDelay inside the
+// first creation. An instant creation leaves nothing for a start-stamped
+// interval to consume, so without that check a caller could pass this helper an
+// adapter against which its assertion could not fail (PRINCIPLES.md §7).
+func staggerQuietGap(t *testing.T, adapter *hkhzjStaggerAdapter, wantCreateDelay time.Duration) time.Duration {
+	t.Helper()
+
+	adapter.mu.Lock()
+	entered := append([]time.Time(nil), adapter.callTimes...)
+	returned := append([]time.Time(nil), adapter.returnTimes...)
+	adapter.mu.Unlock()
+
+	if len(entered) != 2 || len(returned) != 2 {
+		t.Fatalf("expected 2 NewWindowIn calls, got %d entered / %d returned", len(entered), len(returned))
+	}
+	if took := returned[0].Sub(entered[0]); took < wantCreateDelay {
+		t.Fatalf("fake adapter did not spend its creation time: first NewWindowIn took %v, want >= %v", took, wantCreateDelay)
+	}
+	return entered[1].Sub(returned[0])
+}
+
+// staggerKillOnCleanup releases a spawned session at the end of the test and
+// fails if the substrate cannot release it.
+func staggerKillOnCleanup(t *testing.T, ctx context.Context, sess handler.SubstrateSession, label string) {
+	t.Helper()
+	t.Cleanup(func() {
+		if err := sess.Kill(ctx); err != nil {
+			t.Errorf("killing %s: %v", label, err)
+		}
+	})
+}
+
+// TestSpawnStagger_FullIntervalSurvivesSlowWindowCreation defends the promise
+// WithSpawnStagger makes: the next window creation starts at least spawnStagger
+// after the previous one ended. Creating a window takes real time here, so a
+// stagger measured from the START of a creation delivers only stagger minus that
+// time (hk-mirga).
+func TestSpawnStagger_FullIntervalSurvivesSlowWindowCreation(t *testing.T) {
+	const (
+		stagger     = 25 * time.Millisecond
+		createDelay = 15 * time.Millisecond
+	)
+
+	adapter := &hkhzjStaggerAdapter{createDelay: createDelay}
+	sub := daemon.NewTmuxSubstrate(adapter, "stagger-session",
+		daemon.WithSpawnCap(4),
+		daemon.WithSpawnStagger(stagger),
+	)
+
+	ctx := context.Background()
+
+	sess1, err := hkhzjStaggerSpawn(ctx, sub, "slow-1")
+	if err != nil {
+		t.Fatalf("first SpawnWindow failed: %v", err)
+	}
+	staggerKillOnCleanup(t, ctx, sess1, "window 1")
+
+	sess2, err := hkhzjStaggerSpawn(ctx, sub, "slow-2")
+	if err != nil {
+		t.Fatalf("second SpawnWindow failed: %v", err)
+	}
+	staggerKillOnCleanup(t, ctx, sess2, "window 2")
+
+	if gap := staggerQuietGap(t, adapter, createDelay); gap < stagger {
+		t.Errorf("SpawnStagger_FullIntervalSurvivesSlowWindowCreation FAIL: window creation 2 started %v after creation 1 returned; want >= %v (a %v creation was charged against the stagger)",
+			gap, stagger, createDelay)
+	}
+}
+
+// TestSpawnStagger_FailedWindowCreationStillStartsTheInterval defends the other
+// half: a creation that comes back with an error still held the tmux server for
+// its duration, so it still starts the interval and the next creation waits a
+// full spawnStagger from that failure. The stamp is deferred, so this is the
+// test that breaks if it stops covering the paths that do not return a handle.
+func TestSpawnStagger_FailedWindowCreationStillStartsTheInterval(t *testing.T) {
+	const (
+		stagger     = 25 * time.Millisecond
+		createDelay = 15 * time.Millisecond
+	)
+
+	wantErr := errors.New("tmux new-window refused")
+	adapter := &hkhzjStaggerAdapter{createDelay: createDelay, outcomeErr: wantErr}
+	sub := daemon.NewTmuxSubstrate(adapter, "stagger-session",
+		daemon.WithSpawnCap(4),
+		daemon.WithSpawnStagger(stagger),
+	)
+
+	ctx := context.Background()
+
+	if _, err := hkhzjStaggerSpawn(ctx, sub, "failed-1"); !errors.Is(err, wantErr) {
+		t.Fatalf("first SpawnWindow: got err %v, want one wrapping %v", err, wantErr)
+	}
+	if _, err := hkhzjStaggerSpawn(ctx, sub, "failed-2"); !errors.Is(err, wantErr) {
+		t.Fatalf("second SpawnWindow: got err %v, want one wrapping %v", err, wantErr)
+	}
+
+	if gap := staggerQuietGap(t, adapter, createDelay); gap < stagger {
+		t.Errorf("SpawnStagger_FailedWindowCreationStillStartsTheInterval FAIL: window creation 2 started %v after the failed creation 1 returned; want >= %v",
+			gap, stagger)
 	}
 }

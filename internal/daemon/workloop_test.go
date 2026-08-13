@@ -896,7 +896,7 @@ func TestWorkLoop_CloseBeadError_EmitsRunFailed(t *testing.T) {
 		Bus:              collector,
 		ProjectDir:       projectDir,
 		HandlerBinary:    "/bin/sh",
-		HandlerArgs:      []string{"-c", "git commit --allow-empty -m 'closeerr: handler commit' >/dev/null 2>&1; exit 0"},
+		HandlerArgs:      workloopFixtureAdvanceHeadHandlerArgs(t),
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 		WorktreeFactory:  workloopFixturePreCommitWorktreeFactory,
@@ -918,6 +918,13 @@ func TestWorkLoop_CloseBeadError_EmitsRunFailed(t *testing.T) {
 	// 60-second timeout instead of as the assertion below, which says what went
 	// wrong. Waiting on the terminal alone is what let this test pass on a run that
 	// never reached CloseBead at all.
+	//
+	// The close-count gate below IS the reach check (hk-vzxg5), and it is the only
+	// one: `found` is reachable only from inside it, so leaving this loop normally
+	// proves the count is non-zero and the terminal asserted afterwards provably
+	// came from the close error rather than from a guard that failed the run before
+	// CloseBead was ever called. The timeout branch reports the count so a
+	// regression on that path names itself instead of reading as a bare hang.
 	for {
 		if ledger.getCloseCallCount() > 0 {
 			types := collector.eventTypes()
@@ -935,12 +942,6 @@ func TestWorkLoop_CloseBeadError_EmitsRunFailed(t *testing.T) {
 		}
 	}
 found:
-
-	// The reach check: prove the terminal above came from the close error and not
-	// from a guard that failed the run before CloseBead was ever called.
-	if n := ledger.getCloseCallCount(); n == 0 {
-		t.Fatalf("hk-vzxg5: CloseBead was never called, so closeErr never fired and this test measured nothing")
-	}
 
 	cancel()
 	awaitLoopTeardown(t, waitDone, "work loop")

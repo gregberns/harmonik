@@ -482,9 +482,15 @@ done:
 // run_failed. That is deliberate (hk-wfbxf) and normative --
 // specs/execution-model.md EM-052 step 6 requires run_failed, not run_completed,
 // on a CloseBead error -- because a bead left in_progress while the event log
-// claims the run completed is split-brain. A hard close error must also NOT
-// reopen the bead (hk-c1ah6 / hk-hypbi): reopening would re-dispatch work whose
-// ledger state nobody can trust.
+// claims the run completed is split-brain. On the ORDINARY close ladder -- the
+// one this fixture exercises -- a hard close error must also NOT reopen the bead
+// (hk-c1ah6 / hk-hypbi): reopening would re-dispatch work whose ledger state
+// nobody can trust. Scope that claim, because the same function contains a
+// deliberate exception: stepRunFinalizing's AttentionClose branch (the review-loop
+// budget-exhausted ladder, which cites the same beads) DOES reopen on a hard close
+// error, before emitting the failed terminal. This fixture never sets
+// AttentionClose, so the unconditional reading below would be wrong as a general
+// rule and is right as a statement about this path.
 //
 // THE HANDLER MUST COMMIT, and that is load-bearing (hk-vzxg5). This test used to
 // run `sh -c "exit 0"`, which exits clean without advancing HEAD. Every run then
@@ -519,7 +525,7 @@ func TestT4_CloseBeadError(t *testing.T) {
 		Bus:              collector,
 		ProjectDir:       projectDir,
 		HandlerBinary:    "/bin/sh",
-		HandlerArgs:      []string{"-c", "git commit --allow-empty -m 't4: handler commit' >/dev/null 2>&1; exit 0"},
+		HandlerArgs:      workloopFixtureAdvanceHeadHandlerArgs(t),
 		AdapterRegistry2: NewSealedAdapterRegistryForTest(t),
 		IntentLogDir:     filepath.Join(projectDir, ".harmonik", "beads-intents"),
 	})
@@ -590,8 +596,10 @@ doneS4:
 		t.Errorf("T4-S4: expected no closed IDs since closeErr injected; got: %v", ids)
 	}
 
-	// A HARD close error must not reopen the bead (hk-c1ah6 / hk-hypbi). Reopening
-	// would re-dispatch work whose ledger state nobody can trust.
+	// A HARD close error must not reopen the bead on the ORDINARY close ladder
+	// (hk-c1ah6 / hk-hypbi). Reopening would re-dispatch work whose ledger state
+	// nobody can trust. AttentionClose is the documented exception and this fixture
+	// does not set it.
 	if opened := ledger.getReopenedIDs(); len(opened) != 0 {
 		t.Errorf("T4-S4: FINDING: hard CloseBead error reopened %v; a bead whose close failed must be left alone for operator triage (hk-c1ah6/hk-hypbi)", opened)
 	}

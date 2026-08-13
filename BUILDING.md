@@ -21,8 +21,9 @@ make bootstrap      # installs pinned dev tools
 Git hooks are **retired**: lefthook was removed (it re-armed itself on every
 commit). Validation — format/lint gates, the secret scan, and commit-message
 trailers — runs from the two gate targets rather than from a
-pre-commit/pre-push/commit-msg hook. `gate-static`, which both `make fast` and
-`make full` run, calls `scripts/commit-msg-gate.sh --head-only` and
+pre-commit/pre-push/commit-msg hook. `gate-static-product`, which `make fast`,
+`make full` and `make core` all reach, calls
+`scripts/commit-msg-gate.sh --head-only` and
 `scripts/secret-scan.sh --head-only`: both read the commit just made. The gates
 run after the commit, when the ordinary flow leaves nothing staged, so an index
 scope there would read whatever happened to be staged rather than the change
@@ -59,8 +60,16 @@ finds. `make full` calls it that way, in addition to `--head-only`.
 | Target | When to run | What it does |
 |---|---|---|
 | `make fast` | While you work | Format check (gofumpt + gci), `go build ./...`, `go vet ./...`, the tagged vet, the freeze greps (including the allow-list ratchet), `golangci-lint --new-from-rev=HEAD~1`, a compile of every test file, `go test -short` over `FAST_PKGS`, and last the whole-tree lint allow list |
-| `make core` | The hard gate — "does the build work" | `gate-static` plus the core package set (the `CHARTER.md` §3 pipeline: config, branching, event bus, queue, bead-ledger adapter, worktrees, harness registry, work loop, merge) |
+| `make core` | The hard gate — "does the build work" | `gate-static-product` plus the core package set (the `CHARTER.md` §3 pipeline: config, branching, event bus, queue, bead-ledger adapter, worktrees, harness registry, work loop, merge) |
 | `make full` | The merge decision, and what CI runs | Everything in `fast` over EVERY package, the whole-tree lint allow list, the scenario tier, and module hygiene (`go mod tidy` diff, `tools/forbid-import`, `govulncheck`) |
+
+`make core` calls `gate-static-product`, not `gate-static`. The one difference
+is `script-tests`, the self-tests for the shell scripts the gates depend on:
+`gate-static-product` does not run them, by operator decision (D3=v3,
+`internal/daemon/standard-bead.dot`). `make core` is the per-bead commit gate,
+so that gate no longer proves the gate tooling itself fails closed. `make fast`,
+`make full` and CI run `gate-static` and still run `script-tests`, so that proof
+lives there.
 
 Run `make fast` while you work (via `/check`). Run `make full` before anyone
 accepts the work — it is the merge decision. `make fast` is not a merge verdict:

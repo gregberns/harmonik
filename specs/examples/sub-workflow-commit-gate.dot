@@ -60,19 +60,26 @@ digraph "sub-workflow-commit-gate" {
         role="build + vet + test-compile gate; exit 0 = clean build (incl. test files), non-zero = build, vet, or test-compile failure"
     ];
 
-    // tests: the whole-repo test tier, fail-closed. TERMINAL — its exit code is
+    // tests: the core test tier, fail-closed. TERMINAL — its exit code is
     // the Outcome that escapes to the parent cascade per SW-006 / EM-036a.
     // Exit 0 = SUCCESS; non-zero = FAIL. The earlier form ran an
     // affected-package-scoped, fail-open script that could report SUCCESS after
     // a compile failure, a timeout, a signal kill, an exit code it did not
-    // recognise, or a retry that passed once. `make full` has no such path.
+    // recognise, or a retry that passed once. `make core` has no such path.
+    //
+    // `make core` runs the 29 packages named at CORE_PKGS in the Makefile, not
+    // the whole repo, and it runs them WITHOUT `-short`. It is a FIXED list, so
+    // it is not the affected-package scoping described above: that form asked
+    // git what had changed since main, and main is over a thousand commits
+    // behind. The whole repo is still tested by `make full`, which is the
+    // integration-branch-into-main decision and runs in CI. Refs D3=v3.
     tests [
         type="non-agentic",
         handler_ref="shell",
         idempotency_class="idempotent",
-        tool_command="make full",
+        tool_command="make core",
         timeout="3600",
-        role="whole-repo test tier, fail-closed; exit 0 = every test passed"
+        role="core test tier (CORE_PKGS, no -short), fail-closed; exit 0 = every test in the core set passed"
     ];
 
     // gate_fail: TERMINAL for the build-failure path. Exits 1 so the escaped
@@ -90,7 +97,7 @@ digraph "sub-workflow-commit-gate" {
 
     // ─── Edges ───────────────────────────────────────────────────────────────
 
-    // (1) Build + vet passes → run the scenario gate.
+    // (1) Build + vet passes → run the core test set.
     build_check -> tests [
         condition="outcome.status == 'SUCCESS'"
     ];

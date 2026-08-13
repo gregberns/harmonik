@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# gate-fails-closed-test.sh — proves `make fast` and `make full` cannot approve
-# work that did not pass.
+# gate-fails-closed-test.sh — proves `make fast`, `make core` and `make full`
+# cannot approve work that did not pass.
 #
 # The gate this replaced (scripts/scenario-gate.sh) had five ways to allow a
 # merge that never went green: a compile failure, a timeout, a signal kill, an
@@ -234,15 +234,20 @@ fi
 rm -rf "$probe_dir"
 
 # ---------------------------------------------------------------------------
-# STRUCTURAL — no step of either target may swallow a status.
+# STRUCTURAL — no step of any of the three targets may swallow a status.
 #
 # `make -n` expands variables and recurses into the sub-makes, so this reads the
 # real step list rather than the Makefile text. Anything that can turn a failure
 # into an exit 0 is refused by name.
+#
+# `core` is in the list because it is the per-bead commit gate (D3=v3), which
+# makes it the gate that runs most often. The behavioural cases above cannot
+# reach it — they drive gate-test-compile and `full` — so this pass is the only
+# thing that holds its fail-closed property.
 # ---------------------------------------------------------------------------
 banned_pattern='\|\| true|\|\| exit 0|\|\| :|; *true$|set \+e|--issues-exit-code=0|continue-on-error'
 
-for target in fast full; do
+for target in fast full core; do
     assertions=$((assertions + 1))
     steps=$(HARMONIK_GATE_SELFTEST=1 make -n "$target" 2>/dev/null)
     if [ -z "$steps" ]; then
@@ -428,8 +433,8 @@ fi
 
 # ---------------------------------------------------------------------------
 printf 'gate-fails-closed-test: %d assertions, %d failed\n' "$assertions" "$failures"
-if [ "$assertions" -lt 17 ]; then
-    printf 'gate-fails-closed-test: only %d assertions ran; this file expects 17\n' "$assertions" >&2
+if [ "$assertions" -lt 18 ]; then
+    printf 'gate-fails-closed-test: only %d assertions ran; this file expects 18\n' "$assertions" >&2
     exit 1
 fi
 [ "$failures" -eq 0 ]

@@ -182,7 +182,10 @@ func queueSubmitDispatchGitRepo(t *testing.T, dir string) {
 	readmePath := filepath.Join(dir, "README")
 	require.NoError(t, os.WriteFile(readmePath, []byte("queue-submit-dispatch scenario\n"), 0o644),
 		"queueSubmitDispatchGitRepo: WriteFile README")
-	makefile := "full:\n\t@latest=$$(git diff-tree --no-commit-id --name-only -r HEAD); " +
+	// Both target names: see the note in the em012a fixture — the per-bead gate
+	// was renamed from `make full` to `make core` at D3=v3, and a fixture
+	// pinned to one name fails misleadingly when that moves.
+	makefile := ".PHONY: full core\nfull core:\n\t@latest=$$(git diff-tree --no-commit-id --name-only -r HEAD); " +
 		"printf '%s\\n' \"$$latest\" | grep -q '^.harmonik-twin-commit-'; " +
 		"mkdir -p $$(git rev-parse --git-common-dir)/../.harmonik; " +
 		"printf '%s\\n' \"$$latest\" >> $$(git rev-parse --git-common-dir)/../.harmonik/validation-runs\n"
@@ -208,7 +211,7 @@ func queueSubmitDispatchGitRepo(t *testing.T, dir string) {
 
 func queueSubmitDispatchInstallFailingGate(t *testing.T, projectDir string) {
 	t.Helper()
-	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "Makefile"), []byte("full:\n\t@false\n"), 0o644),
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "Makefile"), []byte(".PHONY: full core\nfull core:\n\t@false\n"), 0o644),
 		"write failing validation gate")
 	run := func(args ...string) {
 		t.Helper()

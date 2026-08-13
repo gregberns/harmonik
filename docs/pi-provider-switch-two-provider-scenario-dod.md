@@ -17,10 +17,14 @@ leakage and no claude-tier-3 model leak into the pi family.
 
 All five scenarios below live in `internal/daemon` (package `daemon_test` /
 `daemon`), require no network, and are picked up automatically by the commit
-gate — `make full` runs `go test -short -count=1 ./...` over every package, so
-`internal/daemon` always runs and no `//go:build scenario` tag is needed. The
-older wording named `scripts/scenario-gate.sh` and its affected-package set;
-that gate is deleted and there is no package scoping any more.
+gate — the per-bead gate is `make core`, and `internal/daemon` is one of the 29
+packages named at `CORE_PKGS` in the `Makefile`, so it always runs and no
+`//go:build scenario` tag is needed. The pickup does NOT follow from the gate
+running every package: `CORE_PKGS` is a fixed list, and a package absent from it
+gets no per-bead coverage at all. `make core` runs that list without `-short`.
+The older wording named `scripts/scenario-gate.sh` and its affected-package set;
+that gate is deleted. `make core` is scoped too, but to a fixed list in the
+`Makefile`, not to a set derived from what changed.
 
 | Test | File | Proves |
 |---|---|---|
@@ -30,19 +34,40 @@ that gate is deleted and there is no package scoping any more.
 | `TestPi_UnknownProfile_WorkloopRefusesLaunch` | `pi_unknown_profile_refuse_test.go` | A `profile:does-not-exist` label refuses launch via `brAdapter.ReopenBead` before any launch spec is built (fail-loud, C3). |
 | `TestPiDgxReasoning_LoopbackLaunchSpecAndModelsJSON` | `pi_dgx_reasoning_test.go` | An ornith/DGX reasoning-model bead hermetically reaches the loopback launch spec + models.json. |
 
-Plus the C6 regression pin, re-verified here as part of the same gate:
+Plus the C6 regression pin. It does NOT ride the per-bead gate: it lives in
+`internal/harness/pi`, which is deliberately absent from `CORE_PKGS` — the
+`Makefile` names the second and third substrates as out of the core set. Run it
+by hand, or wait for `make full` on the integration branch and in CI.
 
 | Test | File | Proves |
 |---|---|---|
-| `TestPiHarness_DefaultPath_ByteIdentical` | `pilaunchspec_test.go` | A bead with no `profile:`/provider labels produces a byte-identical default-path argv + env to pre-epic behavior. |
+| `TestPiHarness_DefaultPath_ByteIdentical` | `internal/harness/pi/launchspec_test.go` | A bead with no `profile:`/provider labels produces a byte-identical default-path argv + env to pre-epic behavior. |
 
 ## Verification
 
+The command must name both packages. A `-run` pattern selects tests inside the
+packages that the path argument reaches; it cannot reach a package outside them.
+Five of the six tests live in `internal/daemon`, and
+`TestPiHarness_DefaultPath_ByteIdentical` lives in `internal/harness/pi`. A
+command scoped to `./internal/daemon/...` alone therefore runs five tests and
+never sees the sixth. The record below was written against such a command, and it
+claimed a result that the command could not produce.
+
 ```
-go test -run 'TestPiToolcallsPerProvider_TwoBeadsSameRegistry|TestPiNoTier3Leak_NoLabelBead_UsesHarnessGlobalModel|TestPiNoTier3Leak_DotPathVariant_ProviderTupleUnclobbered|TestPi_UnknownProfile_WorkloopRefusesLaunch|TestPiDgxReasoning_LoopbackLaunchSpecAndModelsJSON|TestPiHarness_DefaultPath_ByteIdentical' -v ./internal/daemon/...
+go test -run 'TestPiToolcallsPerProvider_TwoBeadsSameRegistry|TestPiNoTier3Leak_NoLabelBead_UsesHarnessGlobalModel|TestPiNoTier3Leak_DotPathVariant_ProviderTupleUnclobbered|TestPi_UnknownProfile_WorkloopRefusesLaunch|TestPiDgxReasoning_LoopbackLaunchSpecAndModelsJSON|TestPiHarness_DefaultPath_ByteIdentical' -v ./internal/daemon/... ./internal/harness/pi/...
 ```
 
-All six PASS (re-run 2026-07-08 against this worktree's HEAD).
+Real result, 2026-08-13, from this worktree's HEAD: all six PASS. Nothing failed
+and nothing skipped. `go test` exited 0. Two other packages that the
+`./internal/daemon/...` wildcard reaches — `internal/daemon/bootconfig` and
+`internal/daemon/router` — report `no tests to run`. That is expected, because the
+pattern matches no test in them.
+
+`internal/harness/pi` is absent from `CORE_PKGS` in the `Makefile`. The list holds
+29 packages, it names `internal/daemon`, and it does not name
+`internal/harness/pi`. So the sixth test does not run at the per-bead `make core`
+gate. Only `make full`, which tests every package, reaches it. To run it before
+then, use the command above.
 
 ## Live-DGX operator canary — NOT included here
 

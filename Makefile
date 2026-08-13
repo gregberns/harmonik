@@ -943,13 +943,47 @@ freeze-gates:  ## Subsystem freeze / ratchet greps (structural, sub-second each)
 # Do NOT swap in with-isolated-gocache.sh: it deletes the cache on exit, so
 # every line here would build cold.
 .PHONY: gate-static
-gate-static:  ## Shared static half of fast and full: format, build, vet, freeze greps, changed-line lint
+gate-static:  ## Shared static half of fast and full: script self-tests, format, build, vet, freeze greps, changed-line lint
+	$(MAKE) script-tests
+	$(MAKE) gate-static-product
+
+# gate-static-product — the static half MINUS the script self-tests.
+#
+# WHY THIS SPLIT EXISTS. `script-tests` tests the GATE TOOLING — the shell
+# scripts that implement the gates — not the product. It costs minutes and it
+# runs before a single line of product code is checked. That is right for `fast`
+# and `full`, which are developer and CI targets. It is wrong for the per-bead
+# commit gate, whose only question is "can this run beads through the queue?".
+# A bead's gate must not spend its first several minutes proving that
+# lint-allow-test.sh still works.
+#
+# `make core` therefore calls THIS target, and `fast` / `full` keep the script
+# self-tests through `gate-static` above.
+#
+# WHAT THE SPLIT COSTS, stated plainly, because an earlier version of this
+# comment claimed it cost nothing. `make core` is the only gate the per-bead
+# path runs on its own, and it now runs the gate scripts WITHOUT running the
+# tests that prove those scripts fail closed. secret-scan.sh, commit-msg-gate.sh
+# and lint-changed.sh all still execute here; what no longer executes on this
+# path is the proof that they still refuse what they exist to refuse. That proof
+# now lives only in `fast`, `full` and CI.
+#
+# Read that as a real reduction, not a technicality:
+# scripts/gate-fails-closed-test.sh exists because secret-scan.sh had no caller
+# for twenty days AND was admitting a key when a test was finally written for it.
+# That test just moved off the continuously-run path onto the hand-run one.
+#
+# The trade is still worth making — a bead's gate must not spend its first
+# minutes proving that lint-allow-test.sh works — but it is a trade, and the
+# next person to read this should not have to rediscover which half was given
+# up. Refs D3=v3 (see internal/daemon/standard-bead.dot).
+.PHONY: gate-static-product
+gate-static-product:  ## Static half without the script self-tests (what `make core` runs)
 	@if [ -z "$(TIMEOUT_BIN)" ]; then \
 		echo "NOTE: no timeout/gtimeout on PATH, so the per-step wall-clock cap is inert."; \
 		echo "      go test -timeout=$(GATE_GO_TIMEOUT) still bounds a hung TEST, but a hang in"; \
 		echo "      the toolchain itself will hang instead of failing. brew install coreutils."; \
 	fi
-	$(MAKE) script-tests
 	$(MAKE) fmt-check
 	# The commit just made must carry a well-formed message and honest review
 	# trailers. About a tenth of a second. This is the only place a bad message
@@ -1078,8 +1112,9 @@ endef
 # is the only one that can see an EXTRA finding in a file-and-linter pair the
 # allow list already carries, because the list holds no count.
 #
-# LAST, and NOT inside gate-static. The assessor's gate calls gate-static too,
-# and a lint red there would block every test before it ran.
+# LAST, and NOT inside the shared static half. The assessor's gate is `make
+# core`, which reaches that half through gate-static-product, and a lint red
+# there would block every test before it ran.
 #
 # THE COST OF RUNNING IT LAST, and why it is still the right place. make stops
 # at the first failing step, so a red TEST step hides this one. The finding is
@@ -1147,7 +1182,7 @@ fast:  ## THE inner loop: format, build, vet, compile every test, unit-test the 
 # ---------------------------------------------------------------------------
 .PHONY: core
 core: twins  ## The core set only (CHARTER §3): can this run beads through the queue?
-	$(MAKE) gate-static
+	$(MAKE) gate-static-product
 	$(call RUN_TESTS_AND_REPORT,make core,$(CORE_PKGS),)
 
 # gate-test-report-probe — the smallest real use of the test step above.

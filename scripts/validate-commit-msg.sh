@@ -237,7 +237,11 @@ check_approval_identity() {
 #     exists to keep honest, counts it.
 #   - Equality also means any decoration escapes. `agent-reviewer.`,
 #     `,agent-reviewer`, `agent-reviewer [unreachable]` and `(agent-reviewer)`
-#     all exited 0, and every one of them still answers that same grep.
+#     all exited 0. The two that leave the name at the FRONT of the value —
+#     the trailing period and the bracketed suffix — still answer that same
+#     grep, and that is what makes them the dangerous half. The two carrying a
+#     character BEFORE the name do not answer it, so refusing them is stricter
+#     than the audit asks; the over-refusal note below says so.
 #
 # So a check that mirrors another one must not borrow its comparison. Work out
 # which way each one fails open. Here that means: search all the text for the
@@ -321,18 +325,59 @@ check_no_reviewer_named() {
   # everything else, where narrow fails CLOSED.
   wide="$(printf '%s\n' "$STRIPPED" | grep -E 'Reviewed-By:' || true)"
 
-  # Fold case and flatten the capture to one line, so a name split across two
-  # `Reviewed-By:` lines is still one string to search. tr, not ${x,,}: this
-  # script has to run under the bash 3.2 that ships with macOS.
+  # Fold case, and join every `Reviewed-By:` line into one string.
+  #
+  # THE JOIN CHANGES NO OUTCOME, AND THAT IS A PROOF RATHER THAN A SAMPLE.
+  # `known_reviewers` refuses any name that does not match `^[A-Za-z0-9._-]+$`,
+  # so no name it can ever return holds a space or a newline — nor do the two
+  # hardcoded fallbacks. The match below asks for exactly one `[!a-z0-9]`
+  # character in front of the name, and a space and a newline are BOTH in that
+  # class. Putting one where the other was can therefore neither create nor
+  # destroy a match, for every name the list can produce and not just today's.
+  #
+  # Measured as well, because a proof about a script should still be run:
+  # delete the `| tr '\n' ' '` from the assignment under this comment, in a
+  # scratch copy of the tree rather than in place, and run
+  # `scripts/validate-commit-msg-test.sh`. On 2026-08-13 it reported the same
+  # assertion count and zero failures either way — 173 and 173 that day. The
+  # count rises whenever anybody adds an assertion, so the two runs AGREEING is
+  # the claim here; the number is not.
+  #
+  # The line is therefore dead, and a dead line documented is worse than a dead
+  # line deleted. Removing it is filed as hk-uf0ww rather than done here,
+  # because this commit changes comments only. Delete the leading pad below by
+  # mistake instead and the suite will not tell you — that guard is real and
+  # untested, which is hk-bb17z.
+  #
+  # Three better-sounding reasons are all wrong, which is why the honest one is
+  # written down. It is NOT what lets a name on the second trailer line be
+  # found — the pattern match below crosses a newline on its own, measured. It
+  # does NOT reassemble a name split ACROSS two lines: the newline becomes a
+  # space, so `agent-` and `reviewer` stay two words and nothing here matches
+  # them (not a hole — the audit grep does not match that shape either). And it
+  # is NOT needed to give the padding and the key-strip below a single string
+  # to work on; both do the same thing to a multi-line value.
+  #
+  # tr, not ${x,,}: this script has to run under the bash 3.2 that ships with
+  # macOS.
   hay="$(printf '%s' "$wide" | tr '[:upper:]' '[:lower:]' | tr '\n' ' ')"
 
-  # Drop the trailer keys themselves. No reviewer this repo has is a substring
-  # of `Reviewed-By:` today, so this changes nothing now — it is here so that
-  # naming a future skill `by-reviewer` cannot make every commit refuse itself.
+  # Drop the trailer keys themselves, so the key text can never be part of a
+  # match. This changes no outcome, and the reason is structural rather than a
+  # coincidence of today's names: `known_reviewers` globs
+  # `.claude/skills/*reviewer*`, so every name it can return contains
+  # `reviewer`, and the folded key `reviewed-by:` does not. No name that list
+  # can produce is a substring of the key. `by-reviewer`, the example this
+  # comment used to give, IS a name that glob would return — it is simply not
+  # a substring of `reviewed-by:` either, so it never named a real hazard.
+  # Kept because it costs nothing and the guarantee ends the day the list
+  # stops coming from that glob.
   hay="${hay//reviewed-by:/ }"
 
-  # Pad, so a name at the very start or the very end of the text has a boundary
-  # character on both sides and needs no second pattern.
+  # Pad the front, so a name at the very START of the text has a boundary
+  # character before it and needs no second pattern. The trailing space is
+  # symmetry only — the match below requires a boundary BEFORE the name and
+  # none after it, so nothing ever reads the end of this string.
   padded=" ${hay} "
 
   while IFS= read -r known; do
@@ -1093,8 +1138,14 @@ PY_FALLBACK
           REQUEST_CHANGES|DRIFT_MINOR|DRIFT_MAJOR)
             # OK — these may land in commits, and they may name a reviewer.
             # `Reviewed-By: agent-reviewer` with a REQUEST_CHANGES or a DRIFT
-            # verdict is a TRUE statement: the reviewer ran and declined. 69
-            # commits in this history say it. Nothing here to check.
+            # verdict is a TRUE statement: the reviewer ran and declined. It is
+            # the common shape in this history, not an edge case. No count
+            # here on purpose: a count of commits by verdict goes up with
+            # every commit of that shape, including the ones that write the
+            # count down. The measurement has one owner and it carries the
+            # command that re-derives it — scripts/validate-commit-msg-test.sh,
+            # at the case that pins this arm (search for `commits carry`).
+            # Nothing here to check.
             ;;
           BLOCK)
             err "BLOCK verdict must not be committed (fix first)."

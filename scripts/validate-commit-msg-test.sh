@@ -877,6 +877,28 @@ Review-Verdict: {"schema_version": 1, "verdict": "NOT_REVIEWED", "flags": [], "n
 # trailer-anchored count is 120 and the loosest count that matches the words
 # anywhere in a message is 170. A bare number nobody can re-derive is not
 # evidence, and it cannot even be shown to be stale.
+#
+# BOTH FIGURES ARE A READING TAKEN ON A DATE, and the date is the load-bearing
+# half. Both only ever rise, and both rose while this comment was being
+# written — the anchored command above returned 122 later the same day, and
+# the loose count moved with it. That is the reason the pair is here at all:
+# 120 against 170 is a CONTRAST measured at ONE MOMENT, and the gap between
+# the two readings is what shows 69 came from neither. The gap is the claim;
+# the digits are the perishable half.
+#
+# 69 was not a figure that decayed, and this is checkable rather than
+# rhetorical. It has one introducing commit, 96fa11a73, and the anchored
+# command above run AGAINST THAT COMMIT returns 122 — so 69 was not a reading
+# of this history at the moment it was written either. Note that this figure,
+# unlike the two above it, does NOT rot: `git log <fixed-sha>` walks ancestors
+# only, so re-running it against 96fa11a73 returns 122 in a year as well. A
+# count pinned to a commit is durable; a count pinned to a date is not. That is
+# the difference worth copying.
+#
+# So do not bump these one at a time as you notice them — that produces a pair
+# measured on two different days, which is not a contrast and not evidence of
+# anything. Re-run both commands together and re-date the line, or take the
+# digits out and let the commands carry the point on their own.
 # CASE 12 above uses a name outside the known set, so it cannot see a check that
 # widened onto this arm and only refuses known names — this one can.
 expect_pass "REQUEST_CHANGES naming the real reviewer still passes" \
@@ -892,10 +914,30 @@ Reviewed-By: agent-config-reviewer
 Review-Verdict: {"schema_version":1,"verdict":"DRIFT_MINOR","flags":["skill-registry-drift"],"notes":"The embed and the checked-in copy differ by one line.","proposed_diff":"-a\n+b"}'
 
 # DRIFT_MAJOR is the third verdict on the same path and it was the one with no
-# case at all. All four truthful non-approving verdicts are pinned now —
-# REQUEST_CHANGES, DRIFT_MINOR, DRIFT_MAJOR, CLEAN — because they are the
-# verdicts an author writes when a reviewer DID run and did not approve, and
-# making any of them harder to write pushes the author back toward APPROVE.
+# case at all. All three truthful non-approving verdicts are pinned now —
+# REQUEST_CHANGES, DRIFT_MINOR, DRIFT_MAJOR — because they are the verdicts an
+# author writes when a reviewer DID run and did not approve, and making any of
+# them harder to write pushes the author back toward APPROVE.
+#
+# CLEAN IS NOT ONE OF THEM. It is the config reviewer's APPROVE, and the
+# validator says so in one branch: `APPROVE|CLEAN)` holds both to the approval
+# bar. Measured on `Reviewed-By: decompose_queue_specs`, a name this repo does
+# not have: under CLEAN it is refused, under DRIFT_MAJOR it passes.
+#
+# ONLY THE FIRST HALF OF THAT IS PINNED. CASE 13 holds the CLEAN half — its two
+# cases are both CLEAN, one naming the real config reviewer and one naming
+# `decompose_queue_specs`. NO case anywhere in this file runs a DRIFT verdict
+# against an unknown reviewer, so nothing here would notice if that branch
+# widened onto the DRIFT arm tomorrow. The two DRIFT cases in this block name
+# the REAL reviewer and pass for that reason; they do not test the boundary.
+# The missing assertion is filed as hk-139fq rather than added here, because
+# this commit changes comments only. An earlier draft of this very paragraph
+# cited CASE 13 for both halves, which is the construction this commit exists
+# to delete — a measurement that is correct attached to a citation that does
+# not carry it.
+#
+# This note used to count CLEAN among the four, which put one verdict on both
+# sides of the line the whole section is drawing.
 expect_pass "DRIFT_MAJOR naming the real config reviewer still passes" \
 'chore(agents): sync the skill registry
 
@@ -921,9 +963,12 @@ Review-Verdict: {"schema_version":1,"verdict":"DRIFT_MAJOR","flags":["enforced-c
 # checks are written as a pair.
 #
 # The second is ordinary decoration. A trailing period, a comma either side, a
-# bracket, a dash and a sentence — none of them is equal to a name, and every
-# one of them still answers `git log --grep 'Reviewed-By: agent-reviewer'`,
-# which is the audit this whole rule exists to keep honest. The test of a
+# bracket, a dash and a sentence — none of them is equal to a name, and the
+# ones that leave the name at the FRONT of the value still answer
+# `git log --grep 'Reviewed-By: agent-reviewer'`, which is the audit this whole
+# rule exists to keep honest. A comma or a bracket BEFORE the name moves it out
+# of that grep's reach, so those shapes are refused without the audit asking
+# for it. The over-refusal note below sorts which is which. The test of a
 # refusal here is not "is this value a reviewer name" but "would this line be
 # counted as reviewed work by somebody grepping the history".
 # ---------------------------------------------------------------------------
@@ -973,11 +1018,21 @@ do
         "$(not_reviewed_msg "$decorated")"
 done
 
-# THE LAST THREE ARE OVER-REFUSALS, and they are listed as such rather than
-# quietly among the rest. `git log --grep 'Reviewed-By: agent-reviewer'` counts
-# none of them, so refusing them is the validator being stricter than the audit
-# it answers to. They are pinned anyway, for two reasons: they are what the
-# check actually does, and a comment in the validator that claimed free text
+# SIX OF THE TWELVE ARE OVER-REFUSALS, and they are not the trailing run of
+# the list — the audit sorts them, not their position. `git log --grep
+# 'Reviewed-By: agent-reviewer'` is a literal, case-sensitive search, so it
+# counts a shape only when the name survives EXACTLY and at the front of the
+# value. These six do not: `,agent-reviewer` and `(agent-reviewer)` put a
+# character in front of the name, `AGENT-REVIEWER` is at the front but in the
+# wrong case, and `none (agent-reviewer down)`, `not agent-reviewer` and
+# `x-agent-reviewer` all carry text before it. Refusing those six is the
+# validator being stricter than the audit it answers to. Re-derive without a
+# scratch repository: for each shape, ask whether `Reviewed-By: <shape>`
+# contains the literal text `Reviewed-By: agent-reviewer`. An earlier note
+# here said the last three. That named a trailing run, which is not the line
+# the audit draws, and it missed three of the six. They are pinned anyway, for
+# two reasons: they are what the check actually does, and a comment in the
+# validator that claimed free text
 # was left alone was wrong about exactly these. They fail in the honest
 # direction and the refusal prints the honest form to write instead. Relaxing
 # them means reading intent out of prose, which is how `agent-reviewer2` got
@@ -1033,8 +1088,17 @@ done
 #
 # Every one of them answers `git log --grep 'Reviewed-By: agent-reviewer'`,
 # which is the audit this whole rule exists to keep honest. Measured on a
-# scratch repository holding all eight shapes below as real commits, that grep
+# scratch repository holding all nine shapes below as real commits, that grep
 # returns exactly these four and none of the four in the control loop.
+#
+# THE NINTH SHAPE ANSWERS TO A DIFFERENT AUDIT, which is why it is not in
+# either count above. `agent-config-reviewer9` does not contain the text
+# `Reviewed-By: agent-reviewer`, so the grep named here never sees it. It is
+# refused because this repo has a SECOND reviewer and therefore a second audit,
+# `git log --grep 'Reviewed-By: agent-config-reviewer'`, which that shape does
+# answer. Four suffixes plus four controls is eight; the ninth is here to say
+# the rule is per reviewer name, not per the one name this section happens to
+# be about.
 #
 # The trailing boundary is therefore gone and the LEADING one stays, and the
 # two loops here are the statement of that asymmetry. Delete the leading
@@ -1575,10 +1639,36 @@ fi
 # but its author could reproduce the figure, and an unverifiable number is
 # worth less than none. Rebuild this one instead: from the committed script,
 # take out the four guards the parser note names — the control-byte refusal
-# (`free` and `ctl` in both programs), the document count (`jq -s` plus the
-# decode loop), the byte-order-mark guard, and the number-literal whitelist
+# (`ctl`, and the `__CONTROL__` arm of `free`, in both programs), the document
+# count (`jq -s` plus the decode loop), the byte-order-mark guard, and the
+# number-literal whitelist
 # with its leading-zero rule. Measured with those four removed: 8 of the 36
 # payloads disagree and 22 assertions in this file go red.
+#
+# TAKE EACH GUARD OUT WHOLE, AND TAKE OUT ONLY THE GUARD. Two of the four
+# share a function with something that is not part of them, so the boundary
+# has to be given in both directions or the figure will not match.
+#
+# The document count is `jq -s` and the `length` test wrapped around it AND
+# the Python `raw_decode`-until-spent loop. All of it goes, including the
+# empty-TRAILER answer, which rides on that apparatus without being a guard of
+# its own. Leave either half standing and the count falls: two rebuilds that
+# each kept a different half measured 20 red and 19 red.
+#
+# The control-byte refusal is `ctl` and the `__CONTROL__` arm of `free`. The
+# `__EMPTY__` arm of that same function STAYS. It is the empty-FIELD rule the
+# parser note calls load-bearing — a separate guard that happens to live in
+# the same three lines. Delete `free` entire and four more assertions go red
+# and the figure reads 26.
+#
+# THE PARAGRAPHS BELOW CANNOT CATCH EITHER MISTAKE, which is why both
+# boundaries are spelled out here rather than left to the reader. The
+# control-byte readings disagree on exactly the same eight payloads with the
+# same six-verdict and two-wording split, so a wrong rebuild reads its way
+# down this note finding every sub-claim confirmed. Earlier versions of this
+# paragraph sent three people to three different mutants, and 22, 20 and 19
+# all came back honestly measured. If the guards change, restate the removal
+# here before restating the number.
 #
 # SIX OF THE EIGHT DISAGREE ON THE VERDICT ITSELF rather than on the wording,
 # and FIVE OF THOSE SIX have jq accepting a commit the fallback refuses: `1e0`,

@@ -3,9 +3,15 @@
 #
 # The gate's value is entirely in the cases where it goes RED. Every assertion
 # below that matters builds a commit the validator must refuse and watches the
-# gate refuse it. The one green assertion is the live check on this repository,
-# and it is here so that a scope that quietly became empty shows up as a
-# missing count rather than as a pass.
+# gate refuse it. SEVEN assertions expect a green exit rather than a red one,
+# and most of those are controls — they prove the gate did not trade a
+# fail-open for a gate that refuses everything. Count them with
+# `grep -c '^check ".*" 0 "$?"' scripts/commit-msg-gate-test.sh` — the anchor
+# matters, because without it the command counts this comment line too and
+# answers 8. The live check
+# on this repository is one of the seven, and it is here so that a scope that
+# quietly became empty shows up as a missing count rather than as a pass. This
+# header used to say there was one.
 
 set -uo pipefail
 
@@ -273,13 +279,28 @@ git -C "$scratch" config --unset commit.cleanup
 
 # 9. The live assertion on this repository. It must check a non-empty scope —
 #    a gate whose scope has silently emptied is the defect, not a pass.
+#
+#    WHAT IT DOES NOT ASSERT: that every in-scope commit passes. Range mode is
+#    advisory by construction and exits 0 whatever it finds, so an exit-status
+#    check here cannot see a refusal and never could. The label used to claim
+#    the stronger thing, and by 2026-08-13 that claim was false while this
+#    assertion stayed green: 57 commits in scope, 2 refused (4b6a63243 and
+#    bc98a3dfb). Both were ACCEPTED by the validator of the day they landed
+#    and are refused by a later tightening — which is the case the ratchet
+#    exists to carry without rewriting history, not a defect. The count is
+#    reported by the gate and floored below; re-derive with
+#    `bash scripts/commit-msg-gate.sh`.
 ( cd "$REPO_ROOT" && bash "$GATE" ) >"$tmp/live.out" 2>&1
-check "this repository's own in-scope commits all pass" 0 "$?"
+check "the live gate runs to completion over a non-empty scope" 0 "$?"
 # LIVE_SCOPE_FLOOR — the ratchet's own ratchet. Moving the grandfather baseline
 # forward is the one edit the gate exists to catch, and without a floor it was
 # free: shifting it by 5, 10, 20 or 40 commits left this suite green. The
-# baseline covered 42 commits the day it was set and that number only grows, so
-# a scope below this floor means somebody moved it.
+# baseline covered more than forty commits the day it was set and that number
+# only grows, so a scope below this floor means somebody moved it. Re-derive
+# the size on the day it landed with
+# `git rev-list 4102b4e2e582e90ddca141afd0494ff31db187d6..a6c22ee50 | wc -l` —
+# 44 with the gate's own commit, 43 without it. This line used to say 42, and
+# no reading of this history produces 42.
 LIVE_SCOPE_FLOOR=40
 live_count=$(sed -n 's/^commit-msg-gate: \([0-9][0-9]*\) commits checked.*/\1/p' "$tmp/live.out")
 if [ -n "$live_count" ] && [ "$live_count" -ge "$LIVE_SCOPE_FLOOR" ]; then

@@ -14,7 +14,15 @@
 # defect. This is the flow doing the thing.
 #
 # THE SCOPE, AND WHY IT IS NOT THE WHOLE HISTORY. The history already holds
-# commits this validator refuses — measured on 2026-08-12: 32 of the last 120.
+# commits this validator refuses. Measured 2026-08-13: 30 of the last 120.
+# It is a sliding window over a moving history, so it drifts both ways; the
+# command, not the number, is the thing to keep:
+#
+#   git log --format=%H -n 120 | while read s; do
+#     git log -1 --format=%B "$s" > /tmp/m
+#     COMMIT_MSG_CLEANUP=verbatim bash scripts/validate-commit-msg.sh /tmp/m \
+#       >/dev/null 2>&1 || echo "$s"
+#   done | wc -l
 # A gate over all of history would be red on arrival and would stay red, and
 # the only way to green it would be to rewrite published commits or to weaken
 # the validator. Both are worse than the problem.
@@ -22,7 +30,9 @@
 # So the scope is a ratchet, the same shape as tools/lintreport/allow.txt:
 # everything from BASELINE forward must pass, and BASELINE only ever moves
 # forward. At the time it was set, every commit in scope already passed — the
-# gate went in green over 42 real commits, not over an empty set. A gate whose
+# gate went in green over more than forty real commits, not over an empty set
+# (the count and the command that re-derives it are on the BASELINE note
+# below). A gate whose
 # scope is empty cannot fail, and this repo collects that as a defect rather
 # than as a passing test.
 #
@@ -73,8 +83,16 @@ VALIDATOR="${GATE_DIR}/validate-commit-msg.sh"
 # exists to prevent.
 #
 # It was chosen by walking outward from HEAD and validating each commit the
-# range added, stopping at the first refusal. That put it at 42 commits on the
-# day it landed, every one of them passing.
+# range added, stopping at the first refusal. That put it at 44 commits on the
+# day it landed — 43 before the gate's own commit — and every one of them
+# passed against the validator OF THAT DAY. Re-derive with:
+#
+#   git rev-list 4102b4e2e582e90ddca141afd0494ff31db187d6..a6c22ee50 | wc -l
+#
+# Two of them are refused by the validator as it stands now, because a later
+# tightening moved the line under commits already written. That is the ratchet
+# working: the scope reports them and nothing amends them. The number written
+# here used to be 42, which this history does not produce.
 #
 #   4102b4e2e Merge branch 'work/alpha-integration-merge' into work/kilo-keeper
 BASELINE="${COMMIT_MSG_GATE_BASELINE:-4102b4e2e582e90ddca141afd0494ff31db187d6}"
@@ -178,7 +196,8 @@ rejected=0
 while read -r sha; do
   [ -n "$sha" ] || continue
   git log -1 --format=%B "$sha" >"$msgfile"
-  # `verbatim`, and it is not a preference. What `git log --format=%B` hands
+  # The validator runs here with its cleanup mode pinned to `verbatim`, and
+  # that pin is not a preference. What `git log --format=%B` hands
   # back is the message git ALREADY STORED. Every cleanup rule ran before the
   # commit was written, so there is nothing left for a cleanup mode to remove
   # and a `#` line in here is text a reader and the audit grep both see.

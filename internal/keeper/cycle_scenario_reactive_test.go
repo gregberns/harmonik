@@ -168,6 +168,7 @@ func TestKeeperCycle_FullReactiveCycle(t *testing.T) {
 //   - session_keeper_cycle_aborted emitted; cycle_complete NOT emitted.
 //   - the gauge SID is never rotated (stays S1).
 func TestKeeperCycle_NonceTimeoutAborts(t *testing.T) {
+	t.Skip("keeper-checkpoint-handshake: timeout abort is retired; pending-request scenarios replace this claim")
 	t.Parallel()
 
 	const (

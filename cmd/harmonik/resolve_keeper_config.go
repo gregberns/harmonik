@@ -257,6 +257,7 @@ type ResolvedKeeperConfig struct {
 	// aliased onto it in projectconfig.go). Refs: hk-vs4u.
 	DefaultWarnText    string
 	ActionableWarnText string
+	SettleWarnText     string
 	// LeaderDeferText / CrewDeferText are the K2 leader defer-message and K7
 	// crew keeper-message body overrides (empty = compiled default / off).
 	// CONFIG-only, carried verbatim to WatcherConfig; consumption is T3+. Refs:
@@ -527,6 +528,7 @@ func ResolveKeeperConfig(flags KeeperFlags, cfg projectconfig.KeeperConfig, proj
 	}
 	out.DefaultWarnText = cfg.DefaultWarnText
 	out.ActionableWarnText = cfg.ActionableWarnText
+	out.SettleWarnText = cfg.SettleWarnText
 	out.LeaderDeferText = cfg.LeaderDeferText
 	out.CrewDeferText = cfg.CrewDeferText
 

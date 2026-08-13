@@ -17,8 +17,7 @@ import "time"
 // TA1 band-retune (hk-8hr1): warn=200K / act=215K / force_act=240K — restart
 // EARLIER to cap cache-read token spend. On a 1M window the abs values win
 // (~20-24% of window); on a 200K window the pctCeil caps fire first (~70-95%).
-// The 15K warn→act gap is intentional: the handoff is written via injected
-// /session-handoff during the cycle, not from band width.
+// The first trial uses NOTICE at 170K, WARN at 200K, and HARD at 220K.
 
 const (
 	// Pct-based fallbacks (used when CtxFile.Tokens==0 or WindowSize==0 — older
@@ -30,13 +29,13 @@ const (
 	defaultForceActPctOffset = 5.0 // ForceActPct = ActPct + this
 
 	// Absolute-token thresholds (preferred when Tokens + WindowSize are present).
-	// TA1 band-retune (hk-8hr1): warn=200K / act=215K to restart EARLIER and cap
-	// cache-read token spend. Operator-authorized 2026-06-17.
-	defaultWarnAbsTokens = 200_000
-	defaultActAbsTokens  = 215_000
+	// Checkpoint-handshake trial: the compatibility names map WARN to NOTICE and
+	// ACT to WARN until the public config migration lands.
+	defaultWarnAbsTokens = 170_000
+	defaultActAbsTokens  = 200_000
 	// defaultForceActAbsOffset derives ForceActAbsTokens from ActAbsTokens.
-	// force_act = 215K + 25K = 240K (hk-8hr1). Satisfies warn<act<force_act.
-	defaultForceActAbsOffset = 25_000 // ForceActAbsTokens = ActAbsTokens + this
+	// force_act = 200K + 20K = 220K. Satisfies notice<warn<hard.
+	defaultForceActAbsOffset = 20_000 // ForceActAbsTokens = ActAbsTokens + this
 
 	// Pct-of-window caps. The effective threshold is min(abs, pctCeil*window),
 	// so the gate fires early enough on both 200k and 1M windows.

@@ -81,6 +81,7 @@ func buildKeeperConfigs(resolved ResolvedKeeperConfig, p keeperBuildParams) (kee
 		BootGracePeriod:      resolvedBootGrace,
 		OperatorTurnLookback: resolved.OperatorTurnLookback,
 		PostAnswerGrace:      resolved.PostAnswerGrace,
+		HardBandCycleOnly:    true,
 	}
 
 	watcherCfg := keeper.WatcherConfig{
@@ -92,6 +93,9 @@ func buildKeeperConfigs(resolved ResolvedKeeperConfig, p keeperBuildParams) (kee
 		FallbackWindowSize:   p.WindowSize,
 		WarnAbsTokens:        resolved.WarnAbsTokens,
 		WarnPctCeil:          resolved.WarnPctCeil,
+		ActPct:               float64(p.ActPctRaw),
+		ActAbsTokens:         resolved.ActAbsTokens,
+		ActPctCeil:           resolved.ActPctCeil,
 		WarnOnly:             p.WarnOnly,
 		RespawnCmd:           p.RespawnCmd,
 		PollInterval:         resolved.PollInterval,
@@ -118,6 +122,7 @@ func buildKeeperConfigs(resolved ResolvedKeeperConfig, p keeperBuildParams) (kee
 		// resolved UNSET→TRUE in ResolveKeeperConfig.
 		DefaultWarnText:    resolved.DefaultWarnText,
 		ActionableWarnText: resolved.ActionableWarnText,
+		SettleWarnText:     resolved.SettleWarnText,
 		// K2 leader defer-message / K7 crew-message body overrides (config surface,
 		// T2). Carried to the watcher; T3 fills/validates the leader slots and
 		// wires selection. crew text stays inert until K7 activation.
@@ -646,6 +651,7 @@ func keeperReloadWarnMessagesFn(projectDir string) func() (keeper.WarnMessageTex
 		return keeper.WarnMessageTexts{
 			DefaultWarnText:    k.DefaultWarnText,
 			ActionableWarnText: k.ActionableWarnText,
+			SettleWarnText:     k.SettleWarnText,
 			LeaderDeferText:    k.LeaderDeferText,
 			CrewDeferText:      k.CrewDeferText,
 		}, nil

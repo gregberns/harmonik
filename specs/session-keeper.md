@@ -141,7 +141,7 @@ Tags: mechanism
 
 #### SK-010 — Timers are modeled as events
 
-Timeout races MUST be modeled as timers-as-events: `Step` emits `ArmTimer{kind, d}` and `CancelTimer{kind}` actions, and consumes `TimerFired{kind}` events. The shell owns one `ClockPort` timer per armed kind and emits `TimerFired` when it elapses. The four timer kinds are `handoff_timeout`, `model_done_timeout`, `clear_settle`, and `clear_backstop` (§7.1). This dissolves the two blocking poll loops and the backstop deadline into replayable event interleavings. No `context.WithTimeout` wall-clock deadline may survive inside the cycle.
+Timeout races MUST be modeled as timers-as-events: `Step` emits `ArmTimer{kind, d}` and `CancelTimer{kind}` actions, and consumes `TimerFired{kind}` events. The shell owns one `ClockPort` timer per armed kind and emits `TimerFired` when it elapses. The timer kinds are `handoff_observation_wake`, `model_done_timeout`, `clear_settle`, and `clear_backstop` (§7.1). The handoff wake schedules observation. It is not a failure deadline. This dissolves the two blocking poll loops and the backstop deadline into replayable event interleavings. No `context.WithTimeout` wall-clock deadline may survive inside the cycle.
 
 Tags: mechanism
 
@@ -194,10 +194,80 @@ Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempote
 
 #### SK-015 — Every cycle reaches a terminal or restart_failed within a bounded window
 
-Every `handoff_started(c)` MUST reach exactly one terminal outcome within a bounded window — approximately `HandoffTimeout (300s) + model_done_timeout (60s) + ClearConfirmBackstop (150s) + injection overhead` ≈ 520s — or emit a `restart_failed`-class event. Silence is FORBIDDEN. Structurally, every `TimerFired` edge MUST land in a state that has an outgoing action, so the machine cannot wedge without emitting.
+Every destructive restart tail MUST reach exactly one terminal outcome within a bounded window after restart authority exists. A marked handoff plus a later Stop grants automatic authority. A validated `restart-now` request grants explicit authority. The earlier context request can remain pending without a destructive-cycle deadline. Silence is forbidden after authority exists. Every timer edge in the destructive tail MUST produce an action or a terminal event.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
+
+### 4.11 Context request and checkpoint handshake
+
+#### SK-022 — Context urgency uses three configurable bands
+
+The keeper MUST use three ordered context bands: NOTICE, WARN, and HARD. Configuration owns each
+absolute threshold and percentage cap. The first project trial uses NOTICE at 170,000 tokens, WARN
+at 200,000 tokens, and HARD at 220,000 tokens. A band crossing sets urgency. It does not grant
+restart authority.
+
+Tags: policy
+
+#### SK-023 — Stop is a first-class observation, not clear authority
+
+The keeper MUST observe Stop events and use each new Stop to re-evaluate a pending context request.
+Stop alone MUST NOT authorize `/clear`. The keeper MUST reject duplicate Stop identities without
+repeating an effect. A transcript assistant turn MAY act as a fallback completion observation when
+the Stop hook is unavailable.
+
+Tags: mechanism
+
+#### SK-024 — Normal restart has two authority paths
+
+The automatic path requires the request marker in the handoff document and a later Stop event. The
+explicit path requires a validated `keeper restart-now` request after a fresh handoff. Both paths
+MUST enter the same clear, session-change, and brief protocol. A handoff mtime change without the
+request marker MUST NOT grant authority.
+
+Tags: mechanism
+
+#### SK-025 — Handoff delay is pending work, not failure
+
+A missing marked handoff MUST NOT produce `cycle_aborted{reason=handoff_timeout}`. It MUST NOT
+increment an escalation counter, clear the managed session, or call `ForceRestart`. A finite shell
+wake MAY park synchronous observation, but the request identity and late-handoff eligibility MUST
+remain durable. A later marked handoff and Stop MUST resume the same request.
+
+Tags: safety
+
+#### SK-026 — Operator interaction guards effects, not observations
+
+A recent real operator turn MAY suppress autonomous keeper messages and restart effects for the
+configured lookback. It MUST NOT suppress Stop, transcript, gauge, handoff, or session observation.
+It MUST NOT discard the pending request. An explicit validated `restart-now` request remains an
+agent-owned action and MAY proceed through its normal safety checks.
+
+Tags: safety
+
+#### SK-027 — Keeper messages use configurable prose and typed protocol values
+
+NOTICE, WARN, and HARD messages MUST have compiled defaults and configuration overrides. The
+renderer MUST supply the message kind, request ID, agent, current context, relevant band, handoff
+path, handoff marker, and exact continuation command as typed values. Configuration MAY change the
+prose. It MUST NOT remove the protocol values required for a safe continuation.
+
+The default NOTICE MUST explain periodic session transitions as a token-efficiency practice. It
+MUST permit current work to continue. It MUST use this continuity guidance:
+
+> As you continue, shape the work toward a state that a fresh session can resume without losing
+> decisions or repeating work.
+
+Tags: interface
+
+#### SK-028 — Message submission and receipt are different observations
+
+A successful tmux or comms write proves message submission only. It MUST NOT be recorded as agent
+receipt. A transcript match or explicit acknowledgement MAY record receipt. Receipt telemetry MUST
+NOT become a required step in the normal handoff protocol.
+
+Tags: observability
 
 ### 4.7 Behavior parity (SK-R9)
 
@@ -273,9 +343,9 @@ For a single agent, between `handoff_started(c1)` and the terminal of `c1`, no `
 
 Tags: mechanism
 
-#### SK-INV-005 — SR9: bounded liveness, never silence
+#### SK-INV-005 — SR9: bounded destructive-tail liveness, never silence
 
-For every cycle `c`, `handoff_started(c)` MUST reach exactly one terminal outcome within the SK-015 bounded window, or emit a `restart_failed`-class event. A cycle that produces neither a terminal nor a `restart_failed` event within the window is a conformance failure. Every `TimerFired` edge lands in a state with an outgoing action, so the machine cannot wedge silently.
+For every authorized restart `c`, the destructive tail MUST reach exactly one terminal outcome within the SK-015 bounded window, or emit a `restart_failed`-class event. A pending context request is not an authorized restart and can remain pending. Every destructive-tail timer edge lands in a state with an outgoing action, so the machine cannot wedge silently.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=best-effort; replay-safety=safe; idempotency=non-idempotent
@@ -337,7 +407,7 @@ Events:  GaugeTick{cf, at, gates}  PrecompactTrigger{cf, at, gates}  IdleRestart
          NonceObserved{cycleID, at}  HandoffFreshSeen{cycleID, mtime, at}
          ModelDone{cycleID, sessionID, at, source}  SessionChanged{cycleID, prevSID, newSID, at}
          TimerFired{cycleID, kind, at}  CrashJournal{j, at}
-         -- TimerFired.kind in {handoff_timeout, model_done_timeout, clear_settle, clear_backstop}
+         -- TimerFired.kind in {handoff_observation_wake, model_done_timeout, clear_settle, clear_backstop}
 
 Actions: WriteJournal{phase, reason}  TruncateHandoff  SendEscape  InjectHandoffCmd{cycleID}
          InjectClear  InjectBrief  SetTmuxEnv{key, value}  SetManagedSession{sid}
@@ -400,11 +470,11 @@ The four payloads are versioned schema v1 with a `PayloadCompatEntry` (`CurrentV
 
 ### 7.1 The Step transition table
 
-States: `Idle`, `AwaitingHandoff`, `AwaitModelDone`, `Clearing`, `Briefing`, and terminals `Complete` / `Aborted`. `State` also carries the in-flight `cycleID`, `injectedAt`, `clearAttempt`, `prevSID`, `handoffMtime`, and the anti-loop/hysteresis fields (all timestamps sourced from event `at`). The timer table:
+States: `Idle`, `RequestPending`, `AwaitingHandoff`, `AwaitModelDone`, `Clearing`, `Briefing`, and terminals `Complete` / `Aborted`. `RequestPending` owns a durable request that has no restart authority. `State` also carries the in-flight `cycleID`, `injectedAt`, `clearAttempt`, `prevSID`, `handoffMtime`, and the anti-loop/hysteresis fields (all timestamps sourced from event `at`). The timer table:
 
 | Timer kind | Duration (default) | Armed on entering | Fired-in-state action |
 |---|---|---|---|
-| `handoff_timeout` | `HandoffTimeout` = 300s | `AwaitingHandoff` | fresh ⇒ `AwaitModelDone` (recovered); no-fresh ⇒ `Aborted` |
+| `handoff_observation_wake` | implementation policy | synchronous handoff observation | marked ⇒ `AwaitModelDone`; no marker ⇒ park observation while the request remains pending |
 | `model_done_timeout` | ~60s (< `ClearConfirmBackstop`) | `AwaitModelDone` | ⇒ `Clearing`, `degraded:true` |
 | `clear_settle` | `ClearSettle` = 10s | `Clearing` (re-armed per retry) | retries left ⇒ re-`InjectClear` + re-arm; else fall to backstop |
 | `clear_backstop` | `ClearConfirmBackstop` = 150s | `Clearing` (once) | ⇒ `Briefing` via `clear_unconfirmed` |
@@ -413,7 +483,8 @@ States: `Idle`, `AwaitingHandoff`, `AwaitModelDone`, `Clearing`, `Briefing`, and
 
 | Event | Guard | To | Actions |
 |---|---|---|---|
-| `GaugeTick` / `PrecompactTrigger` / `IdleRestartTick` | prelude runs unconditionally; then ladder-pass | `AwaitingHandoff` | `WriteJournal(opened)`, `Emit(handoff_started)`, `TruncateHandoff?`, `SendEscape`, `InjectHandoffCmd{cycleID}`, `WriteJournal(handoff_injected)`, `ArmTimer(handoff_timeout, 300s)` |
+| `GaugeTick` | NOTICE or WARN crossing | `RequestPending` | record or strengthen one request; submit the configured message when delivery guards permit |
+| `GaugeTick` / `PrecompactTrigger` / `IdleRestartTick` | HARD policy permits a handoff request | `AwaitingHandoff` | `WriteJournal(opened)`, `Emit(handoff_started)`, `TruncateHandoff?`, `SendEscape`, `InjectHandoffCmd{cycleID}`, `WriteJournal(handoff_injected)`, arm an observation wake |
 | same | ladder-fail | `Idle` | prelude side effects only (`SetHold` on 5d path; `ClearPrecompactMarker` + `Emit(precompact_blocked)` on the precompact per-gate path) |
 | `CrashJournal` | phase `cleared` | `Briefing` | fast-forward per crash-recovery matrix |
 | `CrashJournal` | phase `resumed`/terminal | `Complete` / `Aborted` | close-out per crash-recovery matrix |
@@ -425,7 +496,7 @@ States: `Idle`, `AwaitingHandoff`, `AwaitModelDone`, `Clearing`, `Briefing`, and
 |---|---|---|---|
 | `NonceObserved` | — | `AwaitModelDone` | `WriteJournal(confirmed)`, `Emit(handoff_written)`, `CancelTimer(handoff_timeout)`, `ArmTimer(model_done_timeout, 60s)` |
 | `TimerFired(handoff_timeout)` | `HandoffFreshSeen` present (mtime ≥ injectedAt) | `AwaitModelDone` | `WriteJournal(confirmed, reason=handoff_timeout_recovered)`, `Emit(handoff_written{recovered:true})`, `ArmTimer(model_done_timeout)` |
-| `TimerFired(handoff_timeout)` | no fresh handoff | `Aborted` (terminal) | `WriteJournal(aborted)`, `Emit(cycle_aborted, reason=handoff_timeout)`, anti-loop state update, `SetManagedSession("")?` (guarded), `ForceRestart?` (after `MaxHandoffTimeouts`) |
+| observation wake | no marked handoff | `RequestPending` | record `handoff_pending`; preserve request ID; no abort, escalation, managed-session clear, or force restart |
 
 **AwaitModelDone** (the new SR4 state)
 
@@ -475,7 +546,9 @@ The success terminal — reached at `Briefing → Complete`. The brief is inject
 
 ### 8.2 cycle_aborted
 
-The only path that never sends `/clear` — the `AwaitingHandoff` `handoff_timeout` edge with no fresh handoff. Emitted as `cycle_aborted(c, reason=handoff_timeout)`. Every abort carries an explicit reason (the baseline shows 79/79 `handoff_timeout`).
+`cycle_aborted` records a structural or effect failure after restart authority exists. A missing or
+late handoff is not an abort. The retired `handoff_timeout` abort remains readable in old event
+logs, but new keepers MUST NOT emit it.
 
 ### 8.3 clear_unconfirmed (degraded-completion)
 
@@ -505,7 +578,7 @@ The only path that never sends `/clear` — the `AwaitingHandoff` `handoff_timeo
 
 ### 10.1 Conformance profiles
 
-- **Core keeper (this phase)** — all of SK-001…SK-020 and SK-INV-001…SK-INV-005 are in force; an implementation conforms when each passes.
+- **Core keeper (this phase)** — all of SK-001…SK-028 and SK-INV-001…SK-INV-005 are in force; an implementation conforms when each passes.
 - **Extension (deferred)** — F-class durability for the four interior events and `InCycle` relaxation are explicitly deferred (§11) and are not part of the core conformance claim.
 
 ### 10.2 Test-surface obligations
@@ -532,6 +605,7 @@ None blocking.
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-08-12 | 0.3.0 | agent (checkpoint handshake) | Added SK-022 through SK-028. Context pressure now creates a three-band request. Stop is a first-class decision point but never clear authority. A marked handoff plus later Stop and a validated restart-now request are the two normal restart paths. Handoff delay is pending work and cannot cause abort escalation. Operator interaction guards effects without hiding observations. Keeper messages gain configurable prose and typed protocol values. Bounded liveness now starts when restart authority exists. |
 | 2026-07-30 | 0.2.1 | agent (spec citation cleanup) | **Rotted pointers repaired across `specs/`. No obligation changed by this pass.** Deleted files that were cited as implementation evidence now name the symbol that carries the behavior today. Line-number citations became symbol names, per the repo rule to cite symbols and never line numbers. The retired `review-loop` workflow mode was dropped from every list that presented it as a live selectable mode, because `core.WorkflowMode.Valid()` accepts only `single` and `dot`. Rules that name `review-loop` as a RETIRED value to reject are unchanged, and so are the event `review_loop_cycle_complete` and the review-loop-failure budget, whose symbols still exist. Where a spec named a test as its conformance sensor and that test no longer exists, the text now says so instead of claiming cover it does not have. |
 | 2026-07-13 | 0.1.0 | foundation-author | Initial draft — session-restart vertical: five ports (SK-001…SK-007), ClockPort migration (SK-008), pure Step reactor + timers-as-events + gate ladder (SK-009…SK-011), four durable interior events (SK-012…SK-013), model-done signal (SK-014), bounded liveness (SK-015), behavior parity (SK-016…SK-018), baseline anchor (SK-019), verification obligation (SK-020); SR3/SR4/SR6/SR7/SR9 as SK-INV-001…SK-INV-005; Step transition table and model-done detection protocol; terminal/abort taxonomy. |
 | 2026-07-14 | 0.2.0 | foundation-author | M2 agent-input-substrate carve-out (D6/C6/A11): appended the PL-021d keeper carve-out NOTE to SK-002 prose (PL-021d demoted-for-daemon-run-but-preserved-for-keeper; `PanePort.Inject` unchanged; keeper EXCLUDED from the C6 deletion boundary; keeper's load-buffer/paste-buffer/send-keys verbs MUST survive); §9.1 PL-021d "Depends on" clause noting the demoted-not-deleted survival; new deferred requirement SK-021 (§4.10) — keeper input MAY migrate to a session-id-keyed leaf-package port / daemon RPC, with the normative MUST-precondition gating any C6 teardown — plus its §11 deferred-register pointer. No SK renumbering; SK-002 interface block untouched. |

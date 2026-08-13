@@ -15,7 +15,8 @@ import (
 func TestSharedThresholdDefaults_SingleSource(t *testing.T) {
 	// Pin the named default constants (the single source of truth). These values
 	// are operator-decided; do NOT change them to make a test pass.
-	// TA1 band-retune (hk-8hr1): warn=200K / act=215K / force_act=240K.
+	// Checkpoint trial: compatibility warn=NOTICE 170K, act=WARN 200K,
+	// force_act=HARD 220K.
 	cases := []struct {
 		name string
 		got  float64
@@ -24,9 +25,9 @@ func TestSharedThresholdDefaults_SingleSource(t *testing.T) {
 		{"defaultWarnPct", defaultWarnPct, 80.0},
 		{"defaultActPct", defaultActPct, 90.0},
 		{"defaultForceActPctOffset", defaultForceActPctOffset, 5.0},
-		{"defaultWarnAbsTokens", float64(defaultWarnAbsTokens), 200_000},
-		{"defaultActAbsTokens", float64(defaultActAbsTokens), 215_000},
-		{"defaultForceActAbsOffset", float64(defaultForceActAbsOffset), 25_000},
+		{"defaultWarnAbsTokens", float64(defaultWarnAbsTokens), 170_000},
+		{"defaultActAbsTokens", float64(defaultActAbsTokens), 200_000},
+		{"defaultForceActAbsOffset", float64(defaultForceActAbsOffset), 20_000},
 		{"defaultWarnPctCeil", defaultWarnPctCeil, 0.70},
 		{"defaultActPctCeil", defaultActPctCeil, 0.85},
 		{"defaultForceActPctCeilOffset", defaultForceActPctCeilOffset, 0.10},
@@ -55,9 +56,9 @@ func TestSharedThresholdDefaults_SingleSource(t *testing.T) {
 		t.Errorf("WarnPctCeil drift: watcher=%v cycler=%v", w.WarnPctCeil, cy.WarnPctCeil)
 	}
 
-	// Resolved force-act defaults are operator-pinned (hk-8hr1): 240k / 0.95 / 95.
-	if cy.ForceActAbsTokens != 240_000 {
-		t.Errorf("ForceActAbsTokens = %d; want 240000 (act 215k + 25k offset)", cy.ForceActAbsTokens)
+	// Resolved HARD defaults are operator-pinned for the first trial.
+	if cy.ForceActAbsTokens != 220_000 {
+		t.Errorf("ForceActAbsTokens = %d; want 220000 (act 200k + 20k offset)", cy.ForceActAbsTokens)
 	}
 	if cy.ForceActPctCeil != 0.95 {
 		t.Errorf("ForceActPctCeil = %v; want 0.95 (act-ceil 0.85 + 0.10 offset)", cy.ForceActPctCeil)

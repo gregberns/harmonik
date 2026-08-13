@@ -283,6 +283,7 @@ func TestCycler_RunForIdle_RespectsCooldown(t *testing.T) {
 // still-large-context idle crew on a single failed attempt. After the fix the
 // next tick must be free to attempt again. Refs: hk-4i0s.
 func TestCycler_RunForIdle_AbortDoesNotArmCooldown(t *testing.T) {
+	t.Skip("keeper-checkpoint-handshake: timeout abort is retired; pending idle requests need a new policy decision")
 	t.Parallel()
 
 	em := &keeper.RecordingEmitter{}

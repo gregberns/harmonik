@@ -49,10 +49,10 @@ both crew (warn-only) and captain keepers.
 
 | config key (dotted) | CLI flag | suggested (OPERATOR-REQUIRED) | applicability |
 | --- | --- | --- | --- |
-| `keeper.context_thresholds.warn_abs_tokens` | `--warn-abs-tokens` | `200000` (`DefaultWarnAbsTokens`) | Watcher + Cycler |
-| `keeper.context_thresholds.act_abs_tokens` | `--act-abs-tokens` | `215000` (`DefaultActAbsTokens`) | Cycler (act gate) |
-| `keeper.context_thresholds.force_act_abs_tokens` | — | `240000` (`act + DefaultForceActAbsOffset`) | Cycler-only |
-| `keeper.context_thresholds.force_act_abs_offset` | — | `25000` (`DefaultForceActAbsOffset`) | Cycler-only |
+| `keeper.context_thresholds.warn_abs_tokens` | `--warn-abs-tokens` | `170000` (`DefaultWarnAbsTokens`) | Compatibility name for NOTICE |
+| `keeper.context_thresholds.act_abs_tokens` | `--act-abs-tokens` | `200000` (`DefaultActAbsTokens`) | Compatibility name for WARN |
+| `keeper.context_thresholds.force_act_abs_tokens` | — | `220000` (`act + DefaultForceActAbsOffset`) | Compatibility name for HARD |
+| `keeper.context_thresholds.force_act_abs_offset` | — | `20000` (`DefaultForceActAbsOffset`) | HARD offset |
 | `keeper.context_thresholds.idle_floor_abs_tokens` | `--idle-floor-abs-tokens` | `150000` (`DefaultIdleRestartAbsTokens`) | Cycler-only (idle-restart) |
 | `keeper.context_thresholds.act_pct_ceil` | `--act-pct` (fallback) | `0.85` (`DefaultActPctCeil`) | Watcher + Cycler |
 | `keeper.context_thresholds.warn_pct_ceil` | `--warn-pct` (fallback) | `0.70` (`DefaultWarnPctCeil`) | Watcher + Cycler |
@@ -117,6 +117,7 @@ both crew (warn-only) and captain keepers.
 | --- | --- | --- | --- |
 | `keeper.warn_messages.default_warn_text` | — | `""` (compiled default) | Watcher |
 | `keeper.warn_messages.actionable_warn_text` | — | `""` (compiled default) | Watcher (self-service advisory) |
+| `keeper.warn_messages.settle_warn_text` | — | `""` (compiled default) | Watcher (second-band checkpoint warning) |
 | `keeper.warn_messages.on_demand_warn_text` | — | DEPRECATED alias of `actionable_warn_text` (hk-vs4u) | Watcher |
 
 ### Top-level CLI-only flags (no config key)

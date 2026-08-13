@@ -150,11 +150,9 @@ func TestStep_LadderFail_Gate5dDefersTransiently(t *testing.T) {
 	}
 }
 
-// TestStep_HandoffTimeout_NoFresh_Aborts proves the TimerFired(handoff_
-// timeout)-without-fresh-handoff edge: the ONLY path that never sends /clear
-// (SK §8.2) — journal(aborted) + Emit(cycle_aborted), anti-loop suppression
-// armed with the abort marker (hk-vpnp Bug 3a), terminal Aborted.
-func TestStep_HandoffTimeout_NoFresh_Aborts(t *testing.T) {
+// TestStep_HandoffObservationWake_NoMarkerStaysPending proves that an ended
+// observation window returns control without treating useful work as failure.
+func TestStep_HandoffObservationWake_NoMarkerStaysPending(t *testing.T) {
 	t.Parallel()
 	cfg := stepTestConfig()
 	m := NewCycle(cfg)
@@ -166,12 +164,12 @@ func TestStep_HandoffTimeout_NoFresh_Aborts(t *testing.T) {
 		CycleID: "cyc-step-004", At: at.Add(cfg.HandoffTimeout),
 	})
 
-	assertKinds(t, actions, []ActionKind{ActWriteJournal, ActEmit})
-	if actions[0].Journal.Phase != "aborted" || actions[0].Journal.Reason != "handoff_timeout" {
-		t.Fatalf("abort journal = %+v; want aborted/handoff_timeout", actions[0].Journal)
+	assertKinds(t, actions, []ActionKind{ActWriteJournal, ActEmit, ActCancelTimer})
+	if actions[0].Journal.Phase != "pending" || actions[0].Journal.Reason != "handoff_pending" {
+		t.Fatalf("pending journal = %+v; want pending/handoff_pending", actions[0].Journal)
 	}
-	if actions[1].Type != core.EventTypeSessionKeeperCycleAborted {
-		t.Fatalf("emit type = %v; want cycle_aborted", actions[1].Type)
+	if actions[1].Type != core.EventTypeSessionKeeperCycleParked {
+		t.Fatalf("emit type = %v; want cycle_parked", actions[1].Type)
 	}
 	for _, a := range actions {
 		if a.Kind == ActInjectClear || a.Kind == ActInjectBrief {
@@ -179,11 +177,65 @@ func TestStep_HandoffTimeout_NoFresh_Aborts(t *testing.T) {
 		}
 	}
 	st := m.State()
-	if st.Phase != PhaseIdle || st.LastTerminal != "aborted" {
-		t.Fatalf("state = %v/%v; want Idle/aborted", st.Phase, st.LastTerminal)
+	if st.Phase != PhaseIdle || st.LastTerminal != "pending" {
+		t.Fatalf("state = %v/%v; want Idle/pending", st.Phase, st.LastTerminal)
 	}
-	if st.LastFiredSID != "sess-1" || !st.LastFireWasAbort || st.SeenLowPctAfterLastFire {
-		t.Fatalf("anti-loop state = %+v; want LastFiredSID=sess-1, LastFireWasAbort=true", st)
+	if st.LastFiredSID != "" || st.LastFireWasAbort {
+		t.Fatalf("pending window armed abort suppression: %+v", st)
+	}
+}
+
+func TestStep_PendingMarkedHandoffResumesOriginalRequest(t *testing.T) {
+	t.Parallel()
+	cfg := stepTestConfig()
+	m := NewCycle(cfg)
+	at := time.Unix(1_700_000_000, 0)
+	m.Step(gaugeTickAt(at, "cyc-pending-original"))
+	m.Step(Event{Kind: EvTimerFired, Timer: TimerHandoffTimeout, CycleID: "cyc-pending-original", At: at.Add(cfg.HandoffTimeout)})
+
+	actions := m.Step(Event{
+		Kind: EvPendingHandoffSeen, CycleID: "cyc-pending-original",
+		Mtime: at.Add(10 * time.Minute), At: at.Add(10 * time.Minute),
+	})
+	assertKinds(t, actions, []ActionKind{ActWriteJournal, ActEmit, ActCancelTimer, ActArmTimer})
+	if st := m.State(); st.Phase != PhaseAwaitModelDone || st.CycleID != "cyc-pending-original" {
+		t.Fatalf("state = %+v; want original request awaiting model done", st)
+	}
+}
+
+func TestStep_CrashJournalRestoresPendingRequest(t *testing.T) {
+	t.Parallel()
+	cfg := stepTestConfig()
+	m := NewCycle(cfg)
+	at := time.Unix(1_700_000_000, 0)
+	j := &CycleJournal{CycleID: "cyc-restored", SessionID: "sid-restored", Phase: "pending", OpenedAt: at.Add(-10 * time.Minute), UpdatedAt: at, Reason: "handoff_pending"}
+
+	actions := m.Step(Event{Kind: EvCrashJournal, At: at, Journal: j})
+	assertKinds(t, actions, nil)
+	st := m.State()
+	if st.Phase != PhaseIdle || st.LastTerminal != "pending" {
+		t.Fatalf("state = %v/%v; want Idle/pending", st.Phase, st.LastTerminal)
+	}
+	if st.CycleID != j.CycleID || st.PrevSID != j.SessionID || st.OpenedAt != j.OpenedAt {
+		t.Fatalf("restored request = %+v; want journal identity %+v", st, j)
+	}
+}
+
+func TestStep_ProductionHardBandDoesNotStartAtWarnBand(t *testing.T) {
+	t.Parallel()
+	cfg := stepTestConfig()
+	cfg.HardBandCycleOnly = true
+	m := NewCycle(cfg)
+	ev := gaugeTickAt(time.Unix(1_700_000_000, 0), "cyc-must-not-start")
+	ev.CF.Tokens = cfg.ActAbsTokens
+	ev.CF.WindowSize = 1_000_000
+	ev.CF.Pct = cfg.ActPct
+
+	if actions := m.Step(ev); len(actions) != 0 {
+		t.Fatalf("warn band started an automatic cycle: %+v", actions)
+	}
+	if m.InCycle() {
+		t.Fatal("warn band left the machine in a cycle")
 	}
 }
 

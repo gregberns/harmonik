@@ -19,6 +19,16 @@ The keeper should use three configurable context bands.
 
 The example values of 170k and 180k are not decisions. Configuration must own all band values.
 
+The first live trial uses these absolute values:
+
+| Band | Tokens | Intent |
+|---|---:|---|
+| NOTICE | 170,000 | Give the agent room to shape the work for session continuity. |
+| WARN | 200,000 | Ask the agent to favor completing the handoff soon. |
+| HARD | 220,000 | Report that the normal transition did not complete and apply the separate hard policy. |
+
+These values are configurable policy. They are trial values, not permanent constants.
+
 The agent owns the decision that work reached a good stopping point. A good stopping point often
 requires more than one completed turn. The agent can have active subagents, tests, tools, an
 operator exchange, or several related edits to settle.
@@ -28,6 +38,35 @@ a forced restart.
 
 Message text must have compiled defaults and simple configuration overrides. Operators must be able
 to adjust the text as they learn from live use.
+
+The first NOTICE default is:
+
+> KEEPER NOTICE — We use periodic session transitions to keep our work token-efficient. This
+> session is at 170k tokens. We generally aim to continue in a fresh session before 200k. As you
+> continue, shape the work toward a state that a fresh session can resume without losing decisions
+> or repeating work.
+>
+> When ready, run `/session-handoff HANDOFF-alpha.md` and include
+> `<!-- KEEPER:cyc-123 -->`. Then run
+> `harmonik keeper restart-now --agent alpha --nonce cyc-123` so we can continue in the fresh
+> session.
+
+The rendered message uses live values for the agent, context, next band, handoff path, marker, and
+command. The example values above only show the intended prose.
+
+Keep these candidate continuity lines in the plan for later live trials:
+
+- “As you continue, shape the work toward a state that a fresh session can resume without losing
+  decisions or repeating work.”
+- “As you continue, shape the work so a fresh session can resume it without losing decisions or
+  repeating work.”
+- “Keep the current work moving. Shape its state so a fresh session can continue without losing
+  decisions or repeating work.”
+- “Preserve useful momentum, and favor a session transition when the work can continue from its
+  durable state.”
+- “Continue the current line of work while preparing a clear continuation for the fresh session.”
+
+The first line is the selected default. The others are trial candidates, not fallback behavior.
 
 ## Historical record
 

@@ -244,6 +244,12 @@ type WatcherConfig struct {
 	// preventing late warnings on large windows. Default: 0.70.
 	WarnPctCeil float64
 
+	// Act* defines the second checkpoint band. Crossing it delivers one stronger
+	// warning. It does not authorize the automatic cycle.
+	ActPct       float64
+	ActAbsTokens int64
+	ActPctCeil   float64
+
 	// IdleQuiesce is the minimum duration of gauge-file quiescence before the
 	// watcher considers the pane idle enough to accept an injection.
 	// Default: 8s.
@@ -268,6 +274,10 @@ type WatcherConfig struct {
 	// shells out to tmux). Set to a spy in unit tests so the hint path can be
 	// observed without real tmux. Mirrors InjectFn for the warn injection.
 	SelfHintInjectFn func(ctx context.Context, target, text string) error
+
+	// MessageInjectFn delivers a rendered keeper message. The second checkpoint
+	// warning uses this seam so tests can observe its exact text without tmux.
+	MessageInjectFn func(ctx context.Context, target, text string) error
 
 	// DashboardNagInjectFn delivers the [KEEPER NAG] dashboard-staleness
 	// pre-nag text into the pane (hk-xg6rw, DESIGN §4 recommendation B). When
@@ -404,6 +414,10 @@ type WatcherConfig struct {
 	// Sourced from .harmonik/config.yaml keeper.warn_messages.actionable_warn_text.
 	// Refs: hk-vs4u, hk-lhu2.
 	ActionableWarnText string
+
+	// SettleWarnText overrides the second-band checkpoint warning. The override
+	// must retain the restart-now command token.
+	SettleWarnText string
 
 	// LeaderDeferText, when non-empty, overrides the compiled-in leader
 	// defer-message body (the K2 finish-then-self-restart nudge). Empty =
@@ -691,6 +705,7 @@ type WatcherConfig struct {
 type WarnMessageTexts struct {
 	DefaultWarnText    string
 	ActionableWarnText string
+	SettleWarnText     string
 	LeaderDeferText    string
 	CrewDeferText      string
 }
@@ -716,6 +731,18 @@ func (c *WatcherConfig) applyDefaults() {
 	}
 	if c.WarnPctCeil <= 0 {
 		c.WarnPctCeil = defaultWarnPctCeil
+	}
+	if c.ActPct <= 0 {
+		c.ActPct = defaultActPct
+	}
+	if c.ActAbsTokens <= 0 {
+		c.ActAbsTokens = defaultActAbsTokens
+	}
+	if c.ActPctCeil <= 0 {
+		c.ActPctCeil = defaultActPctCeil
+	}
+	if c.MessageInjectFn == nil {
+		c.MessageInjectFn = InjectText
 	}
 	if c.IdleQuiesce <= 0 {
 		c.IdleQuiesce = DefaultIdleQuiesce
@@ -869,6 +896,13 @@ func (c *WatcherConfig) belowWarnThreshold(cf *CtxFile) bool {
 		return cf.Pct < c.WarnPct || cf.Tokens < minAbsOrPctCeil(c.WarnAbsTokens, c.WarnPctCeil, cf.WindowSize)
 	}
 	return cf.Pct < c.WarnPct
+}
+
+func (c *WatcherConfig) belowActThreshold(cf *CtxFile) bool {
+	if cf.Tokens > 0 && cf.WindowSize > 0 {
+		return cf.Pct < c.ActPct || cf.Tokens < minAbsOrPctCeil(c.ActAbsTokens, c.ActPctCeil, cf.WindowSize)
+	}
+	return cf.Pct < c.ActPct
 }
 
 // actionableWarnEligible reports whether the ACTIONABLE self-service restart
@@ -1037,6 +1071,7 @@ func (w *Watcher) maybeReloadWarnMessages(ctx context.Context) {
 	}
 	w.cfg.DefaultWarnText = texts.DefaultWarnText
 	w.cfg.ActionableWarnText = texts.ActionableWarnText
+	w.cfg.SettleWarnText = texts.SettleWarnText
 	w.cfg.LeaderDeferText = texts.LeaderDeferText
 	w.cfg.CrewDeferText = texts.CrewDeferText
 }
@@ -1145,6 +1180,11 @@ func (w *Watcher) Run(ctx context.Context) error {
 		// yet been delivered (pane was not quiesced on the crossing tick).
 		// Cleared when the inject succeeds or when pct resets below warnPct.
 		pendingInject = false
+
+		// settleWarnFired and pendingSettleInject form the second-band latch.
+		// The latch resets only after the gauge falls below that band.
+		settleWarnFired     = false
+		pendingSettleInject = false
 
 		// lastModTime is the mod-time of the gauge file on the previous tick.
 		// Used for idle-gate (quiescence detection).
@@ -1556,6 +1596,8 @@ func (w *Watcher) Run(ctx context.Context) error {
 					warnArmed = true
 					warnFired = false
 					pendingInject = false
+					settleWarnFired = false
+					pendingSettleInject = false
 					// Reset hint latch on genuine session reset (gauge dropped below
 					// warn and cooldown elapsed — new effective session start). Also
 					// cancel any undelivered pending hint from the prior crossing.
@@ -1569,6 +1611,16 @@ func (w *Watcher) Run(ctx context.Context) error {
 					}
 				}
 				continue
+			}
+
+			if w.cfg.belowActThreshold(ctxFile) {
+				settleWarnFired = false
+				pendingSettleInject = false
+			} else if !settleWarnFired {
+				settleWarnFired = true
+				if w.cfg.TmuxTarget != "" {
+					pendingSettleInject = true
+				}
 			}
 
 			// At or above the warn threshold.
@@ -1676,6 +1728,26 @@ func (w *Watcher) Run(ctx context.Context) error {
 					slog.WarnContext(ctx, "keeper: inject wrap-up warning", "err", injectErr)
 				} else {
 					pendingInject = false
+				}
+			}
+
+			if pendingSettleInject && gaugeQuiesced {
+				if w.cfg.SleepingCheckFn(w.cfg.ProjectDir, ctxFile.SessionID) {
+					continue
+				}
+				if w.cfg.OperatorAttachedFn(w.cfg.TmuxTarget) {
+					continue
+				}
+				hard := w.cfg.ActAbsTokens + defaultForceActAbsOffset
+				settleText := SettleWarnText(w.cfg.AgentName, ctxFile.Tokens, hard)
+				if w.cfg.SettleWarnText != "" && containsRestartNowCmd(w.cfg.SettleWarnText) {
+					settleText = w.cfg.SettleWarnText
+				}
+				text := AutomationMessage("keeper", settleText)
+				if err := w.cfg.MessageInjectFn(ctx, w.cfg.TmuxTarget, text); err != nil {
+					slog.WarnContext(ctx, "keeper: inject settle warning", "err", err)
+				} else {
+					pendingSettleInject = false
 				}
 			}
 		}

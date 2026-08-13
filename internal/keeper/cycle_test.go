@@ -384,6 +384,7 @@ func TestCycler_HappyPath(t *testing.T) {
 // TestCycler_AbortOnNonceTimeout verifies the abort path: when the handoff nonce
 // never appears before HandoffTimeout, the cycle ABORTS and NEVER issues /clear.
 func TestCycler_AbortOnNonceTimeout(t *testing.T) {
+	t.Skip("keeper-checkpoint-handshake: timeout abort is retired; pending-request tests replace this claim")
 	t.Parallel()
 
 	const (
@@ -633,6 +634,7 @@ func TestCycler_NilCtxFileNoPanic(t *testing.T) {
 // TestCycler_AbortDoesNotRefire verifies DEFECT-4: after an abort the cycle
 // must not re-fire on the same session_id on the very next tick.
 func TestCycler_AbortDoesNotRefire(t *testing.T) {
+	t.Skip("keeper-checkpoint-handshake: timeout abort is retired; pending-request tests replace this claim")
 	t.Parallel()
 
 	const (
@@ -1712,6 +1714,7 @@ func TestCycler_ForcedClear_BypassesCrispIdle(t *testing.T) {
 // ForceRetryInterval has elapsed. Without this fix, a session stuck above the
 // force threshold after one abort is permanently blocked by Gate 6.
 func TestCycler_ForcedClear_RetryAfterInterval(t *testing.T) {
+	t.Skip("keeper-checkpoint-handshake: timeout escalation is retired; pending requests do not force-restart")
 	t.Parallel()
 
 	const (
@@ -1889,6 +1892,7 @@ func TestCycler_ForcedClear_EscapeInjected(t *testing.T) {
 // MaxHandoffTimeouts consecutive handoff timeouts above the force threshold,
 // RespawnPort is called to hard-restart the agent. Refs: hk-qoz.
 func TestCycler_ForcedClear_EscalatesAfterNTimeouts(t *testing.T) {
+	t.Skip("keeper-checkpoint-handshake: timeout escalation is retired; pending requests do not force-restart")
 	t.Parallel()
 
 	const (
@@ -2085,7 +2089,7 @@ func TestCycler_YoungSessionGuard_NewBand_AbsTokens(t *testing.T) {
 	// Long grace so the young session stays within it for the whole test (no sleep).
 	const bootGrace = 30 * time.Second
 	cfgOverrides := testCycleOverrides{CycleIDs: func() string { return cycleID }, HandoffPath: func(_, a string) string { return "/tmp/HANDOFF-" + a + ".md" }, HandoffRead: readHandoff, HandoffScrub: func(_ string) error { return nil }, Inject: spy.inject, JournalWrite:
-	// Use the default abs-token band (act=215K / force=240K); do not override.
+	// Use the default abs-token band (WARN=200K / HARD=220K); do not override.
 	jc.write}
 	cfg := keeper.CyclerConfig{
 		AgentName:       agent,
@@ -2098,31 +2102,31 @@ func TestCycler_YoungSessionGuard_NewBand_AbsTokens(t *testing.T) {
 	}
 	cycler := mustNewCyclerWithOverrides(cfg, em, cfgOverrides)
 
-	// Establish prevSID below the act threshold (50K < 215K) — no grace armed yet.
+	// Establish prevSID below the WARN threshold — no grace armed yet.
 	cfPrev := &keeper.CtxFile{Pct: 5.0, Tokens: 50_000, WindowSize: window, SessionID: prevSID}
 	if err := cycler.MaybeRun(context.Background(), cfPrev); err != nil {
 		t.Fatalf("MaybeRun (prevSID): %v", err)
 	}
 
-	// Switch to bootSID at 230K — ABOVE the new act (215K) but BELOW force (240K).
+	// Switch to bootSID at 210K — above WARN but below HARD.
 	// The session_id change arms the boot grace; the young-session guard must
 	// suppress the restart even though context is past the aggressive act gate.
-	cfYoung := &keeper.CtxFile{Pct: 23.0, Tokens: 230_000, WindowSize: window, SessionID: bootSID}
+	cfYoung := &keeper.CtxFile{Pct: 21.0, Tokens: 210_000, WindowSize: window, SessionID: bootSID}
 	if err := cycler.MaybeRun(context.Background(), cfYoung); err != nil {
 		t.Fatalf("MaybeRun (young, above act below force): %v", err)
 	}
 	if n := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); n != 0 {
-		t.Errorf("young session above act(215K) below force(240K): want 0 handoff_started (guard suppresses); got %d", n)
+		t.Errorf("young session above WARN below HARD: want 0 handoff_started (guard suppresses); got %d", n)
 	}
 
-	// Same young session now crosses the force-act ceiling (245K >= 240K). The
+	// Same young session now crosses the HARD ceiling (225K >= 220K). The
 	// force exemption bypasses the young-session guard — pane-overflow risk wins.
-	cfForce := &keeper.CtxFile{Pct: 24.5, Tokens: 245_000, WindowSize: window, SessionID: bootSID}
+	cfForce := &keeper.CtxFile{Pct: 22.5, Tokens: 225_000, WindowSize: window, SessionID: bootSID}
 	if err := cycler.MaybeRun(context.Background(), cfForce); err != nil {
 		t.Fatalf("MaybeRun (young, above force): %v", err)
 	}
 	if n := len(em.EventsOfType(core.EventTypeSessionKeeperHandoffStarted)); n != 1 {
-		t.Errorf("young session above force(240K): want 1 handoff_started (force ceiling bypasses guard); got %d", n)
+		t.Errorf("young session above HARD: want 1 handoff_started (hard ceiling bypasses guard); got %d", n)
 	}
 }
 
@@ -2202,6 +2206,7 @@ func TestCycler_CleanHandoffGuard_DispatchingSuppressesAboveForce(t *testing.T) 
 // establishes a prior session (prevSID) at low pct before triggering the abort
 // on the post-resume session (abortSID), ensuring currentSessionIDSince is set.
 func TestCycler_AbortClearsManaged(t *testing.T) {
+	t.Skip("keeper-checkpoint-handshake: timeout abort is retired; pending requests preserve the managed binding")
 	t.Parallel()
 
 	const (
@@ -2511,6 +2516,7 @@ func TestCycler_BootGrace_ForcePathBypasses(t *testing.T) {
 // Gate-6 same-SID force-retry can handle retries rather than creating a new-SID
 // latch that triggers boot-grace and the Gate-6 suppression stall.
 func TestCycler_AbortDoesNotClearManaged_FirstSession(t *testing.T) {
+	t.Skip("keeper-checkpoint-handshake: timeout abort is retired; pending requests preserve the managed binding")
 	t.Parallel()
 
 	const (
@@ -2663,6 +2669,7 @@ func TestCycler_BootGrace_FlappingSID(t *testing.T) {
 // (force-path bypass of grace), fix 2 (novel-SID grace arm), and fix 3 (abort
 // clears managed only after real session change).
 func TestCycler_AbortToResumeGraceToRefire(t *testing.T) {
+	t.Skip("keeper-checkpoint-handshake: timeout abort is retired; late handoff resumes the original request")
 	t.Parallel()
 
 	const (
@@ -2835,6 +2842,7 @@ func TestCycler_AbortToResumeGraceToRefire(t *testing.T) {
 //	B: first-session abort (no prevSID before the aborting SID) → same recovery.
 //	   This exercises the case where currentSessionIDSince is zero throughout.
 func TestCycler_CrossSID_ForceRetry_AfterAbort(t *testing.T) {
+	t.Skip("keeper-checkpoint-handshake: timeout abort and force retry are retired")
 	t.Parallel()
 
 	// hk-h0twl deflake: forceRetryInterval is large in VIRTUAL time (see the

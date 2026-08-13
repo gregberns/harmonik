@@ -232,13 +232,19 @@ assert_eq "base" "$(cat "$S2/marker.txt" 2>/dev/null)" \
 # here-string, both of which have no writer to kill.
 #
 # This rule was written here and then broken eight times further down the same
-# file, and it cost three weeks of a red merge gate. It only bites when the text
-# is long enough that the writer is still writing when grep leaves, so the three
-# sites that fed grep the whole ~950-line script under audit failed on Linux and
-# passed on macOS. Two of those three were NEGATIVE assertions, which fail open:
-# on Linux they reported "not found" whatever the script contained, so they
-# could not fail. A green run of this file on a developer box said nothing about
-# any of them.
+# file, and it held the merge gate red for about five days — from the day the
+# structural assertion arrived until the day it was repaired. The gate was red
+# before that too, for unrelated reasons in a different job; do not let this
+# comment take credit for those.
+#
+# It only bites when the text is long enough that the writer is still writing
+# when grep leaves, so the three sites that fed grep the whole ~950-line script
+# under audit failed on the merge runner and passed on a developer box. That is
+# a race between the writer and the reader, not a platform difference: the same
+# failure reproduces on macOS at a few megabytes. Two of those three sites were
+# NEGATIVE assertions, which fail open — they reported "not found" whatever the
+# script contained, so they could not fail. A green run of this file on a
+# developer box said nothing about any of them.
 assertions=$((assertions + 1))
 $SD status "$S1" >"$ROOT/status-exact.out" 2>&1
 if grep -q "revision: $COMMIT_C" "$ROOT/status-exact.out"; then
@@ -692,11 +698,19 @@ printf 'rev-pin-test: %d assertions, %d failed\n' "$assertions" "$failures"
 # file that dies early reports zero failures and reads as a pass.
 # The floor is set to the number this file actually runs today, with no slack.
 # Slack lets deleted assertions pass silently, which is the failure this floor
-# exists to prevent. Raise it deliberately when you add a case. Counting the
-# `assertions=` lines by grep gives one less than the real total, because one
-# case runs inside a loop.
-if [ "$assertions" -lt 55 ]; then
-    printf 'rev-pin-test: only %d assertions ran; this file expects 55\n' "$assertions" >&2
+# exists to prevent. Raise it deliberately when you add a case.
+#
+# It sat at 55 while 57 ran, so two assertions could have been deleted without
+# it noticing — the comment above claimed no slack while two were there. Do not
+# derive this number by grepping the `assertions=` lines: that count is wrong
+# by more than one, because several cases run inside loops. Run the file and
+# read the number it prints.
+# One name for the number. It was written twice — once in the test and once in
+# the message — and a change to one of them reports the other, which is how a
+# refusal comes out saying the count it just refused was the count it wanted.
+ASSERTION_FLOOR=57
+if [ "$assertions" -lt "$ASSERTION_FLOOR" ]; then
+    printf 'rev-pin-test: only %d assertions ran; this file expects %d\n' "$assertions" "$ASSERTION_FLOOR" >&2
     exit 1
 fi
 [ "$failures" -eq 0 ]

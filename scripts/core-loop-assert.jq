@@ -30,6 +30,15 @@
 # re-emits harness_selected/model_selected), the LAST one wins (`[-1]`) — it reflects the
 # effective final launch. T4-T8 extending this contract should preserve last-wins.
 #
+# LAST-WINS APPLIES WITHIN ONE ROLE, NOT ACROSS ROLES. A dot run resolves a harness for the
+# implementer node AND for the reviewer node. The two events are the same type and carry the
+# same bead id, so last-wins over the mixed set answers a question about the implementer with
+# the reviewer's event whenever the reviewer launches last — which is what a converged
+# round-trip does. gap1 therefore attributes each harness_selected to the node that was
+# dispatched for it (harness_selected_by_node below), keeps the implementer's, and takes
+# last-wins inside that set. The retry the rule exists for — a re-dispatch of the SAME node
+# at a new tier — still wins. Bead: hk-vf4ju.
+#
 # GAP MAP: gap1 model-reaches-harness (T2, DONE) · gap2 remote==local (T7) ·
 #          gap3 provider-through-sandbox (T6) · gap4 dispatch field fidelity (T5) ·
 #          gap5 claude worktree->agent_ready (T8).
@@ -46,6 +55,40 @@ def pl: (.payload // .);
 # result-record constructor
 def result($gap; $verdict; $detail): { gap: $gap, verdict: $verdict, detail: $detail };
 
+# is_implementer_node — does this workflow node id name the implementer?
+#
+# The stream names no ROLE. harness_selected carries {bead_id, agent_type, tier} and
+# model_selected carries {run_id, harness, model}, so neither says which node resolved it.
+# The one role signal in the stream is the node id on node_dispatch_requested. Every graph
+# this gate runs spells its implementer node "implement" (no-review-bead, standard-bead) or
+# "implementer" (review-loop-example), and spells its reviewer node "review" or "reviewer".
+# gap6 already read the node id this way for its re-dispatch clause, so the test lives here
+# once and both gaps use the one spelling.
+def is_implementer_node($id): (($id // "") | tostring | test("implement"; "i"));
+
+# harness_selected_by_node — every harness_selected event, tagged with the node it belongs to.
+#
+# The daemon dispatches a node and then resolves that node's harness, so the most recent
+# node_dispatch_requested before a harness_selected names the node that event belongs to.
+# node_dispatch_requested carries a run_id and no bead id, so the scan first drops the
+# dispatches of any OTHER run — the same join gap4 makes, for the same reason: a sibling
+# run's nodes must not answer for this cell. Pass "" for $rid to keep every dispatch, which
+# is what a stream with no run_started for the seed bead gets.
+#
+# .node is null on a harness_selected that no dispatch precedes. A stream that carries no
+# node_dispatch_requested at all gives every event a null node, and the caller then falls
+# back to the un-attributed set and behaves as it did before.
+def harness_selected_by_node($rid):
+  [ foreach (events[] | {t: (.type // ""), p: pl}) as $e
+      (null;
+       if $e.t == "node_dispatch_requested"
+          and ($rid == "" or ((($e.p.run_id // "") | tostring) == $rid))
+       then (($e.p.node_id // "") | tostring)
+       else . end;
+       {node: ., t: $e.t, p: $e.p})
+  ]
+  | map(select(.t == "harness_selected"));
+
 # --- gap1 — model reaches the harness per family (C4) -----------------------
 # Contract:
 #   (a) a harness_selected event for the seed bead exists, with agent_type == the
@@ -57,11 +100,29 @@ def result($gap; $verdict; $detail): { gap: $gap, verdict: $verdict, detail: $de
 #       .no_leak_models lists the models that must never reach this harness (e.g. a pi
 #       cell forbids "claude-opus-4-8" — the exact hk-lfrub/hk-pkugu regression where a
 #       claude node model= pin leaked into a pi launch). Any hit is a leak → fail.
+#
+# WHOSE HARNESS (a) IS ABOUT: the IMPLEMENTER's. A dot run resolves a harness for the review
+# node too, under the same bead id, so the events must be told apart before last-wins picks
+# one. They are told apart by the node that was dispatched for each (harness_selected_by_node
+# + is_implementer_node above), which is the only role signal the stream carries.
+#
+# A stream that names no implementer node — no node_dispatch_requested at all, or a graph
+# that spells its implementer node something is_implementer_node does not match — falls back
+# to the un-attributed set and behaves as this gap did before hk-vf4ju. The fallback is quiet
+# on purpose, because every fixture that predates node_dispatch_requested relies on it, so
+# a NEW graph with an unusual implementer node id loses the scoping without a word. Teach
+# is_implementer_node the new spelling when that happens.
 def assert_gap1:
   ($spec.expect.harness_selected // {}) as $eh
   | ($spec.expect.model_selected  // {}) as $em
   | ($em.no_leak_models // []) as $forbidden
-  | (of_type("harness_selected") | map(pl) | map(select(.bead_id == $spec.seed_bead))) as $hs
+  | ((of_type("run_started") | map(pl)
+        | map(select((.bead_id // null) == $spec.seed_bead))
+        | (.[-1].run_id // "")) | tostring) as $rid
+  | (harness_selected_by_node($rid)
+        | map(select(.p.bead_id == $spec.seed_bead))) as $hsAll
+  | ($hsAll | map(select(.node != null and is_implementer_node(.node)))) as $hsImpl
+  | ((if ($hsImpl | length) > 0 then $hsImpl else $hsAll end) | map(.p)) as $hs
   | (of_type("model_selected")   | map(pl) | map(select(.harness == ($em.harness // $eh.agent_type)))) as $ms
   | ($ms | map(.model) | map(select(. as $m | $forbidden | index($m))) | unique) as $leaks
   | if ($hs | length) == 0
@@ -258,31 +319,57 @@ def assert_t10:
     else result("t10"; "pass"; "landed on '\($want)' (git-verified; trunk '\($trunk)' unchanged)")
     end;
 
-# --- gap6 — dot review->implement round-trip, same model (D4) ----------------
-# The dot cell must show a REAL model round-trip driven by the seed rubric, with BOTH the
-# implementer and reviewer nodes on the same model (no claude leak into a pi dot run).
+# --- gap6 — dot review->implement round-trip, one model (D4) -----------------
+# The dot cell must show a REAL model round-trip driven by the seed rubric, with no foreign
+# model reaching the run. It must NOT be read as "the implementer and the reviewer are on the
+# same model": they are not, and cannot be. The reviewer of a pi dot run is forced onto
+# claude-code and resolves no model — see clause (d).
 # PASS iff the captured stream shows, IN ORDER:
 #   (a) a reviewer_verdict with verdict == REQUEST_CHANGES,
 #   (b) an implementer RE-DISPATCH after that verdict — a node_dispatch_requested for the
-#       implementer node (node_id matches /implement/) OR a second implementer_phase_complete,
+#       implementer node (is_implementer_node) OR a second implementer_phase_complete,
 #   (c) a reviewer_verdict APPROVE after the re-dispatch, then a terminal pass/close, AND
-#   (d) SAME-MODEL: every model_selected.model in the run == the pinned model (spec
-#       expect.model_selected.model). When the spec pins nothing, the run's OWN first
-#       model_selected is the reference, so the check stays what its name says — every node
-#       used the same model — without this file naming a model. A literal default here was a
-#       copy of a fact that lives in config, and it went stale the day the model changed.
+#   (d) SAME-MODEL: every node that RESOLVED a model resolved the same one — the pinned model
+#       (spec expect.model_selected.model) when the cell pins one, else the run's OWN first
+#       resolved model, so the check stays what its name says without this file naming a
+#       model. A literal default here was a copy of a fact that lives in config, and it went
+#       stale the day the model changed.
+#
+#       "RESOLVED a model" is the scope, and an EMPTY model string is outside it. A node that
+#       pins no model= emits model_selected with model:"". The reviewer of a pi dot run always
+#       does: the daemon refuses to let a reviewer inherit a SessionIDCaptured harness
+#       (internal/runloop ReviewerDefaultHarness), so the review runs on claude-code, the
+#       review node pins nothing, and ResolveModelPreference returns "". An unscoped clause
+#       read that "" as a foreign model and reported a claude leak, which named the wrong
+#       cause for a cell that could not pass in any ordering. Bead: hk-vf4ju.
+#
+#       THE SCOPE IS EMPTINESS AND NOT THE HARNESS FAMILY, and the difference is load-bearing.
+#       gap1's no_leak_models keeps only events on the cell's OWN harness, because a node-pin
+#       leak arrives on that harness. A model leak into a dot run arrives on the FOREIGN
+#       harness with a NON-EMPTY model (testdata/pi-dot-modelleak-fail.ndjson), so gap1's
+#       filter applied here would hide the one event this clause exists to find.
+#
+#       THE COST, stated rather than hidden: ANY node that resolved NO model is invisible to
+#       this clause. An unpinned node on a harness other than pi resolves an empty model, so
+#       an escape to that harness leaves no trace here. Two shapes, and they are not covered
+#       equally. An IMPLEMENTER that escapes is caught by gap1's harness check. A THIRD
+#       agentic node that escapes is caught by NEITHER gap, because gap1 speaks only for the
+#       implementer. No graph in the tree has a third agentic node today (review-loop.dot is
+#       start, implementer, reviewer, close), so this is a future hole, not a live one. Give
+#       gap1 a per-node harness check before you add one.
 # Positional ordering is taken from the append-ordered capture stream (event index).
 def assert_gap6:
-  ($spec.expect.model_selected.model
-     // (of_type("model_selected") | map(pl.model) | map(select(. != null)) | first)) as $wantModel
+  (of_type("model_selected") | map(pl.model) | map(select(. != null and . != ""))) as $models
+  | (of_type("model_selected") | length) as $modelEvents
+  | (($spec.expect.model_selected.model // "") | tostring) as $pinnedModel
+  | (if $pinnedModel != "" then $pinnedModel else ($models | first) end) as $wantModel
   | ([ events[] | {type: .type, p: pl} ] | to_entries
        | map({i: .key, type: .value.type, p: .value.p})) as $seq
   | ([ $seq[] | select(.type == "reviewer_verdict" and (.p.verdict == "REQUEST_CHANGES")) ]
        | (.[0].i // -1)) as $reqIdx
   | ([ $seq[] | select(.type == "implementer_phase_complete"
-        or (.type == "node_dispatch_requested" and ((.p.node_id // "") | tostring | test("implement"; "i")))) ]) as $impl
+        or (.type == "node_dispatch_requested" and is_implementer_node(.p.node_id))) ]) as $impl
   | ([ $seq[] | select(.type == "reviewer_verdict" and (.p.verdict == "APPROVE")) ]) as $appr
-  | (of_type("model_selected") | map(pl.model) | map(select(. != null))) as $models
   | ($models | map(select(. != $wantModel)) | unique) as $badModels
   | (of_type("run_completed") | map(pl)
        | map(select((.bead_id // null) == $spec.seed_bead and .success == true)) | length > 0) as $closed
@@ -295,10 +382,10 @@ def assert_gap6:
     elif $apprIdx < 0
     then result("gap6"; "fail"; "re-dispatch@\($reImplIdx) but no APPROVE reviewer_verdict after it — round-trip did not converge")
     elif ($badModels | length) > 0
-    then result("gap6"; "fail"; "same-model VIOLATED: model_selected carried \($badModels | join(",")) != pinned \($wantModel) (claude leaked into the dot run?)")
+    then result("gap6"; "fail"; "one-model VIOLATED: a node resolved model(s) \($badModels | join(",")) but this run's model is \($wantModel) — report is what was observed; the cause may be a node model= pin or an escape to another harness")
     elif ($closed | not)
     then result("gap6"; "fail"; "round-trip verdicts present but no terminal run_completed(success) for \($spec.seed_bead) — run did not close green")
-    else result("gap6"; "pass"; "REQUEST_CHANGES@\($reqIdx) -> impl re-dispatch@\($reImplIdx) -> APPROVE@\($apprIdx) -> close; all \($models | length) model_selected == \($wantModel)")
+    else result("gap6"; "pass"; "REQUEST_CHANGES@\($reqIdx) -> impl re-dispatch@\($reImplIdx) -> APPROVE@\($apprIdx) -> close; all \($models | length) of \($modelEvents) model_selected resolved \($wantModel) (\($modelEvents - ($models | length)) resolved no model)")
     end;
 
 # --- dispatcher ------------------------------------------------------------

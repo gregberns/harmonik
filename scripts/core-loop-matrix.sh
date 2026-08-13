@@ -266,9 +266,17 @@ seed_model_for() {
     harness_cfg_value "$harness" model
 }
 
-# foreign_models_for <seed-key> <harness> — every OTHER harness family's model, which is
-# exactly the set that must never appear on this cell's runs. Derived, so adding a harness or
-# changing a model updates the leak check for free instead of needing a second edit.
+# foreign_models_for <seed-key> <harness> — every OTHER harness family's model. Derived, so
+# adding a harness or changing a model updates the leak check for free instead of needing a
+# second edit.
+#
+# READ THE SET AS "must never appear ON THIS CELL'S OWN HARNESS", not "must never appear in
+# this cell's capture". gap1 filters model_selected by harness before it looks for a leak, so
+# a node on another family is out of scope by construction. The distinction is load-bearing on
+# a DOT cell: its review node runs on claude-code BY DESIGN, because a reviewer never inherits
+# a SessionIDCaptured harness (internal/runloop ReviewerDefaultHarness), so a claude model can
+# legitimately be resolved inside the capture. This comment used to state the wider claim,
+# which reads as a false red on every dot cell. Bead: hk-vf4ju.
 foreign_models_for() {
     local own_key="$1" own_harness="$2" out="" k h m
     while IFS=$'\t' read -r k h; do

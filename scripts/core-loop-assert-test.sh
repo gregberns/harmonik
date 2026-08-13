@@ -173,13 +173,39 @@ check        "t10 no trunk injected pending"      "$TD/t10-would-pass.ndjson" "$
 check        "t10 unsubstituted sentinel pending" "$TD/t10-would-pass.ndjson" "$T10_SENTINEL" t10 pending
 check_detail "t10 default-landing cell pass"      "$TD/t10-would-pass.ndjson" "$T10_DEFAULT" t10 pass "landed on the trunk 'scratch/main'"
 
-# gap6 — dot review->implement round-trip, same model (D4). PASS iff REQUEST_CHANGES ->
-# implementer re-dispatch -> APPROVE -> close AND every model_selected == the pinned model.
-# FAIL if the reviewer approved on the first pass (no round-trip) or a foreign model leaked.
-GAP6='{"schema_version":1,"seed_bead":"hk-clp-pidot","substrate":"local","expect":{"model_selected":{"harness":"pi","model":"ornith"}},"gaps":["gap6"]}'
-check "gap6 real round-trip pass"      "$TD/pi-dot-roundtrip-pass.ndjson"  "$GAP6" gap6 pass
+# gap6 — dot review->implement round-trip, one model (D4). PASS iff REQUEST_CHANGES ->
+# implementer re-dispatch -> APPROVE -> close AND every node that RESOLVED a model resolved
+# the same one. FAIL if the reviewer approved on the first pass (no round-trip) or a foreign
+# model reached the run.
+#
+# THE GOLDEN CARRIES THE REVIEWER NOW. It used to hold one harness_selected and two
+# model_selected, all pi, and no reviewer selection events at all, so it proved nothing about
+# the cell it stands for. The daemon never lets a reviewer inherit a SessionIDCaptured harness
+# (internal/runloop ReviewerDefaultHarness), so a real pi dot run resolves claude-code at
+# tier 3 for the review node and resolves NO model for it. Both events are in the stream now,
+# in the CONVERGED ordering — the one where the reviewer launches LAST. That ordering broke
+# both gaps at once: gap6 counted the reviewer's empty model as a foreign model, and gap1's
+# last-wins read the reviewer's claude-code event as the run's harness. The shape is taken
+# from the live capture .harmonik/lt-runs/pi-dot-local.ndjson. Bead: hk-vf4ju.
+#
+# The spec asserts gap1 beside gap6 for the same reason: the two gaps go red on OPPOSITE
+# orderings, so a stream checked by one of them alone can still be red in practice.
+GAP6='{"schema_version":1,"cell":"pi-dot:local","substrate":"local","seed_bead":"hk-clp-pidot","expect":{"harness_selected":{"agent_type":"pi","tier":1},"model_selected":{"harness":"pi","model":"ornith","no_leak_models":["claude-opus-4-8"]}},"gaps":["gap1","gap6"]}'
+check_detail "gap6 real round-trip pass" "$TD/pi-dot-roundtrip-pass.ndjson" "$GAP6" gap6 pass "resolved no model"
 check "gap6 no round-trip (first-pass APPROVE) fail" "$TD/pi-dot-noroundtrip-fail.ndjson" "$GAP6" gap6 fail
-check "gap6 same-model leak (claude) fail" "$TD/pi-dot-modelleak-fail.ndjson"  "$GAP6" gap6 fail
+# Two leak shapes, and they arrive on DIFFERENT harnesses. gap6 must catch both, which is why
+# its scope is the empty model string and NOT the harness family: gap1's family filter would
+# hide the first of these two.
+check_detail "gap6 foreign-harness model leak fail" "$TD/pi-dot-modelleak-fail.ndjson" "$GAP6" gap6 fail "claude-opus-4-8"
+check_detail "gap6 own-harness model leak fail"     "$TD/pi-dot-ownharness-modelleak-fail.ndjson" "$GAP6" gap6 fail "claude-opus-4-8"
+# gap1 on the same streams. The converged golden is the ordering in which the reviewer's
+# claude-code tier-3 event is the LAST harness_selected for the seed bead; gap1 must still
+# report the IMPLEMENTER's pi/tier-1 launch. The own-harness leak stream is the other side:
+# the pi harness is right and the model on it is not, so gap1 fails on no_leak_models.
+check_detail "gap1 on the converged round-trip reads the implementer, not the reviewer" \
+             "$TD/pi-dot-roundtrip-pass.ndjson" "$GAP6" gap1 pass "harness=pi tier=1"
+check_detail "gap1 own-harness model leak fail" \
+             "$TD/pi-dot-ownharness-modelleak-fail.ndjson" "$GAP6" gap1 fail "LEAKED into harness pi"
 
 echo "-----"
 echo "core-loop-assert self-test: pass=$pass fail=$fail"

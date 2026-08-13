@@ -659,12 +659,20 @@ twins: build-twin-generic build-twin-claude build-twin-pi build-twin-fail build-
 build-all: build twins  ## go build ./... + all twins (full build artifact set)
 
 # ---------------------------------------------------------------------------
-# Secret scan — blocks staging content that adds API keys, credential
-# patterns, or .env files. Invoked by the agent-driven validation command
-# (git hooks are retired); also callable standalone to audit a working tree.
+# Secret scan — refuses content that adds API keys, credential patterns, or
+# .env files.
+#
+# THIS TARGET IS THE STANDALONE ONE, and it is not where the scan runs. It reads
+# the INDEX, for use before a commit is made. The gates run AFTER the commit,
+# when the index is empty, so they call the script directly with a committed
+# scope: `--head-only` from gate-static and `--range` from full. Nothing depends
+# on this target, and from 2026-07-23, when lefthook was deleted, to 2026-08-12
+# nothing depended on the scan at all while four documents said it ran —
+# scripts/gate-fails-closed-test.sh now asserts both call sites are in the
+# expanded step list.
 # ---------------------------------------------------------------------------
 .PHONY: secret-scan
-secret-scan:  ## Scan staged diff for API keys / credentials / .env files
+secret-scan:  ## Scan the staged index for API keys / credentials / .env files (gates use --head-only / --range)
 	scripts/secret-scan.sh
 
 # ---------------------------------------------------------------------------
@@ -944,10 +952,26 @@ gate-static:  ## Shared static half of fast and full: format, build, vet, freeze
 	$(MAKE) script-tests
 	$(MAKE) fmt-check
 	# The commit just made must carry a well-formed message and honest review
-	# trailers. About a tenth of a second. This is the ONLY place a bad message
-	# fails a build, and the only moment failing is fair: the commit is yours,
-	# it is the tip, and amending it costs nothing.
+	# trailers. About a tenth of a second. This is the only place a bad message
+	# CAN fail a build, and the only moment failing is fair: the commit is
+	# yours, it is the tip, and amending it costs nothing.
+	#
+	# READ "CAN" AS THE WHOLE OF THE CLAIM. --head-only demotes itself to advice
+	# and exits 0 whenever the history does not descend from the message
+	# baseline named in that script, and that baseline is not an ancestor of
+	# main. So on main a bad message fails NOWHERE: this call goes advisory and
+	# the ledger call in `full` never fails by design. An earlier version of
+	# this comment said "the ONLY place a bad message fails a build" flatly,
+	# which reads as a guarantee that only holds on a branch that descends from
+	# the baseline. Bead hk-commit-msg-gate-advisory-on-main-ap068 is the record.
 	scripts/commit-msg-gate.sh --head-only
+	# The same moment, for credentials. --head-only, NOT the default index scope.
+	# The gates run after the commit is made, when the ordinary flow leaves
+	# nothing staged, so the index scope here would read whatever a developer
+	# happened to leave behind rather than the change under test. Not a
+	# GUARANTEED no-op — stage a key and the index scope does block it — but it
+	# answers a question nobody asked, and it is silent when it answers nothing.
+	scripts/secret-scan.sh --head-only
 	scripts/with-lane-gocache.sh go build ./...
 	scripts/with-lane-gocache.sh go vet ./...
 	scripts/with-lane-gocache.sh $(MAKE) vet-tagged
@@ -1157,8 +1181,24 @@ full:  ## THE merge decision: everything in fast over EVERY package, plus the li
 	# written and most of it arrived by merge, and amending a commit another
 	# lane can see is what this project refuses outright — so there is no legal
 	# repair for a bad message in there. A gate that refuses what cannot be
-	# fixed gets deleted, not obeyed. gate-static above is the enforcement.
+	# fixed gets deleted, not obeyed. gate-static above is where enforcement is
+	# MEANT to live — and on main it does not, because --head-only goes advisory
+	# off the message baseline and this ledger call never fails by design, so on
+	# main neither mode blocks anything. An earlier version of this line said
+	# "gate-static above is the enforcement" without that qualifier. Bead
+	# hk-commit-msg-gate-advisory-on-main-ap068 is the record.
 	scripts/commit-msg-gate.sh
+	# The credential scan, and this one FAILS. NOT the same span as the message
+	# ledger above: the two scripts name different baselines. The credential
+	# baseline is the older of the two, so the message ledger's span nests
+	# INSIDE this one (measured 2026-08-12) and this one is by far the wider.
+	# Exact commit counts are not quoted here because they move with every
+	# commit. This one fails where the ledger only reports, because a bad
+	# message on a merged commit has no legal repair and a leaked key has one —
+	# rotate it, and take the value out of the tree before the merge lands — so
+	# refusing here is a demand that can be met. About 5 to 6 seconds over the
+	# two hundred thousand-odd added lines this branch carries.
+	scripts/secret-scan.sh --range
 	$(MAKE) gate-test-compile
 	$(call RUN_TESTS_AND_REPORT,make full,./...,-short)
 	$(MAKE) lint-allow
@@ -1467,10 +1507,15 @@ review-verdict:  ## Cross-check diff-keyed verdict: APPROVE → pass; absent/REQ
 # Pins dev tools into ./.tools/ to avoid polluting the global GOPATH.
 # Fresh-clone setup: make bootstrap  (installs tools)
 #
-# NOTE: git hooks are RETIRED. lefthook (and its self-re-arming `install`)
-# was removed — validation now runs via the agent-driven validation command,
-# not a pre-commit/pre-push/commit-msg hook. scripts/validate-commit-msg.sh
-# and scripts/secret-scan.sh remain callable directly by that command.
+# NOTE: git hooks are RETIRED. lefthook (and its self-re-arming `install`) was
+# removed — validation runs from the two gate targets, not from a
+# pre-commit/pre-push/commit-msg hook. gate-static calls
+# scripts/commit-msg-gate.sh --head-only and scripts/secret-scan.sh --head-only
+# over the commit just made. `make full` adds scripts/commit-msg-gate.sh with no
+# argument (the message ledger, which reports and never fails) and
+# scripts/secret-scan.sh --range (which fails on a finding).
+# scripts/validate-commit-msg.sh stays callable on a message file, and
+# scripts/secret-scan.sh stays callable with no argument, which reads the index.
 # ---------------------------------------------------------------------------
 .PHONY: tools
 tools:  ## Install pinned dev tools into ./.tools/ (gofumpt, gci, golangci-lint, govulncheck, deadcode)

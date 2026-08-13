@@ -108,7 +108,7 @@ The single authoritative map of **which test tier runs where** and **which tier 
 | §1–§5 unit / integration / scenario(in-proc) / crash-recovery(fast) / property — via `-short` | `make full` | `ci.yml` → *make full* | **Yes** — blocks merge |
 | gofumpt+gci / vet / build / golangci-lint | `make fast` (inside `make full`) | `ci.yml` → *make full* | **Yes** |
 | Core set (CHARTER §3 pipeline) **with no `-short`** — the real-daemon E2E tier included | `make core` | *(none — local / assessor)* | Assessor sign-off gate. This is the target that answers "can this run beads through the queue?", so it runs the 45 tests `-short` skips, `TestScenario_HappyPath_N1` and `TestSmokeLoop` among them. About 250s. |
-| commit-message trailers / secret scan | `scripts/validate-commit-msg.sh` · `make secret-scan` (via `/check`) | *(agent-driven; git hooks retired)* | No |
+| commit-message trailers / secret scan | `scripts/commit-msg-gate.sh --head-only` and `scripts/secret-scan.sh --head-only`, both from `gate-static`, so both run in `make fast` and `make full`; `make full` adds `scripts/commit-msg-gate.sh` (the ledger, reports only) and `scripts/secret-scan.sh --range` (fails) | `ci.yml` → *make full* | **Partly** — a credential finding fails the build; the message gate can go advisory. Both are narrower than they look on `main`: see the note under this table. |
 | §3 scenario suite (full, `-tags=scenario`, incl. `internal/daemon` scenario files) | `make test-scenario` | `scenario.yml` → *scenario (Tier 3)* | **No today** (`continue-on-error`); WS1.1 flips the **`./test/scenario/...`-only** invocation to a required check — never the daemon bundle, which `t.Skipf`s green on sshd-less runners |
 | full `-race`, no `-short`, uncapped parallel | `make test-race-nightly` | `nightly-race.yml` | No (nightly shake-out) |
 | §6 Docker cross-container remote-substrate E2E | `make test-docker-e2e` | *(none — local / assessor-forced)* | Assessor gate, not CI |
@@ -117,6 +117,12 @@ The single authoritative map of **which test tier runs where** and **which tier 
 | Real-agent conformance (twin↔real) | *(rare, expensive)* | *(none — on-demand)* | Assessor gate, not CI |
 
 The localhost-SSH + Docker + subprocess tiers are **the assessor's forced-local gate**, deliberately kept off the CI required-check path (a broken host loopback must fail loud locally, never mask a regression as a green CI skip — see §6).
+
+**The credential scan's `--range` scope is narrower than it looks.** A finding fails the build in any of its three scopes. `--range` measures against a baseline commit named in `scripts/secret-scan.sh`. When that baseline is not an ancestor of the branch being built, the scan reads the tip commit alone and can report clean on a tree that holds a key.
+
+The baseline is **not** an ancestor of `main`, so on `main` and on any lane branched from `main` that has not merged in a branch carrying it, the range scope is the tip, not the branch. The credential scan's `--head-only` is unaffected — it consults no baseline — and carries the weight there. Do not read "unaffected" as "every commit passes through it": it reads `HEAD` at the moment a gate runs, so a CI run over a push of five commits reads the tip and never reads the other four, and on a pull-request run `actions/checkout` builds a merge commit so the same flag reads the whole PR diff. What it covers depends on how the branch reached CI. Bead `hk-254ea` is the record of the gap.
+
+**The commit-message gate has the same gap, and it has no mode left that blocks.** Its ledger mode reports and never fails, which is intended. Its `--head-only` mode is meant to be the enforcing one, but it demotes itself to advice and exits 0 whenever the history does not descend from the message baseline — and that baseline is not an ancestor of `main` either. Measured 2026-08-12: the same invalid message exits 1 on this integration branch and 0 on a history that does not descend from the baseline. So on `main` the commit-message gate passes any message at all. Bead `hk-commit-msg-gate-advisory-on-main-ap068` is the record. `docs/foundation/project-level/build-practices.md` §"Git hooks are retired" holds the full statement for both gates.
 
 ### Risk-tiering rule — which tier a change must clear
 

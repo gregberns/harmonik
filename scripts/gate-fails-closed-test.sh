@@ -265,6 +265,143 @@ for target in fast full; do
     fi
 done
 
+# ---------------------------------------------------------------------------
+# STRUCTURAL — the checks that refuse a commit must actually be CALLED.
+#
+# WHY THIS SHAPE OF ASSERTION. scripts/secret-scan.sh had no caller for twenty
+# days, from 2026-07-23 to 2026-08-12. `make -n fast`, `make -n full`, `make -n
+# gate-static` and `make -n core` held zero occurrences of its name; the only
+# invocation anywhere was a leaf `make secret-scan` target that nothing depended
+# on, while four documents said it ran via the gates. It had no unit test at all
+# for that whole span, and when one was written it found the scan admitting a
+# key — so "a working scan that nobody called", which an earlier draft of this
+# comment said, was wrong twice over. Either way no test OF a script can tell
+# whether anything calls the script. This reads the expanded step list, which is
+# the only place that answer lives.
+#
+# It is written as a class, not as one instance: every entry below is a check
+# whose whole value is that a gate runs it. The entries are not equally strong,
+# though. Each is a substring match against the expanded step list, and the
+# blind spot named in scripts/secret-scan.sh applies to all of them — a step
+# make is told to ignore prints the same as one it obeys.
+# ---------------------------------------------------------------------------
+# runs_command <step-list> <needle> — true when a step that REALLY RUNS holds
+# the needle.
+#
+# THE COMMENT STRIP IS THE WHOLE POINT. `make -n` prints a recipe's comment
+# lines verbatim, so a gate switched off the ordinary way —
+#
+#     # scripts/secret-scan.sh --head-only
+#
+# — is still in the expanded step list, and a plain name match calls it wired
+# while it runs nothing. Deleting the line was caught and dropping the flag was
+# caught; only the commented form went through, and commenting out is how a
+# gate is switched off in practice. The strip now exists, so the state that
+# demonstrated the gap cannot be reached from this tree and no assertion here
+# reproduces it — do not read the paragraph above as a live measurement. What
+# IS reproducible is the self-test below, which feeds runs_command a live step,
+# a commented step, an indented commented step and an empty list, and reddens
+# if the strip is put back to a plain name match.
+#
+# An empty step list is a refusal, not a pass. A here-string of an empty capture
+# is one EMPTY line, so a match against it can look like an answer when nothing
+# was read.
+runs_command() {
+    local steps="$1" needle="$2" live
+    [ -n "$steps" ] || return 1
+    live=$(printf '%s\n' "$steps" | grep -vE '^[[:space:]]*#')
+    [ -n "$live" ] || return 1
+    # A here-string, not a pipe. `grep -q` leaves at the first match and the
+    # writer of a pipe would die of SIGPIPE, which `pipefail` reports as the
+    # status of the whole pipeline — a MATCH coming back as a failure. The step
+    # list is tens of kilobytes, which is exactly the size where that bites.
+    grep -qF -- "$needle" <<<"$live"
+}
+
+wiring_case() {
+    # wiring_case <target> <expected-substring> <why>
+    local target="$1" needle="$2" why="$3"
+    assertions=$((assertions + 1))
+    local steps
+    steps=$(HARMONIK_GATE_SELFTEST=1 make -n "$target" 2>/dev/null)
+    if [ -z "$steps" ]; then
+        fail "wiring: 'make -n $target' produced nothing, so nothing was checked"
+        return
+    fi
+    if runs_command "$steps" "$needle"; then
+        pass "wiring: 'make $target' runs '$needle' — $why"
+    else
+        fail "wiring: 'make $target' does NOT run '$needle'. $why"
+    fi
+}
+
+# Every wiring assertion in this file rests on runs_command telling a live step
+# from a commented one, so that is asserted rather than assumed. Four synthetic
+# step lists, one behaviour each. Put the strip back to a plain name match and
+# this goes red.
+assertions=$((assertions + 1))
+selftest_needle='scripts/secret-scan.sh --head-only'
+selftest_live=$(printf 'go build ./...\n%s\ngo vet ./...\n' "$selftest_needle")
+selftest_commented=$(printf 'go build ./...\n# %s\ngo vet ./...\n' "$selftest_needle")
+selftest_indented=$(printf 'go build ./...\n\t  #%s\ngo vet ./...\n' "$selftest_needle")
+selftest_broken=''
+runs_command "$selftest_live" "$selftest_needle" \
+    || selftest_broken="$selftest_broken a step that runs was not found;"
+runs_command "$selftest_commented" "$selftest_needle" \
+    && selftest_broken="$selftest_broken a commented-out step read as wired;"
+runs_command "$selftest_indented" "$selftest_needle" \
+    && selftest_broken="$selftest_broken an indented commented-out step read as wired;"
+runs_command "" "$selftest_needle" \
+    && selftest_broken="$selftest_broken an empty step list read as wired;"
+if [ -n "$selftest_broken" ]; then
+    fail "wiring: the wiring check itself cannot tell a live step from a comment —$selftest_broken every wiring assertion below is worthless"
+else
+    pass "wiring: the wiring check finds a step that runs, and refuses a commented one and an empty list"
+fi
+
+# The credential scan, at both ends. --head-only in the inner loop, because the
+# commit is the tip and amending it costs nothing; --range in the merge
+# decision, because a secret can arrive by merge from a lane whose own
+# gate-static never ran.
+#
+# The flag is part of each assertion and not decoration. The script's DEFAULT
+# scope is the staged index, and every gate here runs after the commit is made,
+# when the ordinary flow leaves nothing staged. A bare `scripts/secret-scan.sh`
+# in either target would read whatever a developer happened to leave in the
+# index rather than the change under test. It is not a call site that CAN never
+# find anything — stage a key and it does block — but it answers a question
+# nobody asked, and it is silent when it answers nothing.
+wiring_case gate-static 'scripts/secret-scan.sh --head-only' \
+    'a credential added by the commit just made must fail the inner loop'
+wiring_case full 'scripts/secret-scan.sh --range' \
+    'the merge decision must read every line this branch adds, including whatever arrived by merge'
+
+# The commit-message tip check, for the same reason: it is the only place a bad
+# message or a fabricated review trailer fails a build.
+wiring_case gate-static 'scripts/commit-msg-gate.sh --head-only' \
+    'a fabricated review trailer on the commit just made must fail the inner loop'
+
+# END TO END, against what `make -n` really prints rather than a synthetic list.
+# Take the real gate-static expansion, comment out the credential scan in the
+# copy exactly as a person switching it off would, and require the wiring check
+# to say NO. The mutation is verified to have changed something first: a
+# replacement that matched nothing would leave this "passing" while measuring
+# nothing, which is the same defect the whole file is about.
+assertions=$((assertions + 1))
+e2e_needle='scripts/secret-scan.sh --head-only'
+e2e_steps=$(HARMONIK_GATE_SELFTEST=1 make -n gate-static 2>/dev/null)
+e2e_disabled=$(printf '%s\n' "$e2e_steps" \
+    | awk -v n="$e2e_needle" '$0 == n { print "# " $0; next } { print }')
+if [ -z "$e2e_steps" ]; then
+    fail "wiring end-to-end: 'make -n gate-static' produced nothing, so nothing was checked"
+elif [ "$e2e_disabled" = "$e2e_steps" ]; then
+    fail "wiring end-to-end: commenting out '$e2e_needle' changed nothing, so this case measures nothing"
+elif runs_command "$e2e_disabled" "$e2e_needle"; then
+    fail "wiring end-to-end: '$e2e_needle' commented out in the real step list still reads as wired — the credential scan can be switched off with every assertion here green"
+else
+    pass "wiring end-to-end: '$e2e_needle' commented out in the real step list reads as NOT wired"
+fi
+
 # The gate that was removed must not come back through a side door. Go code
 # names scripts as string literals, so a resurrected caller breaks at run time
 # rather than at build time.
@@ -291,8 +428,8 @@ fi
 
 # ---------------------------------------------------------------------------
 printf 'gate-fails-closed-test: %d assertions, %d failed\n' "$assertions" "$failures"
-if [ "$assertions" -lt 10 ]; then
-    printf 'gate-fails-closed-test: only %d assertions ran; this file expects 10\n' "$assertions" >&2
+if [ "$assertions" -lt 17 ]; then
+    printf 'gate-fails-closed-test: only %d assertions ran; this file expects 17\n' "$assertions" >&2
     exit 1
 fi
 [ "$failures" -eq 0 ]

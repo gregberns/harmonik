@@ -162,14 +162,21 @@ func gateFatalf(t *testing.T, format string, args ...any) {
 // identical to what that run wrote. The 2026-08-12 gate log IS kept, and this
 // comment used to say it was gone — an assertion made without looking, in the
 // one file whose whole subject is a comment that overran its code. Recover it
-// and read the line for yourself:
+// and read the line for yourself. The commit is reachable from branch
+// work/bravo-reachability, which is what to check out first if git ever answers
+// `bad object` — the log is kept, but nothing here makes that permanent:
 //
 //	git show 6c0454eab:assessments/2026-08-12-1400-alpha-fixes-and-second-live-run/evidence/commit_gate.log.gz |
 //	  gunzip | sed -n 3869p
 //
-// That is 17,214 lines, with the diagnostic 13,345 lines from the end — the
-// distance the old whole-log scan reached past the real failure. The difference
-// from the fixture is the temp path, shortened here.
+// That is 17,214 lines, with the diagnostic at line 3869 and so 13,345 lines
+// SHORT of the end. Short of, not past: the old detector scanned FORWARD from
+// the top and returned on its first match, so it answered from this line and
+// never read the real cascade 13,345 lines further down. The scan that replaced
+// it starts at the end for exactly that reason.
+//
+// The fixture differs from that line only inside the gate-log path, in two
+// places — the $TMPDIR hash segment, and the run id, cut to its first field.
 //
 // The test needs only one property from it — that it matches the detector BY
 // CONTENT, a raw anchor and a signal word on one line — and it asserts that

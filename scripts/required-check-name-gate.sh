@@ -47,12 +47,63 @@
 #
 #   It does NOT read: anchors, aliases, merge keys, explicit tags, more than
 #   one document per file, quoted scalars that continue onto a second line, or
-#   tabs used as indentation. It REFUSES the file when it meets one, and the
-#   gate fails. Failing closed on a construct the reader does not know is the
-#   whole point: the old gate passed a file that was not valid YAML at all.
-#   A folded scalar over several lines is folded approximately; job names are
-#   one line, so this has never mattered, but it is not a general YAML parser
-#   and must not be reused as one.
+#   tabs used as structural indentation. Inside a block scalar a tab is CONTENT
+#   once the scalar's content indent is fixed and the tab sits at or past it, so
+#   a `run: |` step that carries a Makefile recipe or a heredoc body is read,
+#   not refused. A tab LEFT of that column is indentation — and so is a tab on
+#   the FIRST content line of a scalar whose indent is not fixed yet, because
+#   the column that line sets is measured in spaces and a tab sets nothing.
+#   libyaml refuses both ("found a tab character where an indentation space is
+#   expected"), so GitHub refuses the whole workflow, no run starts, and the
+#   required context is pending forever — the wedge itself, arriving through a
+#   file this gate would otherwise have called fine. An explicit indicator
+#   (`|2`) fixes the indent in the header before any content line is read, so a
+#   tab on the first content line of one of THOSE is content and is read.
+#
+#   It REFUSES the file when it meets a construct on the list above. Failing
+#   closed on a construct the reader does not know is the whole point: the old
+#   gate passed a file that was not valid YAML at all. A folded scalar over
+#   several lines is folded approximately; job names are one line, so this has
+#   never mattered, but it is not a general YAML parser and must not be reused
+#   as one.
+#
+#   It also refuses a duplicate key in one mapping, because GitHub does. Two
+#   `jobs:` blocks in one file is what a badly resolved merge conflict looks
+#   like, GitHub rejects the whole workflow, no run starts, and the required
+#   context is then pending forever. Reading it as last-wins would make this
+#   gate's answer depend on which copy came last.
+#
+#   THE READER MUST ALWAYS FINISH. This gate runs inside `make full`, which is
+#   the merge decision, and `ci.yml` declares no `timeout-minutes`, so a hang
+#   here stops every developer and sits in CI until GitHub's six-hour default.
+#   The flow-collection scanner used to return with its index unchanged on
+#   input like `[a:b]`, `[a}` or `run: [[ -n "$X" ]] && make full`, and spun
+#   forever. Every one of those is a syntax error to a real YAML parser too, so
+#   `scan_flow` now refuses any character it cannot get past, and treats an
+#   iteration that consumed nothing as a parse error rather than a loop.
+#
+#   Finishing is about time, not only about loops. `scan_plain_key` is a scan
+#   and not a regular expression for that reason: the pattern it replaced
+#   (`^([^\s:#][^:#]*?)\s*:(?=\s|$)`) let two of its parts match the same run
+#   of whitespace, so a line carrying a long run of it and no `key:` took time
+#   quadratic in the length of that line — 20 KB of it ran for 0.9s, 40 KB for
+#   3.7s, and 300 KB did not finish inside ten seconds. A scan reads each
+#   character once. Depth is bounded by Python's own recursion limit, and a
+#   file that nests past it is refused with a reason like every other refusal
+#   here, not with a traceback.
+#
+# WHAT ONE UNREADABLE FILE DOES. It does not, on its own, redden the gate. A
+# workflow the reader refuses is named on stderr and set aside; if some OTHER
+# workflow still declares a job that satisfies every rule below, the required
+# context arrives and the gate agrees. The refusal is scoped this way because
+# an anchor in an unrelated dependabot-style workflow used to redden a gate
+# whose subject is one job in `ci.yml`, and a gate that goes red for reasons
+# unrelated to its subject is one people learn to route around. Two things keep
+# it closed: an unreadable file is fatal when nothing else carries the context
+# (it might have been the file meant to), and it is fatal even beside a healthy
+# workflow when its raw text mentions REQUIRED_CONTEXT, because then it might
+# be a second job under the same name and the gate cannot tell which check run
+# GitHub would grade.
 #
 # WHAT IT CHECKS. Some job, in some workflow file under the scanned root, must
 # satisfy every one of these:
@@ -74,8 +125,12 @@
 #   7. The job declares no job-level `if:`. The gate cannot evaluate an Actions
 #      expression, and a conditional required job either fails to report or
 #      reports without doing the work. Neither is what protection bought.
-#   8. The job is not `continue-on-error: true`, which reports success on every
-#      REST surface after a real failure.
+#   8. Neither the job nor the step that runs REQUIRED_COMMAND carries
+#      `continue-on-error`, which reports success on every REST surface after a
+#      real failure. The STEP is checked because that is where every instance
+#      of this in this repo's history was written — on ci.yml's own step, and
+#      on the scenario.yml step that reported 20 straight real failures as
+#      green. A job-level-only rule would have passed all of them.
 #   9. The job runs REQUIRED_COMMAND in one of its steps, and that step carries
 #      no `if:` either. This is what tells a real gate from a decoy that
 #      carries the name and runs `true`, and it is checked at the step level
@@ -83,6 +138,17 @@
 #      one line. It is a substring match on the step's `run:`, so a workflow
 #      that only MENTIONS the command in an echo satisfies it. The gate says
 #      the command appears; it cannot say the command does anything.
+#  10. Every job in that workflow declares `runs-on:` (or delegates with
+#      `uses:`). This is the one INVALIDITY check. The nine rules above all
+#      describe ways a VALID workflow loses the context; a workflow GitHub
+#      refuses loses it just as completely, because no run starts and no check
+#      run is ever created. One bad job kills the whole file, so a sibling job
+#      counts.
+#  11. No job the job `needs:`, at any depth, carries a job-level `if:`, and
+#      every job it needs exists. A skipped dependency skips this job, GitHub
+#      reports the required check as SKIPPED, and branch protection reads a
+#      skipped required check as satisfied. That is rule 7's failure one hop
+#      away, and it ends with a merge nobody decided on.
 #
 # A workflow file that holds no YAML mapping at all — empty, or nothing but
 # comments — is refused with the rest, for the same reason: the gate cannot
@@ -153,9 +219,31 @@ class YamlError(Exception):
     pass
 
 
-_PLAIN_KEY = re.compile(r'^([^\s:#][^:#]*?)\s*:(?=\s|$)')
 _UNSUPPORTED_START = re.compile(r'^[&*!]')
 _COMMENT_SPLIT = re.compile(r'(?:^|\s)#')
+
+
+def scan_plain_key(body):
+    """The `key:` half of a plain `key: value` line, or (None, None).
+
+    A key runs up to the first `:` that a space or the end of the line
+    follows, carries no `:` or `#` of its own, and does not open with
+    whitespace. That is exactly the language the regular expression here used
+    to describe, and this reads it in one pass. The regular expression could
+    not: `[^:#]*?` and `\\s*` both matched whitespace, so every space in a long
+    run was another split point to try, and a line with no `key:` on it cost
+    time quadratic in its length. This gate is inside the merge decision.
+    """
+    if not body or body[0].isspace() or body[0] in ":#":
+        return None, None
+    for i, c in enumerate(body):
+        if c == "#":
+            return None, None
+        if c == ":":
+            if i + 1 < len(body) and not body[i + 1].isspace():
+                return None, None
+            return body[:i], body[i + 1:]
+    return None, None
 
 
 def resolve_plain(text):
@@ -192,9 +280,17 @@ class Reader(object):
             else:
                 return
 
+    def indent_width(self, line):
+        """Column of the first character that is not a space. No tab check:
+        this is the measurement block-scalar CONTENT needs, where a tab past
+        the content indent is ordinary text — a Makefile recipe, a heredoc
+        body — and legal YAML. `indent_of` is the structural measurement."""
+        s = self.lines[line]
+        return len(s) - len(s.lstrip(" "))
+
     def indent_of(self, line):
         s = self.lines[line]
-        width = len(s) - len(s.lstrip(" "))
+        width = self.indent_width(line)
         if s[width:width + 1] == "\t":
             self.err("a tab is used for indentation; YAML forbids it and this "
                      "reader will not guess what it meant", line)
@@ -250,6 +346,15 @@ class Reader(object):
             if not ok:
                 self.err("this line is not a mapping key and this reader does "
                          "not understand it")
+            if key in out:
+                # GitHub refuses a workflow with a duplicate key outright:
+                # "'jobs' is already defined". No run starts, no check run is
+                # created, and the required context is pending forever. Reading
+                # it as last-wins would make this gate's answer depend on which
+                # copy of a badly merged block happened to come second.
+                self.err("the key '%s' is defined twice in one mapping; GitHub "
+                         "refuses the whole workflow, so no run starts and no "
+                         "check run is ever created" % key)
             self.i += 1
             out[key] = self.parse_value(rest, indent)
         return out
@@ -261,10 +366,10 @@ class Reader(object):
             if not after.startswith(":"):
                 return None, None, False
             return value, after[1:], True
-        m = _PLAIN_KEY.match(body)
-        if not m:
+        key, rest = scan_plain_key(body)
+        if key is None:
             return None, None, False
-        return m.group(1).strip(), body[m.end():], True
+        return key.strip(), rest, True
 
     def parse_value(self, rest, indent):
         s = rest.strip()
@@ -400,18 +505,42 @@ class Reader(object):
             if s[i] == ",":
                 i += 1
                 continue
-            value, i = self.scan_flow_scalar(s, i, line)
+            start = i
+            value, i = self.scan_flow_entry(s, i, line)
             while i < len(s) and s[i] in " \t":
                 i += 1
             if opener == "{" and i < len(s) and s[i] == ":":
                 i += 1
                 while i < len(s) and s[i] in " \t":
                     i += 1
-                inner, i = self.scan_flow_scalar(s, i, line)
+                inner, i = self.scan_flow_entry(s, i, line)
                 mapping[value if isinstance(value, str) else str(value)] = inner
             else:
                 seq.append(value)
+            if i <= start:
+                # Belt and braces. Every branch above is meant to consume at
+                # least one character. This turns a future branch that does not
+                # into a refusal instead of a hang: the gate runs inside `make
+                # full`, and a merge decision that never finishes is worse than
+                # one that says no.
+                self.err("this reader cannot get past %r inside a flow "
+                         "collection, so the file is refused rather than read "
+                         "as something it is not" % s[start:start + 1], line)
         return (mapping if opener == "{" else seq), i
+
+    def scan_flow_entry(self, s, i, line):
+        """One value inside a flow collection, with the guarantee the caller
+        needs: it consumes a character, or the file is refused. A value that
+        reads as empty is legal only where the next character ends the entry
+        (`[a, ]`). Anywhere else the character is one a real YAML parser also
+        refuses — `[a:b]`, `{a: b: c}` and `run: [[ -n "$X" ]]` are all syntax
+        errors — and returning with the index unchanged used to hang."""
+        value, j = self.scan_flow_scalar(s, i, line)
+        if j == i and (j >= len(s) or s[j] not in ",]}"):
+            self.err("a flow collection contains %r where this reader expects "
+                     "a value, a comma or a closing bracket"
+                     % s[j:j + 1], line)
+        return value, j
 
     def scan_flow_scalar(self, s, i, line):
         if _UNSUPPORTED_START.match(s[i:]):
@@ -439,19 +568,41 @@ class Reader(object):
             else:
                 self.err("the block scalar header '%s' is not understood" % header)
         raw = []
-        content_indent = None
+        # An explicit indicator fixes the content indent in the header, before
+        # any content line is read. With no indicator it is not fixed until the
+        # first non-empty line, and it is that line's SPACES that fix it.
+        content_indent = indent + explicit if explicit else None
         while self.i < len(self.lines):
             line = self.lines[self.i]
-            if line.strip() == "":
+            blank = line.strip() == ""
+            width = self.indent_width(self.i)
+            if not blank and width <= indent:
+                # The line sits left of the key that owns the scalar, so it
+                # ends it. The structural reader picks it up from here and
+                # refuses a tab there in its own words.
+                break
+            # indent_width, not indent_of: a tab AT OR PAST the content indent
+            # is ordinary text — a Makefile recipe, a heredoc body — and legal
+            # YAML. A tab left of that column is indentation, and so is a tab on
+            # the first content line of a scalar whose indent is not fixed yet,
+            # because that line fixes the column by its spaces. libyaml refuses
+            # both, GitHub then refuses the whole workflow, and a gate that said
+            # ok has produced the pending-forever context it exists to prevent.
+            # A whitespace-only line is checked too: libyaml reads its
+            # indentation like any other line's.
+            if line[width:width + 1] == "\t" and (
+                    content_indent is None or width < content_indent):
+                self.err("a tab appears in a block scalar's indentation; YAML "
+                         "measures that indentation in spaces only, so GitHub "
+                         "refuses the whole workflow file and no check run is "
+                         "ever created", self.i)
+            if blank:
                 raw.append("")
                 self.i += 1
                 continue
-            cur = self.indent_of(self.i)
-            if cur <= indent:
-                break
             if content_indent is None:
-                content_indent = indent + explicit if explicit else cur
-            if cur < content_indent:
+                content_indent = width
+            if width < content_indent:
                 break
             raw.append(line[content_indent:])
             self.i += 1
@@ -477,10 +628,40 @@ class Reader(object):
         return text + "\n"
 
 
-def parse_workflow(path):
-    with open(path, "r") as fh:
-        text = fh.read()
-    return Reader(text, path).parse_document()
+def read_workflow(path):
+    """(contexts, candidates, reason, text). When reason is not None the file
+    could not be read and nothing from it is usable."""
+    try:
+        with open(path, "r") as fh:
+            text = fh.read()
+    except OSError as exc:
+        return [], [], "cannot be read: %s" % exc, ""
+    try:
+        doc = Reader(text, path).parse_document()
+    except YamlError as exc:
+        return [], [], "cannot be parsed: %s" % exc, text
+    except RecursionError:
+        # Fails closed either way, but every other refusal here names a reason
+        # and a traceback names none. A reader that ran out of stack has not
+        # read the file, which is all this gate needs to say.
+        return [], [], ("cannot be parsed: it nests deeper than this reader "
+                        "follows, so the reader ran out of stack before it "
+                        "read any job"), text
+    if not isinstance(doc, dict):
+        return [], [], "does not parse as a YAML mapping, so it declares no jobs", text
+    jobs = doc.get("jobs")
+    if not isinstance(jobs, dict):
+        return [], [], None, text
+    contexts = []
+    candidates = []
+    for job_id, job in jobs.items():
+        if not isinstance(job, dict):
+            return [], [], "job '%s' does not parse as a mapping" % job_id, text
+        context = reported_context(job_id, job)
+        contexts.append((path, job_id, context))
+        if context == REQUIRED_CONTEXT:
+            candidates.append((path, job_id, job, doc))
+    return contexts, candidates, None, text
 
 
 # ---- what GitHub would do with the parsed workflow ---------------------
@@ -546,8 +727,29 @@ def reported_context(job_id, job):
     return job_id
 
 
+def declares_runner(job):
+    """True when GitHub would accept the job. A job either names a runner or
+    delegates with `uses:`; one that does neither is a workflow-level syntax
+    error, so the run never starts and no check run is created."""
+    if "uses" in job:
+        return True
+    runs_on = job.get("runs-on")
+    return runs_on is not None and runs_on != "" and runs_on != [] and runs_on != {}
+
+
+def needs_of(job):
+    spec = job.get("needs")
+    if spec is None:
+        return []
+    if isinstance(spec, list):
+        return [str(n) for n in spec if n is not None]
+    return [str(spec)]
+
+
 def job_problems(doc, job, path):
     problems = []
+    jobs = doc.get("jobs") if isinstance(doc, dict) else None
+    jobs = jobs if isinstance(jobs, dict) else {}
 
     present, cfg = pull_request_trigger(doc)
     if not present:
@@ -590,17 +792,68 @@ def job_problems(doc, job, path):
             "it carries continue-on-error, which reports success on every REST "
             "surface after a real failure")
 
+    # The one invalidity check. Rules above describe ways a VALID workflow
+    # loses the context; a workflow GitHub refuses loses it just as completely.
+    # One bad job kills the whole file, so a sibling counts.
+    if not declares_runner(job):
+        problems.append(
+            "it declares no runs-on:, so GitHub refuses the whole workflow "
+            "file, no run starts and no check run is ever created")
+    for other_id, other in jobs.items():
+        if other is job or not isinstance(other, dict):
+            continue
+        if not declares_runner(other):
+            problems.append(
+                "job '%s' in the same workflow declares no runs-on:, so GitHub "
+                "refuses the whole workflow file and this job never runs either"
+                % other_id)
+
+    # Rule 7 one hop away. A skipped dependency skips this job; GitHub reports
+    # the required check as skipped; branch protection reads a skipped required
+    # check as satisfied. `seen` also makes a needs: cycle terminate.
+    seen = set()
+    queue = needs_of(job)
+    while queue:
+        dep_id = queue.pop(0)
+        if dep_id in seen:
+            continue
+        seen.add(dep_id)
+        dep = jobs.get(dep_id)
+        if not isinstance(dep, dict):
+            problems.append(
+                "it needs job '%s', which this workflow does not declare, so "
+                "GitHub refuses the whole workflow file and no check run is "
+                "ever created" % dep_id)
+            continue
+        if "if" in dep:
+            problems.append(
+                "it needs job '%s', which carries a job-level if:. When that "
+                "job is skipped this one is skipped with it, GitHub reports "
+                "the required context as skipped, and branch protection reads "
+                "a skipped required check as satisfied — so the merge decision "
+                "is never made" % dep_id)
+        queue.extend(needs_of(dep))
+
     if "uses" in job:
         problems.append(
-            "it delegates to a reusable workflow, which this gate does not "
-            "follow, so it cannot confirm the job runs '%s'" % REQUIRED_COMMAND)
+            "it delegates to a reusable workflow. A calling job reports its "
+            "child jobs under composed names, '<job name> / <child job name>', "
+            "so the bare context '%s' is never reported at all — and this gate "
+            "does not follow the child, so it cannot confirm '%s' runs there "
+            "either" % (REQUIRED_CONTEXT, REQUIRED_COMMAND))
     else:
         steps = job.get("steps")
         steps = steps if isinstance(steps, list) else []
         runs_it = False
         guarded = False
+        masked = False
+        delegated = []
         for step in steps:
-            if not isinstance(step, dict) or not isinstance(step.get("run"), str):
+            if not isinstance(step, dict):
+                continue
+            if isinstance(step.get("uses"), str):
+                delegated.append(step["uses"])
+            if not isinstance(step.get("run"), str):
                 continue
             if REQUIRED_COMMAND not in step["run"]:
                 continue
@@ -609,6 +862,13 @@ def job_problems(doc, job, path):
                 # this the job-level rule is defeated by a one-line edit.
                 guarded = True
                 continue
+            if "continue-on-error" in step and step["continue-on-error"] is not False:
+                # Same masking as the job-level flag, moved down one line, and
+                # this is the line every real instance of it in this repo was
+                # written on. The step fails, the job still reports success,
+                # and the required context arrives green.
+                masked = True
+                continue
             runs_it = True
             break
         if not runs_it and guarded:
@@ -616,10 +876,28 @@ def job_problems(doc, job, path):
                 "every step that invokes '%s' carries a step-level if:, which "
                 "this gate cannot evaluate, so the job can report the required "
                 "context without making the merge decision" % REQUIRED_COMMAND)
-        elif not runs_it:
+        if not runs_it and masked:
             problems.append(
-                "it runs no step that invokes '%s', so it carries the required "
-                "context without making the merge decision" % REQUIRED_COMMAND)
+                "every step that invokes '%s' carries continue-on-error, so "
+                "the step can fail while the job reports success and the "
+                "required context arrives green after a real failure"
+                % REQUIRED_COMMAND)
+        if not runs_it and not guarded and not masked:
+            if delegated:
+                # Say only what the gate can see. It cannot read a composite
+                # action, so "it runs no step that invokes make full" would be
+                # a stronger claim than it can support.
+                problems.append(
+                    "it runs no step that invokes '%s' directly, and it calls "
+                    "%s, which this gate does not follow, so it cannot confirm "
+                    "the job makes the merge decision"
+                    % (REQUIRED_COMMAND,
+                       ", ".join("'%s'" % u for u in delegated)))
+            else:
+                problems.append(
+                    "it runs no step that invokes '%s', so it carries the "
+                    "required context without making the merge decision"
+                    % REQUIRED_COMMAND)
 
     return problems
 
@@ -627,41 +905,57 @@ def job_problems(doc, job, path):
 def main(paths):
     contexts = []          # (path, job_id, context)
     candidates = []        # (path, job_id, job, doc)
+    unreadable = []        # (path, reason, mentions_required_context)
 
     for path in paths:
-        try:
-            doc = parse_workflow(path)
-        except YamlError as exc:
-            print("%s: FAIL — %s cannot be parsed: %s" % (PREFIX, path, exc),
-                  file=sys.stderr)
-            print("  A workflow this gate cannot read is a workflow it cannot "
-                  "vouch for, so it refuses rather than passing on a guess.",
-                  file=sys.stderr)
-            return 1
-        except OSError as exc:
-            print("%s: FAIL — %s cannot be read: %s" % (PREFIX, path, exc),
-                  file=sys.stderr)
-            return 1
-
-        if not isinstance(doc, dict):
-            print("%s: FAIL — %s does not parse as a YAML mapping, so it "
-                  "declares no jobs" % (PREFIX, path), file=sys.stderr)
-            return 1
-
-        jobs = doc.get("jobs")
-        if not isinstance(jobs, dict):
+        file_contexts, file_candidates, reason, text = read_workflow(path)
+        if reason is not None:
+            unreadable.append((path, reason, REQUIRED_CONTEXT in text))
             continue
-        for job_id, job in jobs.items():
-            if not isinstance(job, dict):
-                print("%s: FAIL — job '%s' in %s does not parse as a mapping"
-                      % (PREFIX, job_id, path), file=sys.stderr)
-                return 1
-            context = reported_context(job_id, job)
-            contexts.append((path, job_id, context))
-            if context == REQUIRED_CONTEXT:
-                candidates.append((path, job_id, job, doc))
+        contexts.extend(file_contexts)
+        candidates.extend(file_candidates)
 
-    if not candidates:
+    # An unreadable file whose text names the required context is fatal even
+    # when a healthy workflow sits beside it: it may declare a second job under
+    # the same name, and the gate cannot tell which check run GitHub grades.
+    suspect = [(path, reason) for path, reason, mentions in unreadable if mentions]
+
+    findings = []
+    for path, job_id, job, doc in candidates:
+        problems = job_problems(doc, job, path)
+        if problems:
+            findings.append((path, job_id, problems))
+            continue
+        if suspect:
+            break
+        for bad_path, bad_reason, _ in unreadable:
+            print("%s: note — %s %s. It is set aside: it cannot deliver '%s' "
+                  "and it does not mention it, so it does not change this "
+                  "gate's answer."
+                  % (PREFIX, bad_path, bad_reason, REQUIRED_CONTEXT),
+                  file=sys.stderr)
+        print("%s: ok — %s job '%s' reports the required context '%s' and "
+              "runs '%s' (%d workflow file(s), %d job(s) checked)"
+              % (PREFIX, path, job_id, REQUIRED_CONTEXT, REQUIRED_COMMAND,
+                 len(paths), len(contexts)))
+        return 0
+
+    if findings:
+        print("%s: FAIL — a job is named '%s' but cannot report it as a "
+              "working required check." % (PREFIX, REQUIRED_CONTEXT),
+              file=sys.stderr)
+        for path, job_id, problems in findings:
+            print("  %s job '%s':" % (path, job_id), file=sys.stderr)
+            for problem in problems:
+                print("    - %s" % problem, file=sys.stderr)
+    elif suspect:
+        print("%s: FAIL — a workflow this gate cannot read mentions '%s'."
+              % (PREFIX, REQUIRED_CONTEXT), file=sys.stderr)
+        print("  It may declare a second job under that name, and two check "
+              "runs with one", file=sys.stderr)
+        print("  name leave the gate unable to say which one branch protection "
+              "grades.", file=sys.stderr)
+    elif not candidates:
         print("%s: FAIL — no job in any scanned workflow is named '%s'."
               % (PREFIX, REQUIRED_CONTEXT), file=sys.stderr)
         print("  Branch protection on %s requires exactly that context. With "
@@ -677,25 +971,20 @@ def main(paths):
               file=sys.stderr)
         print("  REQUIRED_CONTEXT value in this script in the same commit.",
               file=sys.stderr)
-        return 1
 
-    findings = []
-    for path, job_id, job, doc in candidates:
-        problems = job_problems(doc, job, path)
-        if not problems:
-            print("%s: ok — %s job '%s' reports the required context '%s' and "
-                  "runs '%s' (%d workflow file(s), %d job(s) checked)"
-                  % (PREFIX, path, job_id, REQUIRED_CONTEXT, REQUIRED_COMMAND,
-                     len(paths), len(contexts)))
-            return 0
-        findings.append((path, job_id, problems))
-
-    print("%s: FAIL — a job is named '%s' but cannot report it as a working "
-          "required check." % (PREFIX, REQUIRED_CONTEXT), file=sys.stderr)
-    for path, job_id, problems in findings:
-        print("  %s job '%s':" % (path, job_id), file=sys.stderr)
-        for problem in problems:
-            print("    - %s" % problem, file=sys.stderr)
+    if unreadable:
+        print("  Workflow files this gate could not read. Any one of them "
+              "might have been", file=sys.stderr)
+        print("  the file meant to carry the context, so with nothing else "
+              "carrying it they", file=sys.stderr)
+        print("  are part of this refusal:", file=sys.stderr)
+        for path, reason, mentions in unreadable:
+            print("    %s %s%s"
+                  % (path, reason,
+                     " [mentions '%s']" % REQUIRED_CONTEXT if mentions else ""),
+                  file=sys.stderr)
+        print("  A workflow this gate cannot read is a workflow it cannot "
+              "vouch for.", file=sys.stderr)
     print("  Branch protection on %s requires exactly that context, and a "
           "context" % PROTECTED_BRANCH, file=sys.stderr)
     print("  that never arrives reads as PENDING, not as failing. Every pull "

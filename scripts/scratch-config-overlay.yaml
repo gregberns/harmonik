@@ -26,9 +26,11 @@
 #
 # The harnesses.pi block MIRRORS the fleet's live ornith/DGX pass (the operator's
 # forced-local matrix environment: DGX reachable via the `ssh -f -N -L 8553:localhost:8553
-# dgx` loopback tunnel, key at ~/.config/harmonik/ornith.key). cells.json pins
-# pi model_selected.model = "ornith" to match. If DGX is wedged, swap in the parked
-# OpenRouter block from the fleet config and repoint cells.json accordingly.
+# dgx` loopback tunnel, key at ~/.config/harmonik/ornith.key). `ornith` is the PROVIDER
+# alias. The SERVED MODEL NAME is `nemotron`, and it is written once, in harnesses.pi.model
+# below. cells.json names no model: it says "@resolved" and reads the value from here, so
+# this block is the only place to change it. If DGX is down, swap in the parked OpenRouter
+# block from the fleet config; cells.json needs no edit.
 #
 # ===========================================================================
 # THE QUEUE-ONLY RUN POSTURE
@@ -92,9 +94,19 @@ codex:
   stale_wal_max_bytes: 1048576   # required by the codex harness (no compiled default; log-classification only)
 
 harnesses:
-  # D1: the matrix runs a /v1/completions readiness probe (POST model=ornith, tiny prompt)
-  # before every pi cell; a 0-byte / timeout / non-200 reply = a wedged vLLM behind the DGX
-  # tunnel, so the cell is SKIP-loud (never green) and you should restart vLLM on the dgx box.
+  # D1: the matrix runs a /v1/completions readiness probe before every pi cell. It posts a
+  # tiny prompt with the `model:` named below -- the value it reads from this block, which
+  # is the value the pi harness sends. The probe RETRIES: 3 tries of 12s, with 5s and 10s
+  # between them. It retries no answer, an empty completion, and a busy status (HTTP 429 or
+  # 5xx), because the endpoint stays busy for a few seconds after a cell ends. It does NOT
+  # retry a refusal -- HTTP 404 for a model the engine does not serve, HTTP 401 for a bad
+  # key -- because that answer is the same every time. If every try fails, the cell is
+  # SKIP-loud (never green) and the SKIP line prints the probe as a command you can run.
+  #
+  # Run that command before you change anything, and do NOT restart vLLM on the dgx box on
+  # the strength of a SKIP. That remedy used to be printed here and in the matrix. It was
+  # wrong: the endpoint was busy for a few seconds after the previous cell, it needed
+  # nothing done to it, and it answered in 1.2s a moment later (hk-odimo).
   pi:
     provider: ornith
     # The DGX vLLM serves ONE model and names it on the wire. It is `nemotron` as of

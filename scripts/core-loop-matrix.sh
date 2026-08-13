@@ -174,11 +174,11 @@ fi
 # ---- D1: local-model (pi) readiness preflight -----------------------------
 # Before running any pi cell we POST a tiny completion to the ornith /v1/completions
 # endpoint (the same loopback tunnel -> DGX vLLM the pi harness uses). A real non-empty
-# completion => the model is live, proceed. A 0-byte reply / timeout / non-200 => the vLLM
-# behind the tunnel is wedged, so the cell is marked SKIP-loud (never green; fails --gate)
-# with detail "pi endpoint wedged/no response" rather than letting the daemon spend minutes
-# discovering the wedge as a run_failed. Always-on for pi (no --no-preflight escape hatch):
-# a green pi cell MUST be backed by a live model, and catching the wedge here is the point.
+# completion => the model is live, proceed. No answer, a busy status or an empty reply,
+# after the retries in pi_preflight below => the cell is marked SKIP-loud (never green;
+# fails --gate) rather than letting the daemon spend minutes discovering the same thing
+# as a run_failed. Always-on for pi (no --no-preflight escape hatch): a green pi cell
+# MUST be backed by a live model, and catching a dead model here is the point.
 # Endpoint, model and key are READ FROM THE SCRATCH'S OWN harnesses.pi config, which is
 # what the pi harness will actually dial. Override via PI_BASE_URL / PI_MODEL / PI_KEY_FILE.
 #
@@ -191,8 +191,15 @@ fi
 # believed for days. A probe that does not dial what the harness dials is not a preflight, it
 # is a second source of truth that silently disagrees.
 #
-# The model matters for the same reason: vLLM 404s an unknown model id, and a 404 here is
-# indistinguishable from a wedge in the output above.
+# The model matters for the same reason: vLLM 404s an unknown model id, and pi_probe_once
+# must report that as a refusal, not as an endpoint that did not answer.
+#
+# THE SAME MISTAKE, ONE LAYER UP. The probe was fixed, and the message beside it was not.
+# It kept saying "pi endpoint wedged/no response — restart vLLM on dgx". A message that
+# names a remedy is a claim about the cause, and that claim was wrong twice out of two
+# runs: the endpoint was busy for a few seconds after the previous cell, not wedged, and
+# it needed nothing done to it. The SKIP line now reports what the probe saw and how hard
+# it tried, and it tells the reader to probe the endpoint before changing anything.
 harness_cfg_value() {
     # Pull one scalar out of the harnesses.<harness> block of the scratch config. Flat
     # scalars only; trailing `# ...` comments and surrounding quotes are stripped.
@@ -219,27 +226,127 @@ harness_cfg_value() {
 PI_BASE_URL="${PI_BASE_URL:-$(harness_cfg_value pi base_url)}"
 PI_MODEL="${PI_MODEL:-$(harness_cfg_value pi model)}"
 PI_KEY_FILE="${PI_KEY_FILE:-$HOME/.config/harmonik/ornith.key}"
-pi_preflight() {
-    command -v curl >/dev/null 2>&1 || { log "preflight: curl missing — cannot probe pi endpoint"; return 1; }
+# HOW LONG THE PROBE WAITS, AND WHY IT RETRIES. A free endpoint answers this probe in
+# about 1.2s (measured 1.135s / 1.204s / 1.560s). A cell runs for about 280s, and the
+# endpoint stays busy for a few seconds after that agent stops. One 12s shot fired
+# straight after a long cell therefore measures contention, not health: it called the
+# endpoint dead twice out of two runs, the same probe answered in 1.2s a moment later,
+# and the review round-trip cell never started (hk-odimo).
+#
+# So the preflight makes 3 tries of 12s each and waits 5s then 10s between them. The
+# LAST try starts at 39s (two timeouts plus both waits), so 39s is the busy window it
+# reliably survives; the budget expires at 51s. That is about 30x the free answer time.
+# A dead endpoint refuses at once, so it costs only the 15s of waits — 5% of one cell.
+# The SKIP still exists to stop the daemon spending minutes on a dead model. It must
+# not spend minutes proving the model is dead either. Override with PI_PROBE_TIMEOUT /
+# PI_PROBE_TRIES / PI_PROBE_BACKOFF.
+#
+# A refusal is NOT retried. An unknown model id, a bad key or a malformed request gives
+# the same answer on every try, and repeating it only hides the reason. HTTP 429 and 5xx
+# ARE retried: they are how a loaded vLLM says "busy", which is the condition this retry
+# exists for.
+# scripts/core-loop-matrix-preflight-test.sh CUTS THIS BLOCK OUT AND SOURCES IT — from the
+# line below to the end of pi_preflight. It runs the real functions against a stub endpoint,
+# with no daemon and no network. Move the block or rename either function and that test
+# fails loudly rather than testing nothing. Run it by hand after any edit here.
+PI_PROBE_TIMEOUT="${PI_PROBE_TIMEOUT:-12}"
+PI_PROBE_TRIES="${PI_PROBE_TRIES:-3}"
+PI_PROBE_BACKOFF="${PI_PROBE_BACKOFF:-5 10}"
+# What the last probe observed. The SKIP line prints this instead of naming a remedy.
+PI_PREFLIGHT_DETAIL=""
+
+pi_probe_once() {
+    # One probe of the pi endpoint. Sets PI_PREFLIGHT_DETAIL to what it observed.
+    #   0 = live (a real, non-empty completion came back)
+    #   1 = try again (no answer, a busy/5xx status, or an empty completion)
+    #   2 = do not try again (bad config, or the endpoint refused the request)
+    local key="" out body http rc=0
     # An unreadable config is a failed preflight, not a fallback to a guess. Guessing is
     # exactly what produced the false wedge.
-    [ -n "$PI_BASE_URL" ] || { log "preflight: no harnesses.pi.base_url in $SCRATCH/.harmonik/config.yaml"; return 1; }
-    [ -n "$PI_MODEL" ]    || { log "preflight: no harnesses.pi.model in $SCRATCH/.harmonik/config.yaml"; return 1; }
-    local key="" body
-    [ -f "$PI_KEY_FILE" ] && key="$(tr -d '[:space:]' < "$PI_KEY_FILE" 2>/dev/null)"
-    body="$(curl -sS -m 12 -X POST "$PI_BASE_URL/completions" \
+    if [ -z "$PI_BASE_URL" ]; then
+        PI_PREFLIGHT_DETAIL="no harnesses.pi.base_url in $SCRATCH/.harmonik/config.yaml"; return 2
+    fi
+    if [ -z "$PI_MODEL" ]; then
+        PI_PREFLIGHT_DETAIL="no harnesses.pi.model in $SCRATCH/.harmonik/config.yaml"; return 2
+    fi
+    if ! command -v curl >/dev/null 2>&1; then
+        PI_PREFLIGHT_DETAIL="curl is missing, so the pi endpoint cannot be probed"; return 2
+    fi
+    if [ -f "$PI_KEY_FILE" ]; then key="$(tr -d '[:space:]' < "$PI_KEY_FILE" 2>/dev/null)"; fi
+
+    # Read curl's own status from the assignment, never through a pipe. A pipeline
+    # reports the LAST command's status, so `curl | jq` hides a dead endpoint behind a
+    # jq parse error and the two need opposite fixes.
+    out="$(curl -sS -m "$PI_PROBE_TIMEOUT" -w '\n%{http_code}' -X POST "$PI_BASE_URL/completions" \
         -H "Authorization: Bearer $key" -H "Content-Type: application/json" \
-        -d "{\"model\":\"$PI_MODEL\",\"prompt\":\"ping\",\"max_tokens\":16}" 2>/dev/null)" || return 1
-    [ -n "$body" ] || return 1
-    # A model the server does not serve returns a 404 body with no choices. Report that as
-    # itself rather than as a wedge — they need opposite fixes.
-    if printf '%s' "$body" | jq -e '.error' >/dev/null 2>&1; then
-        log "preflight: endpoint answered but rejected the request: $(printf '%s' "$body" | jq -r '.error.message // .error' 2>/dev/null | head -1)"
+        -d "{\"model\":\"$PI_MODEL\",\"prompt\":\"ping\",\"max_tokens\":16}" 2>/dev/null)" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        case "$rc" in
+            7)  PI_PREFLIGHT_DETAIL="nothing accepted a connection at $PI_BASE_URL" ;;
+            28) PI_PREFLIGHT_DETAIL="the pi endpoint sent no answer in ${PI_PROBE_TIMEOUT}s" ;;
+            *)  PI_PREFLIGHT_DETAIL="the probe failed with curl exit $rc" ;;
+        esac
         return 1
     fi
-    printf '%s' "$body" \
-        | jq -e '((.choices[0].text // .choices[0].message.content // "") | tostring | length) > 0' \
-          >/dev/null 2>&1
+    http="${out##*$'\n'}"
+    body="${out%$'\n'*}"
+    case "$http" in
+        200) ;;
+        429|5??)
+            PI_PREFLIGHT_DETAIL="the pi endpoint answered HTTP $http (busy or not ready)"; return 1 ;;
+        *)
+            # A model the server does not serve returns 404. Report that as itself rather
+            # than as a dead endpoint — they need opposite fixes, and no retry fixes this.
+            local why
+            why="$(jq -r '.error.message // .error // empty' <<<"$body" 2>/dev/null | head -1)"
+            PI_PREFLIGHT_DETAIL="the pi endpoint answered HTTP $http and refused the request${why:+: $why}"
+            return 2 ;;
+    esac
+    if jq -e '.error' <<<"$body" >/dev/null 2>&1; then
+        local msg
+        msg="$(jq -r '.error.message // .error' <<<"$body" 2>/dev/null | head -1)"
+        PI_PREFLIGHT_DETAIL="the pi endpoint answered but refused the request: $msg"
+        return 2
+    fi
+    if ! jq -e '((.choices[0].text // .choices[0].message.content // "") | tostring | length) > 0' \
+        <<<"$body" >/dev/null 2>&1; then
+        PI_PREFLIGHT_DETAIL="the pi endpoint answered with an empty completion"
+        return 1
+    fi
+    PI_PREFLIGHT_DETAIL="the pi endpoint answered"
+    return 0
+}
+
+pi_preflight() {
+    local -a backoff
+    read -r -a backoff <<<"$PI_PROBE_BACKOFF"
+    [ "${#backoff[@]}" -gt 0 ] || backoff=(5)
+    local try rc wait_s waited=0
+    for (( try=1; try<=PI_PROBE_TRIES; try++ )); do
+        rc=0
+        pi_probe_once || rc=$?
+        if [ "$rc" -eq 0 ]; then
+            if [ "$try" -gt 1 ]; then
+                log "preflight: the pi endpoint answered on try $try of $PI_PROBE_TRIES (after ${waited}s of waits)"
+            fi
+            return 0
+        fi
+        # A refusal reads the same on every try. Report it now.
+        if [ "$rc" -eq 2 ]; then
+            return 1
+        fi
+        if [ "$try" -ge "$PI_PROBE_TRIES" ]; then break; fi
+        if [ "$((try-1))" -lt "${#backoff[@]}" ]; then
+            wait_s="${backoff[$((try-1))]}"
+        else
+            wait_s="${backoff[$(( ${#backoff[@]} - 1 ))]}"
+        fi
+        log "preflight: $PI_PREFLIGHT_DETAIL — try $try of $PI_PROBE_TRIES; next try in ${wait_s}s"
+        sleep "$wait_s"
+        waited=$((waited + wait_s))
+    done
+    PI_PREFLIGHT_DETAIL="$PI_PREFLIGHT_DETAIL — $PI_PROBE_TRIES tries of ${PI_PROBE_TIMEOUT}s over ${waited}s of waits"
+    return 1
 }
 
 # ---- model resolution for the cell specs ----------------------------------
@@ -543,15 +650,24 @@ for _run_cell in "${RUN_CELLS[@]}"; do
             continue
         fi
 
-        # D1: local-model preflight — pi cells only. A wedged vLLM (0-byte/timeout/non-200)
-        # is SKIP-loud (never green; fails --gate), not a slow run_failed discovered minutes
+        # D1: local-model preflight — pi cells only. A model that does not answer is
+        # SKIP-loud (never green; fails --gate), not a slow run_failed discovered minutes
         # later. Always-on; the readiness of the model IS the precondition for a pi green.
+        # The SKIP line reports what the probe saw and how hard it tried. It names no
+        # remedy: the old line told the operator to restart vLLM on another box, and the
+        # condition it fired on cleared by itself in seconds (see pi_probe_once above).
         if [ "$h" = "pi" ]; then
             if pi_preflight; then
                 log "preflight OK — pi endpoint answered ($PI_BASE_URL)"
             else
-                log "SKIP  $cell — pi endpoint wedged/no response ($PI_BASE_URL) — restart vLLM on dgx"
-                GRID+=("$cell	skip	pi endpoint wedged/no response")
+                log "SKIP  $cell — $PI_PREFLIGHT_DETAIL ($PI_BASE_URL)"
+                # The printed command must send what pi_probe_once sends, down to the key
+                # header and the timeout. A second probe that dials something else is how
+                # the first false wedge survived. `$(tr ...)` is NOT expanded here: the
+                # operator's shell reads the key file, so no key reaches this log.
+                log "      probe it by hand before you change anything:"
+                log "      curl -sS -m $PI_PROBE_TIMEOUT -X POST $PI_BASE_URL/completions -H \"Authorization: Bearer \$(tr -d '[:space:]' < $PI_KEY_FILE)\" -H 'Content-Type: application/json' -d '{\"model\":\"$PI_MODEL\",\"prompt\":\"ping\",\"max_tokens\":16}'"
+                GRID+=("$cell	skip	$PI_PREFLIGHT_DETAIL")
                 n_skip=$((n_skip+1))
                 continue
             fi

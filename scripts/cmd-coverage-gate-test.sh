@@ -167,8 +167,12 @@ grep -q '^sentinel baseline$' "$baseline"
 
 # Baseline replacement uses a same-directory temporary and leaves no debris.
 run_gate --write-baseline >/dev/null
-if find "$(dirname "$baseline")" -name ".$(basename "$baseline").tmp.*" | grep -q .; then
-    echo "atomic baseline write left a temporary file behind" >&2
+# Capture the find output, then test it. Piping a find into `grep -q` is a
+# debris check that can never fail: grep leaves on the first path, find dies of
+# SIGPIPE still walking the tree, and pipefail reports that as "no match".
+debris=$(find "$(dirname "$baseline")" -name ".$(basename "$baseline").tmp.*")
+if [ -n "$debris" ]; then
+    echo "atomic baseline write left a temporary file behind: $debris" >&2
     exit 1
 fi
 

@@ -897,6 +897,7 @@ script-tests:  ## Self-tests for the shell the gate depends on
 	scripts/queue-daemon-count-test.sh
 	scripts/commit-msg-gate-test.sh
 	scripts/secret-scan-test.sh
+	scripts/pipefail-grepq-gate-test.sh
 	scripts/with-lane-gocache.sh scripts/reachability-gate-test.sh
 
 # freeze-gates — the per-subsystem "do not move this back" greps. Cheap
@@ -920,6 +921,7 @@ freeze-gates:  ## Subsystem freeze / ratchet greps (structural, sub-second each)
 	scripts/workloop-scheduler-freeze-gate.sh
 	scripts/queue-status-writer-ratchet.sh
 	scripts/lint-allow-ratchet.sh
+	scripts/pipefail-grepq-gate.sh
 
 # gate-static — everything fast and full share that runs no test.
 #

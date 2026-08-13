@@ -105,7 +105,8 @@ fi
 
 # --help prints through the zsh-dialect note. That paragraph is the one a reader
 # is most likely to need and it has already been sliced off once.
-if ! "$subject" --help 2> /dev/null | grep -q 'jobs -p'; then
+help_out=$("$subject" --help 2> /dev/null)
+if ! grep -q 'jobs -p' <<<"$help_out"; then
     fail "--help does not reach the zsh-dialect note"
 fi
 

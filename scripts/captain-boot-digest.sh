@@ -119,15 +119,31 @@ echo ""
 # mislead a captain reading a boot digest — a short listing is not a short backlog,
 # and hybrid order is not priority order.
 echo "## 7. Ready Beads — all rows, priority order (STARTUP.md §4)"
-br ready --sort priority --limit 0 --json 2>&1 \
-  | jq -r '.[] | "- \(.id)  P\(.priority // "?"): \(.title)"' 2>/dev/null \
-  || br ready --sort priority --limit 0 2>&1 | head -40
+# Capture, then slice the capture. `br` is a Go binary and a slow streaming writer:
+# in `br ready ... | head -40` the head leaves as soon as it has 40 lines, br dies on
+# the closed pipe (exit 134, an abort trap, measured on this machine at 451 lines /
+# 58 KB), and `pipefail` reports that death as the status of the whole pipeline. A
+# here-string has no writer process to kill, so it cannot fail that way.
+READY_JSON="$(br ready --sort priority --limit 0 --json 2>&1)"
+READY_LINES="$(jq -r '.[] | "- \(.id)  P\(.priority // "?"): \(.title)"' <<<"$READY_JSON" 2>/dev/null)" || READY_LINES=""
+if [[ -n "$READY_LINES" ]]; then
+  echo "$READY_LINES"
+else
+  READY_TXT="$(br ready --sort priority --limit 0 2>&1)"
+  head -40 <<<"$READY_TXT"
+fi
 echo ""
 
 echo "## 8. Open Epics (STARTUP.md §4)"
-br list --status=open --type=epic --json 2>&1 \
-  | jq -r '.[] | "- \(.id)  assignee=\(.assignee // "unassigned"): \(.title)"' 2>/dev/null \
-  || br list --status=open --type=epic 2>&1 | head -20
+# Same capture-then-slice shape as section 7, and for the same reason.
+EPICS_JSON="$(br list --status=open --type=epic --json 2>&1)"
+EPICS_LINES="$(jq -r '.[] | "- \(.id)  assignee=\(.assignee // "unassigned"): \(.title)"' <<<"$EPICS_JSON" 2>/dev/null)" || EPICS_LINES=""
+if [[ -n "$EPICS_LINES" ]]; then
+  echo "$EPICS_LINES"
+else
+  EPICS_TXT="$(br list --status=open --type=epic 2>&1)"
+  head -20 <<<"$EPICS_TXT"
+fi
 echo ""
 
 # NOTE: there is deliberately no `kerf next` section. kerf plans work, it does not
@@ -137,7 +153,11 @@ echo ""
 # is section 7 above. `kerf map` stays: it answers "which kerf work owns this bead
 # and what context does it carry", which nothing else answers.
 echo "## 9. Kerf Map — which work owns which bead (STARTUP.md §4)"
-kerf map 2>&1 | head -60
+# `kerf map` is small enough today (89 lines / 9.5 KB) that it fits the pipe buffer
+# and finishes before `head` closes the pipe. That is luck, not safety: the map grows
+# with the plan. Capture first so growing past the buffer changes nothing.
+KERF_MAP="$(kerf map 2>&1)"
+head -60 <<<"$KERF_MAP"
 echo ""
 
 echo "---"

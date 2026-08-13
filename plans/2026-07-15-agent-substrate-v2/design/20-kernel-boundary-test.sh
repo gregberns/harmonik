@@ -13,8 +13,11 @@ for f in "$@"; do
         | sed -E 's/^[[:space:]]+//')
   while read -r id; do
     [ -z "$id" ] && continue
-    echo "$id" | grep -qiE "$ALLOW" && continue
-    if echo "$id" | grep -qiE "$BANNED"; then echo "   BANNED IDENTIFIER in $(basename $f): $id"; fail=1; fi
+    # Here-strings, not pipes: `echo "$x" | grep -q` loses the producer to SIGPIPE
+    # once the payload passes the pipe buffer, and under `set -o pipefail` that
+    # reads as "no match" -- a banned-identifier gate that can never block.
+    grep -qiE "$ALLOW" <<<"$id" && continue
+    if grep -qiE "$BANNED" <<<"$id"; then echo "   BANNED IDENTIFIER in $(basename $f): $id"; fail=1; fi
   done <<< "$ids"
 done
 [ $fail -eq 0 ] && echo "VOCABULARY CLEAN -- the kernel names no domain concept." || echo ">>> BOUNDARY VIOLATION"

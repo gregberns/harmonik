@@ -404,7 +404,11 @@ harmonik comms send --from "$HARMONIK_AGENT" --to <crew> --topic assign -- "<epi
 
 ```bash
 # (a) comms-online: the crew ran its boot loop and called `comms join`
-harmonik comms who --json | grep -q '"agent":"<crew>"' && echo "ONLINE" || echo "NOT ONLINE"
+#     Capture first: `comms who --json | grep -q` loses `who` to SIGPIPE once the
+#     roster outgrows the pipe buffer, and a `pipefail` shell then reports a live
+#     crew as NOT ONLINE.
+who="$(harmonik comms who --json)"
+grep -q '"agent":"<crew>"' <<<"$who" && echo "ONLINE" || echo "NOT ONLINE"
 
 # (b) pane-truth: the crew is actually DOING something (boot status / dispatch)
 tmux capture-pane -p -t harmonik-<hash>-crew-<crew>:hk-crew-<crew> | tail -25
@@ -423,9 +427,13 @@ harmonik queue status --json                                          # its name
 #     nests under `.payload.workflow_mode` — but prefer the verdict join below.
 for rid in $(jq -r 'select(.type=="run_completed") | .payload.run_id' \
                .harmonik/events/events.jsonl | tail -10); do
-  vc=$(jq -r --arg r "$rid" \
+  #     Capture, THEN head the capture. `jq ... | head -1` is a trap: head exits on
+  #     line 1, jq (a Go binary, still streaming a 100MB+ events.jsonl) dies on SIGPIPE,
+  #     and under `set -o pipefail` the pipeline reports that death as failure.
+  hits=$(jq -r --arg r "$rid" \
         'select(.type=="reviewer_verdict" and .payload.run_id==$r) | .payload.run_id' \
-        .harmonik/events/events.jsonl | head -1)
+        .harmonik/events/events.jsonl)
+  vc=$(head -1 <<<"$hits")
   [[ -z "$vc" ]] && echo "WARN: run $rid completed with NO reviewer_verdict (review bypassed)"
 done
 # Any output = post a status flagging the review-bypassed run_ids AND act to stop the
@@ -619,7 +627,10 @@ A keeper-restart resume is NOT a cold boot. The lower band exists to restart EAR
 and more often, so the resume MUST be cheap — re-running the full heavy STARTUP every
 time would burn the very context the lower band saves. So:
 
-- Re-drain comms (`comms recv --follow --json | head -60`) before forming any plan.
+- Re-drain comms (`harmonik comms recv --json` — it drains the pending backlog and exits)
+  before forming any plan. Do NOT write `recv --follow --json | head -60`: `--follow`
+  never ends, so it blocks until 60 messages arrive, and when `head` does exit it kills
+  the stream with SIGPIPE, which `set -o pipefail` reports as a failed drain.
 - **Read tier-3/tier-2 (Steps 0a/0b/0c — incl. `direction-log.md`) + run
   `scripts/captain-boot-digest.sh` ONCE.** The digest is the SINGLE verification pass.
   **TRUST the cached tier-2/tier-3 state as INPUT** — mid epics and long-horizon goals

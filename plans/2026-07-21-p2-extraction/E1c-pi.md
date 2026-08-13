@@ -398,7 +398,16 @@ oracle gate. Change it to:
 	PI_LIVE=1 go test -timeout 180s -count=1 -run TestPiA_ ./internal/harness/pi/...
 ```
 
-Then prove it is not vacuous: `make test-pi-live 2>&1 | grep -q 'no tests to run' && echo BROKEN`.
+Then prove it is not vacuous — capture first, then match the capture:
+
+```bash
+out="$(make test-pi-live 2>&1)"
+grep -q 'no tests to run' <<<"$out" && echo BROKEN
+```
+
+Do NOT write `make test-pi-live 2>&1 | grep -q ...`. `grep -q` exits on the first match while
+`make` is still writing; `make` dies on SIGPIPE, and under `set -o pipefail` the pipeline reports
+that death as failure — so `&& echo BROKEN` never fires and the vacuous-target check never trips.
 
 ### Step 9 — prune `internal/daemon/export_test.go`
 

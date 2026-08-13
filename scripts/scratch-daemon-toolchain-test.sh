@@ -133,7 +133,7 @@ if [ "$status" -ne 0 ]; then
 else
 	fail "PARTIAL: exited 0 with beta absent — the run would die at the commit gate instead"
 fi
-if printf '%s' "$out" | grep -q 'beta'; then
+if grep -q 'beta' <<<"$out"; then
 	pass "PARTIAL: names the absent tool"
 else
 	fail "PARTIAL: failed without naming beta — $out"

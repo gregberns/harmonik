@@ -83,7 +83,14 @@ INPUT="$(cat)"
 PCT="$(printf '%s' "${INPUT}" | jq -r '.context_window.used_percentage // empty' 2>/dev/null || true)"
 
 # Skip write when the field is absent or non-numeric (e.g. "NA").
-if [ -z "${PCT}" ] || ! printf '%s' "${PCT}" | grep -qE '^[0-9]+(\.[0-9]+)?$'; then
+# These scalar checks match with a here-string rather than `printf ... | grep -q`.
+# Each of these values is a single short field, so the piped form could not
+# actually misfire here; the here-string is used anyway because the piped shape
+# reports a MATCH as a FAILURE the moment a producer outgrows the pipe buffer,
+# and a guard is a bad place to keep a shape that depends on its input staying
+# small. Behaviour is unchanged: `printf '%s'` emits no trailing newline and a
+# here-string adds one, which leaves every pattern below matching the same text.
+if [ -z "${PCT}" ] || ! grep -qE '^[0-9]+(\.[0-9]+)?$' <<<"${PCT}"; then
     exit 0
 fi
 
@@ -103,8 +110,8 @@ TOKENS="$(printf '%s' "${INPUT}" | jq -r '.context_window.total_input_tokens // 
 WINDOW_SIZE="$(printf '%s' "${INPUT}" | jq -r '(.context_window_size // .context_window.context_window_size // 0)' 2>/dev/null || echo '0')"
 
 # Sanitise: replace non-integer values with 0.
-if ! printf '%s' "${TOKENS}" | grep -qE '^[0-9]+$'; then TOKENS=0; fi
-if ! printf '%s' "${WINDOW_SIZE}" | grep -qE '^[0-9]+$'; then WINDOW_SIZE=0; fi
+if ! grep -qE '^[0-9]+$' <<<"${TOKENS}"; then TOKENS=0; fi
+if ! grep -qE '^[0-9]+$' <<<"${WINDOW_SIZE}"; then WINDOW_SIZE=0; fi
 
 # Infer window_size when Claude Code omits context_window_size (e.g. [1m] models).
 # Priority: explicit env override → model-id detection → leave at 0 (pct-only fallback).
@@ -120,7 +127,7 @@ if [ "${WINDOW_SIZE}" -eq 0 ]; then
             elif (.model | type) == "string" then .model
             else ((.model.id // "") + " " + (.model.display_name // ""))
             end' 2>/dev/null || true)"
-        if printf '%s' "${MODEL_STR}" | grep -qF '[1m]'; then
+        if grep -qF '[1m]' <<<"${MODEL_STR}"; then
             # Compute effective window as a fraction of the nominal 1M (hk-d8dj0).
             # The keeper's pct guard (cf.Pct < WarnPct) is a NECESSARY condition for
             # warn/act to fire. Claude Code reports pct = tokens/1M, so a session at

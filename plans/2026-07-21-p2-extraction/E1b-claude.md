@@ -336,7 +336,11 @@ When **E1c** lands (all three impls out), arm it as a CI grep-guard — add to `
 
 ```sh
 # P2 §3.2 freeze: extracted concern = closed door. Arm ONLY after E1c.
-if ls internal/daemon/*launchspec*.go 2>/dev/null | grep -qv -e 'crewlaunchspec\.go$'; then
+# Capture, then match the capture -- never `ls ... | grep -q` in a pipefail script:
+# grep -q exits on the first hit, ls dies on SIGPIPE, and the freeze gate silently
+# stops blocking. The -n test keeps "no launchspec files at all" a PASS.
+specs="$(ls internal/daemon/*launchspec*.go 2>/dev/null)"
+if [ -n "$specs" ] && grep -qv -e 'crewlaunchspec\.go$' <<<"$specs"; then
     echo "FREEZE VIOLATION: harness launchspec files belong in internal/harness/<impl>/ (P2 §3.2)" >&2
     exit 1
 fi

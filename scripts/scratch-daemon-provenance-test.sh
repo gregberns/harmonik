@@ -295,7 +295,7 @@ PROV_STATUS=$?
 if [ "$PROV_STATUS" -ne 0 ]; then
     fail "PROVABLE: 'harmonik version --binary --contains $REV' exited $PROV_STATUS (want 0) on the gate binary:
 $PROV_OUT"
-elif ! printf '%s\n' "$PROV_OUT" | grep -q '^status:   contains$'; then
+elif ! grep -q '^status:   contains$' <<<"$PROV_OUT"; then
     fail "PROVABLE: exit 0 but the status token is not 'contains':
 $PROV_OUT"
 else
@@ -307,7 +307,7 @@ fi
 # ---------------------------------------------------------------------------
 assertions=$((assertions + 1))
 STATUS_OUT="$($SD status "$SCRATCH" 2>&1)"
-if ! printf '%s\n' "$STATUS_OUT" | grep -q 'vcs\.modified=false'; then
+if ! grep -q 'vcs\.modified=false' <<<"$STATUS_OUT"; then
     fail "DISCLOSED: status does not report the binary's own vcs.modified, so it can disagree with 'harmonik version --binary' unnoticed:
 $STATUS_OUT"
 else

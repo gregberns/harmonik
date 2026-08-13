@@ -71,8 +71,16 @@ run_report() {
 
 # assert_reported <label> <report-file> <function-name>
 # The function must appear in the zero-coverage section of the report.
+#
+# The section is captured and matched with a here-string rather than piped into
+# `grep -q`. Under pipefail a piped `grep -q` leaves on the first match, the awk
+# feeding it dies of SIGPIPE, and pipefail returns that death as the pipeline's
+# status — so a MATCH arrives here as a miss. It flips the sense of both of these
+# helpers, and for assert_not_reported that means an assertion that always passes.
 assert_reported() {
-    if zero_section "$2" | grep -q "[^A-Za-z0-9_]$3\$"; then
+    local section
+    section="$(zero_section "$2")"
+    if grep -q "[^A-Za-z0-9_]$3\$" <<<"$section"; then
         pass "$1"
     else
         fail "$1 — expected $3 in the zero-coverage section"
@@ -83,7 +91,9 @@ assert_reported() {
 
 # assert_not_reported <label> <report-file> <function-name>
 assert_not_reported() {
-    if zero_section "$2" | grep -q "[^A-Za-z0-9_]$3\$"; then
+    local section
+    section="$(zero_section "$2")"
+    if grep -q "[^A-Za-z0-9_]$3\$" <<<"$section"; then
         fail "$1 — $3 must NOT be in the zero-coverage section"
         printf '       report was:\n'
         sed 's/^/       | /' "$2"
@@ -248,8 +258,9 @@ fi
 pkg_section() {
     awk '/^PACKAGE COVERAGE/ {inside = 1; next} /^$/ {inside = 0} inside' "${WORK}/report.txt"
 }
+pkg_lines="$(pkg_section)"
 if grep -q '^PACKAGE COVERAGE' "${WORK}/report.txt" \
-   && pkg_section | grep -qE '^example\.com/x/p +[0-9]+\.[0-9]+%'; then
+   && grep -qE '^example\.com/x/p +[0-9]+\.[0-9]+%' <<<"${pkg_lines}"; then
     pass "package coverage is printed beside the function findings"
 else
     fail "no PACKAGE COVERAGE section naming example.com/x/p and its percentage"
@@ -394,7 +405,8 @@ else
     sed 's/^/       | /' "${WORK}/red.txt"
 fi
 
-if zero_section "${WORK}/red.txt" | grep -qE '^\? .*Nobody$'; then
+red_zero="$(zero_section "${WORK}/red.txt")"
+if grep -qE '^\? .*Nobody$' <<<"${red_zero}"; then
     pass "the finding itself is marked as coming from a red package"
 else
     fail "the Nobody finding is not marked, so it reads as a confirmed zero"
@@ -452,13 +464,23 @@ printf 'changed-func-coverage: runs on the bash macOS ships\n'
 # cheapest way to go green is to delete the explanation.
 code_only() { grep -v '^[[:space:]]*#' "${SCRIPT}"; }
 
-if code_only | grep -qE '(^|[^[:alnum:]_])(mapfile|readarray)([^[:alnum:]_]|$)'; then
+# Capture once, then match the capture. These two are a MERGE GATE, and piped
+# into `grep -q` they are a gate that cannot block: grep leaves the instant it
+# sees a `mapfile`, the `grep -v` upstream dies of SIGPIPE still writing, and
+# pipefail reports that death — which reads here as "the construct is not
+# present". Measured on this box against a copy of the subject script with
+# `mapfile` inserted at the top: at 6.6 KB of non-comment code the piped form
+# still detects it, at 65 KB it reports the script clean (exit 141). The subject
+# is 6.6 KB today, so the gate works today and fails open as soon as it grows.
+code="$(code_only)"
+
+if grep -qE '(^|[^[:alnum:]_])(mapfile|readarray)([^[:alnum:]_]|$)' <<<"${code}"; then
     fail "uses mapfile/readarray — bash 4 only, and stock macOS bash is 3.2"
 else
     pass "no mapfile/readarray"
 fi
 
-if code_only | grep -qE 'declare +-[A-Za-z]*A|local +-[A-Za-z]*A'; then
+if grep -qE 'declare +-[A-Za-z]*A|local +-[A-Za-z]*A' <<<"${code}"; then
     fail "uses an associative array — bash 4 only"
 else
     pass "no associative arrays"

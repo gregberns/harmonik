@@ -257,7 +257,7 @@ scan_inventory() {
             HITS=$((HITS + 1))
             continue
         fi
-        if ! printf '%s' "$DECLS" | grep -q "^${want}:"; then
+        if ! grep -q "^${want}:" <<<"$DECLS"; then
             echo "workloop-scheduler-freeze-gate: ${sym} is declared outside ${want}:" >&2
             printf '%s\n' "$DECLS" >&2
             echo "  Moving it on purpose? Move it in this gate's inventory in the SAME commit." >&2
@@ -371,8 +371,13 @@ RUNWORKLOOP_MIN_CODE_LINES=200
 # Block comments are tracked across lines, including one opened after code on the
 # same line, so a `/* … */` pad cannot be counted as code either.
 decl_code_lines() {
-    local file=$1 sym=$2 start end
-    start="$(grep -n -E "^func[[:space:]]+${sym}\b" "$file" | head -1 | cut -d: -f1)"
+    local file=$1 sym=$2 start end decls
+    # Capture the matches, THEN take the first. `grep ... | head -1` would leave
+    # grep writing into a closed pipe on any file that declares the symbol twice
+    # -- which is one of the regressions this gate exists to catch -- and
+    # pipefail would report that SIGPIPE (141) as the gate's own failure.
+    decls="$(grep -n -E "^func[[:space:]]+${sym}\b" "$file" || true)"
+    start="$(head -1 <<<"$decls" | cut -d: -f1)"
     if [ -z "$start" ]; then
         echo ""
         return

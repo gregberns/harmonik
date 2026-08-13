@@ -125,7 +125,12 @@ echo ""
 # ── Epic state ────────────────────────────────────────────────────────────────
 echo "## 6. Epic State (epic=${EPIC_ID:-UNKNOWN})"
 if [[ -n "${EPIC_ID:-}" ]]; then
-  br show "$EPIC_ID" 2>&1 | head -30
+  # Capture, then slice the capture. `br show` on an epic with a long description can
+  # outrun the 64 KB pipe buffer; `head` then leaves first, br dies on the closed pipe,
+  # and `pipefail` reports that death as the pipeline status. A here-string has no
+  # writer process to kill.
+  EPIC_TXT="$(br show "$EPIC_ID" 2>&1)"
+  head -30 <<<"$EPIC_TXT"
 else
   echo "(epic_id unknown — parse mission file first)"
 fi
@@ -133,9 +138,18 @@ echo ""
 
 # ── Ready beads ───────────────────────────────────────────────────────────────
 echo "## 7. Ready Beads (all — filter for your epic's children)"
-br ready --limit 0 --json 2>&1 \
-  | jq -r '.[] | "- \(.id)  P\(.priority // "?"): \(.title)"' 2>/dev/null \
-  || br ready --limit 0 2>&1 | head -30
+# Capture, then slice the capture. `br` is a Go binary and a slow streaming writer:
+# in `br ready --limit 0 | head -30` the head leaves as soon as it has 30 lines, br
+# dies on the closed pipe (exit 134, an abort trap, measured on this machine at 451
+# lines / 58 KB), and `pipefail` reports that death as the pipeline status.
+READY_JSON="$(br ready --limit 0 --json 2>&1)"
+READY_LINES="$(jq -r '.[] | "- \(.id)  P\(.priority // "?"): \(.title)"' <<<"$READY_JSON" 2>/dev/null)" || READY_LINES=""
+if [[ -n "$READY_LINES" ]]; then
+  echo "$READY_LINES"
+else
+  READY_TXT="$(br ready --limit 0 2>&1)"
+  head -30 <<<"$READY_TXT"
+fi
 echo ""
 
 # ── Recent comms ──────────────────────────────────────────────────────────────

@@ -173,7 +173,7 @@ assert_refuses() {
 		printf '%s\n' "$ERR" >&2
 	elif [ -n "$OUT" ]; then
 		fail "$label: refused (exit 2) but still printed '$OUT' as the count"
-	elif ! printf '%s' "$ERR" | grep -qF "$want"; then
+	elif ! grep -qF "$want" <<<"$ERR"; then
 		fail "$label: refused (exit 2) but said nothing about '$want'"
 		printf '%s\n' "$ERR" >&2
 	else
@@ -200,7 +200,7 @@ run_count /srv/proj
 if [ "$RC" != "0" ]; then
 	fail "pattern derivation: a well-formed 'supervise ps' still exited $RC"
 	printf '%s\n' "$ERR" >&2
-elif ! printf '%s' "$ERR" | grep -qF "with the pattern 'harmonik start daemon --project'"; then
+elif ! grep -qF "with the pattern 'harmonik start daemon --project'" <<<"$ERR"; then
 	fail "pattern derivation: the host-wide pattern is not 'harmonik start daemon --project'"
 	printf '%s\n' "$ERR" >&2
 else
@@ -371,9 +371,9 @@ assertions=$((assertions + 1))
 steps=$(make -n queue-dogfood-readiness SCRATCH=/dev/null EVIDENCE=/dev/null BEADS=x=y CONCURRENCY=1 2>/dev/null)
 if [ -z "$steps" ]; then
 	fail "structural: 'make -n queue-dogfood-readiness' produced nothing, so nothing was checked"
-elif ! printf '%s' "$steps" | grep -q 'scripts/queue-daemon-count\.sh'; then
+elif ! grep -q 'scripts/queue-daemon-count\.sh' <<<"$steps"; then
 	fail "structural: the make target no longer calls scripts/queue-daemon-count.sh"
-elif ! printf '%s' "$steps" | grep -E 'scripts/queue-daemon-count\.sh' | grep -q 'exit 2'; then
+elif ! grep -q 'exit 2' <<<"$(grep -E 'scripts/queue-daemon-count\.sh' <<<"$steps")"; then
 	fail "structural: the make target calls the count but does not carry its refusal"
 else
 	pass "structural: the make target calls the count script and exits 2 when it refuses"
@@ -385,7 +385,7 @@ assertions=$((assertions + 1))
 recipe=$(sed -n '/^queue-dogfood-readiness:/,/^$/p' "$repo_root/Makefile")
 if [ -z "$recipe" ]; then
 	fail "structural: the queue-dogfood-readiness recipe could not be read"
-elif printf '%s' "$recipe" | grep -vE '^[[:space:]]*@?#' | grep -q 'pgrep'; then
+elif grep -q 'pgrep' <<<"$(grep -vE '^[[:space:]]*@?#' <<<"$recipe")"; then
 	fail "structural: the recipe holds a pgrep of its own, so the tested count is not the only count"
 else
 	pass "structural: the recipe holds no second copy of the derivation"

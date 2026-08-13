@@ -111,7 +111,7 @@ fail() {
 
 assert_contains() {
   local label="$1" needle="$2" haystack="$3"
-  if echo "$haystack" | grep -qF "$needle"; then
+  if grep -qF "$needle" <<<"$haystack"; then
     pass "$label"
   else
     fail "$label (needle='$needle' not found)"
@@ -120,7 +120,7 @@ assert_contains() {
 
 assert_not_contains() {
   local label="$1" needle="$2" haystack="$3"
-  if ! echo "$haystack" | grep -qF "$needle"; then
+  if ! grep -qF "$needle" <<<"$haystack"; then
     pass "$label"
   else
     fail "$label (needle='$needle' should NOT be present)"
@@ -1123,7 +1123,7 @@ assert_contains "critical re-alert: stdout IMMEDIATE" "IMMEDIATE"   "$OUTPUT"
 assert_contains "critical re-alert: stdout daemon-down" "daemon-down" "$OUTPUT"
 LATEST="$PROJ/.harmonik/ops-monitor/latest.json"
 SEND_SIGS=$(python3 -c "import json; d=json.load(open('$LATEST')); print(json.dumps(d.get('send_immediate_signals', [])))" 2>/dev/null || echo "[]")
-if echo "$SEND_SIGS" | grep -qF "daemon-down"; then
+if grep -qF "daemon-down" <<<"$SEND_SIGS"; then
   pass "critical re-alert: daemon-down in send_immediate_signals"
 else
   fail "critical re-alert: daemon-down missing from send_immediate_signals (got $SEND_SIGS)"
@@ -1699,7 +1699,7 @@ PROJ=$(setup_fixture \
 OUTPUT=$(run_check "$PROJ")
 LATEST="$PROJ/.harmonik/ops-monitor/latest.json"
 SEND_SIGS=$(python3 -c "import json; d=json.load(open('$LATEST')); print(json.dumps(d.get('send_immediate_signals', [])))" 2>/dev/null || echo "[]")
-if echo "$SEND_SIGS" | grep -qF "release-due"; then
+if grep -qF "release-due" <<<"$SEND_SIGS"; then
   fail "27e: release-due should be suppressed at 6 min (30-min IMMEDIATE_COOLDOWN, not 5-min critical)"
 else
   pass "27e: release-due suppressed within 30-min cooldown (NOT a critical-component signal)"
@@ -1750,14 +1750,14 @@ run_check "$PROJ" > /dev/null 2>&1
 LATEST="$PROJ/.harmonik/ops-monitor/latest.json"
 # supervisor-down must STILL be detected (in immediate_signals — the condition is real)…
 IMM_SIGS=$(python3 -c "import json; d=json.load(open('$LATEST')); print(json.dumps(d.get('immediate_signals', [])))" 2>/dev/null || echo "[]")
-if echo "$IMM_SIGS" | grep -qF "supervisor-down"; then
+if grep -qF "supervisor-down" <<<"$IMM_SIGS"; then
   pass "28: supervisor-down still detected in immediate_signals (condition is real)"
 else
   fail "28: supervisor-down missing from immediate_signals (should still be detected)"
 fi
 # …but NOT re-sent this tick (persistent throttle: 6 min < 30 min).
 SEND_SIGS=$(python3 -c "import json; d=json.load(open('$LATEST')); print(json.dumps(d.get('send_immediate_signals', [])))" 2>/dev/null || echo "[]")
-if echo "$SEND_SIGS" | grep -qF "supervisor-down"; then
+if grep -qF "supervisor-down" <<<"$SEND_SIGS"; then
   fail "28: supervisor-down re-sent within persistent throttle (Fix B regression: 5-min flood)"
 else
   pass "28: supervisor-down NOT re-sent within 30-min persistent throttle (Fix B)"
@@ -1805,7 +1805,7 @@ run_check "$PROJ" > /dev/null 2>&1
 LATEST="$PROJ/.harmonik/ops-monitor/latest.json"
 # supervisor-down re-sent this tick (throttle elapsed).
 SEND_SIGS_29=$(python3 -c "import json; d=json.load(open('$LATEST')); print(json.dumps(d.get('send_immediate_signals', [])))" 2>/dev/null || echo "[]")
-if echo "$SEND_SIGS_29" | grep -qF "supervisor-down"; then
+if grep -qF "supervisor-down" <<<"$SEND_SIGS_29"; then
   pass "29: supervisor-down re-sent after persistent throttle elapsed"
 else
   fail "29: supervisor-down not re-sent though 31m > 30m throttle"
@@ -1866,13 +1866,13 @@ run_check "$PROJ" > /dev/null 2>&1
 LATEST="$PROJ/.harmonik/ops-monitor/latest.json"
 SEND_29B=$(python3 -c "import json; d=json.load(open('$LATEST')); print(json.dumps(d.get('send_immediate_signals', [])))" 2>/dev/null || echo "[]")
 # The fresh paused-queue signal MUST be sent this tick.
-if echo "$SEND_29B" | grep -q "paused-queue"; then
+if grep -q "paused-queue" <<<"$SEND_29B"; then
   pass "29b: fresh distinct paused-queue signal fires immediately (per-signal keying)"
 else
   fail "29b: fresh paused-queue signal NOT sent; send_immediate=$SEND_29B"
 fi
 # The persistent supervisor-down MUST stay throttled (not in send list this tick).
-if echo "$SEND_29B" | grep -q "supervisor-down"; then
+if grep -q "supervisor-down" <<<"$SEND_29B"; then
   fail "29b: persistent supervisor-down leaked a re-send within throttle; send=$SEND_29B"
 else
   pass "29b: persistent supervisor-down stays throttled while new signal fires"
@@ -1903,7 +1903,7 @@ LOG=$(comms_log "$PROJ")
 if [[ -f "$LOG" && -s "$LOG" ]]; then
   # daemon-down is direct-class, must go to captain
   if grep -q "daemon-down" "$LOG"; then
-    if grep "daemon-down" "$LOG" | grep -q "to=captain"; then
+    if grep -q "to=captain" <<<"$(grep "daemon-down" "$LOG")"; then
       pass "30: daemon-down (direct-class) routed to captain (no config)"
     else
       fail "30: daemon-down (direct-class) NOT routed to captain; got: $(grep "daemon-down" "$LOG")"
@@ -1912,7 +1912,7 @@ if [[ -f "$LOG" && -s "$LOG" ]]; then
     pass "30: daemon-down not in comms (cooldown or fixture variance — skip routing check)"
   fi
   # All sends must be --to captain when no config.yaml
-  if grep -v "to=captain" "$LOG" | grep -q "to="; then
+  if grep -q "to=" <<<"$(grep -v "to=captain" "$LOG")"; then
     fail "30: found non-captain --to target with no config; log: $(cat "$LOG")"
   else
     pass "30: all comms sends target captain (no config — default preserved)"
@@ -1940,13 +1940,13 @@ if [[ ! -f "$LOG" || ! -s "$LOG" ]]; then
   fail "31: expected comms sends (daemon-down + single-mode), got none"
 else
   # direct-class (daemon-down) must go to captain
-  if grep "daemon-down" "$LOG" | grep -q "to=captain"; then
+  if grep -q "to=captain" <<<"$(grep "daemon-down" "$LOG")"; then
     pass "31: daemon-down (direct-class) → to=captain (§4 SPOF bypass)"
   else
     fail "31: daemon-down (direct-class) did not go to captain; log: $(cat "$LOG")"
   fi
   # watch-class (single-mode) must go to watch
-  if grep "single-mode" "$LOG" | grep -q "to=watch"; then
+  if grep -q "to=watch" <<<"$(grep "single-mode" "$LOG")"; then
     pass "31: single-mode (watch-class) → to=watch (opsmonitor_target)"
   elif grep -q "single-mode" "$LOG"; then
     fail "31: single-mode (watch-class) did not go to watch; log: $(cat "$LOG")"
@@ -1975,7 +1975,7 @@ if [[ ! -f "$LATEST" ]]; then
   fail "32: latest.json missing"
 else
   SIGS=$(python3 -c "import json; d=json.load(open('$LATEST')); print(json.dumps(d.get('immediate_signals', [])))" 2>/dev/null || echo "[]")
-  if echo "$SIGS" | grep -q "watch-down"; then
+  if grep -q "watch-down" <<<"$SIGS"; then
     pass "32: watch-down in immediate_signals when watch tmux down + target configured"
   else
     fail "32: watch-down missing from immediate_signals; got: $SIGS"
@@ -1983,19 +1983,19 @@ else
   # watch-down must appear in direct_signals (captain-routed), NOT watch_signals.
   DIRECT=$(python3 -c "import json; d=json.load(open('$LATEST')); print(json.dumps(d.get('direct_signals', [])))" 2>/dev/null || echo "[]")
   WATCH_SIG=$(python3 -c "import json; d=json.load(open('$LATEST')); print(json.dumps(d.get('watch_signals', [])))" 2>/dev/null || echo "[]")
-  if echo "$DIRECT" | grep -q "watch-down"; then
+  if grep -q "watch-down" <<<"$DIRECT"; then
     pass "32: watch-down in direct_signals (captain-routed)"
   else
     fail "32: watch-down NOT in direct_signals; direct=$DIRECT watch=$WATCH_SIG"
   fi
-  if echo "$WATCH_SIG" | grep -q "watch-down"; then
+  if grep -q "watch-down" <<<"$WATCH_SIG"; then
     fail "32: watch-down leaked into watch_signals (must be direct-class only)"
   else
     pass "32: watch-down absent from watch_signals (correct)"
   fi
   LOG=$(comms_log "$PROJ")
   if [[ -f "$LOG" && -s "$LOG" ]]; then
-    if grep "watch-down" "$LOG" | grep -q "to=captain"; then
+    if grep -q "to=captain" <<<"$(grep "watch-down" "$LOG")"; then
       pass "32: watch-down comms send routed to captain (direct-class SPOF bypass)"
     elif grep -q "watch-down" "$LOG"; then
       fail "32: watch-down sent but NOT to captain; log: $(cat "$LOG")"
@@ -2023,7 +2023,7 @@ run_check "$PROJ" > /dev/null 2>&1
 LATEST="$PROJ/.harmonik/ops-monitor/latest.json"
 if [[ -f "$LATEST" ]]; then
   SIGS=$(python3 -c "import json; d=json.load(open('$LATEST')); print(json.dumps(d.get('immediate_signals', [])))" 2>/dev/null || echo "[]")
-  if echo "$SIGS" | grep -q "watch-down"; then
+  if grep -q "watch-down" <<<"$SIGS"; then
     fail "33: watch-down fired with no opsmonitor_target config (breaks inert-merge guarantee)"
   else
     pass "33: watch-down suppressed when no opsmonitor_target configured (inert-merge OK)"
@@ -2053,7 +2053,7 @@ PROJ=$(setup_fixture \
 OUTPUT_34A=$(run_check "$PROJ")
 LATEST_34A="$PROJ/.harmonik/ops-monitor/latest.json"
 SIGS_34A=$(python3 -c "import json; d=json.load(open('$LATEST_34A')); print(json.dumps(d.get('immediate_signals', [])))" 2>/dev/null || echo "[]")
-if echo "$SIGS_34A" | grep -q "watch-down"; then
+if grep -q "watch-down" <<<"$SIGS_34A"; then
   fail "34a: watch-down fired when watch tmux is alive (false positive)"
 else
   pass "34a: no watch-down when watch tmux is alive"
@@ -2077,14 +2077,14 @@ LATEST_34B="$PROJ/.harmonik/ops-monitor/latest.json"
 assert_contains "34b: watch-down in stdout"     "watch-down" "$OUTPUT_34B"
 assert_contains "34b: IMMEDIATE in stdout"      "IMMEDIATE"  "$OUTPUT_34B"
 DIRECT_34B=$(python3 -c "import json; d=json.load(open('$LATEST_34B')); print(json.dumps(d.get('direct_signals', [])))" 2>/dev/null || echo "[]")
-if echo "$DIRECT_34B" | grep -q "watch-down"; then
+if grep -q "watch-down" <<<"$DIRECT_34B"; then
   pass "34b: watch-down in direct_signals (→ captain)"
 else
   fail "34b: watch-down not in direct_signals; got: $DIRECT_34B"
 fi
 LOG_34B=$(comms_log "$PROJ")
 if [[ -f "$LOG_34B" && -s "$LOG_34B" ]]; then
-  if grep "watch-down" "$LOG_34B" | grep -q "to=captain"; then
+  if grep -q "to=captain" <<<"$(grep "watch-down" "$LOG_34B")"; then
     pass "34b: watch-down comms routed to captain (not to watch)"
   elif grep -q "watch-down" "$LOG_34B"; then
     fail "34b: watch-down sent but NOT to captain; log: $(cat "$LOG_34B")"
@@ -2136,13 +2136,13 @@ if [[ ! -f "$LATEST_35A" ]]; then
   fail "35a: latest.json missing"
 else
   SIGS_35A=$(python3 -c "import json; d=json.load(open('$LATEST_35A')); print(json.dumps(d.get('immediate_signals', [])))" 2>/dev/null || echo "[]")
-  if echo "$SIGS_35A" | grep -q "watch-stalled"; then
+  if grep -q "watch-stalled" <<<"$SIGS_35A"; then
     pass "35a: watch-stalled in immediate_signals (cursor frozen with pending events)"
   else
     fail "35a: watch-stalled NOT in immediate_signals; got: $SIGS_35A"
   fi
   # watch_down must NOT fire (watch is present + tmux alive)
-  if echo "$SIGS_35A" | grep -q "watch-down"; then
+  if grep -q "watch-down" <<<"$SIGS_35A"; then
     fail "35a: watch-down must NOT fire when watch is comms-present + tmux alive"
   else
     pass "35a: watch-down correctly absent (watch is present, dual-probe holds)"
@@ -2150,12 +2150,12 @@ else
   # watch-stalled is direct-class: must appear in direct_signals, not watch_signals
   DIRECT_35A=$(python3 -c "import json; d=json.load(open('$LATEST_35A')); print(json.dumps(d.get('direct_signals', [])))" 2>/dev/null || echo "[]")
   WSIG_35A=$(python3 -c "import json; d=json.load(open('$LATEST_35A')); print(json.dumps(d.get('watch_signals', [])))" 2>/dev/null || echo "[]")
-  if echo "$DIRECT_35A" | grep -q "watch-stalled"; then
+  if grep -q "watch-stalled" <<<"$DIRECT_35A"; then
     pass "35a: watch-stalled in direct_signals (→ captain)"
   else
     fail "35a: watch-stalled not in direct_signals; direct=$DIRECT_35A watch=$WSIG_35A"
   fi
-  if echo "$WSIG_35A" | grep -q "watch-stalled"; then
+  if grep -q "watch-stalled" <<<"$WSIG_35A"; then
     fail "35a: watch-stalled leaked into watch_signals (must be direct-class)"
   else
     pass "35a: watch-stalled absent from watch_signals (correct direct-class routing)"
@@ -2194,12 +2194,12 @@ if [[ ! -f "$LATEST_35B" ]]; then
   fail "35b: latest.json missing"
 else
   SIGS_35B=$(python3 -c "import json; d=json.load(open('$LATEST_35B')); print(json.dumps(d.get('immediate_signals', [])))" 2>/dev/null || echo "[]")
-  if echo "$SIGS_35B" | grep -q "watch-stalled"; then
+  if grep -q "watch-stalled" <<<"$SIGS_35B"; then
     fail "35b: watch-stalled fired despite cursor advancing (false positive)"
   else
     pass "35b: no watch-stalled when cursor is advancing"
   fi
-  if echo "$SIGS_35B" | grep -q "watch-down"; then
+  if grep -q "watch-down" <<<"$SIGS_35B"; then
     fail "35b: watch-down must not fire (watch is comms-present + tmux alive)"
   else
     pass "35b: no watch-down when watch is present and tmux alive"
@@ -2227,7 +2227,7 @@ if [[ ! -f "$LATEST_35C" ]]; then
   fail "35c: latest.json missing"
 else
   SIGS_35C=$(python3 -c "import json; d=json.load(open('$LATEST_35C')); print(json.dumps(d.get('immediate_signals', [])))" 2>/dev/null || echo "[]")
-  if echo "$SIGS_35C" | grep -q "watch-down"; then
+  if grep -q "watch-down" <<<"$SIGS_35C"; then
     fail "35c: watch-down fired when tmux is alive (violates dual-probe — must require BOTH absent+no-tmux)"
   else
     pass "35c: watch-down suppressed when tmux is alive (dual-probe correct)"
@@ -2272,7 +2272,7 @@ if [[ ! -f "$LATEST_35D" ]]; then
   fail "35d: latest.json missing"
 else
   SIGS_35D=$(python3 -c "import json; d=json.load(open('$LATEST_35D')); print(json.dumps(d.get('immediate_signals', [])))" 2>/dev/null || echo "[]")
-  if echo "$SIGS_35D" | grep -q "watch-stalled"; then
+  if grep -q "watch-stalled" <<<"$SIGS_35D"; then
     fail "35d: watch-stalled FALSE-POSITIVE on benign churn (Fix A regression); got: $SIGS_35D"
   else
     pass "35d: no watch-stalled when only benign churn is past the frozen cursor (Fix A)"
@@ -2324,7 +2324,7 @@ if [[ ! -f "$LATEST_45" ]]; then
   fail "45: latest.json missing"
 else
   SIGS_45=$(python3 -c "import json; d=json.load(open('$LATEST_45')); print(json.dumps(d.get('immediate_signals', [])))" 2>/dev/null || echo "[]")
-  if echo "$SIGS_45" | grep -q "watch-stalled"; then
+  if grep -q "watch-stalled" <<<"$SIGS_45"; then
     fail "45: watch-stalled FALSE-POSITIVE on idle-but-streaming watch (hk-q6yrw regression); got: $SIGS_45"
   else
     pass "45: no watch-stalled for idle-but-actively-streaming watch (hk-q6yrw)"

@@ -584,16 +584,33 @@ the marshaller in `internal/runmerge/reviewtrailers.go` always writes one, so a
 verdict without it is a shape no reader here accepts.
 
 An `APPROVE` is held to more than the other verdicts. `scripts/validate-commit-msg.sh`
-requires the `Reviewed-By:` value to name a reviewer skill this repo has —
-`agent-reviewer` or `agent-config-reviewer`, with an optional qualifier in parentheses
-— and refuses a value that says "self". Write `Reviewed-By: agent-reviewer`. It also
-requires the `flags` key on an `APPROVE` (and on the config reviewer's `CLEAN`). The
-validator does not demand `flags` of the author-written `NOT_REVIEWED` below, which no
-reviewer emitted and this skill does not govern.
+requires the `Reviewed-By:` value to be the bare name of a reviewer skill this repo has
+— `agent-reviewer` or `agent-config-reviewer` — and refuses a value that says "self".
+Write `Reviewed-By: agent-reviewer`, and write nothing after the name. A qualifier is
+refused: `agent-reviewer (codex harness)` and `agent-reviewer (APPROVE)` both fail. The
+parenthetical used to be free text that no rule read, so `agent-reviewer (myself)` read
+as an approval by a real reviewer. Put the detail about the run — which harness ran,
+when, what it checked — in the verdict's own `notes` field, inside the JSON rather than
+beside it. A name with nothing after it is one exact-match grep to audit.
+
+The name must also be a reviewer skill directory that git TRACKS
+(`.claude/skills/<name>/SKILL.md`). An untracked `mkdir` beside the real skills cannot
+mint a reviewer identity the validator then trusts; a new reviewer arrives the way
+anything else does, as a diff somebody can decline. The validator also requires the
+`flags` key on an `APPROVE` (and on the config reviewer's `CLEAN`). It does not demand
+`flags` of the author-written `NOT_REVIEWED` below, which no reviewer emitted and this
+skill does not govern.
 
 When the implementer could not reach you at all, the trailer says so and the commit
-lands anyway: `"verdict": "NOT_REVIEWED"`, which carries no approval. That is the
-author's record of an absent review, not an output of this skill. It is documented in
+lands anyway. Write these two lines exactly:
+
+```
+Reviewed-By: none — no reviewer was reached for this commit
+Review-Verdict: {"schema_version": 1, "verdict": "NOT_REVIEWED", "flags": ["no-reviewer-reached"], "notes": "<what was verified instead, and by whom>"}
+```
+
+`NOT_REVIEWED` carries no approval. That is the author's record of an absent review, not
+an output of this skill. It is documented in
 `docs/foundation/project-level/build-practices.md` §Commit conventions.
 
 BLOCK verdicts never land. If you emit BLOCK, the implementer fixes the issue and

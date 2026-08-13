@@ -172,6 +172,29 @@ type tmuxSubstrate struct {
 	// Bead ref: hk-pcjkp.
 	capResizeMid func()
 
+	// spawnSemWaits counts the times a non-terminal spawn has missed the
+	// fast-path TryAcquire in acquireSpawnSlot and fallen into
+	// awaitSpawnSemHoldingNonTerminal — the bounded wait for a spawnSem slot
+	// that the reserve was supposed to make unnecessary.
+	//
+	// It is a test seam. Production reads it nowhere, and it must not start
+	// deciding anything: the increment is a plain counter on a path that is
+	// already about to block, so it changes no behaviour and costs one atomic
+	// add per slow acquire.
+	//
+	// What it buys is the only way to see this condition from outside the
+	// substrate. Since hk-terminal-reserve-unbounded-wyy6y the wait normally
+	// SUCCEEDS, so a spawn that took the slow path and one that took the fast
+	// path return the same value, and only their latency differs. A test that
+	// tells them apart by outcome cannot; a test that tells them apart by wall
+	// clock is a load-flaky test waiting to happen. The entry count is exact
+	// and load-independent. Without it the raise-order guard against hk-pcjkp
+	// was vacuous — a woken spawn refused capacity it had just been granted
+	// still started, so the test stayed green (hk-6zv97).
+	//
+	// Bead ref: hk-pcjkp (the ordering rule), hk-6zv97 (this counter).
+	spawnSemWaits atomic.Uint64
+
 	// spawnAcquireTimeout bounds how long SpawnWindow waits for a free spawn
 	// slot before treating the launch as failed (hk-4l7zs). A run sitting at
 	// launch_initiated forever (no tmux session, no implementer_phase_complete)
@@ -1060,6 +1083,11 @@ func (s *tmuxSubstrate) acquireSpawnSlot(ctx context.Context, terminal bool) err
 // Passing that remainder through would turn a bounded wait into the indefinite
 // SpawnWindow block hk-4l7zs removed.
 func (s *tmuxSubstrate) awaitSpawnSemHoldingNonTerminal(ctx context.Context, start time.Time) error {
+	// Count the entry, not the exit: the claim a test needs to hold is that a
+	// spawn never REACHED this wait, and a wait that succeeds leaves no other
+	// trace. See spawnSemWaits (hk-6zv97).
+	s.spawnSemWaits.Add(1)
+
 	unbounded := s.spawnAcquireTimeout <= 0
 	remaining := time.Duration(0)
 	if !unbounded {

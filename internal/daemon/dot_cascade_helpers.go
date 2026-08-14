@@ -898,16 +898,26 @@ func isGateCannotRunError(output []byte) bool {
 // unconditional fallback carries to close-needs-attention, so this branch should
 // no longer see one. This is the second line: whatever class arrives here, the
 // wording matches it, and a future class needs no second fix.
+//
+// notes is REAL gate output, and it goes through gateEvidenceQuote before it is
+// quoted back. This message is the daemon speaking about one gate, and it
+// travels — into the reviewer-feedback file, into the prompt the next
+// implementer reads, and into the diagnostics a test prints when it checks this
+// path. Any of those can land in the NEXT gate's log, at column 0, where the
+// classifier reads it as make's own report. That is the same defect the reading
+// end was repaired for, arriving through the writing end, and no position rule
+// can see it. (hk-e0yhw)
 func gateBackEdgeMessage(class core.FailureClass, notes string) string {
+	quoted := gateEvidenceQuote(notes)
 	if class == core.FailureClassDeterministic {
 		return "The commit gate failed — your commit was recorded but the build/test gate did not pass. " +
-			"Fix the failure and re-commit:\n\n" + notes
+			"Fix the failure and re-commit:\n\n" + quoted
 	}
 	return "The commit gate did not finish — your commit was recorded, but the gate stopped before it " +
 		"reached a verdict, so NOTHING is known to be wrong with your change. Do not invent a fix and do " +
 		"not rewrite working code. Re-read .harmonik/agent-task.md, confirm your work is complete and " +
 		"committed, and change something only if it is genuinely missing. The last output the gate " +
-		"produced follows, for context only — it is a partial log, not a failure report:\n\n" + notes
+		"produced follows, for context only — it is a partial log, not a failure report:\n\n" + quoted
 }
 
 // gateKilledBySignal reports whether the gate was killed by a signal rather than
@@ -983,10 +993,31 @@ func gateKilledBySignal(err error, output []byte) (string, bool) {
 		}
 	}
 	if line, ok := gateSignalKillOutputLine(output); ok {
-		return "gate output reports a signal kill: " + line, true
+		// The line is already sanitized (gateSignalKillOutputLine quotes it as
+		// it extracts it), but gateKillOutputPrefix ends in `: ` and can supply
+		// the head of a signature the sanitizer just removed. Same seam as
+		// gateFailureTail, same guard. This description becomes the logDesc
+		// dispatchDotToolNode writes to stderr at column 0, where the NEXT
+		// gate's classifier reads it with no indentation to rule it out.
+		if gateJoinBuildsASignature(gateKillOutputPrefix, line) {
+			line = "…" + line
+		}
+		return gateKillOutputPrefix + line, true
 	}
 	return "", false
 }
+
+// gateKillOutputPrefix labels the cascade line gateKilledBySignal quotes. It is
+// text this DAEMON writes onto sanitized output, so it is a seam on the same
+// terms as gateFailureTailPrefix.
+//
+// It is named rather than inlined so that the string handed to
+// gateJoinBuildsASignature and the string actually pasted onto the line are ONE
+// value and cannot drift apart. That is the whole benefit, and it is worth
+// stating exactly: no test reads this identifier, and the seam sweep would probe
+// the same bytes if the literal were inlined twice — right up to the day someone
+// edited one of the two copies.
+const gateKillOutputPrefix = "gate output reports a signal kill: "
 
 // gateSignalKillOutputLine finds the line in make's TERMINAL recipe-failure
 // cascade that says the gate died from a signal, and returns it for the log.
@@ -1178,7 +1209,9 @@ func gateRecipeExitCodeIsSignalDeath(line string) bool {
 const gateRecipeFailureAnchorQuoted = "recipe ["
 
 // gateEvidenceQuote renders gate-log text for a message this daemon writes,
-// WITHOUT reproducing any string this file's detectors key on.
+// WITHOUT reproducing any string this file's detectors key on. It takes one line
+// or a whole run of them — every rewrite is a plain substring replacement, so a
+// multi-line excerpt is covered the same way a single line is.
 //
 // This is not cosmetic. The classifier's diagnostic goes to stderr, the gate runs
 // the suite under `go test -v`, and a test that drives this path therefore prints
@@ -1207,12 +1240,45 @@ const gateRecipeFailureAnchorQuoted = "recipe ["
 // It was written for the anchor alone, and for a while it defended one detector
 // while starving the other: a message that had lost the anchor still carried
 // `] Error 127`, and a red gate whose log replayed one read as structural.
-func gateEvidenceQuote(line string) string {
-	out := strings.ReplaceAll(line, gateRecipeFailureAnchor, gateRecipeFailureAnchorQuoted)
+func gateEvidenceQuote(text string) string {
+	out := strings.ReplaceAll(text, gateRecipeFailureAnchor, gateRecipeFailureAnchorQuoted)
 	for _, sig := range gateUnscopedSignatures {
 		out = strings.ReplaceAll(out, sig.text, sig.quoted)
 	}
 	return out
+}
+
+// gateJoinBuildsASignature reports whether left+right carries a detector
+// signature that NEITHER side carries on its own — one made out of a suffix of
+// left and a prefix of right, at the seam where the two are pasted together.
+//
+// The sanitizer cannot see this. It runs on gate output BEFORE that output is
+// pasted into a sentence, and at that moment the text is clean; the signature
+// appears when a constant this daemon writes supplies the first bytes of one.
+// Measured on the clause gateFailureTail builds: its prefix ends in `: `, which
+// is the first two bytes of the `: command not found` signature, so an excerpt
+// that begins `command not found` rebuilt the very string the sanitizer had
+// just removed. (hk-e0yhw)
+//
+// It reads gateUnscopedSignatures, so an unscoped signature added to that table
+// tomorrow is checked at this seam with no edit here. It does NOT read
+// gateRecipeFailureAnchor, the sanitizer's other rewrite class: a constant that
+// ended in `**` could supply the head of make's anchor the same way. No constant
+// does today, so this is a stated limit rather than a covered case.
+//
+// Do not narrow that limit to "the anchor only matters beside a signal word".
+// gateRecipeLineNamesAKill falls through to gateRecipeExitCodeIsSignalDeath, so
+// an anchored line carrying an exit code of 129..255 and NO signal word reads as
+// a kill on its own. The exposure is wider than a signal-word reading suggests.
+func gateJoinBuildsASignature(left, right string) bool {
+	for _, sig := range gateUnscopedSignatures {
+		for i := 1; i < len(sig.text); i++ {
+			if strings.HasSuffix(left, sig.text[:i]) && strings.HasPrefix(right, sig.text[i:]) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // nodeIsReviewer reports whether an agentic node is a reviewer-class node. The
@@ -1510,6 +1576,23 @@ func strandedCommitNote(
 	if !committed || gatePassed || gateNodeID == "" || prevNodeID != gateNodeID {
 		return ""
 	}
+	// THE LEADING SPACE IS PUNCTUATION, NOT PROTECTION. This note is appended
+	// to a sentence, and that is all the space is for. An earlier version of
+	// this comment argued that the space also makes the line land INDENTED, so
+	// gateLineIsIndented would rule it out of make's terminal cascade. That is
+	// false at BOTH places this note is produced. dot_cascade_core.go glues it
+	// onto "dot: no-progress detected at iteration N: HEAD did not advance" and
+	// onto "dot: review fix-up stalled at iteration N: HEAD did not advance
+	// after REQUEST_CHANGES". Both start at COLUMN 0, so the composed line is
+	// not indented and the cascade-scoped detectors do see it.
+	//
+	// So BOTH rewrites in gateEvidenceQuote are load-bearing for this note, and
+	// only the caller's shape shows it. Measured: with the recipe-anchor rewrite
+	// disabled, this note goes red planted against the cascade IN ITS CALLER'S
+	// SHAPE and stays green rendered bare — which is how the earlier reading
+	// came to be recorded as a measurement. See
+	// TestAMessageQuotingGateOutputCannotRelabelTheNextGate, which now renders
+	// it both ways for exactly that reason.
 	return fmt.Sprintf(
 		" — the %s gate stayed red and the implementer added nothing; commit %s is preserved on %s and was NOT merged%s",
 		gateNodeID, headSHA, workspace.TaskBranchPrefix+runID.String(), gateFailureTail(gateNotes))
@@ -1521,23 +1604,78 @@ func strandedCommitNote(
 // reached the implementer as GATE_FAIL feedback.
 const gateFailureTailMaxBytes = 200
 
+// gateFailureTailPrefix labels the excerpt inside the stranded-commit reason.
+// It is text this DAEMON writes, so it is part of the seam gateFailureTail has
+// to keep signature-free; see the fourth step on gateFailureTail. Nothing
+// follows the excerpt — TestGateFailureTail_KeepsTheEnd requires the clause to
+// end where the gate output ends — so there is one seam here and not two.
+const gateFailureTailPrefix = "; gate output: "
+
 // gateFailureTail renders the last of a failed gate's notes for the
 // stranded-commit reason (hk-2vx1n), prefixed and bounded, or "" when the gate
 // recorded nothing. It keeps the TAIL rather than the head: a build or test
 // gate names what failed at the end of its output.
+//
+// It carries REAL gate output into a line an operator reads, so it goes through
+// gateEvidenceQuote for the reason given on gateBackEdgeMessage. The fold onto
+// one line makes this the WORSE of the two: it puts make's recipe anchor in the
+// middle of a single unindented line, where gateLineIsIndented cannot rule it
+// out. (hk-e0yhw)
+//
+// THERE ARE FOUR STEPS AND THEY ARE IN THIS ORDER FOR A REASON. Fold, sanitize,
+// bound, join. Three of them are ordered against each other; the fourth is the
+// one the first version of this comment did not count, and it is the one that
+// was broken:
+//
+//   - fold before sanitizing, because folding a newline to a space JOINS two
+//     lines, and two lines that carry no signature apart can carry one together
+//     — a line that ends in `:` above a line that reads `command not found`;
+//   - sanitize before bounding, because gateEvidenceQuote makes text LONGER, so
+//     a rewrite that happens after the cut pushes the excerpt back past
+//     gateFailureTailMaxBytes;
+//   - the cut re-arms nothing BY ITSELF: it only drops leading bytes, and any
+//     substring of signature-free text is signature-free. That is an argument
+//     about the cut, and it was written as though it were an argument about the
+//     function;
+//   - the JOIN is the fourth step and it is not safe by itself.
+//     gateFailureTailPrefix ends in `: `, the first two bytes of the
+//     `: command not found` signature, so an excerpt that begins `command not
+//     found` rebuilds a signature the sanitizer removed — and this excerpt is
+//     read by the classifier that scans a whole log, with no position rule to
+//     save it. gateJoinBuildsASignature reads the seam, and an ellipsis at the
+//     head of the excerpt breaks it: `…` begins no signature.
+//
+// Inserting that ellipsis cannot push the clause past the bound, because the
+// two cases exclude each other. A cut excerpt ALREADY starts with `…`, so the
+// seam is already broken and nothing is added; the marker only ever reaches an
+// excerpt that was under gateFailureTailMaxBytes to begin with.
+//
+// It is inserted ONCE and not in a loop, and that is a limit rather than a
+// proof. A marker that was itself the head of some future signature would sit
+// against the excerpt exactly as the prefix does now, and a loop would prepend
+// it forever instead of fixing it. `…` begins no signature today. What holds
+// the invariant is a test that reads the RESULT and is derived over
+// gateUnscopedSignatures — TestTheGateOutputClauseCannotBuildASignatureAtTheSeam
+// — and the one shape it does not build a probe for is a signature that starts
+// with the bytes of the marker itself. This paragraph is the only thing
+// standing under that case; add such a signature and give it a probe.
 func gateFailureTail(notes string) string {
 	trimmed := strings.TrimSpace(notes)
 	if trimmed == "" {
 		return ""
 	}
-	if len(trimmed) > gateFailureTailMaxBytes {
-		b := []byte(trimmed[len(trimmed)-gateFailureTailMaxBytes:])
+	oneLine := gateEvidenceQuote(strings.ReplaceAll(trimmed, "\n", " "))
+	if len(oneLine) > gateFailureTailMaxBytes {
+		b := []byte(oneLine[len(oneLine)-gateFailureTailMaxBytes:])
 		for len(b) > 0 && !utf8.Valid(b) {
 			b = b[1:]
 		}
-		trimmed = "…" + string(b)
+		oneLine = "…" + string(b)
 	}
-	return "; gate output: " + strings.ReplaceAll(trimmed, "\n", " ")
+	if gateJoinBuildsASignature(gateFailureTailPrefix, oneLine) {
+		oneLine = "…" + oneLine
+	}
+	return gateFailureTailPrefix + oneLine
 }
 
 // graphVersionOr returns the graph's version field or a placeholder when empty

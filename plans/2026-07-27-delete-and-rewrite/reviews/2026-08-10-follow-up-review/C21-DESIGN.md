@@ -75,7 +75,7 @@ session.
 
 The scheduler uses this order for one dispatch:
 
-1. Mint the run ID and claim transition ID.
+1. Resolve the exact parent commit. Bind it with the run ID and claim transition ID.
 2. Create the prepared intent.
 3. Commit the queue reservation with the same run ID.
 4. Claim the bead with the same transition ID.
@@ -85,6 +85,76 @@ The scheduler uses this order for one dispatch:
 8. Create or select the execution handoff.
 9. Advance the intent to handoff-durable.
 10. Register and launch the run.
+
+The dispatch binding and universal run record both store `parent_commit`.
+This value is the canonical lowercase object ID returned by Git for the
+resolved start point. It is 40 hexadecimal characters in a SHA-1 repository or
+64 hexadecimal characters in a SHA-256 repository. It cannot change after the
+prepared intent is durable. Worktree replay uses this value. It does not read
+the current branch tip.
+
+This is a pre-activation wire change. No production scheduler writes a dispatch
+intent or session-start receipt yet. Increase the dispatch-intent schema from 1
+to 2, the universal run-record schema from 2 to 3, and the session-start receipt
+schema from 1 to 2. The receipt embeds the full dispatch binding. Startup
+rejects the older shapes as unsupported. It does not guess a missing parent
+commit. Exact JSON tests pin the new field and the deliberate rejection of the
+pre-activation schemas.
+
+Provisioning is durable only after the worktree exists at the exact canonical
+run path, its HEAD equals `parent_commit`, and its lease names the exact run ID.
+A lease-write or lease-read failure stops replay. The normal scheduler and
+startup replay use the same strict provisioning adapter. They do not use the
+older best-effort lease helper for a dispatch-intent run.
+
+Provisioning uses these restart rules:
+
+- A located record with no canonical worktree creates `run/<run_id>` at the
+  exact canonical path from `parent_commit`.
+- A registered canonical worktree without a lease is an incomplete replay
+  fact. Replay accepts it only when its Git branch is exactly `run/<run_id>` and
+  its HEAD is exactly `parent_commit`. It then installs and verifies the exact
+  lease. The generic WM-003a Cat 3 sweep does not consume this intent-owned
+  worktree first.
+- A matching durable lease completes provisioning. The next replay decision
+  can prepare the handoff.
+- A worktree at another path, an unregistered canonical path, another branch,
+  another HEAD, a duplicate registration, or a foreign or unreadable lease is
+  `repair-required`. Replay preserves the worktree, record, and intent.
+- A crash after location durability but before worktree creation retries the
+  exact stored location. A crash after worktree creation but before lease
+  durability verifies Git before it writes the lease. A crash after lease
+  durability returns the matching worktree fact. No retry selects a worker or
+  parent commit again.
+
+Worktree creation treats an error as an uncertain filesystem and Git result.
+It reloads the canonical path, the `git worktree list --porcelain` entry, the
+checked-out branch, HEAD, and the standalone `refs/heads/run/<run_id>` branch
+ref. Exact facts continue to lease installation. Full absence means that the
+path, registration, and standalone branch ref are all absent. Only full absence
+permits a later exact retry. Any partial or different fact is
+`repair-required` and remains unchanged. Replay does not run the generic
+partial-worktree cleanup on an intent-owned path.
+
+Before implementation, amend `specs/workspace-model.md` WM-003a. A registered
+worktree without a lease normally routes to Cat 3. The amendment gives a valid
+dispatch intent priority for its exact canonical run path. Dispatch replay
+must classify or finish that worktree before the generic Cat 3 sweep. A path
+with no valid matching intent keeps the existing WM-003a route. This is a
+bounded ownership-order amendment. It does not weaken generic orphan cleanup.
+
+Lease installation uses no replacement. It writes and syncs a temporary file,
+publishes the exact lease, and syncs the lease parent. A publish or parent-sync
+error reloads the exact lease and retries the parent sync. Exact bytes plus a
+successful parent sync are a converged success. Absence is retryable only when
+the publish is known not to have happened. Different or unreadable bytes and
+an unresolved sync error are ambiguous. Replay preserves all facts and stops.
+The executor reads the lease again after success and requires the exact run ID.
+
+The parent-commit HEAD check applies while the intent is `run_durable` and no
+handler handoff exists. Later run phases can contain handler commits. Their
+worktree classifier still requires the canonical registration, task branch,
+and exact lease, but it does not require HEAD to remain at `parent_commit`.
 
 A definite intent-create failure stops before reservation and leaves no intent.
 An ambiguous create reloads the exact path. It proceeds only when the exact
@@ -101,8 +171,8 @@ queue item, Beads status, run record, worktree lease, and session identity that
 the intent names.
 
 The classifier is pure. It returns one action from LB-004. The executor applies
-that action through queue, Beads, run-record, and session ports. It advances or
-removes the intent only after the required durable fact exists.
+that action through queue, Beads, run-record, worktree, and session ports. It
+advances or removes the intent only after the required durable fact exists.
 
 #### Exact session start receipt
 

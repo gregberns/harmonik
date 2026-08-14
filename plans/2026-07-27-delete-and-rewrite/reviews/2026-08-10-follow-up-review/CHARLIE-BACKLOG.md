@@ -7,13 +7,13 @@ Charlie must deliberately break each new claim test before accepting it.
 
 ## Charlie status
 
-Updated: 2026-08-11
+Updated: 2026-08-13
 
 - Owner: Charlie.
 - Active slice: C21 startup replay coordinator and scheduler integration.
 - Start revision: `b49210d67` on `work/alpha-integration-merge`.
 - State: C01 through C20 are complete. C21 implementation is active.
-- Implementation commit: `de0a6ca3`.
+- Latest implementation commit: `462a8817`.
 - Integration reconciliation commit: `b0cac51a`.
 - Stop gate: C05 through C07 received independent approval before C08.
 - Coordination note: the queue RPC overlap retained both the active-run status work and the event-intent path.
@@ -427,7 +427,7 @@ no persistence or daemon wiring.
 
 **Limits:** Do not use log text or event presence as authority.
 
-**Status:** Implementation active on 2026-08-11.
+**Status:** Implementation active on 2026-08-13.
 
 **Implementation status:** C21a and C21b are complete. The pure replay
 classifier is complete. Queue namespace recovery now has a separate startup
@@ -443,10 +443,24 @@ explicit success response. The in-target bootstrap uses the local socket or
 the remote reverse-tunnel endpoint. It starts the handler only after that
 response. The startup replay executor remains.
 
-The exact claim, session, git, and run-outcome readers remain. The startup
-action executor, resumable provisioning, queue-path producer wiring, and crash
-matrix also remain. Producer wiring stays disabled until startup can execute
-every reachable replay action.
+Startup now plans every durable intent before it performs an effect. It replays
+an exact queue reservation, an exact Beads claim, a typed dependency refusal,
+and the base universal run record. It advances the intent only after each
+required fact is durable. It stops before the orphan sweep after each replay
+pass. Independent review approved each slice.
+
+The claim-success crash reader, session reader completion, Git reader, and run
+outcome reader remain. Resumable provisioning, queue-path producer wiring, and
+the crash matrix also remain. Producer wiring stays disabled until startup can
+execute every reachable replay action.
+
+`ResumeProvision` is blocked on one missing durable input. Worktree creation
+requires the exact parent commit. Neither the dispatch intent nor the universal
+run record stores that commit. A restart can therefore create the same run ID
+from a different Git commit. The current production worktree factory also
+treats lease-write failure as non-fatal. Replay requires a durable lease that
+matches the run before it can advance. Define and review these two facts before
+the executor enables `ResumeProvision`.
 
 **Evidence:** `C21-DESIGN.md` defines four review units. It requires a
 fail-closed intent store, a universal run record, an amended startup order, and

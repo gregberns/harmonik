@@ -44,6 +44,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
@@ -524,6 +525,20 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 	// Launch has started the child and its stdout is flowing.
 	var sess handler.Session
 	var emitCapturedSpawnProof func()
+	// Why the launch records WHICH kill fired, and not merely that one did.
+	//
+	// Every kill on this path arrives at the wait as the same three facts —
+	// SIGTERM, exit code -1, "signal: terminated". The agent that announced it
+	// was finished and the agent a watchdog found wedged are indistinguishable
+	// downstream. So a rule of the form "the daemon sent the signal, therefore
+	// the agent did not crash" would pass a stalled run, a never-ready run and an
+	// operator-aborted run along with the healthy one. The discriminator is
+	// knowable only here, at the kill sites.
+	//
+	// atomic because the announcement kill fires on the stdout interceptor's
+	// goroutine and the watchdog kills fire on the dispatch loop's, while the
+	// read below happens on this one.
+	var agentAnnouncedEnd, killedForFailure atomic.Bool
 	// capturedSessionIDCh stays nil for a launch with no interceptor (claude), so
 	// the drain below is a no-op there.
 	var capturedSessionIDCh chan string
@@ -576,6 +591,14 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 		agentEndCb := func() { //nolint:contextcheck // PI-014 backstop kill fires from the stdout interceptor goroutine, which outlives any request ctx
 			// PI-014: pi's process exit is unreliable, so agent_end is the
 			// event-driven kill backstop.
+			//
+			// Record the announcement BEFORE killing. The flag is the only
+			// surviving trace of the difference between this kill and a
+			// watchdog's: it is what stops the terminal classifier reading the
+			// signal death we are about to cause as a crash the agent suffered.
+			// Set it even when sess is still nil — the announcement is a fact
+			// about the AGENT, and it is true whether or not the kill lands.
+			agentAnnouncedEnd.Store(true)
 			if sess != nil {
 				_ = sess.Kill(context.Background()) //nolint:errcheck // best-effort backstop kill (pre-RT8 idiom)
 			}
@@ -934,6 +957,7 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 		Deliver: deliver,
 		KillReady: func(kctx context.Context) {
 			logf("waitAgentReady: %v", runlaunch.ErrAgentReadyTimeout)
+			killedForFailure.Store(true)
 			_ = sess.Kill(kctx) //nolint:errcheck // kill is best-effort; the reap below bounds it (pre-RT8 idiom)
 			if watcher != nil {
 				select {
@@ -977,6 +1001,7 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 			// Ctx-cancel abort edge: Kill is idempotent and the teardown pair
 			// rides behind it either way.
 			if sess != nil {
+				killedForFailure.Store(true)
 				_ = sess.Kill(context.Background()) //nolint:errcheck,contextcheck // idempotent abort kill off the cancelled ctx; teardown follows
 			}
 		},
@@ -1009,6 +1034,7 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 			// pattern. It is bounded off Background rather than off the run
 			// context because the reaper that detected the stall may already have
 			// cancelled that one.
+			killedForFailure.Store(true)
 			killCtx, killCancel := context.WithTimeout(context.Background(), runlaunch.KillReapTimeout)
 			_ = sess.Kill(killCtx) //nolint:errcheck,contextcheck // bounded kill off the (possibly cancelled) run ctx; the error is not actionable
 			killCancel()
@@ -1091,6 +1117,11 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 
 	res.SocketOutcome, res.Exit = runloop.WaitWithSocketGrace(ctx, ports.Clock, handles.HookStore, watcher, sess,
 		runID.String(), artifacts.ClaudeSessionID)
+
+	// Set here rather than inside the wait: WaitWithSocketGrace is given a
+	// session and a store and knows nothing about why anything killed anything,
+	// and teaching it would be handing it a fact it has no way to check.
+	res.Exit.AgentAnnouncedEnd = announcementIsCleanExit(agentAnnouncedEnd.Load(), killedForFailure.Load())
 
 	// Drain what the harness reported about itself. The child has exited by now,
 	// so the interceptor has already seen every byte of its stdout. A non-blocking
@@ -1236,7 +1267,7 @@ func runAgentPostExit(ctx context.Context, in agentPostExitInput) agentPostExitR
 	// ctx per RSM-022, so the lifecycle_transition emission survives a run ctx
 	// the stale watcher has already cancelled.
 	transitionToTerminated(context.Background(), launch.Session.Machine(), in.RunID, emit, //nolint:contextcheck // RSM-022: the lifecycle_transition emission must survive a reaper-cancelled run ctx; Background swap by design
-		launch.Exit.ExitCode, launch.Exit.WaitErr)
+		launch.Exit)
 
 	// implementer_phase_complete (hk-cd8yu) closes the diagnostic gap between
 	// run_started and the run's terminal, where a silent implementer failure used
@@ -1333,4 +1364,24 @@ func runAgentPostExit(ctx context.Context, in agentPostExitInput) agentPostExitR
 		codex.EmitImplementerNoWorkSuspected(ctx, emit, in.RunID, in.BeadID, phaseDur, floor)
 	}
 	return agentPostExitResult{}
+}
+
+// announcementIsCleanExit says whether a launch's kills add up to an exit that
+// describes the daemon's own act rather than a crash.
+//
+// It fails closed on purpose. An agent that announced the end of its turn and
+// then ALSO had a watchdog kill fire on it is not credited with a clean finish:
+// a wedge that happened to print the announcement first must still read as a
+// wedge. The window is small — the announcement kill fires on the announcing
+// line, within a millisecond — but it is not empty, and the cheap answer to
+// "which of the two won?" is to refuse both.
+//
+// It is a named function and not the inline AND it replaces because there is no
+// other way to test it. Both flags live in closures inside runAgentLaunch, which
+// needs a real session and a real agent process to run at all, so the end-to-end
+// path can reach the announced-and-clean case and cannot reach this one. A guard
+// nothing can test is a guard a later edit deletes with nothing going red — and
+// this one is the whole reason the exemption cannot launder a stalled run.
+func announcementIsCleanExit(announcedEnd, killedForFailure bool) bool {
+	return announcedEnd && !killedForFailure
 }

@@ -61,6 +61,12 @@ type ExitInfoExported struct {
 	ExitCode   int
 	WaitErr    error
 	StderrTail []byte
+
+	// AgentAnnouncedEnd mirrors runloop.ExitInfo.AgentAnnouncedEnd. A field of
+	// ExitInfo that is not copied here is a field this seam silently reports as
+	// its zero value, which for this one reads as "the agent did not announce"
+	// — the answer that fails the node.
+	AgentAnnouncedEnd bool
 }
 
 // ExportedStopHookGrace exposes the stopHookGrace constant so tests can assert
@@ -81,5 +87,10 @@ func ExportedWaitWithSocketGrace(
 	runID, claudeSessID string,
 ) (*handler.ExportedOutcomeEmittedPayload, ExitInfoExported) {
 	outcome, ei := runloop.WaitWithSocketGrace(ctx, substrate.SystemClock{}, store, watcher, sess, runID, claudeSessID)
-	return outcome, ExitInfoExported{ExitCode: ei.ExitCode, WaitErr: ei.WaitErr, StderrTail: ei.StderrTail}
+	return outcome, ExitInfoExported{
+		ExitCode:          ei.ExitCode,
+		WaitErr:           ei.WaitErr,
+		StderrTail:        ei.StderrTail,
+		AgentAnnouncedEnd: ei.AgentAnnouncedEnd,
+	}
 }

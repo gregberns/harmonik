@@ -105,22 +105,26 @@ func (bs *bootState) preflightDispatchReplay(
 		beads:      st.orphanStatusReader,
 		resolve:    newSessionStartAdapterResolver(st.sweepTmuxAdapter, bs.cfg.Workers),
 	}
-	return preflightDispatchReplayWithReader(ctx, intents, reader)
+	steps, err := preflightDispatchReplayWithReader(ctx, intents, reader)
+	if err != nil {
+		return err
+	}
+	if err := executeDispatchReplayPlan(ctx, steps, dispatchReplayExecutor{projectDir: bs.cfg.ProjectDir}); err != nil {
+		return err
+	}
+	return fmt.Errorf("daemon: dispatch replay made durable progress; restart is required before orphan sweep")
 }
 
 func preflightDispatchReplayWithReader(
 	ctx context.Context,
 	intents []dispatch.Intent,
 	reader dispatchReplayFactReader,
-) error {
+) ([]dispatchReplayStep, error) {
 	steps, err := planDispatchReplay(ctx, intents, reader)
 	if err != nil {
-		return fmt.Errorf("daemon: plan dispatch replay before orphan sweep: %w", err)
+		return nil, fmt.Errorf("daemon: plan dispatch replay before orphan sweep: %w", err)
 	}
-	if len(steps) > 0 {
-		return fmt.Errorf("daemon: dispatch replay executor is not configured for %d action(s)", len(steps))
-	}
-	return nil
+	return steps, nil
 }
 
 func dispatchReplayOwnership(

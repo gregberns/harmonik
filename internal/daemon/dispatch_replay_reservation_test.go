@@ -14,12 +14,17 @@ func TestReplayPreparedReservationPersistsExactBoundRun(t *testing.T) {
 	if err := replayPreparedReservation(t.Context(), projectDir, intent); err != nil {
 		t.Fatal(err)
 	}
+	assertReplayReservationQueue(t, projectDir, intent, 1)
+}
+
+func assertReplayReservationQueue(t *testing.T, projectDir string, intent dispatch.Intent, attempts int) {
+	t.Helper()
 	durable, err := queue.Load(t.Context(), projectDir, intent.Binding.QueueName)
 	if err != nil {
 		t.Fatal(err)
 	}
 	item := durable.Groups[0].Items[0]
-	if item.Status != queue.ItemStatusDispatched || item.RunID == nil || *item.RunID != intent.Binding.RunID.String() || item.Attempts != 1 {
+	if item.Status != queue.ItemStatusDispatched || item.RunID == nil || *item.RunID != intent.Binding.RunID.String() || item.Attempts != attempts {
 		t.Fatalf("replayed item = %+v", item)
 	}
 }

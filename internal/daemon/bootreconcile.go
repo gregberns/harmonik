@@ -114,6 +114,7 @@ func (bs *bootState) preflightDispatchReplay(
 		projectDir:   bs.cfg.ProjectDir,
 		intentLogDir: st.intentLogDir,
 		claimLedger:  st.dispatchClaimLedger,
+		now:          time.Now,
 	}); err != nil {
 		return err
 	}

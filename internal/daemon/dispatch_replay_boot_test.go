@@ -10,6 +10,7 @@ import (
 	"github.com/gregberns/harmonik/internal/dispatch"
 	"github.com/gregberns/harmonik/internal/dispatchstore"
 	"github.com/gregberns/harmonik/internal/queue"
+	runpkg "github.com/gregberns/harmonik/internal/run"
 )
 
 func TestPreflightDispatchReplayAllowsEmptyAuthorityWithoutReader(t *testing.T) {
@@ -88,7 +89,7 @@ func TestExecuteDispatchReplayPlanRejectsUnsupportedWaveBeforeWrite(t *testing.T
 	writeReplayReaderQueue(t, projectDir, first, false)
 	steps := []dispatchReplayStep{
 		{Intent: first, Action: dispatch.ReplayReservation},
-		{Intent: second, Action: dispatch.WriteRunRecord},
+		{Intent: second, Action: dispatch.ResumeProvision},
 	}
 	err := executeDispatchReplayPlan(t.Context(), steps, dispatchReplayExecutor{projectDir: projectDir})
 	if err == nil || !strings.Contains(err.Error(), "does not support action") {
@@ -152,5 +153,51 @@ exit 0
 	}
 	if strings.Contains(string(calls), " list ") || strings.Contains(string(calls), "list --") {
 		t.Fatalf("orphan sweep reached Beads list after claim:\n%s", calls)
+	}
+}
+
+func TestStartupReconcileWritesUniversalRunRecordBeforeOrphanSweep(t *testing.T) {
+	projectDir := t.TempDir()
+	intent := replayOwnershipIntent(t, dispatch.PhaseClaimDurable)
+	writeReplayReaderIntent(t, projectDir, intent)
+	writeReplayReaderQueue(t, projectDir, intent, true)
+	brPath := filepath.Join(t.TempDir(), "br")
+	callsPath := filepath.Join(t.TempDir(), "calls")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> '` + callsPath + `'
+if [ "$1" = "--version" ]; then
+  echo "br test"
+  exit 0
+fi
+if [ "$1" = "show" ]; then
+  printf '%s\n' '[{"id":"hk-replay-owner","title":"replay","issue_type":"task","status":"in_progress"}]'
+fi
+exit 0
+`
+	if err := os.WriteFile(brPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(brPath, 0o700); err != nil { //nolint:gosec // The test fixture must be executable.
+		t.Fatal(err)
+	}
+	bs := &bootState{cfg: Config{ProjectDir: projectDir, BrPath: brPath}}
+	err := bs.runStartupReconcile(t.Context(), time.Now(), "main")
+	if err == nil || !strings.Contains(err.Error(), "durable progress") {
+		t.Fatalf("runStartupReconcile() error = %v", err)
+	}
+	records, scanErr := runpkg.ScanRegistry(projectDir)
+	if scanErr != nil {
+		t.Fatal(scanErr)
+	}
+	if len(records.Dispatch) != 1 || records.Dispatch[0].RunID != intent.Binding.RunID ||
+		records.Dispatch[0].ClaimTransitionID != intent.Binding.ClaimTransitionID {
+		t.Fatalf("startup dispatch records = %+v", records.Dispatch)
+	}
+	calls, readErr := os.ReadFile(callsPath) //nolint:gosec // Test-owned path below t.TempDir.
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if strings.Contains(string(calls), " list ") || strings.Contains(string(calls), "list --") {
+		t.Fatalf("orphan sweep reached Beads list after run record:\n%s", calls)
 	}
 }

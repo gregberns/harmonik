@@ -146,6 +146,69 @@ session directory and sidecar durable before it installs the exact lease. A
 lease publish or sync error reloads the lease and fails closed. ResumeProvision
 does not write that lease.
 
+#### Repository and location authority
+
+`parent_commit` is not enough to identify a worktree source. A safelisted
+cross-repository run can use the same object ID as the supervised repository.
+The producer first applies the current safelist rule to the exact declared
+`target_repo` string. It does not normalize that string for authorization.
+After authorization, the dispatch binding stores the cleaned,
+symlink-resolved absolute active repository path on the coordinator. The
+producer binds this path before it writes the prepared intent. Replay does not
+derive it again from mutable bead text. Review unit 1 amends
+`specs/process-lifecycle.md` and the operator NFR with this two-step rule.
+
+The durable execution location must also bind the repository root on the host
+that owns the worktree. A local location uses the active repository path. A
+remote location stores the selected worker name, transport, host, and absolute
+`repo_path`. Replay compares all four values with the current trusted worker
+configuration. A missing worker or changed value is a conflict. It does not
+redirect the run to another host or path. Mutable enable and capacity values
+are scheduling policy and are not durable identity.
+
+Cross-repository runs remain local. Replay refuses remote selection when the
+active repository differs from the supervised repository. The current specs
+do not define a remote mapping for each safelisted repository. A later change
+must define that mapping and amend `specs/process-lifecycle.md` before it can
+enable this combination.
+
+The worker registry and its boot health result must exist before replay selects
+a location for a base run record. The daemon must reuse that same registry in
+the work loop. It must not build a second registry with different health or
+slot state. The selection uses the queue's durable `local_only` and
+`worker_target` values and the normal atomic worker-selection operation. The
+selected location becomes durable before worktree creation. A crash before
+that write can select again. A crash after that write must reuse it.
+
+For a durable remote location, replay calls one atomic `AcquireBoundWorker`
+operation. This operation checks the exact durable route, enable state, and
+capacity before it increments the process-local slot count. An unavailable
+slot makes no durable change and leaves replay pending. A successful
+acquisition stays with the resumed run and releases only through the normal
+terminal run owner. Replay must not acquire the same durable run twice.
+
+One location-owned provisioning port performs worktree discovery and creation.
+Its local implementation uses the local runner and the bound active repository.
+Its remote implementation uses the selected worker's SSH runner and bound
+worker repository. Both implementations return the same detached observation
+shape. The replay classifier stays pure. Coordinator filesystem calls must not
+inspect or create a remote worktree.
+
+Land this work in four review units:
+
+1. Amend the cross-repository specs. Add the active repository to the dispatch
+   binding. Add the full owning route to the execution location. Bump all
+   pre-activation wire schemas together.
+2. Build the worker registry before replay and reuse it in the work loop. Add
+   atomic bound-worker acquisition and exact-once slot ownership.
+3. Add the location-owned discovery and creation port. Prove local and remote
+   calls use only their owning runner and repository.
+4. Enable `ResumeProvision`. Bind location first. Create or verify the exact
+   worktree second. Stop the startup pass after each durable change.
+
+Producer wiring remains disabled until all four units and their crash tests are
+approved.
+
 The parent-commit HEAD check applies while the intent is `run_durable` and no
 handler handoff exists. Later run phases can contain handler commits. Their
 worktree classifier still requires the canonical registration and task branch.

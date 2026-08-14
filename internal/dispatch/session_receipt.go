@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const sessionStartReceiptSchemaVersion = 1
+const sessionStartReceiptSchemaVersion = 2
 
 // SessionStartReceipt proves that the exact dispatch target acknowledged start.
 type SessionStartReceipt struct {
@@ -71,6 +71,7 @@ func (r SessionStartReceipt) MarshalJSON() ([]byte, error) {
 			QueueID: r.Binding.QueueID, QueueName: r.Binding.QueueName,
 			GroupIndex: &groupIndex, ItemIndex: &itemIndex, BeadID: string(r.Binding.BeadID),
 			RunID: r.Binding.RunID.String(), ClaimTransitionID: r.Binding.ClaimTransitionID.String(),
+			ParentCommit: r.Binding.ParentCommit,
 		},
 		SessionName: r.SessionName,
 		WindowName:  r.WindowName,

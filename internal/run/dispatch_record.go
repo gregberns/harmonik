@@ -16,7 +16,7 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-const dispatchRecordSchemaVersion = 2
+const dispatchRecordSchemaVersion = 3
 
 // ExecutionKind identifies where one run executes.
 type ExecutionKind string
@@ -43,6 +43,7 @@ type DispatchRecord struct {
 	GroupIndex        int                `json:"group_index"`
 	ItemIndex         int                `json:"item_index"`
 	ClaimTransitionID core.TransitionID  `json:"claim_transition_id"`
+	ParentCommit      string             `json:"parent_commit"`
 	Location          *ExecutionLocation `json:"execution_location,omitempty"`
 	SessionName       string             `json:"session_name,omitempty"`
 	WindowName        string             `json:"window_name,omitempty"`
@@ -60,6 +61,7 @@ func NewDispatchRecord(binding dispatch.Binding, startedAt time.Time) (DispatchR
 		GroupIndex:        binding.GroupIndex,
 		ItemIndex:         binding.ItemIndex,
 		ClaimTransitionID: binding.ClaimTransitionID,
+		ParentCommit:      binding.ParentCommit,
 		StartedAt:         startedAt.UTC().Truncate(time.Millisecond),
 	}
 	if err := record.Validate(); err != nil {
@@ -91,6 +93,9 @@ func (r DispatchRecord) Validate() error {
 	}
 	if !r.ClaimTransitionID.IsUUIDv7() {
 		return errors.New("run: dispatch record claim_transition_id must be UUIDv7")
+	}
+	if err := dispatch.ValidateParentCommit(r.ParentCommit); err != nil {
+		return fmt.Errorf("run: %w", err)
 	}
 	if r.Location != nil {
 		if err := r.Location.validate(); err != nil {
@@ -197,6 +202,7 @@ func (r DispatchRecord) MarshalJSON() ([]byte, error) {
 		GroupIndex:        &r.GroupIndex,
 		ItemIndex:         &r.ItemIndex,
 		ClaimTransitionID: r.ClaimTransitionID.String(),
+		ParentCommit:      r.ParentCommit,
 		Location:          r.Location,
 		SessionName:       r.SessionName,
 		WindowName:        r.WindowName,
@@ -237,6 +243,7 @@ type dispatchRecordWire struct {
 	GroupIndex        *int               `json:"group_index"`
 	ItemIndex         *int               `json:"item_index"`
 	ClaimTransitionID string             `json:"claim_transition_id"`
+	ParentCommit      string             `json:"parent_commit"`
 	Location          *ExecutionLocation `json:"execution_location,omitempty"`
 	SessionName       string             `json:"session_name,omitempty"`
 	WindowName        string             `json:"window_name,omitempty"`
@@ -268,6 +275,7 @@ func (w dispatchRecordWire) record() (DispatchRecord, error) {
 		GroupIndex:        *w.GroupIndex,
 		ItemIndex:         *w.ItemIndex,
 		ClaimTransitionID: core.TransitionID(transitionID),
+		ParentCommit:      w.ParentCommit,
 		Location:          w.Location,
 		SessionName:       w.SessionName,
 		WindowName:        w.WindowName,

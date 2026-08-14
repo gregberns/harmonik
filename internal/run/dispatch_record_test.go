@@ -23,6 +23,7 @@ func TestNewDispatchRecordBindsPreparedIntent(t *testing.T) {
 		BeadID:            base.BeadID,
 		RunID:             base.RunID,
 		ClaimTransitionID: base.ClaimTransitionID,
+		ParentCommit:      base.ParentCommit,
 	}
 	startedAt := base.StartedAt.Add(456 * time.Microsecond).In(time.FixedZone("offset", 3600))
 	record, err := NewDispatchRecord(binding, startedAt)
@@ -49,11 +50,12 @@ const (
 	dispatchTestQueueID      = "0197d200-0000-7000-8000-000000000001"
 	dispatchTestRunID        = "0197d200-0000-7000-8000-000000000002"
 	dispatchTestTransitionID = "0197d200-0000-7000-8000-000000000003"
+	dispatchTestParentCommit = "0123456789abcdef0123456789abcdef01234567"
 )
 
 func testDispatchRecord() DispatchRecord {
 	return DispatchRecord{
-		SchemaVersion:     2,
+		SchemaVersion:     3,
 		RunID:             core.RunID(uuid.MustParse(dispatchTestRunID)),
 		BeadID:            "hk-run-record",
 		QueueName:         "main",
@@ -61,6 +63,7 @@ func testDispatchRecord() DispatchRecord {
 		GroupIndex:        0,
 		ItemIndex:         0,
 		ClaimTransitionID: core.TransitionID(uuid.MustParse(dispatchTestTransitionID)),
+		ParentCommit:      dispatchTestParentCommit,
 		StartedAt:         time.Date(2026, 8, 11, 12, 13, 14, 567000000, time.UTC),
 	}
 }
@@ -120,6 +123,7 @@ func TestDispatchRecordRejectsInvalidShapes(t *testing.T) {
 		{name: "zero time", mutate: func(r *DispatchRecord) { r.StartedAt = time.Time{} }},
 		{name: "offset time", mutate: func(r *DispatchRecord) { r.StartedAt = r.StartedAt.In(time.FixedZone("offset", 3600)) }},
 		{name: "submillisecond time", mutate: func(r *DispatchRecord) { r.StartedAt = r.StartedAt.Add(time.Nanosecond) }},
+		{name: "parent commit", mutate: func(r *DispatchRecord) { r.ParentCommit = strings.ToUpper(r.ParentCommit) }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -147,12 +151,13 @@ func TestDispatchRecordStrictCanonicalJSON(t *testing.T) {
 	}
 	valid := string(data)
 	bad := map[string]string{
-		"unknown":       strings.Replace(valid, `"schema_version":2`, `"schema_version":2,"extra":true`, 1),
-		"missing group": strings.Replace(valid, `"group_index":0,`, "", 1),
-		"missing item":  strings.Replace(valid, `"item_index":0,`, "", 1),
-		"uppercase":     strings.Replace(valid, dispatchTestRunID, strings.ToUpper(dispatchTestRunID), 1),
-		"two values":    valid + `{}`,
-		"time offset":   strings.Replace(valid, `2026-08-11T12:13:14.567Z`, `2026-08-11T13:13:14.567+01:00`, 1),
+		"pre-activation schema": strings.Replace(valid, `"schema_version":3`, `"schema_version":2`, 1),
+		"unknown":               strings.Replace(valid, `"schema_version":3`, `"schema_version":3,"extra":true`, 1),
+		"missing group":         strings.Replace(valid, `"group_index":0,`, "", 1),
+		"missing item":          strings.Replace(valid, `"item_index":0,`, "", 1),
+		"uppercase":             strings.Replace(valid, dispatchTestRunID, strings.ToUpper(dispatchTestRunID), 1),
+		"two values":            valid + `{}`,
+		"time offset":           strings.Replace(valid, `2026-08-11T12:13:14.567Z`, `2026-08-11T13:13:14.567+01:00`, 1),
 	}
 	for name, input := range bad {
 		t.Run(name, func(t *testing.T) {

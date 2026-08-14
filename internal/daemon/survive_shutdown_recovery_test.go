@@ -438,6 +438,7 @@ func TestRunSessionAdoption_DoesNotResetUniversalDispatchRecords(t *testing.T) {
 		BeadID:            "hk-universal-run",
 		RunID:             runID,
 		ClaimTransitionID: core.TransitionID(uuid.MustParse("0197d100-0000-7000-8000-000000000023")),
+		ParentCommit:      "0123456789abcdef0123456789abcdef01234567",
 	}
 	record, err := runpkg.NewDispatchRecord(binding, time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC))
 	if err != nil {

@@ -50,6 +50,7 @@ func TestClassifyDispatchRecordRejectsEveryBindingMismatch(t *testing.T) {
 		func(record *DispatchRecord) {
 			record.ClaimTransitionID = core.TransitionID(uuid.MustParse("0197d200-0000-7000-8000-000000000004"))
 		},
+		func(record *DispatchRecord) { record.ParentCommit = "abcdef0123456789abcdef0123456789abcdef01" },
 	}
 	for index, mutate := range mutations {
 		record := testDispatchRecord()
@@ -87,6 +88,7 @@ func runFactIntent(t *testing.T, phase dispatch.Phase) dispatch.Intent {
 	intent, err := dispatch.NewPrepared(dispatch.Binding{
 		QueueID: base.QueueID, QueueName: base.QueueName, GroupIndex: base.GroupIndex, ItemIndex: base.ItemIndex,
 		BeadID: base.BeadID, RunID: base.RunID, ClaimTransitionID: base.ClaimTransitionID,
+		ParentCommit: base.ParentCommit,
 	})
 	if err != nil {
 		t.Fatal(err)

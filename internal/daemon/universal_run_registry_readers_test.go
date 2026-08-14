@@ -51,6 +51,7 @@ func writeUniversalRunRecord(t *testing.T, projectDir string, beadID core.BeadID
 		BeadID:            beadID,
 		RunID:             core.RunID(uuid.MustParse("0197d100-0000-7000-8000-000000000031")),
 		ClaimTransitionID: core.TransitionID(uuid.MustParse("0197d100-0000-7000-8000-000000000033")),
+		ParentCommit:      "0123456789abcdef0123456789abcdef01234567",
 	}
 	record, err := runpkg.NewDispatchRecord(binding, time.Date(2026, 8, 11, 13, 0, 0, 0, time.UTC))
 	if err != nil {
@@ -563,6 +564,7 @@ func replayOwnershipIntent(t *testing.T, phase dispatch.Phase) dispatch.Intent {
 		GroupIndex: 0, ItemIndex: 0, BeadID: "hk-replay-owner",
 		RunID:             core.RunID(uuid.MustParse("0197d100-0000-7000-8000-000000000031")),
 		ClaimTransitionID: core.TransitionID(uuid.MustParse("0197d100-0000-7000-8000-000000000033")),
+		ParentCommit:      "0123456789abcdef0123456789abcdef01234567",
 	}
 	intent, err := dispatch.NewPrepared(binding)
 	if err != nil {

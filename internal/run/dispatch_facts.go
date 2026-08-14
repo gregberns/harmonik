@@ -31,7 +31,7 @@ func dispatchRecordMatchesIntent(record DispatchRecord, intent dispatch.Intent) 
 	return record.RunID == binding.RunID && record.BeadID == binding.BeadID &&
 		record.QueueName == binding.QueueName && record.QueueID == binding.QueueID &&
 		record.GroupIndex == binding.GroupIndex && record.ItemIndex == binding.ItemIndex &&
-		record.ClaimTransitionID == binding.ClaimTransitionID
+		record.ClaimTransitionID == binding.ClaimTransitionID && record.ParentCommit == binding.ParentCommit
 }
 
 // ClassifySessionStartReceipt validates one receipt against both durable owners.

@@ -14,7 +14,7 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-const intentSchemaVersion = 1
+const intentSchemaVersion = 2
 
 // Phase is the last dispatch boundary known to be durable.
 type Phase string
@@ -85,6 +85,7 @@ type Binding struct {
 	BeadID            core.BeadID       `json:"bead_id"`
 	RunID             core.RunID        `json:"run_id"`
 	ClaimTransitionID core.TransitionID `json:"claim_transition_id"`
+	ParentCommit      string            `json:"parent_commit"`
 }
 
 // RunBinding proves that the durable run record names this dispatch.
@@ -271,6 +272,9 @@ func (b Binding) validate() error {
 	if !b.ClaimTransitionID.IsUUIDv7() {
 		return errors.New("dispatch: claim_transition_id must be UUIDv7")
 	}
+	if err := ValidateParentCommit(b.ParentCommit); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -300,6 +304,7 @@ func (i Intent) MarshalJSON() ([]byte, error) {
 			BeadID:            string(i.Binding.BeadID),
 			RunID:             i.Binding.RunID.String(),
 			ClaimTransitionID: i.Binding.ClaimTransitionID.String(),
+			ParentCommit:      i.Binding.ParentCommit,
 		},
 	}
 	if i.Run != nil {
@@ -364,6 +369,7 @@ type bindingWire struct {
 	BeadID            string `json:"bead_id"`
 	RunID             string `json:"run_id"`
 	ClaimTransitionID string `json:"claim_transition_id"`
+	ParentCommit      string `json:"parent_commit"`
 }
 
 type runBindingWire struct {
@@ -426,6 +432,7 @@ func (w bindingWire) binding() (Binding, error) {
 		QueueID: w.QueueID, QueueName: w.QueueName, GroupIndex: *w.GroupIndex, ItemIndex: *w.ItemIndex,
 		BeadID: core.BeadID(w.BeadID), RunID: core.RunID(uuid.MustParse(w.RunID)),
 		ClaimTransitionID: core.TransitionID(uuid.MustParse(w.ClaimTransitionID)),
+		ParentCommit:      w.ParentCommit,
 	}, nil
 }
 

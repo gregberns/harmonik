@@ -14,6 +14,7 @@ const (
 	testQueueID      = "0197d100-0000-7000-8000-000000000001"
 	testRunID        = "0197d100-0000-7000-8000-000000000002"
 	testTransitionID = "0197d100-0000-7000-8000-000000000003"
+	testParentCommit = "0123456789abcdef0123456789abcdef01234567"
 )
 
 func testIntent(phase Phase) Intent {
@@ -29,6 +30,7 @@ func testIntent(phase Phase) Intent {
 			BeadID:            "hk-dispatch",
 			RunID:             runID,
 			ClaimTransitionID: core.TransitionID(uuid.MustParse(testTransitionID)),
+			ParentCommit:      testParentCommit,
 		},
 	}
 	if phase == PhaseRunDurable || phase == PhaseHandoffDurable {
@@ -142,6 +144,7 @@ func TestIntentRejectsInvalidBaseBinding(t *testing.T) {
 		{name: "bead ID", mutate: func(b *Binding) { b.BeadID = "" }},
 		{name: "run ID", mutate: func(b *Binding) { b.RunID = core.RunID{} }},
 		{name: "claim transition ID", mutate: func(b *Binding) { b.ClaimTransitionID = core.TransitionID{} }},
+		{name: "parent commit", mutate: func(b *Binding) { b.ParentCommit = "ABC" }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -170,13 +173,14 @@ func TestIntentJSONRoundTripAndStrictDecode(t *testing.T) {
 
 	valid := string(data)
 	tests := map[string]string{
-		"unknown top field":    strings.Replace(valid, `"schema_version":1`, `"schema_version":1,"extra":true`, 1),
-		"unknown nested field": strings.Replace(valid, `"queue_id"`, `"extra":true,"queue_id"`, 1),
-		"partial binding":      `{"schema_version":1,"phase":"prepared","binding":{"queue_id":"` + testQueueID + `"}}`,
-		"missing group index":  strings.Replace(valid, `"group_index":2,`, "", 1),
-		"missing item index":   strings.Replace(valid, `"item_index":3,`, "", 1),
-		"uppercase run ID":     strings.Replace(valid, testRunID, strings.ToUpper(testRunID), 1),
-		"multiple values":      valid + `{}`,
+		"pre-activation schema": strings.Replace(valid, `"schema_version":2`, `"schema_version":1`, 1),
+		"unknown top field":     strings.Replace(valid, `"schema_version":2`, `"schema_version":2,"extra":true`, 1),
+		"unknown nested field":  strings.Replace(valid, `"queue_id"`, `"extra":true,"queue_id"`, 1),
+		"partial binding":       `{"schema_version":2,"phase":"prepared","binding":{"queue_id":"` + testQueueID + `"}}`,
+		"missing group index":   strings.Replace(valid, `"group_index":2,`, "", 1),
+		"missing item index":    strings.Replace(valid, `"item_index":3,`, "", 1),
+		"uppercase run ID":      strings.Replace(valid, testRunID, strings.ToUpper(testRunID), 1),
+		"multiple values":       valid + `{}`,
 	}
 	for name, input := range tests {
 		t.Run(name, func(t *testing.T) {

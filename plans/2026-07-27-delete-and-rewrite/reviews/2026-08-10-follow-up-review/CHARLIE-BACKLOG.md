@@ -449,18 +449,28 @@ and the base universal run record. It advances the intent only after each
 required fact is durable. It stops before the orphan sweep after each replay
 pass. Independent review approved each slice.
 
-The claim-success crash reader, session reader completion, Git reader, and run
-outcome reader remain. Resumable provisioning, queue-path producer wiring, and
-the crash matrix also remain. Producer wiring stays disabled until startup can
-execute every reachable replay action.
+The dispatch binding now stores the exact parent commit. The dispatch intent,
+session receipt, and universal run record use new pre-activation schemas. They
+reject a missing or non-canonical commit.
 
-`ResumeProvision` is blocked on one missing durable input. Worktree creation
-requires the exact parent commit. Neither the dispatch intent nor the universal
-run record stores that commit. A restart can therefore create the same run ID
-from a different Git commit. The current production worktree factory also
-treats lease-write failure as non-fatal. Replay requires a durable lease that
-matches the run before it can advance. Define and review these two facts before
-the executor enables `ResumeProvision`.
+Startup now distinguishes a prepared worktree from a leased worktree. Prepared
+means the canonical path, Git registration, task branch, and parent commit all
+match. It also means that no lease or session artifact exists. Leased means the
+task branch, exact run lease, and an exact valid session sidecar all match.
+Discovery reports corrupt, wrong-type, duplicate, and foreign authority as a
+conflict. It does not report these states as absence. Replay covers both crash
+cuts around session-sidecar and lease installation.
+
+The claim-success crash reader, Git result reader, and run outcome reader
+remain. Resumable provisioning, queue-path producer wiring, and the crash
+matrix also remain. Producer wiring stays disabled until startup can execute
+every reachable replay action.
+
+`ResumeProvision` now has its required parent-commit and worktree facts. Its
+next boundary is location ownership. The executor must use the adapter for the
+durable local or remote execution location. It must not create a remote
+worktree on the coordinator. Location selection must also be durable before
+worktree creation. Implement and review this port before enabling the action.
 
 **Evidence:** `C21-DESIGN.md` defines four review units. It requires a
 fail-closed intent store, a universal run record, an amended startup order, and

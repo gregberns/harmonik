@@ -339,6 +339,94 @@ func newAgentLaunchLogf(w io.Writer, prefix string) func(format string, args ...
 	}
 }
 
+// sessionSlot is the one storage for a launch's agent session.
+//
+// The session is written by the segment's Launch closure, on the dispatch
+// goroutine. It is read by the stdout interceptor's agent_end callback, on the
+// goroutine handler.Launch starts for the child's stdout. handler.Launch
+// applies spec.StdoutWrapper and starts that goroutine BEFORE it returns, so
+// the interceptor can announce a finished agent while the plain variable this
+// replaced was still nil. That cost the announcement kill twice over: the read
+// raced the write, and the `!= nil` guard in front of the kill made it a silent
+// no-op whenever the interceptor won (hk-tyksz).
+//
+// The latch is the half a mutex alone does not fix. An announcement that
+// arrives before the session exists is still a true fact about the agent, so it
+// is held and the kill fires the moment set gives the slot a session. Without
+// it pi keeps running, idle, with its work already done, until a stall watchdog
+// reaps it — and THAT kill is recorded as a failure, so the run fails and the
+// commit is discarded. That is the exact outcome the announcement kill exists
+// to stop, reached through the back door.
+type sessionSlot struct {
+	mu          sync.Mutex
+	sess        handler.Session
+	killLatched bool
+}
+
+// set stores the launched session and fires any kill that arrived before it.
+// A nil session means the launch failed, so there is nothing to kill and the
+// latch is simply dropped.
+func (s *sessionSlot) set(sess handler.Session) {
+	s.mu.Lock()
+	s.sess = sess
+	latched := s.killLatched
+	s.killLatched = false
+	s.mu.Unlock()
+	if latched && sess != nil {
+		killAnnounced(sess)
+	}
+}
+
+// get returns the session, or nil while the launch has not produced one.
+func (s *sessionSlot) get() handler.Session {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sess
+}
+
+// killOrLatch kills the session now, or records that it must be killed as soon
+// as one exists. It reports whether the kill was issued, which is what
+// distinguishes the two orderings for a caller that wants to log them apart.
+//
+// It takes no context on purpose. Both orderings must kill on the same bound,
+// and killAnnounced is the one place that decides what that bound is.
+func (s *sessionSlot) killOrLatch() bool {
+	s.mu.Lock()
+	sess := s.sess
+	if sess == nil {
+		s.killLatched = true
+		s.mu.Unlock()
+		return false
+	}
+	s.mu.Unlock()
+	killAnnounced(sess)
+	return true
+}
+
+// killAnnounced issues the kill that follows an agent's announcement that it
+// has finished.
+//
+// A BOUNDED context, not Background. Session.Kill sends SIGTERM and then waits
+// on the context to decide whether to escalate to SIGKILL, so Background makes
+// it wait for ever on an agent that ignores SIGTERM — and an agent that says it
+// has finished and then does not exit is EXACTLY the agent this kill exists
+// for. pi's own harness says its process exit is unreliable, which is the whole
+// reason the announcement is a kill trigger. Unbounded, the two orderings wedge
+// two different goroutines: the held kill runs inside the Launch closure and
+// wedges the launch itself, and the direct kill runs on the stdout interceptor
+// goroutine, which stops draining pi's stdout and can leave the child blocked
+// writing into a full pipe. This is KillStalled's pattern and it is stated
+// there for the same reason.
+//
+// Bounded off Background rather than off the launch context because the
+// announcement arrives on a goroutine that outlives any request context, and a
+// kill the launch could cancel is a kill that leaves pi running.
+func killAnnounced(sess handler.Session) {
+	ctx, cancel := context.WithTimeout(context.Background(), runlaunch.KillReapTimeout)
+	defer cancel()
+	_ = sess.Kill(ctx) //nolint:errcheck // best-effort backstop kill (pre-RT8 idiom)
+}
+
 // runAgentLaunch spawns the agent described by in.Spec, proves it is alive,
 // drives it to a dead session and returns the exit facts.
 //
@@ -523,7 +611,7 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 	// hk-47u9z / hk-z4nif: the spawn proof is assigned after the tap exists; it
 	// is captured by reference here because the interceptor cannot fire until
 	// Launch has started the child and its stdout is flowing.
-	var sess handler.Session
+	var sess sessionSlot
 	var emitCapturedSpawnProof func()
 	// Why the launch records WHICH kill fired, and not merely that one did.
 	//
@@ -596,11 +684,16 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 			// surviving trace of the difference between this kill and a
 			// watchdog's: it is what stops the terminal classifier reading the
 			// signal death we are about to cause as a crash the agent suffered.
-			// Set it even when sess is still nil — the announcement is a fact
-			// about the AGENT, and it is true whether or not the kill lands.
+			// Set it even before the session exists — the announcement is a
+			// fact about the AGENT, and it is true whether or not the kill
+			// lands.
 			agentAnnouncedEnd.Store(true)
-			if sess != nil {
-				_ = sess.Kill(context.Background()) //nolint:errcheck // best-effort backstop kill (pre-RT8 idiom)
+			// killOrLatch, not a nil check. handler.Launch starts this
+			// goroutine before it hands the session back, so an agent that
+			// announces early would otherwise have its kill dropped in silence
+			// and be reaped later by a stall watchdog as a failure (hk-tyksz).
+			if !sess.killOrLatch() {
+				logf("agent_end arrived before the session was handed back; the kill is held until it is")
 			}
 		}
 		spec.StdoutWrapper = func(r io.Reader) io.Reader {
@@ -770,7 +863,7 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 			return
 		}
 		in.Deliver(dctx, agentDeliverCtx{
-			Session:     sess,
+			Session:     sess.get(),
 			PasteTarget: pasteTarget,
 			Tap:         tap,
 			ProcessExit: processExit,
@@ -855,7 +948,17 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 		Tap:         tap,
 		TapCh:       tapCh,
 		Launch: func(lctx context.Context) (<-chan struct{}, error) {
-			sess, watcher, launchErr = runH.Launch(lctx, spec)
+			var launched handler.Session
+			launched, watcher, launchErr = runH.Launch(lctx, spec)
+			// set fires any announcement kill that arrived while the slot was
+			// still empty, so it must run on the failure path too.
+			//
+			// It kills on context.Background(), which is what every other kill
+			// on this path does and what the announcement's own kill did before
+			// it was held: the announcement arrives on the stdout interceptor's
+			// goroutine, which outlives any request ctx, and a kill the launch
+			// ctx could cancel is a kill that leaves pi running.
+			sess.set(launched) //nolint:contextcheck // the held kill is the announcement's own, off Background for the reason above
 			if launchErr != nil {
 				return nil, launchErr
 			}
@@ -894,7 +997,7 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 			}
 
 			if in.OnLaunchedExtra != nil {
-				in.OnLaunchedExtra(lctx, sess)
+				in.OnLaunchedExtra(lctx, sess.get())
 			}
 
 			if handles.HookStore != nil {
@@ -958,7 +1061,8 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 		KillReady: func(kctx context.Context) {
 			logf("waitAgentReady: %v", runlaunch.ErrAgentReadyTimeout)
 			killedForFailure.Store(true)
-			_ = sess.Kill(kctx) //nolint:errcheck // kill is best-effort; the reap below bounds it (pre-RT8 idiom)
+			readySess := sess.get()
+			_ = readySess.Kill(kctx) //nolint:errcheck // kill is best-effort; the reap below bounds it (pre-RT8 idiom)
 			if watcher != nil {
 				select {
 				case <-watcher.Done():
@@ -973,7 +1077,7 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 			// parent makes the bound independent of the per-run ctx, which the
 			// reaper may already have cancelled (hk-4hso5).
 			waitCtx, waitCancel := context.WithTimeout(context.Background(), runlaunch.KillReapTimeout)
-			_ = sess.Wait(waitCtx) //nolint:errcheck,contextcheck // bounded reap off the (possibly cancelled) run ctx; error non-actionable (pre-RT8 idiom)
+			_ = readySess.Wait(waitCtx) //nolint:errcheck,contextcheck // bounded reap off the (possibly cancelled) run ctx; error non-actionable (pre-RT8 idiom)
 			waitCancel()
 			giveBackHookSession()
 		},
@@ -1000,15 +1104,16 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 			}
 			// Ctx-cancel abort edge: Kill is idempotent and the teardown pair
 			// rides behind it either way.
-			if sess != nil {
+			if abortSess := sess.get(); abortSess != nil {
 				killedForFailure.Store(true)
-				_ = sess.Kill(context.Background()) //nolint:errcheck,contextcheck // idempotent abort kill off the cancelled ctx; teardown follows
+				_ = abortSess.Kill(context.Background()) //nolint:errcheck,contextcheck // idempotent abort kill off the cancelled ctx; teardown follows
 			}
 		},
 		Stalls: stallCh,
 		KillStalled: func(_ context.Context, reason string) {
 			logf("stall watchdog: %s — killing the agent", reason)
-			if sess == nil {
+			stalledSess := sess.get()
+			if stalledSess == nil {
 				return
 			}
 			// The same disposition read every other kill site makes. A run whose
@@ -1036,7 +1141,7 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 			// cancelled that one.
 			killedForFailure.Store(true)
 			killCtx, killCancel := context.WithTimeout(context.Background(), runlaunch.KillReapTimeout)
-			_ = sess.Kill(killCtx) //nolint:errcheck,contextcheck // bounded kill off the (possibly cancelled) run ctx; the error is not actionable
+			_ = stalledSess.Kill(killCtx) //nolint:errcheck,contextcheck // bounded kill off the (possibly cancelled) run ctx; the error is not actionable
 			killCancel()
 			if watcher != nil {
 				select {
@@ -1054,7 +1159,7 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 	// The watch runs across the completion wait below and ends here, so no kill
 	// hook can fire after the caller has begun tearing the session down.
 	defer seg.StopWorkingWatch()
-	res.Session = sess
+	res.Session = sess.get()
 	res.Watcher = watcher
 
 	if launchErr != nil {
@@ -1084,7 +1189,7 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 	// — and carried a comment claiming that inversion as deliberate. It is
 	// superseded here.
 	launchScope.Hold(runlease.AgentSession, func() error { //nolint:contextcheck // the give-back takes no ctx (pre-RT8 idiom); ForceTeardownSession reaps on context.Background() so the kill completes even after the run ctx is cancelled
-		runlaunch.ForceTeardownSession(sess)
+		runlaunch.ForceTeardownSession(sess.get())
 		return nil
 	})
 
@@ -1115,7 +1220,7 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 	//nolint:errcheck // the give-back is a receive on a channel this launch filled; it cannot fail
 	_ = coldStart.Release()
 
-	res.SocketOutcome, res.Exit = runloop.WaitWithSocketGrace(ctx, ports.Clock, handles.HookStore, watcher, sess,
+	res.SocketOutcome, res.Exit = runloop.WaitWithSocketGrace(ctx, ports.Clock, handles.HookStore, watcher, sess.get(),
 		runID.String(), artifacts.ClaudeSessionID)
 
 	// Set here rather than inside the wait: WaitWithSocketGrace is given a
@@ -1142,7 +1247,7 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 	// guard is belt to that brace. It is stated explicitly rather than relied
 	// upon implicitly.)
 	if watcher == nil && disposition().Releases(runlease.AgentSession) {
-		_ = sess.Kill(context.Background()) //nolint:errcheck,contextcheck // best-effort window kill on a deliberately non-cancellable ctx: the run ctx may already be cancelled and the pane must still die (pre-RT8 idiom)
+		_ = sess.get().Kill(context.Background()) //nolint:errcheck,contextcheck // best-effort window kill on a deliberately non-cancellable ctx: the run ctx may already be cancelled and the pane must still die (pre-RT8 idiom)
 	}
 
 	giveBackHookSession()

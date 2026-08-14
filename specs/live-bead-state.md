@@ -8,10 +8,10 @@ requirement-prefix: LB
 status: draft
 spec-category: foundation-cross-cutting
 spec-shape: requirements-first
-version: 0.1.0
+version: 0.1.1
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-08-11
+last-updated: 2026-08-13
 depends-on:
   - queue-model
   - execution-model
@@ -39,7 +39,7 @@ Use the narrowest durable fact that owns the question.
 | Which dispatch owns the claim? | The dispatch intent binding | An `in_progress` status with no binding |
 | Is a run live in this process? | Run registry entry | A durable run record or a live process alone |
 | Can a run be adopted after restart? | Durable run record plus exact live-session identity | Run registry memory |
-| Who owns the worktree? | Worktree lease bound to run ID | Directory presence alone |
+| Who owns the worktree? | Before lease installation, a dispatch intent plus exact prepared Git facts. After session preparation, the worktree lease bound to run ID. | Directory presence alone |
 | Is work ready to land? | Immutable release claim in git | Dispatch intent, worktree state, events, or run memory |
 | Did work land? | Git completion evidence for the release claim | Dispatch intent, event, or source-branch commit alone |
 | Is the bead complete? | Beads `closed` plus matching git completion evidence | Either fact by itself |
@@ -61,7 +61,7 @@ The model uses these facts.
 | Dispatch intent | `absent`, `prepared`, `claim_refused`, `claim_durable`, `run_durable`, `handoff_durable` |
 | Run registry | `absent` or `live(run_id)` |
 | Durable run record | `absent`, `present(run_id, execution_location)`, or `present(run_id, execution_location, session_id)` |
-| Worktree | `absent`, `leased(run_id)`, or `retained_for_repair(run_id)` |
+| Worktree | `absent`, `prepared(run_id, parent_commit)`, `leased(run_id)`, or `retained_for_repair(run_id)` |
 | Session | `absent`, `live(session_id)`, or `dead(session_id)` |
 | Release claim | `absent` or `present(run_id, dispatch_head, target)` |
 | Merge | `not_landed` or `landed(run_id, target_tip)` |
@@ -84,7 +84,7 @@ cut from section 4. It must not create another steady state.
 | S0d dispatch deferred | deferred-for-ledger-dep | open, in_progress, or other(status) | absent | absent | absent | absent | absent | absent | not_landed | pending | scheduler status and dependency check |
 | S1 reserved | reserved | open | prepared | absent | absent | absent | absent | absent | not_landed | pending | dispatch transaction |
 | S2 claimed | reserved | in_progress | claim_durable | absent | absent | absent | absent | absent | not_landed | pending | dispatch transaction |
-| S3 recoverable run | reserved | in_progress | run_durable | absent | present | absent or leased | absent | absent | not_landed | pending | startup replay |
+| S3 recoverable run | reserved | in_progress | run_durable | absent | present | absent or prepared | absent | absent | not_landed | pending | startup replay |
 | S4 handed off | reserved | in_progress | handoff_durable | live | present | leased | live | absent | not_landed | pending | run supervisor |
 | S5 stopped with evidence | reserved | in_progress | handoff_durable | absent | present | retained_for_repair | dead or absent | absent or present | not_landed | pending | startup replay or reconciliation |
 | S6 ready to release | reserved | in_progress | handoff_durable | live or absent | present | leased or retained_for_repair | dead or absent | present | not_landed | pending | release transaction |
@@ -95,9 +95,12 @@ cut from section 4. It must not create another steady state.
 | S9f retryable failure consumed | terminal(failed) | open | absent | absent | absent | absent or retained_for_repair | absent | present or absent | not_landed | durable | queue group policy |
 | S9x unreopened failure consumed | terminal(failed) | in_progress | absent | absent | absent | retained_for_repair or absent | absent | present or absent | not_landed | durable | reconciliation |
 
-`S3` permits an already-created leased worktree because worktree creation can
-finish before session handoff. The durable run record must exist before this
-state can be treated as recoverable.
+`S3` permits an already-created prepared worktree because worktree creation can
+finish before session handoff. Prepared means the canonical path, one Git
+registration, exact task branch, and recorded parent commit agree. It does not
+mean that a workspace lease exists. WM-013a and WM-016 create the lease after
+the first session sidecar is durable. The durable run record must exist before
+this state can be treated as recoverable.
 
 `S5` is not a success state. It is a stable recovery input. The worktree stays
 when it can contain evidence that no durable fact has yet classified.
@@ -132,9 +135,10 @@ scheduler offers new work.
 | D5 after durable claim, before run record | Reserved item, claim_durable intent, current bead status | Use table 4.3 | Leave a permanent bare claim |
 | D6 after run record, before intent phase update | Exact run record, claim_durable intent | `advance-run-phase` | Write a second run record |
 | D6a after run phase update, before worktree | S3 with no worktree | `resume-provision` | Create another run ID |
-| D7 after worktree, before session handoff | S3 with leased worktree | `resume-handoff` with the same worktree | Delete the worktree before classification |
-| D8 after handoff identity is durable, before intent phase update | Run record with exact session identity, leased worktree, run_durable intent | `advance-handoff-phase` | Spawn the session before handoff identity is durable |
-| D8a after handoff phase is durable, before session spawn | Handoff intent, run record, leased worktree, absent exact session | `replay-session-start` with the same identity | Mint a session identity or reset the bead |
+| D7 after worktree, before session handoff | S3 with prepared worktree | `resume-handoff` with the same worktree | Delete the worktree before classification |
+| D8 after handoff identity is durable, before intent phase update | Run record with exact session identity, prepared worktree, run_durable intent | `advance-handoff-phase` | Spawn the session before handoff identity is durable |
+| D8a after handoff phase is durable, before session preparation | Handoff intent, run record, prepared worktree, absent exact session | `replay-session-start` with the same identity. Make the session sidecar durable, then the exact lease, before start. | Mint a session identity or reset the bead |
+| D8b after session sidecar and lease are durable, before target spawn | Handoff intent, run record, exact leased worktree, absent exact session | `replay-session-start` with the same identity. Reuse the sidecar and lease. | Mint a session identity or classify the absent target as a dead run |
 | D9 during agent work | Handoff intent and exact live session facts | Use table 4.5 | Double-launch |
 | D10 after work commit, before release claim | Run branch ahead, no release claim | `retain-and-repair` | Merge from branch shape alone |
 | D10f after a failed run, before Beads routing | No durable failure-class authority, bead in_progress | `repair-required` | Infer the failure class from an event or memory |
@@ -187,10 +191,11 @@ Beads status is the claim result. The C20 intent supplies dispatch ownership.
 
 | Exact fact | Recovery result |
 | --- | --- |
-| Run-durable intent and exact run record has no session identity | `prepare-handoff` with the same run and worktree |
-| Run-durable intent and exact run record has the selected session identity | `advance-handoff-phase` |
-| Handoff-durable intent and exact session is absent | `replay-session-start` with the same identity |
-| Handoff-durable intent and exact session is live | `adopt-live` |
+| Run-durable intent, exact run record with no session identity, and exact prepared worktree | `prepare-handoff` with the same run and worktree |
+| Run-durable intent, exact run record has the selected session identity, and worktree is prepared | `advance-handoff-phase` |
+| Handoff-durable intent, prepared worktree, and exact session is absent | `replay-session-start` with the same identity. Make the sidecar and lease durable first. |
+| Handoff-durable intent, exact leased worktree, and exact session is absent | `replay-session-start` with the same identity. Reuse the sidecar and lease. |
+| Handoff-durable intent, exact leased worktree, and exact session is live | `adopt-live` |
 | Session, run record, worktree, or intent identity differs or cannot be read | `repair-required` |
 
 ### 4.5 Active run classification
@@ -282,7 +287,8 @@ The dispatch transaction must define an intent with these immutable bindings:
 - claim transition ID
 - exact durable run-record identity
 - exact session identity at handoff
-- worktree lease identity
+- exact parent commit and prepared worktree identity
+- future worktree lease identity at handoff
 
 The type must not admit a claimed phase without all queue, bead, and run
 bindings. A later phase can add a binding that the prior phase could not know.
@@ -298,6 +304,9 @@ handoff binding.
 The run record alone owns the execution location. The intent binds that record
 by exact run ID. Replay must decode and validate the record before it uses the
 location.
+The handoff binding prebinds the run ID that the future workspace lease must
+contain. It does not claim that the lease exists before the WM-013a and WM-016
+session-sidecar gate.
 
 The run record exists for every claimed dispatch. `run_durable` does not
 require a session identity. A remote run and a shared-session run are valid at
@@ -342,7 +351,7 @@ Do not use these facts to settle a crash cut:
 - event presence or event order
 - stderr text
 - process names without exact session identity
-- directory presence without a valid lease
+- directory presence without exact prepared Git facts or a valid lease
 - run registry memory after restart
 - elapsed time by itself
 - a branch being ahead without an immutable release claim

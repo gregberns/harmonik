@@ -8,10 +8,10 @@ requirement-prefix: WM
 status: reviewed
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.4.12
+version: 0.4.13
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-08-12
+last-updated: 2026-08-13
 depends-on:
   - architecture
   - execution-model
@@ -207,6 +207,18 @@ Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempo
 #### WM-003a — Discovery classifies partially-crash-ed worktree states
 
 If daemon startup (or reconciliation) observes a directory under `<repo>/.harmonik/worktrees/<run_id>/` that `git worktree list --porcelain` reports as a registered worktree but that carries NO lease-lock file (`${workspace_path}/.harmonik/lease.lock` absent per §4.3.WM-013a) AND NO session-log directory (`${workspace_path}/.harmonik/sessions/` absent), it MUST be classified under the evidence type `bare-worktree-no-lease` and routed to reconciliation Cat 3 per [reconciliation/spec.md §8]. If the same worktree carries a sidecar (`.harmonik/sessions/<session_id>/harmonik.meta.json` present) but NO lease-lock, it MUST be classified under the evidence type `sidecar-without-lease` and routed to reconciliation Cat 3. Both cases arise from a SIGKILL / power loss between `git worktree add` and the lease-lock fsync gate of WM-016; neither the `leased` nor any post-`ready` event has been durably emitted, so the run's workflow state treats the workspace as non-existent while the filesystem retains an orphan. Cat 3 routing gives reconciliation the right to propose `reopen-bead` (discard the partial worktree, fresh run_id per WM-034) or `accept-close-with-note` with operator cleanup.
+
+A valid durable dispatch intent takes priority for its exact canonical
+`<run_id>` path before this generic Cat 3 route. Dispatch replay must compare
+the path, the one Git worktree registration, the `run/<run_id>` branch, the
+worktree HEAD equal to the recorded `parent_commit`, and any lease. An exact
+registered worktree with no lease, session directory, or session sidecar is an
+incomplete dispatch-owned create. Replay can classify it as prepared for
+handoff. It does not install a lease before the WM-013a and WM-016 session
+gates. A session artifact before lease durability, or any other partial or
+different fact, fails closed and stays in place for dispatch repair. If no
+valid matching dispatch intent exists, the two Cat 3 routes above apply without
+change.
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
@@ -1373,6 +1385,7 @@ Default-if-unresolved: Out of scope for now. Later support is an additive extens
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-08-13 | 0.4.13 | Charlie | **WM-003a gives a valid durable dispatch intent priority for its exact no-lease worktree before generic Cat 3 cleanup.** Replay must verify the canonical path, one Git registration, exact task branch, recorded parent commit, and lease. Missing or conflicting intent authority keeps the existing Cat 3 route. No requirement IDs changed. |
 | 2026-08-12 | 0.4.12 | agent (hk-uu0ke) | **WM-040a amended: materialization removes harmonik's own hook entries and then adds the current one, and the idempotency axis flips to `idempotent`.** The merge clause said the bridge-required hook entries are APPENDED to the existing event-type arrays. That is what the code did, and it was wrong. Materialization runs one time for each agent launch and one worktree hosts many launches, so the file collected one more copy of every bridge group on each launch. Claude Code runs a hook one time for each configured copy, so one agent stop reported as four, and that is the path the daemon learns from that an agent stopped. Seven of forty live worktrees carried duplicates when this was measured, and the worst held four copies of each of the five groups (hk-dknb2). The merge clause now states remove-then-add, states that hook entries harmonik did not write stay in place, and adds an idempotency paragraph. The removal works on hook ENTRIES and not on whole matcher groups, so an entry another writer put in the default-matcher group beside harmonik's survives. Companion amendment: claude-hook-bridge.md CHB-004 v1.4. Code: `internal/workspace/claudesettings_wm040a.go`. No prior requirement IDs renumbered. Status remains `reviewed`. |
 | 2026-08-05 | 0.4.11 | agent (spec repair, hk-6lt60) | **WM-041 retired. The identifier is not reusable and is added to the retired list in the ID FREEZE note and in §10.1.** WM-041 arrived at 0.4.10 from a kerf work whose changelog holds two target tables and states that the first wins a disagreement. This spec appears in no row of the first table, and the work's own task file records bravo task 4, `WM-041`, as having "no card of record". It also contradicted four rules in this file: §4.8 WM-032 and the §7.1 `leased → discarded` row require the discard it forbade, §4.9 WM-034 and [run-state-machine.md RSM-021] require the reopen it forbade, "a nonterminal recovery disposition" is not a §7.1 state, not a §4.10 WM-037 `interrupt_state` value and not a verdict in the §4.9 WM-036 table, and its startup-adoption step is absent from the closed §4.3 WM-013c discovery path and from [process-lifecycle.md §4.2 PL-005]. Its gate cited "the terminal-recovery matrix", which no document defines. No requirement text is changed and no obligation is added. Refs: hk-6lt60, hk-7bfqe. |
 | 2026-08-02 | 0.4.10 | agent (kerf finalize, queue-dogfood-readiness) | **WM-041 added, and it should not have been.** The finalize appended an "Amendment — terminal recovery workspace" block carrying WM-041 and bumped the version with no row in this table and no change to `last-updated`. The row is written here at 0.4.11 so the table is complete. This spec was named in no row of the work's plan of record. Refs: hk-6lt60. |

@@ -138,6 +138,13 @@ func TestGateFailureTail_KeepsTheEnd(t *testing.T) {
 	if !strings.Contains(got, "…") {
 		t.Errorf("a 1.5 KB gate output produced an un-truncated excerpt, so the head was never dropped:\n%s", got)
 	}
+	// THE LITERAL STAYS A LITERAL. gateFailureTailPrefix holds this same string
+	// and using it here would read tidier, and would delete the only check in
+	// the tree that catches a change to the prefix ITSELF. The tests next to
+	// gateFailureTail derive their bound from that constant, so widening the
+	// prefix widens their bound with it and they stay green; this line does not
+	// move, so it is what fails. Measured: one byte added to the prefix is
+	// reported here, at 219, and nowhere else.
 	if len(got) > gateFailureTailMaxBytes+len("; gate output: ")+len("…") {
 		t.Errorf("the excerpt is unbounded at %d bytes; it travels into run_failed, which is read one line at a time", len(got))
 	}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gregberns/harmonik/internal/dispatch"
+	"github.com/gregberns/harmonik/internal/dispatchstore"
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
@@ -87,7 +88,7 @@ func TestExecuteDispatchReplayPlanRejectsUnsupportedWaveBeforeWrite(t *testing.T
 	writeReplayReaderQueue(t, projectDir, first, false)
 	steps := []dispatchReplayStep{
 		{Intent: first, Action: dispatch.ReplayReservation},
-		{Intent: second, Action: dispatch.ReplayClaim},
+		{Intent: second, Action: dispatch.WriteRunRecord},
 	}
 	err := executeDispatchReplayPlan(t.Context(), steps, dispatchReplayExecutor{projectDir: projectDir})
 	if err == nil || !strings.Contains(err.Error(), "does not support action") {
@@ -99,5 +100,57 @@ func TestExecuteDispatchReplayPlanRejectsUnsupportedWaveBeforeWrite(t *testing.T
 	}
 	if item := durable.Groups[0].Items[0]; item.Status != queue.ItemStatusPending || item.RunID != nil || item.Attempts != 0 {
 		t.Fatalf("unsupported wave changed queue item = %+v", item)
+	}
+}
+
+func TestStartupReconcileReplaysExactClaimBeforeOrphanSweep(t *testing.T) {
+	projectDir := t.TempDir()
+	intent := replayOwnershipIntent(t, dispatch.PhasePrepared)
+	writeReplayReaderIntent(t, projectDir, intent)
+	writeReplayReaderQueue(t, projectDir, intent, true)
+	if err := os.MkdirAll(filepath.Join(projectDir, ".harmonik", "beads-intents"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	brPath := filepath.Join(t.TempDir(), "br")
+	callsPath := filepath.Join(t.TempDir(), "calls")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> '` + callsPath + `'
+if [ "$1" = "--version" ]; then
+  echo "br test"
+  exit 0
+fi
+if [ "$1" = "show" ]; then
+  printf '%s\n' '[{"id":"hk-replay-owner","title":"replay","issue_type":"task","status":"open"}]'
+fi
+exit 0
+`
+	if err := os.WriteFile(brPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(brPath, 0o700); err != nil { //nolint:gosec // The test fixture must be executable.
+		t.Fatal(err)
+	}
+	bs := &bootState{cfg: Config{ProjectDir: projectDir, BrPath: brPath}}
+	err := bs.runStartupReconcile(t.Context(), time.Now(), "main")
+	if err == nil || !strings.Contains(err.Error(), "durable progress") {
+		t.Fatalf("runStartupReconcile() error = %v", err)
+	}
+	got, loadErr := dispatchstore.New(projectDir).Load(intent.Binding.RunID)
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if got.Phase != dispatch.PhaseClaimDurable {
+		t.Fatalf("replayed claim intent = %+v", got)
+	}
+	calls, readErr := os.ReadFile(callsPath) //nolint:gosec // Test-owned path below t.TempDir.
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	wantClaim := "update " + string(intent.Binding.BeadID) + " --claim"
+	if !strings.Contains(string(calls), wantClaim) {
+		t.Fatalf("claim call %q missing:\n%s", wantClaim, calls)
+	}
+	if strings.Contains(string(calls), " list ") || strings.Contains(string(calls), "list --") {
+		t.Fatalf("orphan sweep reached Beads list after claim:\n%s", calls)
 	}
 }

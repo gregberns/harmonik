@@ -26,6 +26,7 @@ type reconcileState struct {
 	projectHash core.ProjectHash
 
 	beadLedger          lifecycle.InFlightBeadLedger
+	dispatchClaimLedger dispatchReplayClaimLedger
 	beadResetter        lifecycle.BeadResetter
 	orphanStatusReader  beadStatusReader
 	beadCat3cCloser     lifecycle.BeadCat3cCloser
@@ -109,7 +110,11 @@ func (bs *bootState) preflightDispatchReplay(
 	if err != nil {
 		return err
 	}
-	if err := executeDispatchReplayPlan(ctx, steps, dispatchReplayExecutor{projectDir: bs.cfg.ProjectDir}); err != nil {
+	if err := executeDispatchReplayPlan(ctx, steps, dispatchReplayExecutor{
+		projectDir:   bs.cfg.ProjectDir,
+		intentLogDir: st.intentLogDir,
+		claimLedger:  st.dispatchClaimLedger,
+	}); err != nil {
 		return err
 	}
 	return fmt.Errorf("daemon: dispatch replay made durable progress; restart is required before orphan sweep")
@@ -258,6 +263,7 @@ func (bs *bootState) buildBeadAdapters(ctx context.Context, st *reconcileState) 
 		return err
 	}
 	st.beadLedger = brAdapter
+	st.dispatchClaimLedger = brAdapter
 	st.beadResetter = brAdapter
 	st.orphanStatusReader = brAdapter  // hk-mdus1 B3: in_progress guard reader
 	st.beadCat3cCloser = brAdapter     // Cat 3c auto-reconciler (hk-lgtq2)

@@ -66,6 +66,30 @@ type ExitInfo struct {
 	ExitCode   int
 	WaitErr    error
 	StderrTail []byte // last ~4 KiB of subprocess stderr; nil for substrate sessions
+
+	// AgentAnnouncedEnd says the agent announced the end of its turn on its own
+	// event stream and the daemon then terminated it ON that announcement. The
+	// exit status of such a run describes what the DAEMON did, not how the agent
+	// ended, so its signal death is not evidence that the agent crashed.
+	//
+	// Read the name literally. It is NOT a claim that the work succeeded, and it
+	// must not grow into one: pi emits the same announcement for a turn it
+	// aborted as for a turn it finished, and the harness parser reads no field
+	// of the event that would tell the two apart. All this field withdraws is a
+	// false claim about how the process died. What the run actually produced is
+	// decided after it by the git layer, which the harness contract (HN-009,
+	// HN-INV-001) makes the sole authority on whether work is done — a process
+	// exit may refine that outcome and may never substitute for it.
+	//
+	// WaitWithSocketGrace never sets this and cannot: only the kill site knows
+	// why it killed, and by the time a wait returns every kill looks alike —
+	// SIGTERM, exit code -1, "signal: terminated" — whether the agent said it
+	// was stopping or a watchdog found it wedged. runAgentLaunch sets it after
+	// this function returns, from the callback that fires the announcement kill.
+	//
+	// The zero value is the safe answer: a launch that arms no announcement kill
+	// leaves it false and is judged on its exit code exactly as before.
+	AgentAnnouncedEnd bool
 }
 
 // waitWithSocketGrace races ctx cancellation against watcher completion, reaps

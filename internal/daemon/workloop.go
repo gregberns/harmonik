@@ -1568,9 +1568,19 @@ func maybeEmitEpicCompleted(ctx context.Context, ports runloop.RunPorts, handles
 //
 // Spec ref: handler-contract.md §4.13 HC-065; event-model.md §8.3.14.
 // Bead ref: hk-xrygh.
-func transitionToTerminated(ctx context.Context, m *hclifecycle.Machine, runID core.RunID, bus handlercontract.EventEmitter, exitCode int, waitErr error) {
+func transitionToTerminated(ctx context.Context, m *hclifecycle.Machine, runID core.RunID, bus handlercontract.EventEmitter, exit runloop.ExitInfo) {
 	if m == nil {
 		return
+	}
+	exitCode, waitErr := exit.ExitCode, exit.WaitErr
+	// An agent the daemon killed on the agent's own announcement that it had
+	// finished did not fail, and its run must not be recorded as Failed. The
+	// wait reports the same "signal: terminated" it reports for a wedge, so
+	// without this the lifecycle log said a healthy run had errored — the same
+	// false claim the terminal classifier used to make about the same kill, in
+	// the other place a run is written down.
+	if exit.AgentAnnouncedEnd {
+		exitCode, waitErr = 0, nil
 	}
 	// Step 1: Terminating (current → Terminating). The machine may already be
 	// there (e.g. Kill was called earlier) — the Machine silently rejects

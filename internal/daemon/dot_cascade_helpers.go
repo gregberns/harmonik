@@ -141,7 +141,35 @@ func dotNodeTerminalFailure(
 	if term.Type == handlercontract.ProgressMsgTypeAgentCompleted {
 		return "", false
 	}
-	if !outcomeIsAnAgentReport(socketOutcome) && exit.ExitCode == exitCodeClean && !watcherFailed {
+	// An announcement kill reads as a clean exit, and it is the same exemption
+	// the reviewer budget kill already gets one level up in dot_cascade_core.go:
+	// the non-zero exit describes what the DAEMON did, not an agent that
+	// crashed.
+	//
+	// Without it, a harness whose process exit is unreliable enough to need
+	// PI-014's announcement kill is judged on an exit code the daemon itself
+	// manufactured. Branch 1 above is shut to such a harness as well, because it
+	// reports nothing on the hook socket, so this branch is its only way to pass
+	// and it can hold only by losing a race: pi passes when it happens to die
+	// before the SIGTERM lands, and fails whenever PI-014's premise actually
+	// holds and it lingers. Both outcomes are on record — a live dot run in
+	// August reported exit 0 and advanced, and two of two runs on 2026-08-14 that
+	// read the file, made the change and committed with a valid Refs: trailer
+	// were recorded agent_failed sub_reason=claude_crashed exit=-1 and had the
+	// work discarded. A verdict that turns on who won a millisecond race is the
+	// thing being removed here.
+	//
+	// It exempts the EXIT CODE and nothing else. A FAILURE_SIGNAL still fails the
+	// node and so does a watcher error, because neither is a claim about how the
+	// process died. Nor is passing here a finding that the run succeeded — the
+	// announcement means the agent stopped, not that it finished well. It returns
+	// the decision to the HEAD-advance guard in the caller, which is where the
+	// harness contract puts it: HN-009 and HN-INV-001 make the git layer the sole
+	// completion authority and let a process exit refine that outcome but never
+	// substitute for the commit check. Letting a manufactured exit code veto a
+	// node whose commit had landed inverted exactly that.
+	cleanExit := exit.ExitCode == exitCodeClean || exit.AgentAnnouncedEnd
+	if !outcomeIsAnAgentReport(socketOutcome) && cleanExit && !watcherFailed {
 		return "", false
 	}
 

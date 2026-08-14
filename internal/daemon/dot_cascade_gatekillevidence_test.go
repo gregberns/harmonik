@@ -1731,10 +1731,39 @@ func gateSignatureInText(text string) bool {
 	return false
 }
 
-// gateExprCarriesSignature reports whether an expression subtree contains a
-// string literal with an unscoped signature in it, or names a variable that
-// holds one at that point in the source.
-func gateExprCarriesSignature(expr ast.Expr, spans []gateTaintSpan) bool {
+// gateAnchorInText reports whether text carries make's recipe anchor — the
+// prefix that lets a line be read as a member of make's terminal cascade.
+//
+// It is a SEPARATE class from an unscoped signature, and the difference is
+// position. An anchor is read only inside the cascade window and only on a line
+// that is not indented, so a write through a testing handle cannot build one:
+// go test indents it and gateLineIsIndented throws it out. A write that lands
+// at column 0 has no such cover, so this class is asked only about those
+// channels.
+func gateAnchorInText(text string) bool {
+	return strings.Contains(text, gateRecipeFailureAnchor)
+}
+
+// gateChannelLandsAtColumnZero reports whether text written through this
+// channel reaches the gate log with nothing in front of it.
+//
+// go test indents everything a testing handle prints. Every other channel
+// gateOutputChannel recognises — the standard streams, log, slog, the print
+// builtins — writes straight out at column 0, which is the position make's own
+// report occupies and the one no indentation rule can rule out.
+func gateChannelLandsAtColumnZero(channel string, handles map[string]bool) bool {
+	i := strings.LastIndex(channel, ".")
+	if i < 0 {
+		// The print / println builtins take no qualifier and go to stderr.
+		return true
+	}
+	return !gateReceiverIsTestingHandle(channel[:i], handles)
+}
+
+// gateExprCarriesText reports whether an expression subtree contains a string
+// literal that match recognises, or names a variable that holds one at that
+// point in the source.
+func gateExprCarriesText(expr ast.Expr, match func(string) bool, spans []gateTaintSpan) bool {
 	found := false
 	ast.Inspect(expr, func(n ast.Node) bool {
 		switch node := n.(type) {
@@ -1746,7 +1775,7 @@ func gateExprCarriesSignature(expr ast.Expr, spans []gateTaintSpan) bool {
 			if unquoted, err := strconv.Unquote(text); err == nil {
 				text = unquoted
 			}
-			if gateSignatureInText(text) {
+			if match(text) {
 				found = true
 			}
 		case *ast.Ident:
@@ -1759,8 +1788,8 @@ func gateExprCarriesSignature(expr ast.Expr, spans []gateTaintSpan) bool {
 	return found
 }
 
-// gateTaintSpan is one variable that holds an unscoped signature, and the span
-// of source over which it does. A span, not a file-wide name: `out` is the
+// gateTaintSpan is one variable that holds text a matcher recognises, and the
+// span of source over which it does. A span, not a file-wide name: `out` is the
 // obvious name for a loop variable, both of the files this guard has to read use
 // it twice in ONE function, and only one of the two loops carries a signature.
 // Keying on the name alone reported the safe loop as well and turned 2 real
@@ -1770,8 +1799,8 @@ type gateTaintSpan struct {
 	from, to token.Pos
 }
 
-// gateTaintSpans finds the variables in file that hold an unscoped signature,
-// each scoped to the source span where it holds one.
+// gateTaintSpans finds the variables in file that hold text match recognises,
+// each scoped to the source span where they hold it.
 //
 // It is a deliberately SHALLOW pass, and naming its limits is the point. It
 // follows a range over a signature-bearing expression (scoped to that loop's
@@ -1813,7 +1842,7 @@ type gateTaintSpan struct {
 // It exists at all because both real sites interpolate a loop variable rather
 // than a literal — `for _, out := range cannotRun { t.Errorf("...%s", out) }` —
 // so a literals-only scan reports neither.
-func gateTaintSpans(file *ast.File) []gateTaintSpan {
+func gateTaintSpans(file *ast.File, match func(string) bool) []gateTaintSpan {
 	var spans []gateTaintSpan
 	add := func(target ast.Expr, from, to token.Pos) {
 		if id, isIdent := target.(*ast.Ident); isIdent && id.Name != "_" {
@@ -1839,7 +1868,7 @@ func gateTaintSpans(file *ast.File) []gateTaintSpan {
 			funcEnds = funcEnds[:len(funcEnds)-1]
 			return false
 		case *ast.RangeStmt:
-			if gateExprCarriesSignature(node.X, spans) {
+			if gateExprCarriesText(node.X, match, spans) {
 				add(node.Key, node.Body.Pos(), node.Body.End())
 				add(node.Value, node.Body.Pos(), node.Body.End())
 			}
@@ -1852,7 +1881,7 @@ func gateTaintSpans(file *ast.File) []gateTaintSpan {
 				if _, isCall := rhs.(*ast.CallExpr); isCall {
 					continue
 				}
-				if !gateExprCarriesSignature(rhs, spans) {
+				if !gateExprCarriesText(rhs, match, spans) {
 					continue
 				}
 				if len(node.Rhs) == len(node.Lhs) {
@@ -1878,7 +1907,7 @@ func gateTaintSpans(file *ast.File) []gateTaintSpan {
 					if _, isCall := node.Values[i].(*ast.CallExpr); isCall {
 						continue
 					}
-					if gateExprCarriesSignature(node.Values[i], spans) {
+					if gateExprCarriesText(node.Values[i], match, spans) {
 						add(name, from, end)
 					}
 				}
@@ -1926,7 +1955,7 @@ func gateDedupeSpans(spans []gateTaintSpan) []gateTaintSpan {
 	return out
 }
 
-// gateTaintedAt reports whether name holds an unscoped signature at pos.
+// gateTaintedAt reports whether name holds matched text at pos.
 func gateTaintedAt(spans []gateTaintSpan, name string, pos token.Pos) bool {
 	for _, span := range spans {
 		if span.name == name && pos >= span.from && pos <= span.to {
@@ -1936,11 +1965,28 @@ func gateTaintedAt(spans []gateTaintSpan, name string, pos token.Pos) bool {
 	return false
 }
 
-// gateSignatureWriteSites reports every write in file whose message carries an
-// unscoped signature without going through gateEvidenceQuote.
+// gateSignatureWriteSites reports every write in file whose message reaches the
+// gate log carrying something the classifier keys on, without going through
+// gateEvidenceQuote. Two classes, and they differ in which channels they apply
+// to, because they differ in what protects them:
+//
+//   - an UNSCOPED signature, on ANY channel. Its detector reads the whole log,
+//     so no line position protects it and an indent buys nothing.
+//   - make's RECIPE ANCHOR, on the channels that land at COLUMN 0 only. The
+//     anchor is read only inside make's terminal cascade and only on a line
+//     that is not indented, so go test's indent really is cover for a testing
+//     handle — and it is no cover at all for a write straight to stderr, which
+//     is the class this guard was named after and did not have.
+//
+// The anchor class is why this tier reads the whole package rather than one
+// file. Its predecessor (gateOutputSites) reports every unsanitized write, and
+// so it can only afford to read the single file it is kept clean in; a sibling
+// file writing an anchor at column 0 was invisible to both tiers, and a planted
+// one left the whole gate suite green (hk-gate-anchor-guard-one-file-x6t5k).
 func gateSignatureWriteSites(fset *token.FileSet, name string, file *ast.File) []string {
 	handles := gateTestingHandleNames(file)
-	spans := gateTaintSpans(file)
+	signatureSpans := gateTaintSpans(file, gateSignatureInText)
+	anchorSpans := gateTaintSpans(file, gateAnchorInText)
 	var sites []string
 	ast.Inspect(file, func(n ast.Node) bool {
 		call, isCall := n.(*ast.CallExpr)
@@ -1951,19 +1997,31 @@ func gateSignatureWriteSites(fset *token.FileSet, name string, file *ast.File) [
 		if !isWrite || gateArgsAreSanitized(msgArgs) {
 			return true
 		}
-		for _, arg := range msgArgs {
-			if gateExprCarriesSignature(arg, spans) {
-				sites = append(sites, fmt.Sprintf("%s:%d: %s", name, fset.Position(call.Pos()).Line, channel))
-				break
-			}
+		carries := gateArgsCarry(msgArgs, gateSignatureInText, signatureSpans)
+		if !carries && gateChannelLandsAtColumnZero(channel, handles) {
+			carries = gateArgsCarry(msgArgs, gateAnchorInText, anchorSpans)
+		}
+		if carries {
+			sites = append(sites, fmt.Sprintf("%s:%d: %s", name, fset.Position(call.Pos()).Line, channel))
 		}
 		return true
 	})
 	return sites
 }
 
+// gateArgsCarry reports whether any of a write's message arguments carries text
+// the matcher recognises.
+func gateArgsCarry(args []ast.Expr, match func(string) bool, spans []gateTaintSpan) bool {
+	for _, arg := range args {
+		if gateExprCarriesText(arg, match, spans) {
+			return true
+		}
+	}
+	return false
+}
+
 // gateSnippetName is the file name the synthetic production file is parsed
-// under, and gateSnippetPlantMarker marks the one write in it that MUST be
+// under, and gateSnippetPlantMarker marks each write in it that MUST be
 // reported. The marker is a comment, so the parser ignores it and the line it
 // sits on is the expected finding.
 const (
@@ -1986,9 +2044,15 @@ const (
 // declaration reports the second write and misses the first, silently. Marking
 // both plants is what makes that miss a failure.
 //
-// Four writes and two plants. The other two are what keeps the guard usable: one
-// sanitizes its message, and one carries no signature at all. A pass that
-// reported those would be one nobody could keep green.
+// Six writes and three plants. The third plant carries make's recipe anchor and
+// nothing else, and it is what pins the ANCHOR class: this same source with the
+// anchor plant unreported is what the guard looked like when a column-0 anchor
+// in a sibling file left the whole gate suite green.
+//
+// The other three writes are what keeps the guard usable: one sanitizes its
+// message, one carries no signature at all, and one is an ordinary line beside
+// the anchor plant. A pass that reported those would be one nobody could keep
+// green.
 const gateProductionSnippetSource = `package daemon
 
 import (
@@ -2013,6 +2077,11 @@ func snippetClassify(out string) {
 	}
 	fmt.Fprintf(os.Stderr, "gate: %d bytes of gate output\n", len(out))
 }
+
+func snippetKilled(node string) {
+	fmt.Fprintf(os.Stderr, "gate: make[1]: *** [%s] Error 143\n", node) // PLANTED
+	fmt.Fprintf(os.Stderr, "gate: node %s reached the end of its budget\n", node)
+}
 `
 
 // gateScanProductionSnippet runs the package-wide scan over one synthetic
@@ -2026,8 +2095,8 @@ func gateScanProductionSnippet(t *testing.T, src string) (got, want []string) {
 			want = append(want, fmt.Sprintf("%s:%d: fmt.Fprintf", gateSnippetName, i+1))
 		}
 	}
-	if len(want) < 2 {
-		gateFatalf(t, "the synthetic production source marks %d plant(s); it needs the one ABOVE the detector table and the one below it, or the span rule is not being measured", len(want))
+	if len(want) < 3 {
+		gateFatalf(t, "the synthetic production source marks %d plant(s); it needs the one ABOVE the detector table, the one below it, and the bare recipe anchor, or the span rule and the anchor class are not both being measured", len(want))
 	}
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, gateSnippetName, src, parser.SkipObjectResolution)
@@ -2057,14 +2126,20 @@ func gateScanProductionSnippet(t *testing.T, src string) (got, want []string) {
 // package, zero findings — the cost of the wider scan is nothing and the next
 // `fmt.Fprintf(os.Stderr, …)` that spells a signature is caught.
 //
-// SCOPE, and it is narrower than the single-file guard on purpose. This tier
-// reports only writes carrying an UNSCOPED signature — the ones whose detectors
-// read the whole log, so that no line position protects them. It does NOT report
-// a bare make anchor: an anchor written by a test always lands indented and
-// gateLineIsIndented already keeps an indented line out of the cascade. Widening
-// this to every unsanitized write in the package would flag several thousand
-// ordinary t.Fatalf calls that carry no signature at all, and a guard nobody can
-// keep green is a guard that gets deleted.
+// SCOPE, and it is narrower than the single-file guard on purpose. It reports
+// two classes and not every unsanitized write: an UNSCOPED signature on any
+// channel, and make's RECIPE ANCHOR on the channels that land at column 0. See
+// gateSignatureWriteSites for why the anchor class is asked of those channels
+// only. Widening this to every unsanitized write in the package would flag
+// several thousand ordinary t.Fatalf calls that carry nothing the classifier
+// reads, and a guard nobody can keep green is a guard that gets deleted.
+//
+// The anchor class was the half of this guard that did not ship the first time.
+// It read one file, so a column-0 anchor written from a SIBLING test file left
+// the entire gate suite green — measured, not inferred
+// (hk-gate-anchor-guard-one-file-x6t5k). The indented t.Errorf anchors this
+// package really does write stay unreported, and that is the reading end's job:
+// gateLineIsIndented keeps them out of the cascade.
 //
 // It reads WRITES, and not the data flowing into them. A production helper that
 // pastes gate output into a message it RETURNS is invisible here — that is what
@@ -2087,7 +2162,7 @@ func TestNoSignatureInThisPackageReachesTheLogUnsanitized(t *testing.T) {
 	sort.Strings(offenders)
 
 	if len(offenders) > 0 {
-		gateReportf(t, "these write a classifier signature into the gate's log without passing it through %s, and either kind makes the next genuinely-red gate read as structural. A TEST site fires only when that test fails, and go test indents it. A PRODUCTION site is worse on both counts: the daemon writes its diagnostic every time it classifies a failure, not only when something is wrong, and it lands on stderr at column 0 — the position make's own report occupies, where no indentation rule can rule it out. Sites: %s",
+		gateReportf(t, "these write a classifier signature, or make's recipe anchor at column 0, into the gate's log without passing it through %s, and either kind makes the next genuinely-red gate read as structural. A TEST site fires only when that test fails, and go test indents it. A PRODUCTION site is worse on both counts: the daemon writes its diagnostic every time it classifies a failure, not only when something is wrong, and it lands on stderr at column 0 — the position make's own report occupies, where no indentation rule can rule it out. Sites: %s",
 			gateSanitizerName, strings.Join(offenders, ", "))
 	}
 
@@ -2106,7 +2181,7 @@ func TestNoSignatureInThisPackageReachesTheLogUnsanitized(t *testing.T) {
 	// findings need: follow a range over a signature-bearing slice, and scope it
 	// to that loop. Without this a pass that silently stopped resolving names
 	// would report a clean package.
-	probe := gateTaintSpans(files["dot_cascade_gatecannotrun_hk2f3v4_test.go"])
+	probe := gateTaintSpans(files["dot_cascade_gatecannotrun_hk2f3v4_test.go"], gateSignatureInText)
 	var outSpans int
 	for _, span := range probe {
 		if span.name == "out" {

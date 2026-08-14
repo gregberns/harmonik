@@ -63,11 +63,34 @@ func TestMapDiscoveredWorktreesPreservesAbsentUnreadableAndExactLease(t *testing
 		t.Fatalf("mapped worktrees = %+v", got)
 	}
 	if fact := dispatch.ClassifyWorktreeObservations(intent, append(got, dispatch.WorktreeObservation{
-		RunID: runID, Path: "/tmp/" + runID, Registered: true,
-		LeasePresent: true, LeaseReadable: true, LeaseRunID: runID,
+		RunID: runID, Path: "/tmp/" + runID, Registered: true, CanonicalPath: true,
+		GitBranch:       "run/" + runID,
+		HasSessions:     true,
+		HasExactSidecar: true,
+		LeasePresent:    true, LeaseReadable: true, LeaseRunID: runID,
 		LeasePID: 42, LeaseCreatedAt: "2026-08-13T01:02:03Z", LeaseTTLSec: 60,
 	})); fact != dispatch.WorktreeLeased {
 		t.Fatalf("worktree fact = %q", fact)
+	}
+}
+
+func TestMapDiscoveredWorktreesClassifiesExactPreparedAuthority(t *testing.T) {
+	intent := replayOwnershipIntent(t, dispatch.PhaseRunDurable)
+	runID := intent.Binding.RunID.String()
+	got := mapDiscoveredWorktrees([]workspace.DiscoveredWorktree{{
+		RunID: runID, WorktreePath: "/tmp/" + runID, RegisteredInGit: true,
+		GitBranch: "run/" + runID, HeadCommit: intent.Binding.ParentCommit,
+	}})
+	if fact := dispatch.ClassifyWorktreeObservations(intent, got); fact != dispatch.WorktreePrepared {
+		t.Fatalf("prepared fact = %q from %+v", fact, got)
+	}
+	conflict := []workspace.DiscoveredWorktree{{
+		RunID: runID, WorktreePath: "/tmp/" + runID, RegisteredInGit: true,
+		GitBranch: "run/" + runID, HeadCommit: intent.Binding.ParentCommit,
+		SessionsPathConflict: true,
+	}}
+	if fact := dispatch.ClassifyWorktreeObservations(intent, mapDiscoveredWorktrees(conflict)); fact != dispatch.WorktreeConflict {
+		t.Fatalf("conflicting fact = %q", fact)
 	}
 }
 

@@ -13,6 +13,35 @@ func TestClassifyWorktreeObservationsAbsentAndExactLease(t *testing.T) {
 	}
 }
 
+func TestClassifyWorktreeObservationsPrepared(t *testing.T) {
+	intent := queueFactIntent(PhaseRunDurable, "")
+	observation := worktreeFactObservation()
+	observation.LeasePresent = false
+	observation.LeaseReadable = false
+	observation.LeaseRunID = ""
+	observation.LeasePID = 0
+	observation.LeaseCreatedAt = ""
+	observation.LeaseTTLSec = 0
+	observation.HasSessions = false
+	observation.GitBranch = "run/" + testRunID
+	observation.HeadCommit = intent.Binding.ParentCommit
+	if got := ClassifyWorktreeObservations(intent, []WorktreeObservation{observation}); got != WorktreePrepared {
+		t.Fatalf("prepared = %q", got)
+	}
+	for _, mutate := range []func(*WorktreeObservation){
+		func(w *WorktreeObservation) { w.CanonicalPath = false },
+		func(w *WorktreeObservation) { w.GitBranch = "run/other" },
+		func(w *WorktreeObservation) { w.HeadCommit = "0000000000000000000000000000000000000000" },
+		func(w *WorktreeObservation) { w.HasSessions = true },
+	} {
+		candidate := observation
+		mutate(&candidate)
+		if got := ClassifyWorktreeObservations(intent, []WorktreeObservation{candidate}); got != WorktreeConflict {
+			t.Fatalf("changed prepared fact = %q", got)
+		}
+	}
+}
+
 func TestClassifyWorktreeObservationsRejectsPartialAndConflictingAuthority(t *testing.T) {
 	intent := queueFactIntent(PhaseRunDurable, "")
 	for _, tc := range []struct {
@@ -22,6 +51,8 @@ func TestClassifyWorktreeObservationsRejectsPartialAndConflictingAuthority(t *te
 		{name: "path absent", mutate: func(w *WorktreeObservation) { w.Path = "" }},
 		{name: "path run mismatch", mutate: func(w *WorktreeObservation) { w.Path = "/tmp/other-run" }},
 		{name: "not registered", mutate: func(w *WorktreeObservation) { w.Registered = false }},
+		{name: "branch mismatch", mutate: func(w *WorktreeObservation) { w.GitBranch = "run/other" }},
+		{name: "fact conflict", mutate: func(w *WorktreeObservation) { w.FactConflict = true }},
 		{name: "lease absent", mutate: func(w *WorktreeObservation) { w.LeasePresent = false }},
 		{name: "lease unreadable", mutate: func(w *WorktreeObservation) { w.LeaseReadable = false }},
 		{name: "lease run mismatch", mutate: func(w *WorktreeObservation) { w.LeaseRunID = testQueueID }},
@@ -29,6 +60,8 @@ func TestClassifyWorktreeObservationsRejectsPartialAndConflictingAuthority(t *te
 		{name: "lease pid", mutate: func(w *WorktreeObservation) { w.LeasePID = 0 }},
 		{name: "lease created", mutate: func(w *WorktreeObservation) { w.LeaseCreatedAt = "not-time" }},
 		{name: "lease ttl", mutate: func(w *WorktreeObservation) { w.LeaseTTLSec = 0 }},
+		{name: "session sidecar absent", mutate: func(w *WorktreeObservation) { w.HasSessions = false }},
+		{name: "exact sidecar absent", mutate: func(w *WorktreeObservation) { w.HasExactSidecar = false }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			observation := worktreeFactObservation()
@@ -70,8 +103,11 @@ func TestClassifyWorktreeObservationsRejectsForeignPathClaimingIntentLease(t *te
 
 func worktreeFactObservation() WorktreeObservation {
 	return WorktreeObservation{
-		RunID: testRunID, Path: "/tmp/" + testRunID, Registered: true,
-		LeasePresent: true, LeaseReadable: true, LeaseRunID: testRunID,
+		RunID: testRunID, Path: "/tmp/" + testRunID, Registered: true, CanonicalPath: true,
+		GitBranch:       "run/" + testRunID,
+		HasSessions:     true,
+		HasExactSidecar: true,
+		LeasePresent:    true, LeaseReadable: true, LeaseRunID: testRunID,
 		LeasePID: 42, LeaseCreatedAt: "2026-08-11T12:13:14Z", LeaseTTLSec: 60,
 	}
 }

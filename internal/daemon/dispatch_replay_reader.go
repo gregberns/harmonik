@@ -112,8 +112,12 @@ func mapDiscoveredWorktrees(values []workspace.DiscoveredWorktree) []dispatch.Wo
 	for _, value := range values {
 		observation := dispatch.WorktreeObservation{
 			RunID: value.RunID, Path: value.WorktreePath, Registered: value.RegisteredInGit,
-			LeasePresent:  value.LeaseLock != nil || value.LeaseLockUnreadable,
-			LeaseReadable: value.LeaseLock != nil,
+			CanonicalPath: true, GitBranch: value.GitBranch, HeadCommit: value.HeadCommit,
+			HasSessions:     value.HasSessionsDir,
+			HasExactSidecar: value.HasExactSidecar,
+			FactConflict:    value.GitRegistrationConflict || value.SessionsPathConflict,
+			LeasePresent:    value.LeaseLock != nil || value.LeaseLockUnreadable,
+			LeaseReadable:   value.LeaseLock != nil,
 		}
 		if value.LeaseLock != nil {
 			observation.LeaseRunID = value.LeaseLock.RunID

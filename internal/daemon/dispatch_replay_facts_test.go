@@ -42,8 +42,11 @@ func TestBuildDispatchReplayFactsJoinsExactHandoffAuthorities(t *testing.T) {
 		t.Fatal(err)
 	}
 	worktree := dispatch.WorktreeObservation{
-		RunID: runID, Path: "/tmp/" + runID, Registered: true,
-		LeasePresent: true, LeaseReadable: true, LeaseRunID: runID,
+		RunID: runID, Path: "/tmp/" + runID, Registered: true, CanonicalPath: true,
+		GitBranch:       "run/" + runID,
+		HasSessions:     true,
+		HasExactSidecar: true,
+		LeasePresent:    true, LeaseReadable: true, LeaseRunID: runID,
 		LeasePID: 42, LeaseCreatedAt: "2026-08-13T01:02:03Z", LeaseTTLSec: 60,
 	}
 	session := dispatch.SessionTargetObservation{

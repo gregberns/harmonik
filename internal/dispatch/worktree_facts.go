@@ -9,15 +9,21 @@ import (
 
 // WorktreeObservation is the value-only result of one workspace discovery.
 type WorktreeObservation struct {
-	RunID          string
-	Path           string
-	Registered     bool
-	LeasePresent   bool
-	LeaseReadable  bool
-	LeaseRunID     string
-	LeasePID       int
-	LeaseCreatedAt string
-	LeaseTTLSec    int
+	RunID           string
+	Path            string
+	Registered      bool
+	CanonicalPath   bool
+	GitBranch       string
+	HeadCommit      string
+	HasSessions     bool
+	HasExactSidecar bool
+	FactConflict    bool
+	LeasePresent    bool
+	LeaseReadable   bool
+	LeaseRunID      string
+	LeasePID        int
+	LeaseCreatedAt  string
+	LeaseTTLSec     int
 }
 
 // ClassifyWorktreeObservations validates worktree authority for one intent.
@@ -43,14 +49,25 @@ func ClassifyWorktreeObservations(intent Intent, observations []WorktreeObservat
 	if match == nil {
 		return WorktreeAbsent
 	}
-	if !validWorktreeObservation(*match, wantRunID) {
+	if validPreparedWorktreeObservation(intent, *match) {
+		return WorktreePrepared
+	}
+	if !validLeasedWorktreeObservation(*match, wantRunID) {
 		return WorktreeConflict
 	}
 	return WorktreeLeased
 }
 
-func validWorktreeObservation(observation WorktreeObservation, wantRunID string) bool {
-	if observation.Path == "" || filepath.Base(observation.Path) != wantRunID || !observation.Registered ||
+func validPreparedWorktreeObservation(intent Intent, observation WorktreeObservation) bool {
+	wantRunID := intent.Binding.RunID.String()
+	return observation.Path != "" && filepath.Base(observation.Path) == wantRunID && observation.CanonicalPath &&
+		observation.Registered && observation.GitBranch == "run/"+wantRunID &&
+		observation.HeadCommit == intent.Binding.ParentCommit && !observation.LeasePresent && !observation.HasSessions &&
+		!observation.FactConflict
+}
+
+func validLeasedWorktreeObservation(observation WorktreeObservation, wantRunID string) bool {
+	if !validRegisteredWorktreeObservation(observation, wantRunID) || !observation.HasSessions || !observation.HasExactSidecar ||
 		!observation.LeasePresent || !observation.LeaseReadable {
 		return false
 	}
@@ -60,4 +77,9 @@ func validWorktreeObservation(observation WorktreeObservation, wantRunID string)
 	}
 	createdAt, err := time.Parse(time.RFC3339, observation.LeaseCreatedAt)
 	return err == nil && !createdAt.IsZero() && observation.LeasePID > 0 && observation.LeaseTTLSec > 0
+}
+
+func validRegisteredWorktreeObservation(observation WorktreeObservation, wantRunID string) bool {
+	return observation.Path != "" && filepath.Base(observation.Path) == wantRunID && observation.CanonicalPath &&
+		observation.Registered && observation.GitBranch == "run/"+wantRunID && !observation.FactConflict
 }

@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 // runIDRegexProduction is the canonical filesystem-safety regex for run_id values
@@ -51,6 +54,15 @@ type DiscoveredWorktree struct {
 	// to [process-lifecycle.md §4.2 PL-006].
 	RegisteredInGit bool
 
+	// GitBranch and HeadCommit are the exact registration facts reported by
+	// `git worktree list --porcelain`.
+	GitBranch  string
+	HeadCommit string
+
+	// GitRegistrationConflict reports another registration that claims this
+	// run path or task branch.
+	GitRegistrationConflict bool
+
 	// LeaseLock is the parsed lease-lock file (step c). Nil when the
 	// lease-lock file is absent — caller interprets absence as "not leased"
 	// per WM-013a.
@@ -68,7 +80,11 @@ type DiscoveredWorktree struct {
 	// HasSessionsDir reports whether ${path}/.harmonik/sessions/ exists on disk
 	// (step d). False means no session was ever started against this worktree,
 	// which contributes to the "bare-worktree-no-lease" evidence type of WM-003a.
-	HasSessionsDir bool
+	HasSessionsDir  bool
+	HasExactSidecar bool
+
+	// SessionsPathConflict reports an unreadable or unsupported sessions path.
+	SessionsPathConflict bool
 }
 
 // discoveredLeaseLock is the subset of lease-lock fields recovered by startup
@@ -124,32 +140,39 @@ func DiscoverWorktrees(ctx context.Context, repoRoot string, cfg WorktreeRootCon
 	entries, err := os.ReadDir(worktreeRoot)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// No worktrees have ever been created; not an error.
-			return nil, nil
+			// The canonical root can be absent while Git still records a foreign
+			// worktree. Keep scanning registration authority.
+			entries = nil
+		} else {
+			return nil, fmt.Errorf("workspace: DiscoverWorktrees: ReadDir %q: %w", worktreeRoot, err)
 		}
-		return nil, fmt.Errorf("workspace: DiscoverWorktrees: ReadDir %q: %w", worktreeRoot, err)
 	}
 
 	// Step (b): call `git worktree list --porcelain` once for the whole repo.
 	// Parse the output into a set of registered worktree paths.
-	registeredPaths, err := porcelainWorktreePaths(ctx, repoRoot)
+	registeredPaths, err := porcelainWorktreeRegistrations(ctx, repoRoot)
 	if err != nil {
 		return nil, fmt.Errorf("workspace: DiscoverWorktrees: git worktree list: %w", err)
 	}
 
 	results := make([]DiscoveredWorktree, 0, len(entries))
+	seenRunIDs := make(map[string]bool, len(entries))
 
 	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
 		name := entry.Name()
 		if !RunIDValid(name) {
 			// Does not match the WM-002 run_id regex; skip.
 			continue
 		}
+		seenRunIDs[name] = true
 
 		worktreePath := WorktreePath(repoRoot, name, cfg)
+		if !entry.IsDir() {
+			results = append(results, DiscoveredWorktree{
+				RunID: name, WorktreePath: worktreePath, GitRegistrationConflict: true,
+			})
+			continue
+		}
 
 		// Resolve symlinks before checking the git-registered set: on macOS,
 		// t.TempDir() paths under /var/folders are symlinks to /private/var/folders,
@@ -159,15 +182,35 @@ func DiscoverWorktrees(ctx context.Context, repoRoot string, cfg WorktreeRootCon
 			resolvedPath = rp
 		}
 
+		registration, registered := registeredPaths[worktreePath]
+		if !registered {
+			registration, registered = registeredPaths[resolvedPath]
+		}
 		dw := DiscoveredWorktree{
 			RunID:           name,
 			WorktreePath:    worktreePath,
-			RegisteredInGit: registeredPaths[worktreePath] || registeredPaths[resolvedPath],
+			RegisteredInGit: registered,
+			GitBranch:       registration.Branch,
+			HeadCommit:      registration.Head,
+			GitRegistrationConflict: conflictingWorktreeRegistration(
+				registeredPaths, worktreePath, resolvedPath, name,
+			),
 		}
 
 		// Step (c): read the lease-lock file if present.
 		leaseLockPath := LeaseLockPath(worktreePath)
-		ll, llErr := readDiscoveredLeaseLock(leaseLockPath)
+		var ll *discoveredLeaseLock
+		var llErr error
+		leaseInfo, leaseStatErr := os.Lstat(leaseLockPath)
+		switch {
+		case os.IsNotExist(leaseStatErr):
+		case leaseStatErr != nil:
+			llErr = leaseStatErr
+		case !leaseInfo.Mode().IsRegular():
+			llErr = fmt.Errorf("unsupported lease-lock type %s", leaseInfo.Mode().Type())
+		default:
+			ll, llErr = readDiscoveredLeaseLock(leaseLockPath)
+		}
 		switch {
 		case llErr != nil:
 			// A read/parse error means the lock file EXISTS but its content
@@ -185,14 +228,104 @@ func DiscoverWorktrees(ctx context.Context, repoRoot string, cfg WorktreeRootCon
 
 		// Step (d): stat the sessions root directory.
 		sessionsRoot := SessionLogRootPath(worktreePath)
-		if info, err := os.Stat(sessionsRoot); err == nil && info.IsDir() {
-			dw.HasSessionsDir = true
+		if info, statErr := os.Lstat(sessionsRoot); statErr == nil {
+			if info.IsDir() {
+				dw.HasSessionsDir = true
+				dw.HasExactSidecar, statErr = discoverExactRunSidecar(sessionsRoot, name)
+				if statErr != nil {
+					dw.SessionsPathConflict = true
+				}
+			} else {
+				dw.SessionsPathConflict = true
+			}
+		} else if !os.IsNotExist(statErr) {
+			dw.SessionsPathConflict = true
 		}
 
 		results = append(results, dw)
 	}
 
+	for path, registration := range registeredPaths {
+		const taskBranchPrefix = "run/"
+		candidateRunIDs := []string{filepath.Base(path)}
+		if strings.HasPrefix(registration.Branch, taskBranchPrefix) {
+			candidateRunIDs = append(candidateRunIDs, strings.TrimPrefix(registration.Branch, taskBranchPrefix))
+		}
+		for _, runID := range candidateRunIDs {
+			if !canonicalDispatchRunID(runID) || seenRunIDs[runID] {
+				continue
+			}
+			results = append(results, DiscoveredWorktree{
+				RunID: runID, WorktreePath: WorktreePath(repoRoot, runID, cfg),
+				GitBranch: registration.Branch, HeadCommit: registration.Head,
+				GitRegistrationConflict: true,
+			})
+			seenRunIDs[runID] = true
+		}
+	}
+
 	return results, nil
+}
+
+func canonicalDispatchRunID(value string) bool {
+	id, err := uuid.Parse(value)
+	return err == nil && id.Version() == 7 && id.String() == value
+}
+
+func discoverExactRunSidecar(sessionsRoot string, runID string) (bool, error) {
+	entries, err := os.ReadDir(sessionsRoot)
+	if err != nil {
+		return false, err
+	}
+	found := false
+	worktreePath := filepath.Dir(filepath.Dir(sessionsRoot))
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			return false, fmt.Errorf("unsupported session entry %q", entry.Name())
+		}
+		path := SessionMetadataSidecarPath(worktreePath, entry.Name())
+		info, statErr := os.Lstat(path)
+		if os.IsNotExist(statErr) {
+			continue
+		}
+		if statErr != nil || !info.Mode().IsRegular() {
+			return false, fmt.Errorf("unsupported session sidecar %q", path)
+		}
+		sidecar, readErr := ReadSessionMetadataSidecar(path)
+		if readErr != nil || sidecar == nil || !validReplayAuthoritySidecar(*sidecar, runID) {
+			return false, fmt.Errorf("invalid session sidecar %q", path)
+		}
+		found = true
+	}
+	return found, nil
+}
+
+func validReplayAuthoritySidecar(sidecar SessionMetadataSidecar, runID string) bool {
+	if sidecar.RunID.String() != runID ||
+		sidecar.SchemaVersion < SessionMetadataSidecarSchemaVersion-1 ||
+		sidecar.SchemaVersion > SessionMetadataSidecarSchemaVersion {
+		return false
+	}
+	launchedAt, err := time.Parse(time.RFC3339, sidecar.LaunchedAt)
+	return err == nil && !launchedAt.IsZero()
+}
+
+func conflictingWorktreeRegistration(
+	registrations map[string]porcelainWorktreeRegistration,
+	worktreePath string,
+	resolvedPath string,
+	runID string,
+) bool {
+	wantBranch := "run/" + runID
+	for path, registration := range registrations {
+		if path == worktreePath || path == resolvedPath {
+			continue
+		}
+		if filepath.Base(path) == runID || registration.Branch == wantBranch {
+			return true
+		}
+	}
+	return false
 }
 
 // porcelainWorktreePaths returns a set of absolute worktree paths reported by
@@ -200,18 +333,34 @@ func DiscoverWorktrees(ctx context.Context, repoRoot string, cfg WorktreeRootCon
 //
 // Each "worktree <path>" line in the porcelain output contributes one entry.
 // The set is keyed by the cleaned absolute path string.
-func porcelainWorktreePaths(ctx context.Context, repoRoot string) (map[string]bool, error) {
+type porcelainWorktreeRegistration struct {
+	Branch string
+	Head   string
+}
+
+func porcelainWorktreeRegistrations(ctx context.Context, repoRoot string) (map[string]porcelainWorktreeRegistration, error) {
 	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "worktree", "list", "--porcelain")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("workspace: porcelainWorktreePaths: git worktree list: %w", err)
 	}
 
-	registered := make(map[string]bool)
-	for _, line := range strings.Split(string(out), "\n") {
-		const prefix = "worktree "
-		if strings.HasPrefix(line, prefix) {
-			registered[strings.TrimSpace(line[len(prefix):])] = true
+	registered := make(map[string]porcelainWorktreeRegistration)
+	for _, block := range strings.Split(strings.TrimSpace(string(out)), "\n\n") {
+		var path string
+		var registration porcelainWorktreeRegistration
+		for _, line := range strings.Split(block, "\n") {
+			switch {
+			case strings.HasPrefix(line, "worktree "):
+				path = strings.TrimSpace(strings.TrimPrefix(line, "worktree "))
+			case strings.HasPrefix(line, "HEAD "):
+				registration.Head = strings.TrimSpace(strings.TrimPrefix(line, "HEAD "))
+			case strings.HasPrefix(line, "branch "):
+				registration.Branch = strings.TrimPrefix(strings.TrimSpace(strings.TrimPrefix(line, "branch ")), "refs/heads/")
+			}
+		}
+		if path != "" {
+			registered[path] = registration
 		}
 	}
 	return registered, nil

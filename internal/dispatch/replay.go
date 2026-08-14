@@ -61,6 +61,9 @@ type WorktreeFact string
 const (
 	// WorktreeAbsent through WorktreeConflict are the admitted lease observations.
 	WorktreeAbsent WorktreeFact = "absent"
+	// WorktreePrepared means the exact registered worktree matches the durable
+	// branch and parent commit and has no later session or lease facts.
+	WorktreePrepared WorktreeFact = "prepared"
 	// WorktreeLeased means the exact run owns the lease.
 	WorktreeLeased WorktreeFact = "leased"
 	// WorktreeConflict means lease ownership cannot be classified.
@@ -315,7 +318,13 @@ func (f ReplayFacts) runFactsCoherent() bool {
 }
 
 func (f ReplayFacts) handoffFactsCoherent() bool {
-	if f.Claim != ClaimNone || f.RunRecord != RunRecordSession || f.Worktree != WorktreeLeased {
+	if f.Claim != ClaimNone || f.RunRecord != RunRecordSession {
+		return false
+	}
+	if f.Worktree == WorktreePrepared {
+		return f.Session == SessionAbsent && f.SessionReceipt == SessionReceiptAbsent && !f.RunOutcomeDurable
+	}
+	if f.Worktree != WorktreeLeased {
 		return false
 	}
 	return !f.RunOutcomeDurable ||
@@ -374,14 +383,21 @@ func decideRunReplay(f ReplayFacts) ReplayAction {
 	}
 	switch f.RunRecord {
 	case RunRecordBase:
-		return ResumeProvision
-	case RunRecordLocated:
-		if f.Worktree == WorktreeLeased {
-			return PrepareHandoff
+		if f.Worktree != WorktreeAbsent {
+			return ReplayRepairRequired
 		}
 		return ResumeProvision
+	case RunRecordLocated:
+		switch f.Worktree {
+		case WorktreePrepared:
+			return PrepareHandoff
+		case WorktreeAbsent:
+			return ResumeProvision
+		default:
+			return ReplayRepairRequired
+		}
 	case RunRecordSession:
-		if f.Worktree == WorktreeLeased {
+		if f.Worktree == WorktreePrepared {
 			return AdvanceHandoffPhase
 		}
 	case RunRecordAbsent, RunRecordConflict:
@@ -391,17 +407,18 @@ func decideRunReplay(f ReplayFacts) ReplayAction {
 }
 
 func decideHandoffReplay(f ReplayFacts) ReplayAction {
-	if f.Queue != QueueReserved || f.Bead != BeadInProgress || f.RunRecord != RunRecordSession || f.Worktree != WorktreeLeased {
+	if f.Queue != QueueReserved || f.Bead != BeadInProgress || f.RunRecord != RunRecordSession {
 		return ReplayRepairRequired
 	}
 	switch {
-	case f.SessionReceipt == SessionReceiptAbsent && f.Session == SessionAbsent:
+	case (f.Worktree == WorktreePrepared || f.Worktree == WorktreeLeased) &&
+		f.SessionReceipt == SessionReceiptAbsent && f.Session == SessionAbsent:
 		return ReplaySessionStart
-	case f.SessionReceipt == SessionReceiptAbsent && f.Session == SessionDead:
+	case f.Worktree == WorktreeLeased && f.SessionReceipt == SessionReceiptAbsent && f.Session == SessionDead:
 		return RemoveDeadUnstartedTarget
-	case f.SessionReceipt == SessionReceiptExact && f.Session == SessionLive:
+	case f.Worktree == WorktreeLeased && f.SessionReceipt == SessionReceiptExact && f.Session == SessionLive:
 		return AdoptLive
-	case f.SessionReceipt == SessionReceiptExact && (f.Session == SessionAbsent || f.Session == SessionDead):
+	case f.Worktree == WorktreeLeased && f.SessionReceipt == SessionReceiptExact && (f.Session == SessionAbsent || f.Session == SessionDead):
 		if f.RunOutcomeDurable {
 			return AdvanceRunOutcome
 		}
@@ -555,7 +572,7 @@ func validRunRecordFact(v RunRecordFact) bool {
 }
 
 func validWorktreeFact(v WorktreeFact) bool {
-	return v == WorktreeAbsent || v == WorktreeLeased || v == WorktreeConflict
+	return v == WorktreeAbsent || v == WorktreePrepared || v == WorktreeLeased || v == WorktreeConflict
 }
 
 func validSessionFact(v SessionFact) bool {

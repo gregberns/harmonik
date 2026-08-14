@@ -14,9 +14,10 @@ func TestDecideReplayProcessDeathCuts(t *testing.T) {
 		{name: "D5 claimed before record", facts: replayFacts(PhaseClaimDurable, QueueReserved, BeadInProgress, RunRecordAbsent, WorktreeAbsent, SessionAbsent), want: WriteRunRecord},
 		{name: "D6 record before phase", facts: replayFacts(PhaseClaimDurable, QueueReserved, BeadInProgress, RunRecordBase, WorktreeAbsent, SessionAbsent), want: AdvanceRunPhase},
 		{name: "D6a run before placement", facts: replayFacts(PhaseRunDurable, QueueReserved, BeadInProgress, RunRecordBase, WorktreeAbsent, SessionAbsent), want: ResumeProvision},
-		{name: "D7 worktree before handoff", facts: replayFacts(PhaseRunDurable, QueueReserved, BeadInProgress, RunRecordLocated, WorktreeLeased, SessionAbsent), want: PrepareHandoff},
-		{name: "D8 identity before phase", facts: replayFacts(PhaseRunDurable, QueueReserved, BeadInProgress, RunRecordSession, WorktreeLeased, SessionAbsent), want: AdvanceHandoffPhase},
-		{name: "D8a phase before spawn", facts: replayFacts(PhaseHandoffDurable, QueueReserved, BeadInProgress, RunRecordSession, WorktreeLeased, SessionAbsent), want: ReplaySessionStart},
+		{name: "D7 worktree before handoff", facts: replayFacts(PhaseRunDurable, QueueReserved, BeadInProgress, RunRecordLocated, WorktreePrepared, SessionAbsent), want: PrepareHandoff},
+		{name: "D8 identity before phase", facts: replayFacts(PhaseRunDurable, QueueReserved, BeadInProgress, RunRecordSession, WorktreePrepared, SessionAbsent), want: AdvanceHandoffPhase},
+		{name: "D8a phase before spawn", facts: replayFacts(PhaseHandoffDurable, QueueReserved, BeadInProgress, RunRecordSession, WorktreePrepared, SessionAbsent), want: ReplaySessionStart},
+		{name: "D8b lease before spawn", facts: replayFacts(PhaseHandoffDurable, QueueReserved, BeadInProgress, RunRecordSession, WorktreeLeased, SessionAbsent), want: ReplaySessionStart},
 		{name: "D9 live session", facts: withReceipt(replayFacts(PhaseHandoffDurable, QueueReserved, BeadInProgress, RunRecordSession, WorktreeLeased, SessionLive)), want: AdoptLive},
 		{name: "dead before receipt", facts: replayFacts(PhaseHandoffDurable, QueueReserved, BeadInProgress, RunRecordSession, WorktreeLeased, SessionDead), want: RemoveDeadUnstartedTarget},
 		{name: "dead without outcome", facts: withReceipt(replayFacts(PhaseHandoffDurable, QueueReserved, BeadInProgress, RunRecordSession, WorktreeLeased, SessionDead)), want: ResumeDead},
@@ -33,6 +34,18 @@ func TestDecideReplayProcessDeathCuts(t *testing.T) {
 				t.Fatalf("DecideReplay() = (%q, %v), want %q", got, err, tc.want)
 			}
 		})
+	}
+}
+
+func TestDecideReplayRejectsWorktreePhaseContradictions(t *testing.T) {
+	for _, facts := range []ReplayFacts{
+		replayFacts(PhaseRunDurable, QueueReserved, BeadInProgress, RunRecordBase, WorktreePrepared, SessionAbsent),
+		replayFacts(PhaseRunDurable, QueueReserved, BeadInProgress, RunRecordLocated, WorktreeLeased, SessionAbsent),
+	} {
+		got, err := DecideReplay(facts)
+		if err != nil || got != ReplayRepairRequired {
+			t.Fatalf("DecideReplay() = (%q, %v)", got, err)
+		}
 	}
 }
 
@@ -76,6 +89,9 @@ func TestDecideReplaySessionReceiptTargetMatrix(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			facts := base
 			facts.SessionReceipt, facts.Session = tc.receipt, tc.target
+			if tc.receipt == SessionReceiptAbsent && tc.target == SessionAbsent {
+				facts.Worktree = WorktreePrepared
+			}
 			got, err := DecideReplay(facts)
 			if err != nil || got != tc.want {
 				t.Fatalf("DecideReplay() = (%q, %v), want %q", got, err, tc.want)

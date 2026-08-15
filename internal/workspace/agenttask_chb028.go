@@ -379,6 +379,91 @@ func buildAgentTaskContent(p AgentTaskPayload) string {
 
 		sb.WriteString("\n## Structure\n\n")
 		sb.WriteString("If the shape of the file or function you have to touch is what makes this change hard, say so in the bead rather than working around it. Make the smallest change that does not deepen the problem.\n")
+
+		// Commit contract (hk-li7zr): the daemon runs scripts/commit-msg-gate.sh
+		// --head-only on the commit the implementer just made, and that gate
+		// REFUSES a subject that is not Conventional Commits and a non-trivial
+		// message with no review trailers. Until this section existed the task
+		// file named only the `Refs:` trailer, so a dispatched agent was failed
+		// by rules it was never given and the implement -> commit_gate -> implement
+		// edge looped without converging. Measured on a real Pi run: three
+		// rebuilds of the same non-conventional subject, ~7s per gate, no progress.
+		//
+		// MOST of the rules below are copied from scripts/validate-commit-msg.sh:
+		// the closed type set at CC_PATTERN, the 72-character ceiling, the
+		// trailing-period refusal, and the trailer block. Change those together or
+		// this file starts lying to every implementer. Two tests hold that promise.
+		// TestCommitTemplatePassesTheCommitMessageGate runs the real script over
+		// the template this file hands out. TestRenderedCommitRulesMatchTheValidator
+		// reads the type set, the length ceiling and the trailing-period rule back
+		// out of the script and checks the PROSE against them. The template test on
+		// its own was not enough: its subject is 69 characters, uses `docs`, and
+		// ends with no period, so a tenth type in CC_PATTERN or a higher ceiling
+		// left it green while the sentences above went stale.
+		//
+		// The `Refs:` line is the one rule here that the validator does NOT own.
+		// That script never reads the trailer, and a message carrying no `Refs:`
+		// exits 0. But the trailer is NOT mere bookkeeping: specs/harness-contract.md
+		// HN-009 makes completion a CONJUNCTION — "the worktree HEAD differs from its
+		// parent AND the new commit carries a `Refs:<beadID>` trailer" — and
+		// HN-INV-001 binds that rule to every harness and every completion mode. The
+		// prose therefore states both conjuncts. Stating either one alone teaches a
+		// rule weaker than the spec, and this section has now been wrong in BOTH
+		// directions: first crediting the trailer as the whole signal, then crediting
+		// HEAD advance as the whole signal.
+		//
+		// What the CODE enforces is only the first conjunct:
+		// internal/daemon/dot_cascade_core.go compares the worktree HEAD before and
+		// after the turn and fails the node with "exited without advancing HEAD past
+		// <sha>". The second arrives via HN-009 clause (c), the mandated repair —
+		// internal/harness/pi/commit.go EnsureRefsTrailer amends a missing trailer
+		// onto a commit that already advanced HEAD. That repair is gated on
+		// CompletionProcessExit in internal/daemon/agentlaunch.go runAgentPostExit,
+		// so it does NOT run for a claude implementer, which this section also
+		// renders for. That gap is a filed divergence from HN-INV-001
+		// (hk-claude-refs-trailer-gap-j1bq2), not a reason
+		// to soften the rule: on the claude path nothing repairs the trailer, so
+		// writing it really is the agent's own job.
+		//
+		// renderSessionCompletion, further down this file, still tells a one-shot
+		// harness that the trailer "is how the daemon detects that your work is
+		// done". That sentence carries the same overclaim and is left untouched
+		// here; citing it as corroboration is how the false rule spread.
+		//
+		// The template is fenced at column zero on purpose. It used to be indented
+		// two spaces, with a sentence AFTER it saying not to copy the indent.
+		// Copied verbatim, that template produces nine validation errors — worse
+		// than the failure it was added to fix — because `^Reviewed-By:`,
+		// `^Review-Verdict:` and `^Trivial: true$` are all anchored at column zero
+		// in the validator. The audience is a small literal model, and it copies
+		// what it sees before it reads a negation placed after it.
+		sb.WriteString("\n## Commit Message (a gate refuses any other shape)\n\n")
+		sb.WriteString("Write the commit message into a file OUTSIDE the worktree — `/tmp/commit-msg.txt` will do — so the file itself never becomes part of your change. Commit with `git commit -F /tmp/commit-msg.txt`. Do NOT use `git commit -m`.\n\n")
+		sb.WriteString("The subject is the first line. It MUST have this shape:\n\n")
+		sb.WriteString("```\n")
+		sb.WriteString("<type>(<scope>): <description>\n")
+		sb.WriteString("```\n\n")
+		sb.WriteString("The `<type>` MUST be one of these nine words: `feat` `fix` `refactor` `test` `docs` `chore` `spec` `build` `perf` — no other word is accepted.\n")
+		sb.WriteString("The `(<scope>)` part is optional. A scope holds only lower-case letters, digits, commas, hyphens and colons.\n")
+		sb.WriteString("The subject MUST be 72 characters or fewer. A subject of 73 characters is refused.\n")
+		sb.WriteString("The subject MUST NOT end with a period.\n")
+		sb.WriteString("The body MUST hold a `Reviewed-By:` line and a `Review-Verdict:` line. Each one starts at the beginning of its own line, with no spaces before it.\n")
+		sb.WriteString("The `Review-Verdict:` JSON MUST be on ONE line.\n")
+		sb.WriteString("The body MUST also hold a `Refs:` line that names the bead. The commit-message gate never reads that line — the daemon does.\n")
+		sb.WriteString("Your work counts as done only when BOTH of these are true: this worktree's HEAD has advanced past where it started, and the new commit carries that `Refs:` line. If HEAD does not advance, the workflow sends this task back to you.\n")
+		sb.WriteString("That line is also what ties the commit to the bead, so a later reconciliation can match the two.\n")
+		sb.WriteString("NEVER write a verdict of APPROVE. You did not review your own work. Record the honest form below.\n\n")
+		sb.WriteString("Copy the lines between the two fence lines below. Do NOT copy the fence lines. Write your own subject line and your own sentence, and keep the `Refs:` line, the `Reviewed-By:` line and the `Review-Verdict:` line exactly as they are:\n\n")
+		sb.WriteString("```\n")
+		sb.WriteString("docs(workspace): remove the stale mode note from the Terminal comment\n")
+		sb.WriteString("\n")
+		sb.WriteString("The comment named a mode this type no longer has. Remove that sentence.\n")
+		sb.WriteString("\n")
+		sb.WriteString(fmt.Sprintf("Refs: %s\n", p.BeadID))
+		sb.WriteString("Reviewed-By: none\n")
+		sb.WriteString("Review-Verdict: {\"schema_version\": 1, \"verdict\": \"NOT_REVIEWED\", \"flags\": [\"no-reviewer-reached\"], \"notes\": \"No reviewer was reached for this commit.\"}\n")
+		sb.WriteString("```\n\n")
+		sb.WriteString("If your change is only a typo or a whitespace fix, you MAY write the single line `Trivial: true` in place of the `Reviewed-By:` and `Review-Verdict:` lines. Start it at the beginning of its own line, with no spaces before it.\n")
 	}
 
 	// Prior-Iteration Context section: present only for implementer-resume and reviewer.

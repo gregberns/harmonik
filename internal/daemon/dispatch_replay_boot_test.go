@@ -136,7 +136,7 @@ func TestExecuteDispatchReplayPlanRejectsUnsupportedWaveBeforeWrite(t *testing.T
 	writeReplayReaderQueue(t, projectDir, first, false)
 	steps := []dispatchReplayStep{
 		{Intent: first, Action: dispatch.ReplayReservation},
-		{Intent: second, Action: dispatch.ResumeProvision},
+		{Intent: second, Action: dispatch.PrepareHandoff},
 	}
 	err := executeDispatchReplayPlan(t.Context(), steps, dispatchReplayExecutor{projectDir: projectDir})
 	if err == nil || !strings.Contains(err.Error(), "does not support action") {
@@ -148,6 +148,47 @@ func TestExecuteDispatchReplayPlanRejectsUnsupportedWaveBeforeWrite(t *testing.T
 	}
 	if item := durable.Groups[0].Items[0]; item.Status != queue.ItemStatusPending || item.RunID != nil || item.Attempts != 0 {
 		t.Fatalf("unsupported wave changed queue item = %+v", item)
+	}
+}
+
+func TestExecuteDispatchReplayPlanStopsAfterFirstDurableChange(t *testing.T) {
+	projectDir := t.TempDir()
+	first := replayOwnershipIntent(t, dispatch.PhaseClaimDurable)
+	second := replayOwnershipIntent(t, dispatch.PhaseClaimDurable)
+	second.Binding.RunID = mustReplayRunID(t, "0197d100-0000-7000-8000-000000000041")
+	second.Binding.ClaimTransitionID = mustReplayTransitionID(t, "0197d100-0000-7000-8000-000000000042")
+	second.Binding.ItemIndex = 1
+	second.Binding.BeadID = "hk-replay-second"
+	for _, intent := range []dispatch.Intent{first, second} {
+		prepared, err := dispatch.NewPrepared(intent.Binding)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := dispatchstore.New(projectDir).Create(prepared); err != nil {
+			t.Fatal(err)
+		}
+		if err := dispatchstore.New(projectDir).Advance(prepared, intent); err != nil {
+			t.Fatal(err)
+		}
+	}
+	steps := []dispatchReplayStep{
+		{Intent: first, Action: dispatch.AdvanceRunPhase},
+		{Intent: second, Action: dispatch.AdvanceRunPhase},
+	}
+	if err := executeDispatchReplayPlan(t.Context(), steps, dispatchReplayExecutor{projectDir: projectDir}); err != nil {
+		t.Fatal(err)
+	}
+	store := dispatchstore.New(projectDir)
+	firstGot, err := store.Load(first.Binding.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondGot, err := store.Load(second.Binding.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstGot.Phase != dispatch.PhaseRunDurable || secondGot.Phase != dispatch.PhaseClaimDurable {
+		t.Fatalf("phases after one pass = (%q, %q)", firstGot.Phase, secondGot.Phase)
 	}
 }
 

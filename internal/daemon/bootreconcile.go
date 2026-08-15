@@ -13,6 +13,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/dispatch"
 	"github.com/gregberns/harmonik/internal/dispatchstore"
+	"github.com/gregberns/harmonik/internal/handler"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/queue"
@@ -119,10 +120,23 @@ func (bs *bootState) preflightDispatchReplay(
 		intentLogDir: st.intentLogDir,
 		claimLedger:  st.dispatchClaimLedger,
 		now:          time.Now,
+		workers:      bs.workerRegistry,
+		localKind:    replayLocalExecutionKind(bs.cfg.Substrate),
 	}); err != nil {
 		return err
 	}
 	return fmt.Errorf("daemon: dispatch replay made durable progress; restart is required before orphan sweep")
+}
+
+func replayLocalExecutionKind(substrate handler.Substrate) runpkg.ExecutionKind {
+	tmuxSubstrate, ok := substrate.(*tmuxSubstrate)
+	if !ok {
+		return runpkg.ExecutionLocalShared
+	}
+	if _, ok := tmuxSubstrate.adapter.(sessionCreator); ok {
+		return runpkg.ExecutionLocalIndependent
+	}
+	return runpkg.ExecutionLocalShared
 }
 
 func preflightDispatchReplayWithReader(

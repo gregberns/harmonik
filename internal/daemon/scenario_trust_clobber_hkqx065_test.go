@@ -26,12 +26,39 @@ package daemon_test
 //
 // PROVES, at real concurrency through the real provisioning path:
 //
-//   - The repair actually engages, and is load-bearing. Measured, not assumed:
-//     with the attempt budget cut to 1 (verify, no repair) this scenario goes
-//     0/3 completed — the very first launch's key is erased between the write and
-//     the verifying re-read. At a 15ms rewrite cadence the foreign writer lands
-//     inside that window essentially every launch, so the retry is what carries
-//     provisioning through.
+//   - The repair actually engages, and is load-bearing. Measured on this fixture
+//     by mutating trustWriteMaxAttempts, unloaded, on one 10-core box:
+//
+//       budget 4, the shipping value ... 15 runs, 0 failures  [instrumented]
+//       budget 2 ...................... 15 runs, 1 failure
+//       budget 1, no repair ........... 35 runs, 19 failures
+//
+//     Every budget-4 run above is an instrumented overlay build — nothing in
+//     that campaign ran the shipping value on this fixture without the extra
+//     logging, so read that row as "the shipping value plus instrumentation".
+//
+//     A failing budget-1 run loses 1 or 2 of its 3 launches. So the retry is what
+//     carries provisioning through. But read the budget-1 rate before you lean on
+//     this test: a build with repair disabled still passes about half of single
+//     unloaded runs, so ONE green run here is weak evidence that the repair loop
+//     still works. Ask that question with repeated runs (hk-r8nx4).
+//
+//     What the shipping budget actually costs, from an instrumented build over
+//     those same 15 budget-4 runs — 45 trust writes, every one a key the hostile
+//     writer targeted: 40 settled on the first attempt, 4 on the second, 1 on the
+//     third, and none needed the fourth. The typical write does not retry at all,
+//     and the worst one observed still left an attempt spare. Logging may shift
+//     the timing somewhat, which is the other reason to read that row with the
+//     instrumentation in mind.
+//
+//     Two earlier claims are narrowed here, neither having reproduced as stated.
+//     This bullet used to say the budget-1 mutation goes 0/3 completed. It does
+//     not, on this fixture or on the intermediate draft the first campaign ran;
+//     the fixture this one replaced was never run at budget 1 at all. And
+//     6b9f3fb8e's commit message says the fixture now makes harmonik spend 3 of
+//     its 4 attempts to settle a key rather than 2. As a general claim the counts
+//     above refute it — 40 of 45 settle on the first attempt. Its predicted worst
+//     case did happen, once.
 //   - Liveness under a hostile writer: N=3 concurrent dispatches all reach
 //     run_completed. A repair loop that gave up too eagerly would fail every run;
 //     one that held the sidecar flock across its backoff, or took a fresh full

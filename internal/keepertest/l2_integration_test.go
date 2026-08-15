@@ -303,24 +303,6 @@ func wantDegradedClears(cfg *keeper.CyclerConfig) int {
 	return k
 }
 
-// assertOneTerminal asserts exactly one terminal with the wanted shape.
-func assertOneTerminal(t *testing.T, sink *KeeperBridgeSink, ckey string, wantComplete, wantUnconfirmed bool) {
-	t.Helper()
-	types := sink.emitTypes()
-	complete := countType(types, core.EventTypeSessionKeeperCycleComplete)
-	aborted := countType(types, core.EventTypeSessionKeeperCycleAborted)
-	unconfirmed := countType(types, core.EventTypeSessionKeeperClearUnconfirmed)
-	if complete+aborted != 1 {
-		t.Fatalf("%s: want exactly 1 terminal, got complete=%d aborted=%d (%v)", ckey, complete, aborted, types)
-	}
-	if wantComplete != (complete == 1) {
-		t.Fatalf("%s: terminal complete=%v, want %v (%v)", ckey, complete == 1, wantComplete, types)
-	}
-	if wantUnconfirmed != (unconfirmed == 1) {
-		t.Fatalf("%s: clear_unconfirmed=%d, want present:%v (%v)", ckey, unconfirmed, wantUnconfirmed, types)
-	}
-}
-
 // journalPhases extracts the journal phase sequence.
 func journalPhases(js []keeper.CycleJournal) []string {
 	out := make([]string, 0, len(js))
@@ -352,7 +334,7 @@ func TestL2_CleanCompleteEffects(t *testing.T) {
 	sum := pickPerStratum(t)[keepertwin.StratumCleanComplete]
 	sink, _ := runDiscrete(t, sum, keepertwin.FaultConfig{}, false)
 
-	assertOneTerminal(t, sink, sum.CKey, true, false)
+	assertOutcome(t, sink.Emits, sum.CKey, outcomeComplete)
 	if sink.Escapes != 1 {
 		t.Errorf("escapes = %d, want 1", sink.Escapes)
 	}
@@ -389,7 +371,7 @@ func TestL2_DegradedCompleteEffects(t *testing.T) {
 	sum := pickPerStratum(t)[keepertwin.StratumDegradedComplete]
 	sink, _ := runDiscrete(t, sum, keepertwin.FaultConfig{}, false)
 
-	assertOneTerminal(t, sink, sum.CKey, true, true)
+	assertOutcome(t, sink.Emits, sum.CKey, outcomeDegradedComplete)
 
 	want := wantDegradedClears(testConfig(sum.AgentName))
 	if sink.Clears != want {
@@ -412,38 +394,50 @@ func TestL2_DegradedCompleteEffects(t *testing.T) {
 	}
 }
 
-// TestL2_AbortEffects drives the handoff-timeout stratum: no /clear, no
-// brief, journal aborted, explicit reason.
-func TestL2_AbortEffects(t *testing.T) {
+// TestL2_MissingHandoffSuspendsEffects drives the handoff-timeout stratum: the
+// observation window closes with no marked handoff, and the machine SUSPENDS
+// the request instead of failing it (SK-025, §8.4). At the ports that means
+// cycle_parked{handoff_pending} and a journal left at "pending" — and, just as
+// load-bearing, the four effects SK-025 forbids on this edge never happen: no
+// /clear, no brief, no managed-session write, no ForceRestart. The pending
+// journal is the durable half of "the request identity remains": crash
+// recovery reads phase "pending" and restores the same cycle id.
+func TestL2_MissingHandoffSuspendsEffects(t *testing.T) {
 	t.Parallel()
 	sum := pickPerStratum(t)[keepertwin.StratumAbortHandoffTimeout]
 	sink, _ := runDiscrete(t, sum, keepertwin.FaultConfig{}, false)
 
-	assertOneTerminal(t, sink, sum.CKey, false, false)
+	assertOutcome(t, sink.Emits, sum.CKey, outcomeParkedPending)
 	if sink.Clears != 0 {
 		t.Errorf("clears = %d, want 0 (NEVER /clear an unconfirmed handoff)", sink.Clears)
 	}
 	if sink.Briefs != 0 {
-		t.Errorf("briefs = %d, want 0 on abort", sink.Briefs)
+		t.Errorf("briefs = %d, want 0 on a park", sink.Briefs)
 	}
-	if len(sink.HandoffCmds) != 1 {
-		t.Errorf("handoff cmds = %v, want exactly 1", sink.HandoffCmds)
+	// SK-025 forbids clearing the managed session or calling ForceRestart on
+	// this edge: the agent is working, not stuck.
+	if len(sink.ManagedWrites) != 0 {
+		t.Errorf("managed writes = %v, want none (SK-025: a pending handoff must not unbind the session)",
+			sink.ManagedWrites)
+	}
+	// There is deliberately NO assertion on sink.ForceRestarts here. Nothing in
+	// the tree constructs Action{Kind: ActForceRestart} — c3931d22a deleted
+	// stepAbort, its only producer — so "want 0" holds for every input and would
+	// sell coverage that does not exist. That is the same defect
+	// internal/specaudit refuses for event types; it does not police action
+	// kinds, so this one has to be refused by hand. Assert it again when a
+	// producer comes back.
+	// Positive evidence that the machinery ran and chose to wait: the handoff
+	// request WAS injected, and the request text was never scrubbed away.
+	if len(sink.HandoffCmds) != 1 || sink.HandoffCmds[0] != sum.CycleID {
+		t.Errorf("handoff cmds = %v, want [%s]", sink.HandoffCmds, sum.CycleID)
+	}
+	if sink.Truncates != 0 {
+		t.Errorf("handoff truncates = %d, want 0 (the pending request stays readable)", sink.Truncates)
 	}
 	phases := journalPhases(sink.Journals)
-	if len(phases) == 0 || phases[len(phases)-1] != "aborted" {
-		t.Errorf("journal phases = %v, want terminal \"aborted\"", phases)
-	}
-	for _, a := range sink.Emits {
-		if a.Type != core.EventTypeSessionKeeperCycleAborted {
-			continue
-		}
-		var p core.SessionKeeperCycleAbortedPayload
-		if err := json.Unmarshal(a.Payload, &p); err != nil {
-			t.Fatalf("decode aborted payload: %v", err)
-		}
-		if p.Reason != "handoff_timeout" {
-			t.Errorf("abort reason = %q, want handoff_timeout", p.Reason)
-		}
+	if len(phases) == 0 || phases[len(phases)-1] != "pending" {
+		t.Errorf("journal phases = %v, want the cycle left at \"pending\" (resumable), not a terminal phase", phases)
 	}
 }
 
@@ -460,7 +454,7 @@ func TestL2_UnterminatedCycleFixedEffects(t *testing.T) {
 	sink, _ := runDiscrete(t, sum, keepertwin.FaultConfig{}, false)
 
 	// FIXED behavior: complete + clear_unconfirmed within the virtual bound.
-	assertOneTerminal(t, sink, sum.CKey, true, true)
+	assertOutcome(t, sink.Emits, sum.CKey, outcomeDegradedComplete)
 	if sink.Briefs != 1 {
 		t.Errorf("briefs = %d, want 1 (the fixed cycle still resumes the agent)", sink.Briefs)
 	}
@@ -469,57 +463,62 @@ func TestL2_UnterminatedCycleFixedEffects(t *testing.T) {
 // ─── Fault smoke: one case per substrate mode (full matrix = T12) ────────────
 
 // TestL2_FaultSmoke asserts RS-INV-003 for one representative cell per fault
-// mode: every fault yields exactly one explicit terminal within the virtual
-// deadline — never silence. EventN indexes the stripped discrete stimulus
-// (clean stratum: 1=GaugeTick, 2=NonceObserved, 3=ModelDone, 4=SessionChanged).
+// mode: every fault yields exactly one explicit cycle ending within the
+// virtual deadline — never silence. EventN indexes the stripped discrete
+// stimulus (clean stratum: 1=GaugeTick, 2=NonceObserved, 3=ModelDone,
+// 4=SessionChanged).
+//
+// Each case names the ending it wants, not merely "an ending". Which one is
+// legitimate follows from how far the fault let the cycle get: past the nonce
+// the machine holds restart authority and owes a completion (SK-INV-005);
+// before it, the handoff is still pending and the machine suspends (SK-025).
 func TestL2_FaultSmoke(t *testing.T) {
 	t.Parallel()
 	clean := pickPerStratum(t)[keepertwin.StratumCleanComplete]
 
 	cases := []struct {
-		name            string
-		fault           keepertwin.FaultConfig
-		stallExpected   bool
-		wantComplete    bool
-		wantUnconfirmed bool
-		wantClears      int
+		name          string
+		fault         keepertwin.FaultConfig
+		stallExpected bool
+		wantOutcome   cycleOutcome
+		wantClears    int
 	}{
 		{
 			// Pane/session lost right after the nonce landed: the reactor is
 			// awaiting model-done; the fail-open model_done_timeout then the
 			// clear backstop carry it to a bounded degraded completion.
-			name:            "drop_after_nonce",
-			fault:           keepertwin.FaultConfig{Mode: keepertwin.FaultDropAfter, EventN: 2},
-			wantComplete:    true,
-			wantUnconfirmed: true,
-			wantClears:      wantDegradedClears(testConfig(clean.AgentName)),
+			name:        "drop_after_nonce",
+			fault:       keepertwin.FaultConfig{Mode: keepertwin.FaultDropAfter, EventN: 2},
+			wantOutcome: outcomeDegradedComplete,
+			wantClears:  wantDegradedClears(testConfig(clean.AgentName)),
 		},
 		{
 			// Stimulus stalls before the nonce (the writeNonce=false analog):
-			// handoff_timeout aborts with the explicit reason.
+			// no marked handoff ever lands, so the handoff_timeout edge
+			// suspends the request rather than failing it.
 			name:          "stall_before_nonce",
 			fault:         keepertwin.FaultConfig{Mode: keepertwin.FaultStall, EventN: 2},
 			stallExpected: true,
-			wantComplete:  false,
+			wantOutcome:   outcomeParkedPending,
 			wantClears:    0,
 		},
 		{
 			// Corrupt stimulus at the nonce position: the codec's transport-
 			// error event replaces it and the stream ends; the armed
-			// handoff_timeout aborts explicitly — a parse failure is never
+			// handoff_timeout suspends explicitly — a parse failure is never
 			// swallowed into silence.
-			name:         "truncate_at_nonce",
-			fault:        keepertwin.FaultConfig{Mode: keepertwin.FaultTruncate, EventN: 2},
-			wantComplete: false,
-			wantClears:   0,
+			name:        "truncate_at_nonce",
+			fault:       keepertwin.FaultConfig{Mode: keepertwin.FaultTruncate, EventN: 2},
+			wantOutcome: outcomeParkedPending,
+			wantClears:  0,
 		},
 		{
-			// Nonce delivered twice (re-delivery probe): exactly one terminal,
+			// Nonce delivered twice (re-delivery probe): exactly one ending,
 			// no second /clear, no overlapping cycle (SR7).
-			name:         "dup_nonce",
-			fault:        keepertwin.FaultConfig{Mode: keepertwin.FaultDup, EventN: 2},
-			wantComplete: true,
-			wantClears:   1,
+			name:        "dup_nonce",
+			fault:       keepertwin.FaultConfig{Mode: keepertwin.FaultDup, EventN: 2},
+			wantOutcome: outcomeComplete,
+			wantClears:  1,
 		},
 	}
 
@@ -527,28 +526,15 @@ func TestL2_FaultSmoke(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			sink, _ := runDiscrete(t, clean, tc.fault, tc.stallExpected)
-			assertOneTerminal(t, sink, clean.CKey, tc.wantComplete, tc.wantUnconfirmed)
+			// assertOutcome carries the explicit-reason companion (metric 4):
+			// parkReason refuses an empty or unknown park reason.
+			assertOutcome(t, sink.Emits, clean.CKey, tc.wantOutcome)
 			if sink.Clears != tc.wantClears {
 				t.Errorf("clears = %d, want %d", sink.Clears, tc.wantClears)
 			}
 			types := sink.emitTypes()
 			if n := countType(types, core.EventTypeSessionKeeperHandoffStarted); n != 1 {
 				t.Errorf("handoff_started = %d, want 1 (SR7: no overlapping cycle)", n)
-			}
-			// Explicit-reason companion (metric 4) on the abort outcomes.
-			if !tc.wantComplete {
-				for _, a := range sink.Emits {
-					if a.Type != core.EventTypeSessionKeeperCycleAborted {
-						continue
-					}
-					var p core.SessionKeeperCycleAbortedPayload
-					if err := json.Unmarshal(a.Payload, &p); err != nil {
-						t.Fatalf("decode aborted payload: %v", err)
-					}
-					if p.Reason == "" {
-						t.Error("fault abort has empty reason (must be explicit)")
-					}
-				}
 			}
 		})
 	}

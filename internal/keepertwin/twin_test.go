@@ -162,14 +162,21 @@ func TestTwinRoundTrip_TerminalPerStratum(t *testing.T) {
 		stratum         keepertwin.Stratum
 		wantComplete    bool
 		wantUnconfirmed bool
+		// wantParked says the replay must NOT terminate. The cycle suspends
+		// with cycle_parked{handoff_pending} and stays resumable under the same
+		// cycle id. cycle_complete must not appear on such a replay.
+		wantParked bool
 	}{
-		{keepertwin.StratumCleanComplete, true, false},
-		{keepertwin.StratumDegradedComplete, true, true},
-		{keepertwin.StratumAbortHandoffTimeout, false, false},
+		{stratum: keepertwin.StratumCleanComplete, wantComplete: true},
+		{stratum: keepertwin.StratumDegradedComplete, wantComplete: true, wantUnconfirmed: true},
+		// The 79 recorded handoff-timeout cycles. The OLD keeper terminated
+		// them; the NEW one parks them (see synthesizer.go, the
+		// abort_handoff_timeout row).
+		{stratum: keepertwin.StratumAbortHandoffTimeout, wantParked: true},
 		// The 1 recorded unterminated cycle: NEW must terminate within bound —
 		// the clear_backstop converts the old wedge into a degraded completion
 		// (SR9 fix; required divergence per measurement-design §4).
-		{keepertwin.StratumUnterminated, true, true},
+		{stratum: keepertwin.StratumUnterminated, wantComplete: true, wantUnconfirmed: true},
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.stratum), func(t *testing.T) {
@@ -177,18 +184,24 @@ func TestTwinRoundTrip_TerminalPerStratum(t *testing.T) {
 			types := emittedTypes(runCycle(t, sum))
 
 			complete := countType(types, core.EventTypeSessionKeeperCycleComplete)
-			aborted := countType(types, core.EventTypeSessionKeeperCycleAborted)
+			parked := countType(types, core.EventTypeSessionKeeperCycleParked)
 			unconfirmed := countType(types, core.EventTypeSessionKeeperClearUnconfirmed)
 
-			if complete+aborted != 1 {
-				t.Fatalf("%s: want exactly 1 terminal, got complete=%d aborted=%d (types %v)",
-					sum.CKey, complete, aborted, types)
-			}
 			if tc.wantComplete && complete != 1 {
-				t.Errorf("%s: want cycle_complete, got aborted", sum.CKey)
+				t.Fatalf("%s: want exactly 1 cycle_complete, got %d (types %v)",
+					sum.CKey, complete, types)
 			}
-			if !tc.wantComplete && aborted != 1 {
-				t.Errorf("%s: want cycle_aborted, got complete", sum.CKey)
+			if tc.wantParked {
+				if parked != 1 {
+					t.Fatalf("%s: want exactly 1 cycle_parked, got %d (types %v)",
+						sum.CKey, parked, types)
+				}
+				if complete != 0 {
+					t.Errorf("%s: a parked cycle must not also complete; got %d cycle_complete (types %v)",
+						sum.CKey, complete, types)
+				}
+			} else if parked != 0 {
+				t.Errorf("%s: unexpected cycle_parked (%d) (types %v)", sum.CKey, parked, types)
 			}
 			if tc.wantUnconfirmed && unconfirmed != 1 {
 				t.Errorf("%s: want clear_unconfirmed, got %d", sum.CKey, unconfirmed)
@@ -200,27 +213,42 @@ func TestTwinRoundTrip_TerminalPerStratum(t *testing.T) {
 	}
 }
 
-// TestTwinRoundTrip_AbortReason asserts the abort terminal carries the
-// explicit recorded reason (metric 4: aborts always explicit-reasoned).
-func TestTwinRoundTrip_AbortReason(t *testing.T) {
+// TestTwinRoundTrip_HandoffTimeoutParksPendingOnTheSameCycleID asserts that a
+// recorded handoff-timeout cycle replays to a SUSPENSION, not a terminal: one
+// cycle_parked, reason handoff_pending, on the recorded cycle id.
+//
+// COVERAGE LOST HERE, on purpose. This test used to be
+// TestTwinRoundTrip_AbortReason, and it round-tripped a RECORDED value: the
+// corpus summary.json says abort_reason "handoff_timeout" for all 79 of these
+// cycles, and the test read that recorded string back out of the replayed
+// payload. That is gone. The new emission carries "handoff_pending", which the
+// reactor invents at the park edge; no field of the corpus produced it. So the
+// reason assertion below is now a constant check, and only the cycle id is
+// still round-tripped from the recording. Metric 4 of measurement-design
+// ("aborts always explicit-reasoned") no longer has a test.
+func TestTwinRoundTrip_HandoffTimeoutParksPendingOnTheSameCycleID(t *testing.T) {
 	sum := pickPerStratum(t)[keepertwin.StratumAbortHandoffTimeout]
+	found := 0
 	for _, a := range runCycle(t, sum) {
-		if a.Kind != keeper.ActEmit || a.Type != core.EventTypeSessionKeeperCycleAborted {
+		if a.Kind != keeper.ActEmit || a.Type != core.EventTypeSessionKeeperCycleParked {
 			continue
 		}
-		var p core.SessionKeeperCycleAbortedPayload
+		found++
+		var p core.SessionKeeperCycleParkedPayload
 		if err := json.Unmarshal(a.Payload, &p); err != nil {
-			t.Fatalf("decode aborted payload: %v", err)
+			t.Fatalf("decode parked payload: %v", err)
 		}
-		if p.Reason != "handoff_timeout" {
-			t.Fatalf("abort reason = %q, want handoff_timeout", p.Reason)
+		if p.Reason != "handoff_pending" {
+			t.Fatalf("park reason = %q, want handoff_pending (the resumable flavor)", p.Reason)
 		}
+		// The one value still carried across from the recording.
 		if p.CycleID != sum.CycleID {
-			t.Fatalf("abort cycle_id = %q, want %q", p.CycleID, sum.CycleID)
+			t.Fatalf("park cycle_id = %q, want the recorded %q", p.CycleID, sum.CycleID)
 		}
-		return
 	}
-	t.Fatal("no cycle_aborted emit found")
+	if found != 1 {
+		t.Fatalf("want exactly 1 cycle_parked emit, got %d", found)
+	}
 }
 
 // TestTwinRoundTrip_SR4Ordering asserts the synthesized replay preserves SR4:

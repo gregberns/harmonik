@@ -6,7 +6,7 @@
 // The four tiers (all zero-token except L3):
 //
 //   - L0 unit (l0_step_test.go): pure keeper.Step transition tables (the gate
-//     ladder, the clean/abort/recovery/degraded paths) driven through
+//     ladder, the clean/pending/recovery/degraded paths) driven through
 //     substrate.SyntheticSource + substrate.FakeEffector, plus seeded property
 //     tests asserting SR3/SR4/SR6/SR7 as pure postconditions over the emitted
 //     action order, plus the stimulus-codec golden round-trip.

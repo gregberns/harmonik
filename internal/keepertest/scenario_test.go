@@ -283,7 +283,13 @@ func TestScenarioSuccessfulCycleRecordsOrderedEffects(t *testing.T) {
 	}
 }
 
-func TestScenarioHandoffTimeoutAbortsWithoutClear(t *testing.T) {
+// TestScenarioHandoffTimeoutSuspendsWithoutClearing drives the whole cycle,
+// shell and all, to the edge where the observation window closes with no
+// marked handoff. The agent is working, not stuck, so the keeper suspends the
+// request: journal phase "pending" with reason "handoff_pending", the same
+// cycle id still on it, and none of the effects SK-025 forbids — no /clear and
+// no managed-session write.
+func TestScenarioHandoffTimeoutSuspendsWithoutClearing(t *testing.T) {
 	policy := keeper.CyclePolicyFromConfig(keeper.CyclerConfig{})
 	policy.BootGracePeriod = 0
 	policy.MaxBootGraceTotal = 0
@@ -306,13 +312,22 @@ func TestScenarioHandoffTimeoutAbortsWithoutClear(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	if s.Ports().Journal == nil || s.Ports().Journal.Phase != "aborted" ||
-		s.Ports().Journal.Reason != "handoff_timeout" {
-		t.Fatalf("journal = %+v, want aborted handoff_timeout", s.Ports().Journal)
+	journal := s.Ports().Journal
+	if journal == nil || journal.Phase != "pending" || journal.Reason != "handoff_pending" {
+		t.Fatalf("journal = %+v, want pending handoff_pending", journal)
+	}
+	// The suspension is only useful if the request survives it: crash recovery
+	// restores the request from this journal by cycle id.
+	if journal.CycleID != "cyc-timeout" {
+		t.Fatalf("journal cycle id = %q, want the original request id cyc-timeout", journal.CycleID)
 	}
 	for _, effect := range s.Ports().EffectsSnapshot() {
 		if strings.Contains(effect, "inject:/clear") {
-			t.Fatalf("handoff timeout cleared the pane: %v", s.Ports().EffectsSnapshot())
+			t.Fatalf("a pending handoff cleared the pane: %v", s.Ports().EffectsSnapshot())
+		}
+		if strings.Contains(effect, "managed:") {
+			t.Fatalf("a pending handoff rewrote the managed session (SK-025 forbids it): %v",
+				s.Ports().EffectsSnapshot())
 		}
 	}
 }

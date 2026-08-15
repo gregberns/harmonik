@@ -202,40 +202,100 @@ func TestL0_CleanCycleTable(t *testing.T) {
 	}
 }
 
-// TestL0_AbortTable is the handoff-timeout abort table: the ONLY path that
-// never sends /clear (SK §8.2).
-func TestL0_AbortTable(t *testing.T) {
+// TestL0_MissingHandoffSuspendsTable is the handoff-timeout table: the window
+// closes with no marked handoff, and the cycle SUSPENDS instead of failing
+// (SK-025, SK §8.4). It is the one path that never sends /clear, and the
+// suspension is only real if the machine can pick the request back up — so
+// this table asserts the three things that make it resumable: the same cycle
+// id is still held, the state says "pending", and the journal was left at
+// phase "pending" for crash recovery to restore.
+func TestL0_MissingHandoffSuspendsTable(t *testing.T) {
 	t.Parallel()
-	cfg := testConfig("l0-abort")
+	cfg := testConfig("l0-pending")
 	events := []keeper.Event{
-		gaugeTick("cyc-l0-abort", "sid-a", 92, passGates(), l0Base),
-		{Kind: keeper.EvTimerFired, Timer: keeper.TimerHandoffTimeout, CycleID: "cyc-l0-abort", At: l0Base.Add(cfg.HandoffTimeout)},
+		gaugeTick("cyc-l0-pending", "sid-a", 92, passGates(), l0Base),
+		{Kind: keeper.EvTimerFired, Timer: keeper.TimerHandoffTimeout, CycleID: "cyc-l0-pending", At: l0Base.Add(cfg.HandoffTimeout)},
 	}
 	actions, cyc := runSynthetic(t, cfg, events)
 
+	assertOutcome(t, actions, "cyc-l0-pending", outcomeParkedPending)
 	types := emittedTypes(actions)
-	if countType(types, core.EventTypeSessionKeeperCycleAborted) != 1 {
-		t.Fatalf("want exactly 1 cycle_aborted, got %v", types)
-	}
-	if countType(types, core.EventTypeSessionKeeperCycleComplete) != 0 {
-		t.Fatalf("unexpected cycle_complete on abort path: %v", types)
+	// No restart authority was ever granted, so the destructive tail must not
+	// have started: no handoff_written, and therefore nothing owes a terminal.
+	if countType(types, core.EventTypeSessionKeeperHandoffWritten) != 0 {
+		t.Fatalf("handoff_written on a path where no handoff arrived: %v", types)
 	}
 	for _, a := range actions {
 		if a.Kind == keeper.ActInjectClear {
-			t.Fatal("abort path must NEVER send /clear (hk-vpnp Bug 3)")
+			t.Fatal("a pending handoff must NEVER send /clear (hk-vpnp Bug 3)")
 		}
-		if a.Kind == keeper.ActEmit && a.Type == core.EventTypeSessionKeeperCycleAborted {
-			var p core.SessionKeeperCycleAbortedPayload
-			if err := json.Unmarshal(a.Payload, &p); err != nil {
-				t.Fatalf("decode aborted payload: %v", err)
+		if a.Kind == keeper.ActInjectBrief {
+			t.Fatal("a pending handoff must not re-brief: the agent never restarted")
+		}
+	}
+	journaled := make([]string, 0, len(actions))
+	for _, a := range actions {
+		if a.Kind != keeper.ActWriteJournal {
+			continue
+		}
+		journaled = append(journaled, a.Journal.Phase)
+		if a.Journal.Phase == "pending" {
+			if a.Journal.Reason != "handoff_pending" {
+				t.Fatalf("pending journal reason = %q, want handoff_pending", a.Journal.Reason)
 			}
-			if p.Reason != "handoff_timeout" {
-				t.Fatalf("abort reason = %q, want handoff_timeout (metric 4: explicit-reasoned)", p.Reason)
+			if a.Journal.CycleID != "cyc-l0-pending" {
+				t.Fatalf("pending journal cycle id = %q, want the original request id", a.Journal.CycleID)
 			}
 		}
 	}
-	if st := cyc.State(); st.LastTerminal != "aborted" {
-		t.Fatalf("LastTerminal = %q, want aborted", st.LastTerminal)
+	if len(journaled) == 0 || journaled[len(journaled)-1] != "pending" {
+		t.Fatalf("journal phases = %v, want the cycle left at \"pending\"", journaled)
+	}
+	st := cyc.State()
+	if st.LastTerminal != "pending" {
+		t.Fatalf("LastTerminal = %q, want pending (the request is suspended, not finished)", st.LastTerminal)
+	}
+	if st.CycleID != "cyc-l0-pending" {
+		t.Fatalf("CycleID = %q, want the original request id retained for the resume", st.CycleID)
+	}
+}
+
+// TestL0_OperatorTurnParkTable is the second §8.4 park, and it is a different
+// kind of thing from the first: a real operator turn arrived while the keeper
+// was waiting for the handoff, so the restart is declined rather than
+// suspended (SK-026). The state says "parked", not "pending", which is what
+// stops the shell from resuming this cycle id — the next cycle mints a fresh
+// one. Like every park it sends no /clear, and it leaves the handoff alone.
+func TestL0_OperatorTurnParkTable(t *testing.T) {
+	t.Parallel()
+	cfg := testConfig("l0-operator")
+	events := []keeper.Event{
+		gaugeTick("cyc-l0-operator", "sid-o", 92, passGates(), l0Base),
+		{Kind: keeper.EvOperatorTurnRecent, CycleID: "cyc-l0-operator", At: l0Base.Add(time.Second)},
+	}
+	actions, cyc := runSynthetic(t, cfg, events)
+
+	assertOutcome(t, actions, "cyc-l0-operator", outcomeParkedOperator)
+	for _, a := range actions {
+		if a.Kind == keeper.ActInjectClear {
+			t.Fatal("an operator turn must never cost the operator the pane (SK-INV-001)")
+		}
+		if a.Kind == keeper.ActTruncateHandoff {
+			t.Fatal("the declined restart must leave the handoff in place (SK-026)")
+		}
+	}
+	var journaled []string
+	for _, a := range actions {
+		if a.Kind == keeper.ActWriteJournal {
+			journaled = append(journaled, a.Journal.Phase)
+		}
+	}
+	if len(journaled) == 0 || journaled[len(journaled)-1] != "parked" {
+		t.Fatalf("journal phases = %v, want the cycle left at \"parked\"", journaled)
+	}
+	if st := cyc.State(); st.LastTerminal != "parked" {
+		t.Fatalf("LastTerminal = %q, want parked — \"pending\" would offer this cycle a resume it must not get",
+			st.LastTerminal)
 	}
 }
 
@@ -524,7 +584,23 @@ func TestL0_Properties_SRPostconditions(t *testing.T) {
 }
 
 // assertSRPostconditions checks the pure-order SR invariants over one emitted
-// action stream.
+// action stream. It is keepertest's OWN SR7 — deliberately independent of the
+// internal/replay checker of the same name, so the two cannot agree by sharing
+// a bug.
+//
+// A park closes the open slot, for the same reason internal/replay's SR7 does:
+// both park paths return Phase to Idle, and Idle is the only phase the gate
+// ladder starts a cycle from, so the next handoff_started after a park is a
+// legitimate new cycle and not an overlap.
+//
+// KNOWN GAP, reported rather than papered over: the generator below never
+// emits EvPendingHandoffSeen, so it never produces the SK-025 RESUME — park,
+// then the same cycle id proceeds to handoff_written and cycle_complete. On
+// that stream this function would read the complete as "terminal with no open
+// cycle" and fail wrongly. Closing the slot on park is therefore correct for
+// what this generator produces and untested for what it does not. Fixing it
+// means teaching the generator to resume, which is a coverage change, not part
+// of the park migration.
 func assertSRPostconditions(t *testing.T, seq int, actions []keeper.Action) {
 	t.Helper()
 	open := false // a cycle is open (handoff_started seen, no terminal yet) — SR7
@@ -570,6 +646,19 @@ func assertSRPostconditions(t *testing.T, seq int, actions []keeper.Action) {
 		case core.EventTypeSessionKeeperCycleAborted:
 			if !open {
 				t.Fatalf("seq %d action %d: terminal exclusivity violated — cycle_aborted with no open cycle", seq, i)
+			}
+			open = false
+		case core.EventTypeSessionKeeperCycleParked:
+			if !open {
+				t.Fatalf("seq %d action %d: cycle_parked with no open cycle", seq, i)
+			}
+			// SK-INV-005 anchor: a park always happens BEFORE restart
+			// authority. Both park paths leave AwaitingHandoff, which is the
+			// phase before handoff_written. A park after authority would mean
+			// the machine walked away from a destructive tail it owed a
+			// terminal for.
+			if sawWritten {
+				t.Fatalf("seq %d action %d: cycle_parked after handoff_written — an authorized restart owes a terminal (SK-INV-005)", seq, i)
 			}
 			open = false
 		default:

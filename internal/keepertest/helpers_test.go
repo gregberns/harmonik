@@ -191,6 +191,126 @@ func countType(types []core.EventType, want core.EventType) int {
 	return n
 }
 
+// ─── Cycle outcomes ──────────────────────────────────────────────────────────
+
+// cycleOutcome is what ONE keeper cycle ended with, carried as one value.
+//
+// The tiers used to carry this as a pair of booleans (wantComplete,
+// wantUnconfirmed). That pair can spell (complete=false, unconfirmed=true),
+// which names nothing the machine has ever produced, and it cannot spell a
+// park at all — so when the handoff-timeout edge stopped aborting and started
+// parking (session-keeper.md §8.4), every assertion built on it read the new
+// behavior as "no outcome". One value with four inhabitants removes both
+// problems (PRINCIPLES §2).
+type cycleOutcome string
+
+const (
+	// outcomeComplete is the clean terminal (§8.1): /clear confirmed by a new
+	// session id, brief injected.
+	outcomeComplete cycleOutcome = "cycle_complete"
+	// outcomeDegradedComplete is the §8.3 degraded terminal: the clear
+	// backstop expired without a session change, and the cycle completes
+	// anyway. Still exactly one terminal.
+	outcomeDegradedComplete cycleOutcome = "cycle_complete+clear_unconfirmed"
+	// outcomeParkedPending is the §8.4 SUSPENSION: the observation window
+	// closed before a marked handoff arrived. The request stays live and the
+	// SAME cycle id can resume and complete later (SK-025).
+	outcomeParkedPending cycleOutcome = "cycle_parked{handoff_pending}"
+	// outcomeParkedOperator is the §8.4 final park: a recent real operator
+	// turn holds the restart effects back (SK-026). This cycle does not
+	// resume; the next one mints a fresh id.
+	outcomeParkedOperator cycleOutcome = "cycle_parked{operator_turn_recent}"
+)
+
+// isCompletion reports whether an outcome is one of the two completions. Use
+// it where the claim is "the destructive tail finished", clean or degraded.
+func isCompletion(o cycleOutcome) bool {
+	return o == outcomeComplete || o == outcomeDegradedComplete
+}
+
+// parkReason decodes the reason a cycle_parked emit carries and refuses any
+// value outside the §8.4 pair. The reason is not a detail on this event: it is
+// what separates a suspension the same cycle id resumes from an end, so a park
+// with an empty or unknown reason is a defect and fails here.
+func parkReason(t *testing.T, a keeper.Action) string {
+	t.Helper()
+	var p core.SessionKeeperCycleParkedPayload
+	if err := json.Unmarshal(a.Payload, &p); err != nil {
+		t.Fatalf("decode parked payload: %v", err)
+	}
+	switch p.Reason {
+	case "handoff_pending", "operator_turn_recent":
+		return p.Reason
+	default:
+		t.Fatalf("cycle_parked reason = %q, want handoff_pending or operator_turn_recent "+
+			"(§8.4: those two are the complete set; any other value is a defect)", p.Reason)
+		return ""
+	}
+}
+
+// cycleEndings reduces an emitted action stream to the outcomes it recorded,
+// in emit order. An ending is any emit that returns the machine to Idle:
+// cycle_complete, cycle_parked (either flavor), and cycle_aborted.
+//
+// cycle_aborted has had no producer since keeper checkpoints became
+// agent-paced (§8.2). It is decoded here anyway, with its reason, so that a
+// regression which revives it is NAMED in the failure message instead of
+// arriving as an unexplained extra outcome.
+func cycleEndings(t *testing.T, actions []keeper.Action) []cycleOutcome {
+	t.Helper()
+	var out []cycleOutcome
+	unconfirmed := false
+	for _, a := range actions {
+		if a.Kind != keeper.ActEmit {
+			continue
+		}
+		switch a.Type {
+		case core.EventTypeSessionKeeperClearUnconfirmed:
+			unconfirmed = true
+		case core.EventTypeSessionKeeperCycleComplete:
+			if unconfirmed {
+				out = append(out, outcomeDegradedComplete)
+			} else {
+				out = append(out, outcomeComplete)
+			}
+			unconfirmed = false
+		case core.EventTypeSessionKeeperCycleParked:
+			out = append(out, cycleOutcome("cycle_parked{"+parkReason(t, a)+"}"))
+		case core.EventTypeSessionKeeperCycleAborted:
+			var p core.SessionKeeperCycleAbortedPayload
+			if err := json.Unmarshal(a.Payload, &p); err != nil {
+				t.Fatalf("decode aborted payload: %v", err)
+			}
+			out = append(out, cycleOutcome("cycle_aborted{"+p.Reason+"}"))
+		default:
+			// Interior events (handoff_started, handoff_written, model_done,
+			// clear_sent, new_session_up, cycle_recovered) end nothing.
+		}
+	}
+	return out
+}
+
+// soleOutcome asserts the stream recorded exactly one cycle ending and returns
+// it. Zero endings is the silence SK-INV-005 forbids; two is an overlap.
+func soleOutcome(t *testing.T, actions []keeper.Action, ckey string) cycleOutcome {
+	t.Helper()
+	got := cycleEndings(t, actions)
+	if len(got) != 1 {
+		t.Fatalf("%s: want exactly 1 cycle ending, got %d %v (emitted %v)",
+			ckey, len(got), got, emittedTypes(actions))
+	}
+	return got[0]
+}
+
+// assertOutcome asserts the stream recorded exactly one cycle ending and that
+// it is want.
+func assertOutcome(t *testing.T, actions []keeper.Action, ckey string, want cycleOutcome) {
+	t.Helper()
+	if got := soleOutcome(t, actions, ckey); got != want {
+		t.Fatalf("%s: outcome = %s, want %s (emitted %v)", ckey, got, want, emittedTypes(actions))
+	}
+}
+
 // writeReplayedStream replays ALL corpus cycles through the flat pipe and
 // re-envelopes every emitted event into an events.jsonl at path (the T10
 // envelope-writer, shared by TestL1_ReplayedStreamInvariants and the T13

@@ -19,17 +19,33 @@ package keepertest_test
 //
 // WHAT EACH CELL ASSERTS (the §5 uniform shape, as amended for T12):
 //
-//	exactly ONE explicit terminal (cycle_complete XOR cycle_aborted) …
+//	exactly ONE explicit cycle ending …
+//	… of the kind the cycle EARNED. The dividing line is restart authority,
+//	  granted at handoff_written (internal/keeper stepConfirmHandoff). Past
+//	  it the machine owns the destructive tail and owes a completion, clean
+//	  or degraded (SK-INV-005). Before it the handoff is still pending, so
+//	  the only legitimate ending is cycle_parked{handoff_pending} (SK-025).
+//	  "Exactly one ending" alone is NOT enough here: a keeper that parked
+//	  every cycle and never restarted anything would satisfy it in all 44
+//	  cells, which is precisely the failure this matrix exists to catch,
 //	… within the SK-015 bounded VIRTUAL window (≈520s: HandoffTimeout +
 //	  model_done_timeout + ClearConfirmBackstop + injection overhead),
 //	exactly ONE handoff_started (SR7 — no overlapping cycle),
-//	a TERMINAL journal phase ("complete"/"aborted") — no half-open journal,
-//	cycle_aborted ⇒ non-empty explicit reason,
+//	no /clear without authority (SK-INV-001),
+//	a CLOSED journal phase ("complete"/"pending"/"parked") — no half-open
+//	  journal. Phase "aborted" is absent because nothing emits it on this
+//	  path any more; crash recovery is its only writer (§8.2),
+//	a park ⇒ one of the two §8.4 reasons, never empty (parkReason),
 //	and NEVER silence: runDiscrete converts "still in-cycle with nothing
 //	  pending" into an explicit test failure, drainTwin's wall-clock idle
 //	  timer converts a genuinely hung stream into a failure, and the
 //	  100k-step guard converts a livelock into a failure (plus go test's own
 //	  -timeout as the outermost backstop). None of these is a golden value.
+//
+// A NOTE ON "abort_handoff_timeout": that stratum name is the CORPUS's, and
+// the corpus is frozen. The recorded cycles did abort. Replayed through the
+// current reactor the same stimulus suspends instead, so the cells under that
+// stratum expect a park.
 //
 // THE §5 SEAM-GAP DECISION (path A — ratified here; carried from the T9/T10
 // reviews): keeper's Event vocabulary has no native transport-error or
@@ -37,8 +53,8 @@ package keepertest_test
 // keepertwin codec returns SENTINEL kinds (twin_transport_error /
 // twin_disconnected, 00b R3) that the pure reactor's TOTAL transition
 // ignores. Under FaultDropAfter/FaultTruncate the reactor therefore never
-// "sees" the disconnect — it proceeds to its OWN timeout-driven terminal
-// (pre-nonce: cycle_aborted{handoff_timeout}; post-nonce: model_done
+// "sees" the disconnect — it proceeds to its OWN timeout-driven ending
+// (pre-nonce: cycle_parked{handoff_pending}; post-nonce: model_done
 // fail-open → clear backstop → cycle_complete + clear_unconfirmed). That IS
 // the SR9 invariant satisfied: SK-015 mandates "exactly one terminal outcome
 // within a bounded window … silence is FORBIDDEN" — a bounded-LIVENESS
@@ -53,12 +69,11 @@ package keepertest_test
 // cycle-opening GaugeTick entirely and FaultTruncate@1 replaces it with the
 // ignored transport-error sentinel — NO cycle ever opens, so SR9 ("every
 // handoff_started(c) reaches …") is vacuously satisfied. Those cells assert
-// the no-cycle shape instead: zero handoff_started, zero terminals, zero
+// the no-cycle shape instead: zero handoff_started, zero endings, zero
 // /clear, zero journal writes, and a clean harness exit (the liveness half is
 // still proven — a hang would fail in drainTwin or the step guard).
 
 import (
-	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -98,22 +113,12 @@ func strippedStimulusLen(t *testing.T, sum keepertwin.CycleSummary) int {
 	return len(stripPreScheduledTimers(events))
 }
 
-// abortReasons decodes every cycle_aborted payload reason in emit order.
-func abortReasons(t *testing.T, sink *KeeperBridgeSink) []string {
-	t.Helper()
-	out := make([]string, 0, len(sink.Emits))
-	for _, a := range sink.Emits {
-		if a.Type != core.EventTypeSessionKeeperCycleAborted {
-			continue
-		}
-		var p core.SessionKeeperCycleAbortedPayload
-		if err := json.Unmarshal(a.Payload, &p); err != nil {
-			t.Fatalf("decode aborted payload: %v", err)
-		}
-		out = append(out, p.Reason)
-	}
-	return out
-}
+// closedJournalPhases are the journal phases that mean the machine returned to
+// Idle and left nothing half-open. "pending" is a suspension rather than a
+// terminal, but it is a COMPLETE record: crash recovery reads it and restores
+// the same request (internal/keeper stepIdleCrashJournal). "aborted" is not
+// here because nothing on this path writes it any more (§8.2).
+var closedJournalPhases = map[string]bool{"complete": true, "pending": true, "parked": true}
 
 // TestKeeperReplay_FaultMatrix is the T12 matrix. The name matches the §7
 // metric-8 recompute command (`go test -run 'TestKeeperReplay_Fault' …`).
@@ -149,30 +154,45 @@ func TestKeeperReplay_FaultMatrix(t *testing.T) {
 
 					types := sink.emitTypes()
 					started := countType(types, core.EventTypeSessionKeeperHandoffStarted)
-					complete := countType(types, core.EventTypeSessionKeeperCycleComplete)
-					aborted := countType(types, core.EventTypeSessionKeeperCycleAborted)
-					unconfirmed := countType(types, core.EventTypeSessionKeeperClearUnconfirmed)
+					endings := cycleEndings(t, sink.Emits)
 
 					// Entry-foreclosed cells: the fault erases the cycle-opening
 					// GaugeTick — no cycle exists for SR9 to bound (vacuous); the
 					// harness has already proven the loop EXITS. Assert the
 					// no-cycle shape: nothing started, nothing half-open.
 					if n == 1 && (fm.mode == keepertwin.FaultStall || fm.mode == keepertwin.FaultTruncate) {
-						if started != 0 || complete+aborted != 0 || sink.Clears != 0 || len(sink.Journals) != 0 {
-							t.Fatalf("entry-foreclosed cell leaked state: started=%d terminals=%d clears=%d journals=%d",
-								started, complete+aborted, sink.Clears, len(sink.Journals))
+						if started != 0 || len(endings) != 0 || sink.Clears != 0 || len(sink.Journals) != 0 {
+							t.Fatalf("entry-foreclosed cell leaked state: started=%d endings=%v clears=%d journals=%d",
+								started, endings, sink.Clears, len(sink.Journals))
 						}
 						return
 					}
 
-					// SR9 / SK-015: exactly ONE explicit terminal…
-					if complete+aborted != 1 {
-						t.Fatalf("want exactly 1 terminal, got complete=%d aborted=%d (%v)",
-							complete, aborted, types)
+					// SR9 / SK-015: exactly ONE explicit ending…
+					if len(endings) != 1 {
+						t.Fatalf("want exactly 1 cycle ending, got %v (%v)", endings, types)
 					}
+					ending := endings[0]
 					// …within the bounded virtual window.
 					if bound := sr9VirtualBound(testConfig(sum.AgentName)); elapsed > bound {
-						t.Fatalf("terminal at %v virtual, beyond the SK-015 bound %v", elapsed, bound)
+						t.Fatalf("ending at %v virtual, beyond the SK-015 bound %v", elapsed, bound)
+					}
+					// …and of the kind the cycle earned. handoff_written is where
+					// restart authority begins, and it is what separates an owed
+					// terminal from a legitimate suspension.
+					authorized := countType(types, core.EventTypeSessionKeeperHandoffWritten) > 0
+					switch {
+					case authorized && !isCompletion(ending):
+						t.Fatalf("ending = %s after restart authority (handoff_written); "+
+							"an authorized restart owes a completion (SK-INV-005) (%v)", ending, types)
+					case !authorized && ending != outcomeParkedPending:
+						t.Fatalf("ending = %s with no restart authority; the only legitimate "+
+							"ending before handoff_written is %s (SK-025) (%v)",
+							ending, outcomeParkedPending, types)
+					}
+					// SK-INV-001: /clear NEVER precedes a confirmed handoff.
+					if !authorized && sink.Clears != 0 {
+						t.Fatalf("clears = %d with no confirmed handoff (SK-INV-001)", sink.Clears)
 					}
 					// SR7: exactly one cycle — no overlap, no double start.
 					if started != 1 {
@@ -182,14 +202,20 @@ func TestKeeperReplay_FaultMatrix(t *testing.T) {
 					if len(sink.Journals) == 0 {
 						t.Fatal("no journal writes for a started cycle")
 					}
-					if last := sink.Journals[len(sink.Journals)-1].Phase; last != "complete" && last != "aborted" {
+					last := sink.Journals[len(sink.Journals)-1].Phase
+					if !closedJournalPhases[last] {
 						t.Fatalf("journal left half-open in phase %q", last)
 					}
-					// Aborts carry an explicit, non-empty reason.
-					for _, r := range abortReasons(t, sink) {
-						if r == "" {
-							t.Fatal("cycle_aborted with empty reason (must be explicit)")
-						}
+					// A suspension owes the one phase crash recovery can read
+					// back. stepIdleCrashJournal restores a request from
+					// "pending" only — "parked" falls through its default and
+					// recovers nothing — so a cycle that emits
+					// cycle_parked{handoff_pending} while journaling "parked"
+					// strands the request across a keeper restart. Membership in
+					// closedJournalPhases alone cannot see that.
+					if !authorized && last != "pending" {
+						t.Fatalf("journal phase %q for a suspension; want \"pending\", "+
+							"the only phase stepIdleCrashJournal restores (SK-025)", last)
 					}
 					// FaultDup: the duplicate delivery is absorbed — no second
 					// /clear beyond the stratum's no-fault baseline.
@@ -198,8 +224,8 @@ func TestKeeperReplay_FaultMatrix(t *testing.T) {
 							sink.Clears, baselineClears[st])
 					}
 
-					t.Logf("terminal: complete=%d aborted=%d unconfirmed=%d clears=%d elapsed=%v",
-						complete, aborted, unconfirmed, sink.Clears, elapsed)
+					t.Logf("ending: %s authorized=%v clears=%d elapsed=%v",
+						ending, authorized, sink.Clears, elapsed)
 				})
 			}
 		}

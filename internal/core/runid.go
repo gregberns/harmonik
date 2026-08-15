@@ -23,6 +23,12 @@ func (r RunID) String() string {
 	return uuid.UUID(r).String()
 }
 
+// IsUUIDv7 reports whether the run ID has the required UUIDv7 shape.
+func (r RunID) IsUUIDv7() bool {
+	u := uuid.UUID(r)
+	return u != uuid.Nil && u.Version() == 7
+}
+
 // MarshalText implements encoding.TextMarshaler.
 // The output is the canonical hyphenated UUID string (36 bytes).
 func (r RunID) MarshalText() ([]byte, error) {

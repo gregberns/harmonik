@@ -20,6 +20,7 @@ import (
 	"github.com/gregberns/harmonik/internal/queuewiring"
 	"github.com/gregberns/harmonik/internal/runlaunch"
 	"github.com/gregberns/harmonik/internal/runloop"
+	"github.com/gregberns/harmonik/internal/workers"
 )
 
 // bootState threads the shared singletons constructed across the daemon
@@ -42,6 +43,8 @@ type bootState struct {
 	qs                      *queuewiring.QueueStore
 	handlerPauseCtrl        *HandlerPauseController
 	sharedRunRegistry       *RunRegistry
+	workerRegistry          *workers.Registry
+	workerRegistryBuilt     bool
 	pollGate                *PollGate
 
 	// P5 (wireWatchersAndObservers) outputs consumed by later phases.

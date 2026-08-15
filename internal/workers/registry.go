@@ -1,9 +1,22 @@
 package workers
 
 import (
+	"errors"
 	"fmt"
 	"sync"
+
+	"github.com/gregberns/harmonik/internal/core"
 )
+
+// BoundWorker identifies the full durable route for one remote run.
+type BoundWorker struct {
+	Name           string
+	Transport      string
+	Host           string
+	RepositoryPath string
+}
+
+var errInvalidBoundWorker = errors.New("workers: bound worker route is incomplete")
 
 // Registry wraps a loaded Config and provides per-bead worker selection with
 // slot tracking and live-disable support (remote-substrate B5).
@@ -12,6 +25,7 @@ type Registry struct {
 	worker    Worker
 	hasWorker bool
 	inFlight  int
+	boundRuns map[core.RunID]struct{}
 }
 
 // PrimaryWorkerIndex returns the index of the worker the Registry consumes as
@@ -29,12 +43,56 @@ func PrimaryWorkerIndex(cfg Config) int {
 // NewRegistry constructs a Registry from a loaded Config.
 // If cfg has no workers, SelectWorker always returns nil (local fallback).
 func NewRegistry(cfg Config) *Registry {
-	r := &Registry{}
+	r := &Registry{boundRuns: make(map[core.RunID]struct{})}
 	if i := PrimaryWorkerIndex(cfg); i >= 0 {
 		r.worker = cfg.Workers[i]
 		r.hasWorker = true
 	}
 	return r
+}
+
+// AcquireBoundWorker restores one process-local slot for a durable remote run.
+// It returns nil without an error when the exact worker is disabled or full.
+// A repeat call for the same run returns the worker without taking a second slot.
+func (r *Registry) AcquireBoundWorker(runID core.RunID, bound BoundWorker) (*Worker, error) {
+	if !runID.IsUUIDv7() || bound.Name == "" || bound.Transport == "" || bound.Host == "" || bound.RepositoryPath == "" {
+		return nil, errInvalidBoundWorker
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.hasWorker {
+		return nil, fmt.Errorf("workers: durable worker %q is not configured", bound.Name)
+	}
+	if r.worker.Name != bound.Name || r.worker.Transport != bound.Transport ||
+		r.worker.Host != bound.Host || r.worker.RepoPath != bound.RepositoryPath {
+		return nil, fmt.Errorf("workers: durable route for worker %q does not match trusted configuration", bound.Name)
+	}
+	if _, held := r.boundRuns[runID]; held {
+		worker := r.worker
+		return &worker, nil
+	}
+	if !r.worker.Enabled || (r.worker.MaxSlots > 0 && r.inFlight >= r.worker.MaxSlots) {
+		return nil, nil
+	}
+	r.inFlight++
+	r.boundRuns[runID] = struct{}{}
+	worker := r.worker
+	return &worker, nil
+}
+
+// ReleaseBoundWorker releases the slot held for one durable remote run.
+// It returns false when this process does not own that run's slot.
+func (r *Registry) ReleaseBoundWorker(runID core.RunID) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, held := r.boundRuns[runID]; !held {
+		return false
+	}
+	delete(r.boundRuns, runID)
+	if r.inFlight > 0 {
+		r.inFlight--
+	}
+	return true
 }
 
 // SelectWorker returns the configured worker when it is enabled and has a free

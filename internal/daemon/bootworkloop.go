@@ -55,14 +55,10 @@ func (bs *bootState) launchWorkLoop(ctx context.Context, daemonStartTime time.Ti
 	if harnessErr != nil {
 		return fmt.Errorf("daemon.Start: work loop deps: newHarnessRegistry: %w", harnessErr)
 	}
-	var workerEmit workers.EmitFunc
-	if bs.bus != nil {
-		workerEmit = bs.bus.Emit
+	if err := bs.ensureWorkerRegistry(ctx); err != nil {
+		return err
 	}
-	workerRegistry := workers.BuildRegistry(ctx, cfg.Workers, workerEmit)
-	if cfg.WorkerRegistryObserver != nil {
-		cfg.WorkerRegistryObserver(workerRegistry)
-	}
+	workerRegistry := bs.workerRegistry
 	handlerBinary := cfg.HandlerBinary
 	if handlerBinary == "" {
 		handlerBinary = "claude"
@@ -155,6 +151,22 @@ func (bs *bootState) launchWorkLoop(ctx context.Context, daemonStartTime time.Ti
 	}()
 	// Block until the work loop exits (either ctx cancelled or fatal error).
 	<-loopDone
+	return nil
+}
+
+func (bs *bootState) ensureWorkerRegistry(ctx context.Context) error {
+	if bs.workerRegistryBuilt {
+		return nil
+	}
+	var emit workers.EmitFunc
+	if bs.bus != nil {
+		emit = bs.bus.Emit
+	}
+	bs.workerRegistry = workers.BuildRegistry(ctx, bs.cfg.Workers, emit)
+	bs.workerRegistryBuilt = true
+	if bs.cfg.WorkerRegistryObserver != nil {
+		bs.cfg.WorkerRegistryObserver(bs.workerRegistry)
+	}
 	return nil
 }
 

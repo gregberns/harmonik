@@ -30,6 +30,18 @@ func TestRunID_String(t *testing.T) {
 	}
 }
 
+func TestRunID_IsUUIDv7(t *testing.T) {
+	if !mustParseRunID(t, "0196a1b2-c3d4-7000-8a1b-000000000001").IsUUIDv7() {
+		t.Fatal("UUIDv7 run ID was rejected")
+	}
+	if mustParseRunID(t, "550e8400-e29b-41d4-a716-446655440000").IsUUIDv7() {
+		t.Fatal("UUIDv4 run ID was accepted")
+	}
+	if (RunID{}).IsUUIDv7() {
+		t.Fatal("zero run ID was accepted")
+	}
+}
+
 func TestRunID_MarshalText(t *testing.T) {
 	const raw = "0196a1b2-c3d4-7000-8a1b-000000000001"
 

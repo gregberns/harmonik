@@ -53,6 +53,9 @@ func (bs *bootState) runStartupReconcile(ctx context.Context, daemonStartTime ti
 	if cfg.ProjectDir == "" {
 		return nil
 	}
+	if err := bs.ensureWorkerRegistry(ctx); err != nil {
+		return fmt.Errorf("daemon: build worker registry before dispatch replay: %w", err)
+	}
 	if err := lifecycle.PrepareQueueNamespaceAtStartup(ctx, cfg.ProjectDir, nil); err != nil {
 		return fmt.Errorf("daemon: prepare queue namespace before dispatch replay: %w", err)
 	}

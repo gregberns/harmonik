@@ -3,8 +3,18 @@ package workers_test
 import (
 	"testing"
 
+	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/workers"
 )
+
+func boundRunID(t *testing.T, value string) core.RunID {
+	t.Helper()
+	var runID core.RunID
+	if err := runID.UnmarshalText([]byte(value)); err != nil {
+		t.Fatal(err)
+	}
+	return runID
+}
 
 func newRegistryCfg(enabled bool, maxSlots int) workers.Config {
 	return workers.Config{
@@ -160,4 +170,81 @@ func TestRegistry_ReleaseSlotDecrementsInFlight(t *testing.T) {
 		t.Fatal("after release: expected slot available again")
 	}
 	r.ReleaseSlot()
+}
+
+func TestRegistry_AcquireBoundWorkerOwnsOneSlotPerRun(t *testing.T) {
+	r := workers.NewRegistry(newRegistryCfg(true, 1))
+	route := workers.BoundWorker{
+		Name: "test-worker", Transport: "ssh", Host: "host.example.com", RepositoryPath: "/repo",
+	}
+	firstRun := boundRunID(t, "0197d200-0000-7000-8000-000000000001")
+	secondRun := boundRunID(t, "0197d200-0000-7000-8000-000000000002")
+	first, err := r.AcquireBoundWorker(firstRun, route)
+	if err != nil || first == nil {
+		t.Fatalf("first acquire = (%+v, %v)", first, err)
+	}
+	replay, err := r.AcquireBoundWorker(firstRun, route)
+	if err != nil || replay == nil || r.InFlight() != 1 {
+		t.Fatalf("replay acquire = (%+v, %v), in-flight %d", replay, err, r.InFlight())
+	}
+	blocked, err := r.AcquireBoundWorker(secondRun, route)
+	if err != nil || blocked != nil {
+		t.Fatalf("full acquire = (%+v, %v)", blocked, err)
+	}
+	if !r.ReleaseBoundWorker(firstRun) || r.ReleaseBoundWorker(firstRun) || r.InFlight() != 0 {
+		t.Fatalf("release state: in-flight %d", r.InFlight())
+	}
+}
+
+func TestRegistry_AcquireBoundWorkerFailsClosedOnRouteChange(t *testing.T) {
+	base := workers.BoundWorker{
+		Name: "test-worker", Transport: "ssh", Host: "host.example.com", RepositoryPath: "/repo",
+	}
+	tests := []struct {
+		name   string
+		mutate func(*workers.BoundWorker)
+	}{
+		{name: "name", mutate: func(v *workers.BoundWorker) { v.Name = "other" }},
+		{name: "transport", mutate: func(v *workers.BoundWorker) { v.Transport = "other" }},
+		{name: "host", mutate: func(v *workers.BoundWorker) { v.Host = "other.example" }},
+		{name: "repository", mutate: func(v *workers.BoundWorker) { v.RepositoryPath = "/other" }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := workers.NewRegistry(newRegistryCfg(true, 1))
+			route := base
+			tc.mutate(&route)
+			if worker, err := r.AcquireBoundWorker(boundRunID(t, "0197d200-0000-7000-8000-000000000001"), route); err == nil || worker != nil || r.InFlight() != 0 {
+				t.Fatalf("AcquireBoundWorker() = (%+v, %v), in-flight %d", worker, err, r.InFlight())
+			}
+		})
+	}
+}
+
+func TestRegistry_AcquireBoundWorkerLeavesDisabledAndFullRunsPending(t *testing.T) {
+	route := workers.BoundWorker{
+		Name: "test-worker", Transport: "ssh", Host: "host.example.com", RepositoryPath: "/repo",
+	}
+	disabled := workers.NewRegistry(newRegistryCfg(false, 1))
+	if worker, err := disabled.AcquireBoundWorker(boundRunID(t, "0197d200-0000-7000-8000-000000000001"), route); err != nil || worker != nil || disabled.InFlight() != 0 {
+		t.Fatalf("disabled acquire = (%+v, %v), in-flight %d", worker, err, disabled.InFlight())
+	}
+	full := workers.NewRegistry(newRegistryCfg(true, 1))
+	if full.SelectWorker() == nil {
+		t.Fatal("fill slot")
+	}
+	if worker, err := full.AcquireBoundWorker(boundRunID(t, "0197d200-0000-7000-8000-000000000002"), route); err != nil || worker != nil || full.InFlight() != 1 {
+		t.Fatalf("full acquire = (%+v, %v), in-flight %d", worker, err, full.InFlight())
+	}
+	full.ReleaseSlot()
+}
+
+func TestRegistry_AcquireBoundWorkerRejectsInvalidRunID(t *testing.T) {
+	r := workers.NewRegistry(newRegistryCfg(true, 1))
+	route := workers.BoundWorker{
+		Name: "test-worker", Transport: "ssh", Host: "host.example.com", RepositoryPath: "/repo",
+	}
+	if worker, err := r.AcquireBoundWorker(core.RunID{}, route); err == nil || worker != nil || r.InFlight() != 0 {
+		t.Fatalf("invalid acquire = (%+v, %v), in-flight %d", worker, err, r.InFlight())
+	}
 }

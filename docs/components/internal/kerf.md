@@ -23,7 +23,7 @@ Work progresses through a fixed stage sequence: problem-space, decompose, resear
 Jigs define the passes an agent makes over a piece of work. Built-in jigs: plan, spec, bug, implementation, spike, retrofit. Each jig prescribes what the agent does at each pass, what artifacts it produces, and what checks must pass before advancing. Custom jigs are supported for project-specific workflows.
 
 ### Work Management
-Works have codenames, statuses, and sessions. They live on a bench (~/.kerf/) outside of git until finalization. This keeps speculative and in-progress planning out of the repository until it reaches a publishable state.
+Works have codenames, statuses, and sessions. They live on a bench (~/.kerf/) outside of git until finalization. This project has localized kerf storage (see .kerf/config.yaml), so the repo — not the global bench — is the authoritative working directory. The bench path ~/.kerf/ still resolves: it is a symlink to .kerf/works/, so either spelling reaches the same files. This keeps speculative and in-progress planning out of the repository until it reaches a publishable state.
 
 ### Multi-Agent Coordination via Agent-Mail
 The orchestrator registers with Agent Mail, spawns workers via NTM, sends beads (task units) per worker, and polls for completion. This is kerf's native multi-agent dispatch model.

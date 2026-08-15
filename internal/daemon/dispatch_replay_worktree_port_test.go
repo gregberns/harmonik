@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"reflect"
 	"testing"
@@ -38,6 +39,85 @@ func TestDispatchWorktreeObserverResolverOwnsExactRemoteRoute(t *testing.T) {
 	}
 	if got != nil || factoryCalls != 1 || len(runner.Calls) == 0 {
 		t.Fatalf("Observe() = %+v; factory=%d calls=%+v", got, factoryCalls, runner.Calls)
+	}
+}
+
+func TestDispatchWorktreeProductionResolverAcquiresBeforeRunner(t *testing.T) {
+	intent := replayOwnershipIntent(t, dispatch.PhaseHandoffDurable)
+	record := replayFactRunRecord(t, intent)
+	location := runpkg.ExecutionLocation{
+		Kind: runpkg.ExecutionRemote, WorkerName: "worker-a", Transport: "ssh",
+		Host: "worker.example", RepositoryPath: "/srv/worker/project",
+	}
+	record.Location = &location
+	worker := workers.Worker{
+		Name: location.WorkerName, Transport: location.Transport, Host: location.Host,
+		RepoPath: location.RepositoryPath, Enabled: true, MaxSlots: 1,
+	}
+	registry := workers.NewRegistry(workers.Config{Workers: []workers.Worker{worker}})
+	factoryCalls := 0
+	resolver := newDispatchWorktreeObserverResolverWithOwnership(
+		workers.Config{Workers: []workers.Worker{worker}},
+		func(workers.Worker) ltmux.CommandRunner {
+			if registry.InFlight() != 1 {
+				t.Fatalf("runner factory ran before bound slot: in-flight %d", registry.InFlight())
+			}
+			factoryCalls++
+			return &ltmux.RecordingRunner{}
+		}, nil, registry,
+	)
+	for range 2 {
+		if _, err := resolver(record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if registry.InFlight() != 1 || factoryCalls != 2 {
+		t.Fatalf("in-flight = %d, runner factories = %d", registry.InFlight(), factoryCalls)
+	}
+}
+
+func TestDispatchWorktreeProductionResolverStopsBeforeRunnerWhenWorkerUnavailable(t *testing.T) {
+	intent := replayOwnershipIntent(t, dispatch.PhaseHandoffDurable)
+	record := replayFactRunRecord(t, intent)
+	location := runpkg.ExecutionLocation{
+		Kind: runpkg.ExecutionRemote, WorkerName: "worker-a", Transport: "ssh",
+		Host: "worker.example", RepositoryPath: "/srv/worker/project",
+	}
+	record.Location = &location
+	for _, tc := range []struct {
+		name    string
+		enabled bool
+		fill    bool
+	}{
+		{name: "disabled"},
+		{name: "full", enabled: true, fill: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			worker := workers.Worker{
+				Name: location.WorkerName, Transport: location.Transport, Host: location.Host,
+				RepoPath: location.RepositoryPath, Enabled: tc.enabled, MaxSlots: 1,
+			}
+			registry := workers.NewRegistry(workers.Config{Workers: []workers.Worker{worker}})
+			if tc.fill {
+				if owned, err := registry.SelectBoundWorker(mustReplayRunID(t, "0197d100-0000-7000-8000-000000000076"), ""); err != nil || owned == nil {
+					t.Fatalf("fill worker = (%+v, %v)", owned, err)
+				}
+			}
+			factoryCalls := 0
+			resolver := newDispatchWorktreeObserverResolverWithOwnership(
+				workers.Config{Workers: []workers.Worker{worker}},
+				func(workers.Worker) ltmux.CommandRunner {
+					factoryCalls++
+					return &ltmux.RecordingRunner{}
+				}, nil, registry,
+			)
+			if _, err := resolver(record); !errors.Is(err, errDispatchReplayPending) {
+				t.Fatalf("resolver error = %v", err)
+			}
+			if factoryCalls != 0 {
+				t.Fatalf("runner factory calls = %d", factoryCalls)
+			}
+		})
 	}
 }
 

@@ -50,26 +50,35 @@ func (o locationOwnedDispatchWorktreeObserver) Observe(
 	return workspace.ObserveDispatchWorktree(ctx, o.repositoryPath, record.RunID.String(), o.config)
 }
 
-func newDispatchWorktreeObserverResolver(cfg workers.Config) dispatchWorktreeObserverResolver {
-	return newDispatchWorktreeObserverResolverWithFactory(cfg, func(worker workers.Worker) ltmux.CommandRunner {
+func newDispatchWorktreeObserverResolver(cfg workers.Config, registry *workers.Registry) dispatchWorktreeObserverResolver {
+	return newDispatchWorktreeObserverResolverWithOwnership(cfg, func(worker workers.Worker) ltmux.CommandRunner {
 		return ltmux.SSHRunner{
 			Host: worker.Host,
 			Opts: []string{"-o", "ControlMaster=no", "-o", "ControlPath=none"},
 		}
-	})
+	}, nil, registry)
 }
 
 func newDispatchWorktreeObserverResolverWithFactory(
 	cfg workers.Config,
 	remoteRunner func(workers.Worker) ltmux.CommandRunner,
 ) dispatchWorktreeObserverResolver {
-	return newDispatchWorktreeObserverResolverWithRunners(cfg, remoteRunner, nil)
+	return newDispatchWorktreeObserverResolverWithOwnership(cfg, remoteRunner, nil, nil)
 }
 
 func newDispatchWorktreeObserverResolverWithRunners(
 	cfg workers.Config,
 	remoteRunner func(workers.Worker) ltmux.CommandRunner,
 	localRunner ltmux.CommandRunner,
+) dispatchWorktreeObserverResolver {
+	return newDispatchWorktreeObserverResolverWithOwnership(cfg, remoteRunner, localRunner, nil)
+}
+
+func newDispatchWorktreeObserverResolverWithOwnership(
+	cfg workers.Config,
+	remoteRunner func(workers.Worker) ltmux.CommandRunner,
+	localRunner ltmux.CommandRunner,
+	registry *workers.Registry,
 ) dispatchWorktreeObserverResolver {
 	return func(record runpkg.DispatchRecord) (dispatchWorktreeProvisioner, error) {
 		if err := record.Validate(); err != nil {
@@ -86,7 +95,7 @@ func newDispatchWorktreeObserverResolverWithRunners(
 				config:         workspace.NoWorktreeRootOverride(),
 			}, nil
 		case runpkg.ExecutionRemote:
-			return resolveRemoteDispatchWorktreeObserver(cfg, location, remoteRunner, localRunner)
+			return resolveRemoteDispatchWorktreeObserver(record, cfg, location, remoteRunner, localRunner, registry)
 		default:
 			return nil, fmt.Errorf("daemon: unsupported dispatch worktree location %q", location.Kind)
 		}
@@ -94,10 +103,12 @@ func newDispatchWorktreeObserverResolverWithRunners(
 }
 
 func resolveRemoteDispatchWorktreeObserver(
+	record runpkg.DispatchRecord,
 	cfg workers.Config,
 	location runpkg.ExecutionLocation,
 	remoteRunner func(workers.Worker) ltmux.CommandRunner,
 	localRunner ltmux.CommandRunner,
+	registry *workers.Registry,
 ) (dispatchWorktreeProvisioner, error) {
 	for _, worker := range cfg.Workers {
 		if worker.Name != location.WorkerName {
@@ -108,6 +119,17 @@ func resolveRemoteDispatchWorktreeObserver(
 		}
 		if worker.Transport != "ssh" {
 			return nil, fmt.Errorf("daemon: worker %q has unsupported dispatch worktree transport %q", worker.Name, worker.Transport)
+		}
+		if registry != nil {
+			owned, err := registry.AcquireBoundWorker(record.RunID, workers.BoundWorker{
+				Name: worker.Name, Transport: worker.Transport, Host: worker.Host, RepositoryPath: worker.RepoPath,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("daemon: acquire worker before dispatch worktree access: %w", err)
+			}
+			if owned == nil {
+				return nil, fmt.Errorf("%w: exact worker is disabled or full", errDispatchReplayPending)
+			}
 		}
 		runner := remoteRunner(worker)
 		if runner == nil {

@@ -109,7 +109,7 @@ func (bs *bootState) preflightDispatchReplay(
 		projectDir: bs.cfg.ProjectDir,
 		beads:      st.orphanStatusReader,
 		resolve:    newSessionStartAdapterResolver(st.sweepTmuxAdapter, bs.cfg.Workers),
-		worktrees:  newDispatchWorktreeObserverResolver(bs.cfg.Workers),
+		worktrees:  newDispatchWorktreeObserverResolver(bs.cfg.Workers, bs.workerRegistry),
 	}
 	steps, err := preflightDispatchReplayWithReader(ctx, intents, reader)
 	if err != nil {
@@ -122,7 +122,7 @@ func (bs *bootState) preflightDispatchReplay(
 		now:          time.Now,
 		workers:      bs.workerRegistry,
 		localKind:    replayLocalExecutionKind(bs.cfg.Substrate),
-		worktrees:    newDispatchWorktreeObserverResolver(bs.cfg.Workers),
+		worktrees:    newDispatchWorktreeObserverResolver(bs.cfg.Workers, bs.workerRegistry),
 	}); err != nil {
 		return err
 	}

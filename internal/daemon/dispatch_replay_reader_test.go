@@ -231,6 +231,61 @@ func TestFilesystemDispatchReplayReaderUsesScannedRemoteLocationForTarget(t *tes
 	}
 }
 
+func TestFilesystemDispatchReplayReaderRejectsMismatchedRemoteRecordBeforeResolvers(t *testing.T) {
+	projectDir := t.TempDir()
+	intent := replayOwnershipIntent(t, dispatch.PhaseHandoffDurable)
+	writeReplayReaderIntent(t, projectDir, intent)
+	writeReplayReaderQueue(t, projectDir, intent, true)
+	record, err := runpkg.NewDispatchRecord(intent.Binding, time.Date(2026, 8, 15, 4, 5, 6, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.BeadID = "hk-other"
+	if err := runpkg.CreateDispatchRecord(projectDir, record); err != nil {
+		t.Fatal(err)
+	}
+	location := runpkg.ExecutionLocation{
+		Kind: runpkg.ExecutionRemote, WorkerName: "worker-a", Transport: "ssh",
+		Host: "worker.example", RepositoryPath: "/srv/worker/project",
+	}
+	located, err := record.BindLocation(location)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runpkg.AdvanceDispatchRecord(projectDir, record, located); err != nil {
+		t.Fatal(err)
+	}
+	bound, err := located.BindSession(intent.Handoff.SessionName, intent.Handoff.WindowName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runpkg.AdvanceDispatchRecord(projectDir, located, bound); err != nil {
+		t.Fatal(err)
+	}
+	resolverCalls := 0
+	reader := filesystemDispatchReplayReader{
+		projectDir: projectDir,
+		beads:      &replayReaderBeads{record: replayFactBead(intent.Binding.BeadID, core.CoarseStatusInProgress)},
+		resolve: func(runpkg.ExecutionLocation) (ltmux.Adapter, error) {
+			resolverCalls++
+			return &dispatchTargetProbeAdapter{}, nil
+		},
+		worktrees: func(runpkg.DispatchRecord) (dispatchWorktreeProvisioner, error) {
+			resolverCalls++
+			return replayWorktreeObserverFunc(func(context.Context, runpkg.DispatchRecord) ([]workspace.DiscoveredWorktree, error) {
+				return nil, nil
+			}), nil
+		},
+	}
+	facts, err := reader.ReadDispatchReplayFacts(t.Context(), intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if facts.RunRecord != dispatch.RunRecordConflict || resolverCalls != 0 {
+		t.Fatalf("facts = %+v, resolver calls = %d", facts, resolverCalls)
+	}
+}
+
 func writeReplayReaderIntent(t *testing.T, projectDir string, intent dispatch.Intent) {
 	t.Helper()
 	prepared := replayOwnershipIntent(t, dispatch.PhasePrepared)

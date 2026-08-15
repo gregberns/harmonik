@@ -37,6 +37,28 @@ package daemon_test
 //     that campaign ran the shipping value on this fixture without the extra
 //     logging, so read that row as "the shipping value plus instrumentation".
 //
+//     Two things those three rows do not show. The budget-1 pool of 35 is two
+//     arms, not one. 20 of those runs came from a compiled overlay build and
+//     failed 12. The other 15 came from a separate campaign that edited the
+//     constant in place and ran `go test -race`. Those failed 7. Bead hk-r8nx4
+//     records that arm. Close, but not the same condition, so a rate read
+//     off the pooled figure is approximate. And budget 3 has no row because the
+//     only budget-3 arm ever run used an EARLIER draft of this fixture. It went
+//     10 runs, 0 failures. That number is real. It is not a measurement of this
+//     file.
+//
+//     Every row above counts runs of THIS fixture only. The campaign also ran
+//     earlier drafts and the pre-fix fixture. Those fail at their own rates —
+//     one draft failed 9 of 10 at budget 1 where this fixture fails 12 of 20.
+//     Too few runs to call that a rate difference, and enough to keep the pools
+//     apart. Pooling them is how the first recount of these numbers went wrong.
+//
+//     To recount, tell the arms apart by trustKeysLearned in the summary line.
+//     Runs of this fixture carry it. Runs of every earlier draft carry none.
+//     Do NOT score those logs by grepping for PASS. An earlier draft hardcoded
+//     "scenario PASS" into its summary line, so its 9 failing runs all print
+//     PASS. Read the process exit status instead.
+//
 //     A failing budget-1 run loses 1 or 2 of its 3 launches. So the retry is what
 //     carries provisioning through. But read the budget-1 rate before you lean on
 //     this test: a build with repair disabled still passes about half of single

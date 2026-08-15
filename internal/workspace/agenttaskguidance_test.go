@@ -414,8 +414,10 @@ func renderedTypeSet(t *testing.T, content string) (string, []string) {
 func countWord(t *testing.T, n int) string {
 	t.Helper()
 
-	words := []string{"zero", "one", "two", "three", "four", "five", "six",
-		"seven", "eight", "nine", "ten", "eleven", "twelve"}
+	words := []string{
+		"zero", "one", "two", "three", "four", "five", "six",
+		"seven", "eight", "nine", "ten", "eleven", "twelve",
+	}
 	if n < 0 || n >= len(words) {
 		t.Fatalf("the validator allows %d types and this test has no word for that count; extend countWord", n)
 	}

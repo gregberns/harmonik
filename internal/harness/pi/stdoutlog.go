@@ -35,10 +35,13 @@ package pi
 //
 // The same run shrinks from 197,243,057 bytes to 830,717 — a factor of 237 —
 // and the curve goes from quadratic to linear in the length of the turn. Both
-// figures are the shipped code measured on 2026-08-15 against the capture of run
-// 01a0061c-6601-7528-9544-2ed98c23b967, which is no longer on disk — so they
-// cannot be re-derived from that run. The mechanism they describe is proved
-// independently by this package's tests.
+// figures are the shipped code measured on 2026-08-15 against the retained
+// capture of run 01a0061c-6601-7528-9544-2ed98c23b967, which is kept at
+// .harmonik/worktrees/<run-id>/.harmonik/pi-agent/pi-stdout.log — a failed pi
+// run keeps its worktree, so the file survives to be re-measured. Name the path
+// rather than the run: a reviewer looked for this capture in ~/.harmonik, /tmp
+// and /var/folders, concluded it was gone, and flagged the figures as
+// underivable.
 //
 // WHAT CHANGES ON DISK, EXACTLY. A line that is not a rewritten message_update
 // is copied byte for byte. A rewritten one is decoded and re-encoded, so its

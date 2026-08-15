@@ -446,6 +446,15 @@
 >   real ~30% failure**: reviewer worktree trust key not persisting after 4 write attempts (5-of-17,
 >   always review iteration 1, **both preservation probes GREEN** so it is NOT a lost-update).
 >   Filed **`hk-6qw8s` (P1)**.
+>   - **CORRECTION 2026-08-15 (lane alpha, `hk-c7eox`) — "both preservation probes green so it is
+>     NOT a lost-update" is FALSE. Do not act on it.** Both probes (`maxBackslide`,
+>     `ownProjectDrops`, the latter only on unmerged commit `b13939e7e` — do not expect to find it in
+>     the tree) only ever measured **harmonik clobbering the hostile writer**. Nothing in
+>     either version of the `hk-qx065` fixture has ever measured **the writer clobbering harmonik**,
+>     which is the direction the real failure runs. The two coexist, and were later measured
+>     coexisting: every passing run showed each trust key at `countedDrops=2` (budget saturated)
+>     while *uncounted* lost updates against that same key ran 1–4. Green preservation probes rule
+>     out nothing here. This inference sent three separate investigations down the wrong path.
 > - kilo's implementer fixes the helper-pinning init test → removing the wiring now **fails FIVE
 >   tests, two previously incapable of failing.**
 >
@@ -461,6 +470,13 @@
 > lima's own finding, unchanged. **`hk-6qw8s` now gives the remaining gap a MEASURED shape:**
 > reviewer trust-key non-persistence at **~30%**, preservation probes green. That is no longer a
 > caution, it is a quantified failure rate on the worktree-trust path.
+> **CORRECTION 2026-08-15 (lane alpha, `hk-c7eox`):** the "preservation probes green" clause carries
+> no weight — see the correction above. Separately, the *reviewer-worktree* framing of `hk-6qw8s`
+> cannot recur at HEAD: `CreateReviewerWorktree` has no production caller left (review-loop retired,
+> EM-015d), so dot-mode reviewer nodes reuse the implementer worktree. The failure reproduced under
+> `hk-c7eox` is on an implementer key's FIRST write — more fundamental than the case this entry
+> describes. The `trustWriteMaxAttempts=4` fork named here is still open and is now tracked on
+> `hk-trust-repair-budget-uncalibrated-6xryw`.
 > **Do NOT lift inline mode on `hk-qx065` landing alone.** The fork lima named: never-calibrated
 > `trustWriteMaxAttempts=4` (*"nobody counted clobbers"*) vs the fixture's erase model for
 > late-created worktrees. **"Never calibrated" is exactly the class of number that has been wrong

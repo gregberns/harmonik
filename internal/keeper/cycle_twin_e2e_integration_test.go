@@ -794,11 +794,11 @@ func TestIntegration_TwinE2E_DefaultsPin(t *testing.T) {
 		got  float64
 		want float64
 	}{
-		{"ActAbsTokens", float64(d.ActAbsTokens), 215_000},
+		{"ActAbsTokens", float64(d.ActAbsTokens), 200_000},
 		{"ActPctCeil", d.ActPctCeil, 0.85},
-		{"WarnAbsTokens", float64(d.WarnAbsTokens), 200_000},
+		{"WarnAbsTokens", float64(d.WarnAbsTokens), 170_000},
 		{"WarnPctCeil", d.WarnPctCeil, 0.70},
-		{"ForceActAbsTokens", float64(d.ForceActAbsTokens), 240_000},
+		{"ForceActAbsTokens", float64(d.ForceActAbsTokens), 220_000},
 		{"ForceActPctCeil", d.ForceActPctCeil, 0.95},
 		{"ActPct", d.ActPct, 90},
 		{"WarnPct", d.WarnPct, 80},
@@ -843,13 +843,13 @@ func TestIntegration_TwinE2E_GaugeStateTransitions(t *testing.T) {
 		crispIdle bool
 		wantFired bool
 	}{
-		{"1m-below-act", 1_000_000, 214_999, true, false},
-		{"1m-at-act", 1_000_000, 215_000, true, true},
-		{"1m-below-warn", 1_000_000, 199_999, true, false},
+		{"1m-below-act", 1_000_000, 199_999, true, false},
+		{"1m-at-act", 1_000_000, 200_000, true, true},
+		{"1m-below-warn", 1_000_000, 169_999, true, false},
 		{"200k-below-act-ceil", 200_000, 169_999, true, false}, // 0.85*200k = 170k
 		{"200k-at-act-ceil", 200_000, 170_000, true, true},
-		{"1m-act-but-not-crisp", 1_000_000, 215_000, false, false},   // act but below force, not idle → no fire
-		{"1m-force-bypasses-crisp", 1_000_000, 240_000, false, true}, // force bypasses CrispIdle
+		{"1m-act-but-not-crisp", 1_000_000, 200_000, false, false},   // act but below force, not idle → no fire
+		{"1m-force-bypasses-crisp", 1_000_000, 220_000, false, true}, // force bypasses CrispIdle
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

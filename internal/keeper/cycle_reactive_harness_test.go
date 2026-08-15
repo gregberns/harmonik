@@ -229,6 +229,14 @@ func (rs *reactiveSession) handoffModTime(_ /*path*/ string) (time.Time, bool) {
 	return time.Now(), true
 }
 
+func (rs *reactiveSession) writeMarkedHandoff(cycleID string) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	rs.handoffBody = "# Handoff (late reactive fake)\n\n" + nonceMarkerForTest(cycleID) + "\n"
+}
+
+func nonceMarkerForTest(cycleID string) string { return "<!-- KEEPER:" + cycleID + " -->" }
+
 // truncate is the reactive TruncateHandoffFn. It mirrors production
 // (defaultScrubHandoffNonces): strip the keeper's own "<!-- KEEPER:... -->"
 // marker(s) so a stale nonce cannot pre-satisfy the poll, and PRESERVE the rest
@@ -355,6 +363,7 @@ func newReactiveCyclerWithBackstop(
 	}
 	return mustNewCyclerWithOverridesAndDeps(cfg, em, cfgOverrides, func(deps *keeper.CycleDeps) {
 		deps.Handoff = testHandoffWithModTime{HandoffDocument: deps.Handoff, modTime: rs.handoffModTime}
+		deps.Activity = testActivityWithIdle{ActivityProbe: deps.Activity, idleMarker: func() (time.Time, bool) { return time.Now(), true }}
 		deps.Context = testContextWithManaged{ContextStore: deps.Context, setManaged: func(sid string) error {
 			mu.Lock()
 			defer mu.Unlock()

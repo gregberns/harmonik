@@ -825,9 +825,29 @@ cmd_init() {
         || die "init: cannot check out $want ('$rev') in $scratch"
     git -C "$scratch" reset --quiet --hard "$want"
     # An untracked leftover from a previous run is still the previous run's code.
-    # .harmonik is this scratch's own daemon state (binary, socket, pidfile,
-    # config) rather than part of the revision, so it is the one thing kept.
-    git -C "$scratch" clean -qfdx -e .harmonik
+    # Two directories are this scratch's own harness state rather than part of
+    # the revision under audit, so the clean keeps both:
+    #   .harmonik — daemon state (socket, pidfile, config). The binary lives here
+    #               too and is NOT kept: the block below deletes it deliberately.
+    #   .beads    — the seed ledger (hk-sxvsm). It is gitignored, so a bare
+    #               `clean -fdx` deletes it. That breaks the one workflow this
+    #               script exists for — repin to a new commit, re-run the same
+    #               proof beads — and it breaks it silently. Every symptom points
+    #               somewhere else. `queue submit --beads` returns a bare
+    #               `internal_error (code -32099)`, which names no cause. The
+    #               daemon log says `brcli: bead not found`. `br list` reports an
+    #               empty set and exits 0, so the ledger reads as deliberately
+    #               empty rather than destroyed. Nothing names the repin.
+    #
+    # KNOW WHAT THIS DOES NOT RESET. The ledger is not a read-only fixture: the
+    # graded run writes to it, because the daemon owns terminal transitions. So a
+    # repin carries the previous run's bead transitions forward, in the same way
+    # it already carries every git ref and the bare scratch origin. That cannot
+    # produce a false green — cmd_batch folds the live event stream only and never
+    # reads br, so a bead the daemon declines to dispatch folds to `incomplete`
+    # and exits 1. It fails loudly, which is the direction this script always errs.
+    # Reset a seed to `open` yourself when you want a clean second grading.
+    git -C "$scratch" clean -qfdx -e .harmonik -e .beads
 
     # VERIFY. Every step above can fail in a way that leaves the tree on the wrong
     # commit, and a wrong tree reporting green is the whole failure this guards

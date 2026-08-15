@@ -69,6 +69,7 @@ const (
 	EvIdleRestartTick    EventKind = "idle_restart_tick"
 	EvNonceObserved      EventKind = "nonce_observed"
 	EvHandoffFreshSeen   EventKind = "handoff_fresh_seen"
+	EvPendingHandoffSeen EventKind = "pending_handoff_seen"
 	EvOperatorTurnRecent EventKind = "operator_turn_recent"
 	EvModelDone          EventKind = "model_done"
 	EvSessionChanged     EventKind = "session_changed"
@@ -292,6 +293,8 @@ func stepCycle(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action)
 			return stepIdleRestartTick(cfg, s, ev)
 		case EvCrashJournal:
 			return stepIdleCrashJournal(cfg, s, ev)
+		case EvPendingHandoffSeen:
+			return stepResumePendingHandoff(cfg, s, ev)
 		default:
 			// any timer/detection event in Idle → ignored (no cycle in flight).
 			return s, nil
@@ -315,14 +318,7 @@ func stepAwaitingHandoff(cfg *CyclerConfig, s CycleState, ev Event) (CycleState,
 		// (SK-012, §4: the AwaitingHandoff → AwaitModelDone transition),
 		// and await the model-done signal (SR4) under the fail-open
 		// model_done_timeout bound (SK-014).
-		s.Phase = PhaseAwaitModelDone
-		s.NonceConfirmedAt = ev.At
-		return s, []Action{
-			journalAction(&s, "confirmed", ev.At),
-			emitHandoffWrittenAction(cfg, s.CycleID, s.PrevSID, false, time.Time{}),
-			{Kind: ActCancelTimer, Timer: TimerHandoffTimeout},
-			{Kind: ActArmTimer, Timer: TimerModelDone, D: cfg.ModelDoneTimeout},
-		}
+		return stepConfirmHandoff(cfg, s, ev, false, time.Time{})
 	case EvHandoffFreshSeen:
 		// The shell observed a fresh handoff (mtime ≥ injectedAt) at
 		// handoff-timeout expiry; record it for the TimerFired edge.
@@ -351,10 +347,47 @@ func stepAwaitingHandoff(cfg *CyclerConfig, s CycleState, ev Event) (CycleState,
 				{Kind: ActArmTimer, Timer: TimerModelDone, D: cfg.ModelDoneTimeout},
 			}
 		}
-		return stepAbort(cfg, s, ev)
+		return stepParkPending(cfg, s, ev)
 	default:
 		return s, nil
 	}
+}
+
+func stepConfirmHandoff(cfg *CyclerConfig, s CycleState, ev Event, recovered bool, mtime time.Time) (CycleState, []Action) {
+	s.Phase = PhaseAwaitModelDone
+	s.NonceConfirmedAt = ev.At
+	return s, []Action{
+		journalAction(&s, "confirmed", ev.At),
+		emitHandoffWrittenAction(cfg, s.CycleID, s.PrevSID, recovered, mtime),
+		{Kind: ActCancelTimer, Timer: TimerHandoffTimeout},
+		{Kind: ActArmTimer, Timer: TimerModelDone, D: cfg.ModelDoneTimeout},
+	}
+}
+
+// stepParkPending ends the synchronous observation window without classifying
+// useful work as failure. The request identity remains in state and on disk.
+func stepParkPending(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action) {
+	s.Reason = "handoff_pending"
+	s.Phase = PhaseIdle
+	s.LastTerminal = "pending"
+	s.LastFireWasAbort = false
+	return s, []Action{
+		journalAction(&s, "pending", ev.At),
+		emitCycleParkedAction(cfg, s.CycleID, s.EntryCF.SessionID, s.Reason),
+		{Kind: ActCancelTimer, Timer: TimerHandoffTimeout},
+	}
+}
+
+// stepResumePendingHandoff accepts the original request marker after the
+// synchronous observation window ended. Event.At is the handoff mtime, so a
+// Stop marker written after the handoff remains comparable in AwaitModelDone.
+func stepResumePendingHandoff(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action) {
+	if s.LastTerminal != "pending" || ev.CycleID == "" || ev.CycleID != s.CycleID {
+		return s, nil
+	}
+	s.LastTerminal = ""
+	s.Reason = "handoff_observed_after_wait"
+	return stepConfirmHandoff(cfg, s, ev, true, ev.Mtime)
 }
 
 // stepParkForOperator ends a cycle without treating an operator turn as an
@@ -496,8 +529,12 @@ func stepIdleGaugeTick(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, [
 		return s, nil
 	}
 
-	// Gate 3: act threshold.
-	if cfg.belowActThreshold(cf) {
+	// Gate 3: production uses the hard threshold. Compatibility callers can
+	// retain the former act-threshold cycle policy.
+	if cfg.HardBandCycleOnly && !cfg.aboveForceThreshold(cf) {
+		return s, nil
+	}
+	if !cfg.HardBandCycleOnly && cfg.belowActThreshold(cf) {
 		return s, nil
 	}
 	// Gate 4: CrispIdle unless above the hard force threshold (hk-0uu).
@@ -776,6 +813,18 @@ func stepIdleCrashJournal(cfg *CyclerConfig, s CycleState, ev Event) (CycleState
 		return s, nil
 	}
 	switch j.Phase {
+	case "pending":
+		// The observation window ended before the handoff arrived. Restore the
+		// request without sending another message or minting another cycle ID.
+		// A later GaugeTick observes the marked handoff and resumes this cycle.
+		s.CycleID = j.CycleID
+		s.EntryKind = EvGaugeTick
+		s.EntryCF = CtxFile{SessionID: j.SessionID}
+		s.PrevSID = j.SessionID
+		s.OpenedAt = j.OpenedAt
+		s.LastTerminal = "pending"
+		s.Reason = "handoff_pending"
+		return s, nil
 	case "cleared":
 		// /clear was issued before the crash: inject the brief to complete the
 		// interrupted cycle (I1 identity re-pin), close the journal, emit
@@ -869,51 +918,6 @@ func stepStartCycle(cfg *CyclerConfig, s CycleState, ev Event, cf *CtxFile) (Cyc
 		journalAction(&s, "handoff_injected", ev.At),
 		Action{Kind: ActArmTimer, Timer: TimerHandoffTimeout, D: cfg.HandoffTimeout},
 	)
-	return s, actions
-}
-
-// stepAbort is the AwaitingHandoff handoff_timeout edge with NO fresh handoff
-// — the ONLY path that never sends /clear (SK §8.2). NEVER /clear an
-// unconfirmed handoff (hk-vpnp Bug 3).
-func stepAbort(cfg *CyclerConfig, s CycleState, ev Event) (CycleState, []Action) {
-	actions := []Action{
-		journalAbortedAction(&s, ev.At),
-		emitCycleAbortedAction(cfg, s.CycleID, s.EntryCF.SessionID, "handoff_timeout"),
-	}
-	// DEFECT-4: record suppression on abort; hk-vpnp Bug 3a: mark as ABORT so
-	// the same-SID escape hatch does not re-arm on a post-abort gauge dip.
-	s.LastFiredSID = s.EntryCF.SessionID
-	s.SeenLowPctAfterLastFire = false
-	s.LastFireWasAbort = true
-
-	// Re-arm: clear .managed so the .sid channel can rebind — ONLY when a real
-	// session-id change was previously observed (hk-ibb fix 3).
-	if !s.CurrentSessionIDSince.IsZero() {
-		actions = append(actions, Action{Kind: ActSetManagedSession, SID: ""})
-	}
-
-	// Escalation: consecutive timeouts above the force threshold march toward
-	// ForceRestart (hk-qoz). The counter only resets on the escalation call
-	// when a respawn port is actually wired (pre-rebuild: respawn != nil).
-	if cfg.aboveForceThreshold(&s.EntryCF) {
-		s.ConsecutiveHandoffTimeouts++
-		if cfg.hasRespawn && cfg.MaxHandoffTimeouts > 0 &&
-			s.ConsecutiveHandoffTimeouts >= cfg.MaxHandoffTimeouts {
-			actions = append(actions, Action{Kind: ActForceRestart})
-			s.ConsecutiveHandoffTimeouts = 0
-		}
-	} else {
-		s.ConsecutiveHandoffTimeouts = 0
-	}
-
-	// hk-4i0s: an idle-entry cycle that aborted issued no /clear — unwind the
-	// cooldown stamp so the next tick can retry.
-	if s.EntryKind == EvIdleRestartTick {
-		s.LastIdleRestartAt = time.Time{}
-	}
-
-	s.Phase = PhaseIdle
-	s.LastTerminal = "aborted"
 	return s, actions
 }
 
@@ -1025,21 +1029,11 @@ func stepBriefing(cfg *CyclerConfig, s CycleState, ev Event, newSID string, acti
 func journalAction(s *CycleState, phase string, at time.Time) Action {
 	return Action{Kind: ActWriteJournal, Journal: CycleJournal{
 		CycleID:   s.CycleID,
+		SessionID: s.EntryCF.SessionID,
 		Phase:     phase,
 		OpenedAt:  s.OpenedAt,
 		UpdatedAt: at.UTC(),
 		Reason:    s.Reason,
-	}}
-}
-
-// journalAbortedAction is the abort journal write (Reason "handoff_timeout").
-func journalAbortedAction(s *CycleState, at time.Time) Action {
-	return Action{Kind: ActWriteJournal, Journal: CycleJournal{
-		CycleID:   s.CycleID,
-		Phase:     "aborted",
-		OpenedAt:  s.OpenedAt,
-		UpdatedAt: at.UTC(),
-		Reason:    "handoff_timeout",
 	}}
 }
 
@@ -1048,6 +1042,7 @@ func journalAbortedAction(s *CycleState, at time.Time) Action {
 func journalCompleteAction(s *CycleState, at time.Time) Action {
 	return Action{Kind: ActWriteJournal, Journal: CycleJournal{
 		CycleID:   s.CycleID,
+		SessionID: s.EntryCF.SessionID,
 		Phase:     "complete",
 		OpenedAt:  s.OpenedAt,
 		UpdatedAt: at.UTC(),
@@ -1093,16 +1088,6 @@ func emitCycleCompleteAction(cfg *CyclerConfig, cycleID, prevSID, newSID string)
 		NewSessionID:  newSID,
 	})
 	return Action{Kind: ActEmit, Type: core.EventTypeSessionKeeperCycleComplete, Payload: raw}
-}
-
-func emitCycleAbortedAction(cfg *CyclerConfig, cycleID, sessionID, reason string) Action {
-	raw := mustMarshalPayload(core.SessionKeeperCycleAbortedPayload{
-		AgentName: cfg.AgentName,
-		CycleID:   cycleID,
-		SessionID: sessionID,
-		Reason:    reason,
-	})
-	return Action{Kind: ActEmit, Type: core.EventTypeSessionKeeperCycleAborted, Payload: raw}
 }
 
 func emitCycleParkedAction(cfg *CyclerConfig, cycleID, sessionID, reason string) Action {

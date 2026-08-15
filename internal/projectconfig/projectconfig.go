@@ -354,6 +354,7 @@ type rawKeeperWarnMessages struct {
 	DefaultWarnText    string `yaml:"default_warn_text"`
 	OnDemandWarnText   string `yaml:"on_demand_warn_text"`
 	ActionableWarnText string `yaml:"actionable_warn_text"`
+	SettleWarnText     string `yaml:"settle_warn_text"`
 	// LeaderDeferText overrides the compiled-in leader defer-message body (the
 	// K2 finish-then-self-restart nudge). Empty = compiled default. The four
 	// SK-026 structural slots are validated/filled by T3 (SK-033); T2 only
@@ -481,6 +482,7 @@ func keeperBlockAbsent(raw rawKeeperConfig) bool {
 		w.DefaultWarnText == "" &&
 		w.OnDemandWarnText == "" &&
 		w.ActionableWarnText == "" &&
+		w.SettleWarnText == "" &&
 		w.LeaderDeferText == "" &&
 		w.CrewDeferText == ""
 }
@@ -641,6 +643,8 @@ type KeeperConfig struct {
 	// warning) and is kept as a RECOGNIZED key so old strict configs (hk-9f3f) do not
 	// hard-error. Refs: hk-vs4u, hk-lhu2.
 	ActionableWarnText string
+	// SettleWarnText overrides the second-band checkpoint warning.
+	SettleWarnText string
 	// LeaderDeferText overrides the compiled-in leader defer-message body (K2
 	// finish-then-self-restart nudge). Empty = compiled default. Carried to
 	// WatcherConfig; the four SK-026 structural slots are filled/validated by T3.
@@ -1910,6 +1914,7 @@ func parseKeeperBlock(path string, raw rawKeeperConfig) (KeeperConfig, error) {
 	// ── warn_messages ── empty strings are "not configured" — defer to compiled default.
 	cfg.DefaultWarnText = raw.WarnMessages.DefaultWarnText
 	cfg.ActionableWarnText = raw.WarnMessages.ActionableWarnText
+	cfg.SettleWarnText = raw.WarnMessages.SettleWarnText
 	// Leader defer-message + crew-message overrides (K2/K7). Empty = compiled
 	// default (leader) / off (crew). Carried through verbatim; consumption is T3+.
 	cfg.LeaderDeferText = raw.WarnMessages.LeaderDeferText

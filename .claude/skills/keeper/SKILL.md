@@ -7,7 +7,7 @@ description: >
   intent-preserving handoff → /clear → /session-resume cycle BEFORE the pane
   overflows and stops accepting keystrokes. Load this when you run (or manage)
   any keeper-watched session — captain, crew, flywheel, orchestrator. Covers:
-  the two thresholds (warn vs act) and their REAL default values, the command
+  the three checkpoint bands and their REAL default values, the command
   surface (enable / doctor / set-dispatching / clear-dispatching / the watcher
   itself), crew-restart re-hydration, and verifying gauge + watcher liveness with
   `keeper doctor` (use `live-watcher` check — confirms a running keeper, not just a
@@ -59,13 +59,13 @@ Each turn, the keeper's **statusLine hook** (`keeper-statusline.sh`) writes
 `.harmonik/keeper/<agent>.ctx` with the session's `pct`, absolute `tokens`, and
 `session_id`. A **watcher** loop polls that gauge every ~5s
 (`internal/keeper/thresholds.go` `DefaultPollInterval`) and crosses one of two
-thresholds:
+checkpoint bands:
 
-- **WARN** — the session is getting full. The keeper injects a wrap-up-warning
-  prompt into the tmux pane (if `--tmux` is set) and emits `session_keeper_warn`.
-  **This is informational. The agent keeps working.**
-- **ACT** — the session is near-full AND idle (CrispIdle) AND not holding a
-  dispatch. The keeper runs the **reset cycle** (`Cycler.MaybeRun`): truncate the
+- **NOTICE** — the keeper sends early continuity guidance. The agent keeps working.
+- **WARN** — the keeper asks the agent to reach a durable checkpoint soon.
+  It injects the prompt into the tmux pane when `--tmux` is set.
+- **HARD** — the session reached the automatic action band. When the safety gates pass,
+  the keeper runs the **reset cycle** (`Cycler.MaybeRun`): scrub the
   handoff → inject `/session-handoff` → **poll for the handoff nonce** → ONLY
   THEN `/clear` → `/session-resume <agent>`. The invariant — *never `/clear`
   without a confirmed handoff nonce* — is what makes the cycle safe
@@ -78,7 +78,7 @@ ever fires). Creating `.managed` requires explicit destructive consent (see
 
 ---
 
-## § The two thresholds — REAL values from code
+## § The three checkpoint bands — REAL values from code
 
 > **Operator-required config (no built-in runtime defaults).** harmonik does NOT
 > apply a baked-in number for any keeper value when you launch `harmonik keeper`.
@@ -106,9 +106,9 @@ token spend.
 
 | gate | authoritative symbol (`internal/keeper/thresholds.go`) | pct-ceil symbol | indicative value |
 |---|---|---|---|
-| **WARN** | `DefaultWarnAbsTokens` | `DefaultWarnPctCeil` | ~200k abs, ceil ~0.70 |
-| **ACT** | `DefaultActAbsTokens` | `DefaultActPctCeil` | ~215k abs, ceil ~0.85 |
-| **FORCE-ACT** | `DefaultActAbsTokens` + `DefaultForceActAbsOffset` | act ceil + the force-act ceil offset | ~240k abs, ceil ~0.95 |
+| **NOTICE** | `DefaultWarnAbsTokens` | `DefaultWarnPctCeil` | ~170k abs, ceil ~0.70 |
+| **WARN** | `DefaultActAbsTokens` | `DefaultActPctCeil` | ~200k abs, ceil ~0.85 |
+| **HARD** | `DefaultActAbsTokens` + `DefaultForceActAbsOffset` | act ceil + the force-act ceil offset | ~220k abs, ceil ~0.95 |
 | **HARD-CEILING** (SID-independent trip-wire) | `HardCeilingAbsTokens` (alias of `DefaultHardCeilingTokens`) | — | ~280k abs |
 | window fallback | the fallback window size applied by `WatcherConfig.applyDefaults` (`watcher.go`), overridable with `--window-size` | — | ~200k |
 
@@ -148,7 +148,7 @@ token spend.
   are both LOOSER than the default and both hard-fail at startup. To move the band, reach
   for `--warn-abs-tokens` / `--act-abs-tokens`. Reach for a pct flag only when you mean to
   tighten the gate relative to a particular window size. (Refs: hk-odhh, hk-5da7.)
-- **FORCE-ACT** (240k) fires the cycle **unconditionally, bypassing the
+- **HARD** (220k) fires the cycle **unconditionally, bypassing the
   CrispIdle gate**, so a perpetually-busy session that never goes idle still gets
   cleared before exhaustion (`cycle.go` `CyclerConfig.aboveForceThreshold` /
   `forceActThreshold`, Refs: hk-0uu).
@@ -187,7 +187,8 @@ required), and `boot_grace: 0s` is the explicit "disable boot grace" sentinel (p
 not missing). self_service / warn_messages are OPTIONAL (not in the required set);
 `crews_enabled` absent ⇒ true (crews self-restart by default — hk-vs4u).
 
-The config is loaded once at keeper startup. Restart the keeper to reload.
+The keeper reloads `keeper.warn_messages` after the config file changes.
+Restart the keeper to apply threshold changes.
 Refs: `cmd/harmonik/resolve_keeper_config.go` (operator-facing chokepoint),
 `internal/daemon/projectconfig.go`, hk-lhu2.
 
@@ -432,9 +433,9 @@ flight; a hold defers it while an *operator* is in the loop.
 
 | crossing | keeper does | YOU do (crew / default) | YOU do (captain / OnDemandRestart) |
 |---|---|---|---|
-| **WARN** (≥200k tokens abs / `--warn-pct` fallback) | injects warn text, emits `session_keeper_warn` | **Keep working.** Optionally refresh `HANDOFF-<agent>.md`. | **Keep working.** At the next clean idle point: write `HANDOFF-captain.md` (include the KEEPER nonce), run `harmonik keeper restart-now --agent captain`, keep the turn OPEN, and stop typing. |
-| **ACT** (≥215k / `--act-pct`, CrispIdle, no dispatch hold) | runs handoff → nonce-poll → `/clear` → `/session-resume` | **Nothing.** Hold with `keeper set-dispatching` if mid-dispatch. | **Nothing** — same cycle fires if the captain has not already triggered restart-now. |
-| **FORCE-ACT** (≥240k / `--act-pct` 95) | runs the cycle **unconditionally** (bypasses CrispIdle) | **Nothing** — the safety net for a never-idle session. | **Nothing** — same safety net; always fires regardless of restart-now status. |
+| **NOTICE** (≥170k tokens abs / `--warn-pct` fallback) | sends continuity guidance and emits `session_keeper_warn` | Continue active work. Shape its state so a fresh session can resume it. | Same. Use `restart-now` when ready. |
+| **WARN** (≥200k / `--act-pct` fallback) | sends a stronger checkpoint warning | Bring the current unit to a durable checkpoint. | Same. Use `restart-now` when ready. |
+| **HARD** (≥220k / force threshold) | starts the automatic handoff request when the safety gates pass | Finish the handoff. The observation window does not abort useful work. | Same. A late marked handoff remains valid. |
 | **HARD-CEILING** (≥280k, SID-independent) | forces handoff+restart regardless of session_id binding (`thresholds.go` `HardCeilingAbsTokens`, hk-34ac) | **Nothing** — last-resort backstop against a mis-bound keeper. | **Nothing** — same backstop. |
 | **captain restart-now** | `RunOnDemand`: bypasses CrispIdle gate, runs cycle immediately on next tick | — | Captain writes handoff + nonce, then calls `harmonik keeper restart-now --agent captain`. |
 | **operator attached at cycle entry** | act-path goes **warn-only**: cycle injection is not started while a tmux client is active | nothing (`cycle.go` `CyclerConfig.OperatorAttachedFn`, hk-6qf) | nothing |

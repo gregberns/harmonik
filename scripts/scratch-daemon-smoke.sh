@@ -384,6 +384,27 @@ if [ "$FULL" = "1" ]; then
             "clone is at the revision init was given, not the source's default branch"
         assert_eq "$REPO_HEAD" "$(cut -f1 <"$CLONE/.harmonik/audit-revision")" \
             "init recorded the audit revision"
+        # A repin must NOT destroy the seed ledger (hk-sxvsm). `.beads/` is gitignored,
+        # so the `git clean -qfdx` in cmd_init deleted it until `-e .beads` was added.
+        # This guard exists because that data loss was SILENT and every symptom pointed
+        # somewhere else: `queue submit --beads` returned a bare `internal_error
+        # (code -32099)`, the daemon log said `brcli: bead not found`, and `br list`
+        # reported an empty set with exit 0, so the ledger read as deliberately empty
+        # rather than destroyed. Nothing named the repin. Assert the file survives a
+        # second init rather than trusting the flag to stay in the command.
+        mkdir -p "$CLONE/.beads"
+        echo '{"id":"smoke-seed-marker"}' > "$CLONE/.beads/issues.jsonl"
+        if $SD init "$CLONE" --source "$REPO_ROOT" --rev "$REPO_HEAD" --reuse \
+            >"$ROOT/init-reuse.out" 2>&1; then
+            if [ -f "$CLONE/.beads/issues.jsonl" ] \
+                && grep -q smoke-seed-marker "$CLONE/.beads/issues.jsonl"; then
+                ok "init --reuse preserves the seed ledger (.beads survives the repin)"
+            else
+                bad "init --reuse DELETED .beads/issues.jsonl — a repin destroys its seed beads (hk-sxvsm)"
+            fi
+        else
+            bad "init --reuse failed outright; see $ROOT/init-reuse.out"
+        fi
         scratch_origin="$(git -C "$CLONE" remote get-url origin 2>/dev/null)"
         clone_real="$(cd "$CLONE" && pwd -P)"
         expected_origin="$clone_real/.harmonik/scratch-origin.git"

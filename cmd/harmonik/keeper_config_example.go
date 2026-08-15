@@ -37,9 +37,9 @@ const keeperConfigExampleBlock = `keeper:
   # context_thresholds — the warn/act/force token band + pct-of-window caps.
   # Token fields are plain integers. INVARIANT: warn < act < force_act.
   context_thresholds:
-    warn_abs_tokens: 200000          # emit a wrap-up WARNING at this token count
-    act_abs_tokens: 215000           # drive the handoff/clear ACT cycle here (> warn)
-    force_act_abs_tokens: 240000     # unconditional forced clear (> act); or set force_act_abs_offset instead
+    warn_abs_tokens: 170000          # compatibility name: emit the NOTICE at this token count
+    act_abs_tokens: 200000           # compatibility name: emit the stronger WARN here (> notice)
+    force_act_abs_tokens: 220000     # compatibility name: HARD band (> warn); or set force_act_abs_offset instead
     idle_floor_abs_tokens: 150000    # floor below which an idle crew is NOT idle-restarted
     warn_pct_ceil: 0.70              # pct-of-window cap for the warn gate; fraction in (0,1]
     act_pct_ceil: 0.85               # pct-of-window cap for the act gate; fraction in (0,1] (> warn_pct_ceil)
@@ -87,6 +87,7 @@ const keeperConfigExampleBlock = `keeper:
   warn_messages:
     default_warn_text: ""            # ordinary wrap-up warning text
     actionable_warn_text: ""         # must include the literal harmonik keeper restart-now command
+    settle_warn_text: ""             # second-band warning; must include harmonik keeper restart-now
     leader_defer_text: ""            # leader finish-then-restart nudge; structural slots are validated
     crew_defer_text: ""              # reserved crew-specific defer wording
 `

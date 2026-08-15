@@ -82,10 +82,11 @@ func shellSafeByte(b byte) bool {
 // Written atomically to .harmonik/keeper/<agent>.cycle before any injection.
 //
 // Phase transitions: "opened" → "handoff_injected" → "confirmed" → "cleared"
-// → "resumed" → "complete". A timeout ends as "aborted". A recent operator
-// turn during the wait ends as "parked".
+// → "resumed" → "complete". An ended observation window records "pending".
+// A recent operator turn during the wait records "parked".
 type CycleJournal struct {
 	CycleID   string    `json:"cycle_id"`
+	SessionID string    `json:"session_id,omitempty"`
 	Phase     string    `json:"phase"`
 	OpenedAt  time.Time `json:"opened_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -125,6 +126,11 @@ type CyclerConfig struct {
 	ActPct      float64 // threshold to fire; default 90
 	WarnPct     float64 // re-arm threshold; default 80
 	ForceActPct float64 // forced-clear fallback pct; default 95
+
+	// HardBandCycleOnly makes the act threshold advisory. Production enables
+	// this for the three-band checkpoint protocol. The zero value preserves the
+	// former library behavior for compatibility callers.
+	HardBandCycleOnly bool
 
 	HandoffTimeout time.Duration // wait for handoff nonce; default 300s (hk-4xni9 K2)
 	ClearSettle    time.Duration // per-attempt wait for new session_id; default 10s (hk-4xni9 K3)
@@ -728,6 +734,9 @@ func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
 	if cf == nil {
 		return nil
 	}
+	if handled, err := c.resumePendingHandoff(ctx, cf.SessionID); handled {
+		return err
+	}
 	snap := c.snapshot(cf.SessionID)
 	return c.runEntry(ctx, Event{
 		Kind:  EvGaugeTick,
@@ -735,6 +744,37 @@ func (c *Cycler) MaybeRun(ctx context.Context, cf *CtxFile) error {
 		CF:    cf,
 		Gates: snap,
 	})
+}
+
+// resumePendingHandoff keeps one request identity alive after the synchronous
+// handoff observation window returns control to the watcher. A late marker is
+// never scrubbed as stale by a newly minted cycle.
+func (c *Cycler) resumePendingHandoff(ctx context.Context, sid string) (bool, error) {
+	st := c.machine.State()
+	if st.LastTerminal != "pending" || st.CycleID == "" {
+		return false, nil
+	}
+	content, err := c.handoff.Read()
+	if err != nil {
+		return true, nil //nolint:nilerr // a transient read error keeps the durable request pending
+	}
+	if !strings.Contains(content, nonceMarker(st.CycleID)) {
+		return true, nil
+	}
+	mtime, ok := c.handoff.ModTime()
+	if !ok {
+		return true, nil
+	}
+	snap := c.snapshot(sid)
+	if gateOperatorTurnHolds(&c.cfg, snap, c.cfg.Clock.Now(), sid) {
+		return true, nil
+	}
+	if err := c.feed(ctx, Event{
+		Kind: EvPendingHandoffSeen, CycleID: st.CycleID, Mtime: mtime, At: mtime,
+	}); err != nil {
+		return true, err
+	}
+	return true, c.drive(ctx)
 }
 
 // resolvedTranscriptDir returns the effective transcript directory: the

@@ -23,6 +23,7 @@ type CyclePolicy struct {
 	ActPct               float64
 	WarnPct              float64
 	ForceActPct          float64
+	HardBandCycleOnly    bool
 	HandoffTimeout       time.Duration
 	ClearSettle          time.Duration
 	PollInterval         time.Duration
@@ -54,6 +55,7 @@ func CyclePolicyFromConfig(cfg CyclerConfig) CyclePolicy {
 		ActPct:               cfg.ActPct,
 		WarnPct:              cfg.WarnPct,
 		ForceActPct:          cfg.ForceActPct,
+		HardBandCycleOnly:    cfg.HardBandCycleOnly,
 		HandoffTimeout:       cfg.HandoffTimeout,
 		ClearSettle:          cfg.ClearSettle,
 		PollInterval:         cfg.PollInterval,

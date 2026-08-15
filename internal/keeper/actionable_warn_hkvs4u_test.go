@@ -10,7 +10,7 @@ import (
 // These tests pin the three load-bearing contracts:
 //   1. ActionableWarnText ALWAYS contains the verbatim restart-now command and the
 //      /session-handoff step (the two-step procedure), the live token count, the
-//      band, and the auto-restart fall-through line.
+//      band, and the session-continuity guidance.
 //   2. selectWarnText picks the actionable form ONLY when the gate holds (captain
 //      OR crew-with-crews-enabled, primary SID, CrispIdle, self_service.enabled),
 //      and a custom ActionableWarnText override that DROPS the command falls back
@@ -21,17 +21,16 @@ const restartNowStem = "harmonik keeper restart-now"
 
 func TestActionableWarnText_ContainsTwoStepProcedureAndFigures(t *testing.T) {
 	t.Parallel()
-	txt := ActionableWarnText("captain", 205_000, 200_000, 215_000)
+	txt := ActionableWarnText("captain", 175_000, 170_000, 200_000)
 
 	wantSubstrs := []string{
 		"/session-handoff", // step (a)
 		"harmonik keeper restart-now --agent captain", // step (b), verbatim, templated-in
-		"205k",                      // live token count (tokens/1000)
-		"warn 200k",                 // band
-		"act 215k",                  // band
-		"auto-restarts at 215k",     // fall-through line
-		"Only at a clean stop",      // clean-stop qualifier
-		"if mid-task, finish first", // mid-task instruction
+		"175k", // live token count (tokens/1000)
+		"before 200k",
+		"notice band is 170k",
+		"As you continue, shape the work toward a state that a fresh session can resume without losing decisions or repeating work.",
+		"so we can continue in the fresh session",
 	}
 	for _, sub := range wantSubstrs {
 		if !strings.Contains(txt, sub) {
@@ -43,10 +42,24 @@ func TestActionableWarnText_ContainsTwoStepProcedureAndFigures(t *testing.T) {
 func TestActionableWarnText_AlwaysCarriesCommand_AnyAgent(t *testing.T) {
 	t.Parallel()
 	for _, agent := range []string{"captain", "crew-paul", "-weird-name"} {
-		txt := ActionableWarnText(agent, 100_000, 200_000, 215_000)
+		txt := ActionableWarnText(agent, 100_000, 170_000, 200_000)
 		want := "harmonik keeper restart-now --agent " + agent
 		if !strings.Contains(txt, want) {
 			t.Errorf("agent %q: ActionableWarnText must contain %q, got: %s", agent, want, txt)
+		}
+	}
+}
+
+func TestSettleWarnText_KeepsCheckpointAgentOwned(t *testing.T) {
+	t.Parallel()
+	got := SettleWarnText("alpha", 201_000, 220_000)
+	for _, want := range []string{
+		"[KEEPER WARN]", "201k tokens", "220k hard band", "durable checkpoint",
+		"/session-handoff", "harmonik keeper restart-now --agent alpha",
+		"continue in the fresh session",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("SettleWarnText() missing %q: %q", want, got)
 		}
 	}
 }

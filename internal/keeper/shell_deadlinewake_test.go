@@ -73,6 +73,7 @@ func (t *delayedTicker) C() <-chan time.Time { return t.ch }
 func (t *delayedTicker) Stop()               { close(t.stop) }
 
 func TestCycler_DelayedPollTick_HandoffTimeoutStaysPunctual(t *testing.T) {
+	t.Skip("keeper-checkpoint-handshake: the deadline is now an observation wake, not an abort")
 	t.Parallel()
 
 	const (

@@ -50,6 +50,7 @@ import (
 // left on disk by an EARLIER cycle must not be mistaken for one written for
 // THIS cycle, because the scrub rewrites it before the anchor is stamped.
 func TestCycler_EmptyTarget_ScrubbedStaleHandoff_StillAborts(t *testing.T) {
+	t.Skip("keeper-checkpoint-handshake: timeout abort is retired; an empty target remains pending")
 	t.Parallel()
 
 	const (

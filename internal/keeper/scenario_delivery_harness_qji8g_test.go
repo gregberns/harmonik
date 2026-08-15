@@ -37,14 +37,9 @@ import (
 )
 
 // (b) LATE-HANDOFF ABORT — the agent never writes the nonce within the handoff
-// window (writeNonce=false), so the nonce poll cannot confirm and the cycle
-// ABORTS on the handoff timeout. The destructive /clear is NEVER injected on an
-// unconfirmed handoff (SK-INV-001). Fail-before: a path that cleared without a
-// fresh, confirmed handoff would have injected /clear here. Pass-after:
-// cycle_aborted{handoff_timeout}, no /clear, no cycle_complete. Validates T5/T6
-// (the abort leaves the 300s watch window; the T+301 restart-now leg is the
-// integration test scenario_restartnow_integration_qji8g_test.go).
-func TestScenario_LateHandoffAborts_NoClear_qji8g(t *testing.T) {
+// window (writeNonce=false). The observation wake returns control and keeps the
+// request pending. It does not clear, abort, or rotate the session.
+func TestScenario_HandoffObservationWake_ParksWithoutClear(t *testing.T) {
 	t.Parallel()
 
 	const (
@@ -57,8 +52,8 @@ func TestScenario_LateHandoffAborts_NoClear_qji8g(t *testing.T) {
 	jc := &journalCapture{}
 	var managedBinding string
 
-	// writeNonce=false: /session-handoff is injected but the nonce is never
-	// written → the poll times out → abort BEFORE any /clear.
+	// writeNonce=false: the request reaches the session, but no marker arrives
+	// during the first observation window.
 	rs := newReactiveSession(s1, s2, false /*writeNonce*/, true /*flipOnClear*/)
 
 	cycler := newReactiveCycler(
@@ -74,26 +69,63 @@ func TestScenario_LateHandoffAborts_NoClear_qji8g(t *testing.T) {
 
 	// SK-INV-001: /clear must NEVER be injected on an unconfirmed handoff.
 	if rs.sawClear() {
-		t.Fatal("/clear was injected on the late-handoff abort path — SK-INV-001 violated")
+		t.Fatal("/clear was injected without a confirmed handoff")
 	}
-	// cycle_aborted{handoff_timeout} emitted; cycle_complete NOT.
-	aborted := em.EventsOfType(core.EventTypeSessionKeeperCycleAborted)
-	if len(aborted) != 1 {
-		t.Fatalf("want 1 cycle_aborted; got %d", len(aborted))
+	parked := em.EventsOfType(core.EventTypeSessionKeeperCycleParked)
+	if len(parked) != 1 {
+		t.Fatalf("want 1 cycle_parked; got %d", len(parked))
 	}
-	var ap core.SessionKeeperCycleAbortedPayload
-	if err := json.Unmarshal(aborted[0].Payload, &ap); err != nil {
-		t.Fatalf("unmarshal cycle_aborted: %v", err)
+	var pp core.SessionKeeperCycleParkedPayload
+	if err := json.Unmarshal(parked[0].Payload, &pp); err != nil {
+		t.Fatalf("unmarshal cycle_parked: %v", err)
 	}
-	if ap.Reason != "handoff_timeout" {
-		t.Errorf("cycle_aborted.reason = %q; want \"handoff_timeout\"", ap.Reason)
+	if pp.Reason != "handoff_pending" {
+		t.Errorf("cycle_parked.reason = %q; want handoff_pending", pp.Reason)
+	}
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleAborted)); n != 0 {
+		t.Errorf("want 0 cycle_aborted; got %d", n)
 	}
 	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)); n != 0 {
-		t.Errorf("want 0 cycle_complete on abort; got %d", n)
+		t.Errorf("want 0 cycle_complete while pending; got %d", n)
 	}
-	// The gauge SID never rotated (the flip is gated behind /clear, which never ran).
 	if rs.liveSID() != s1 {
-		t.Errorf("gauge SID = %q after abort; want %q (never rotated)", rs.liveSID(), s1)
+		t.Errorf("gauge SID = %q while pending; want %q", rs.liveSID(), s1)
+	}
+	if got := jc.lastJournal(); got == nil || got.Phase != "pending" || got.CycleID != cycleID {
+		t.Fatalf("last journal = %+v; want pending request %s", got, cycleID)
+	}
+}
+
+func TestScenario_LateMarkedHandoff_ResumesOriginalRequest(t *testing.T) {
+	t.Parallel()
+	const cycleID = "cyc-late-resume-001"
+	s1, s2 := reactiveSIDs()
+	em := &keeper.RecordingEmitter{}
+	jc := &journalCapture{}
+	var managedBinding string
+	rs := newReactiveSession(s1, s2, false, true)
+	cycler := newReactiveCycler("late-resume-agent", t.TempDir(), cycleID, rs, em, jc, &managedBinding, 40*time.Millisecond, 30*time.Millisecond)
+	cf := &keeper.CtxFile{Pct: 95, Tokens: 320_000, WindowSize: 1_000_000, SessionID: s1}
+
+	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+		t.Fatalf("first MaybeRun: %v", err)
+	}
+	rs.writeMarkedHandoff(cycleID)
+	if err := cycler.MaybeRun(context.Background(), cf); err != nil {
+		t.Fatalf("resume MaybeRun: %v", err)
+	}
+
+	if !rs.sawClear() || rs.liveSID() != s2 {
+		t.Fatalf("late handoff did not complete clear: clear=%v sid=%q", rs.sawClear(), rs.liveSID())
+	}
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)); n != 1 {
+		t.Fatalf("cycle_complete count = %d; want 1", n)
+	}
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleAborted)); n != 0 {
+		t.Fatalf("cycle_aborted count = %d; want 0", n)
+	}
+	if got := jc.lastJournal(); got == nil || got.Phase != "complete" || got.CycleID != cycleID {
+		t.Fatalf("last journal = %+v; want complete original request", got)
 	}
 }
 
@@ -105,6 +137,7 @@ func TestScenario_LateHandoffAborts_NoClear_qji8g(t *testing.T) {
 // without a 5-minute wall-clock wait, and that the cycle timing path is fully on the
 // ClockPort (a residual time.Now would never trip under a manual-advance clock).
 func TestScenario_LateHandoff300sFakeClock_Aborts_qji8g(t *testing.T) {
+	t.Skip("keeper-checkpoint-handshake: the 300s deadline is now an observation wake, not an abort")
 	t.Parallel()
 
 	const (
@@ -376,9 +409,9 @@ func TestScenario_NoThresholdConstantChanged_qji8g(t *testing.T) {
 		got  int64
 		want int64
 	}{
-		{"DefaultWarnAbsTokens", keeper.DefaultWarnAbsTokens, 200_000},
-		{"DefaultActAbsTokens", keeper.DefaultActAbsTokens, 215_000},
-		{"DefaultForceActAbsOffset", keeper.DefaultForceActAbsOffset, 25_000},
+		{"DefaultWarnAbsTokens", keeper.DefaultWarnAbsTokens, 170_000},
+		{"DefaultActAbsTokens", keeper.DefaultActAbsTokens, 200_000},
+		{"DefaultForceActAbsOffset", keeper.DefaultForceActAbsOffset, 20_000},
 		{"DefaultHardCeilingTokens", keeper.DefaultHardCeilingTokens, 280_000},
 		{"HardCeilingAbsTokens", keeper.HardCeilingAbsTokens, 280_000},
 	}
@@ -387,9 +420,9 @@ func TestScenario_NoThresholdConstantChanged_qji8g(t *testing.T) {
 			t.Errorf("%s = %d; want %d (threshold constant changed — SK-028 violated)", tc.name, tc.got, tc.want)
 		}
 	}
-	// force_act derives as act + offset = 240K; assert the derivation is intact.
-	if got := keeper.DefaultActAbsTokens + keeper.DefaultForceActAbsOffset; got != 240_000 {
-		t.Errorf("derived force_act = %d; want 240000", got)
+	// The first checkpoint trial derives the hard band as 220K.
+	if got := keeper.DefaultActAbsTokens + keeper.DefaultForceActAbsOffset; got != 220_000 {
+		t.Errorf("derived force_act = %d; want 220000", got)
 	}
 	// The 300s handoff window (hk-4xni9 K2) and 10s clear-settle are unchanged.
 	if keeper.DefaultHandoffTimeout != 300*time.Second {

@@ -52,6 +52,9 @@ func TestBuildKeeperConfigsProjectsResolvedCyclePolicy(t *testing.T) {
 	if p.MaxBootGraceTotal != 2*resolved.BootGrace {
 		t.Errorf("MaxBootGraceTotal = %s, want %s", p.MaxBootGraceTotal, 2*resolved.BootGrace)
 	}
+	if !p.HardBandCycleOnly {
+		t.Fatal("production policy must reserve automatic cycle entry for the hard band")
+	}
 }
 
 func TestBuildKeeperConfigsPreservesDisabledBootGrace(t *testing.T) {

@@ -13,8 +13,8 @@ import (
 // wrapUpWarningText is the prompt injected into the managed pane when the
 // context-window percentage crosses the warn threshold. Advisory only — no exit
 // instruction (agents without a supervised respawn path must not stop).
-const wrapUpWarningText = "[KEEPER WARN] Context threshold crossed. " +
-	"At a clean stop: commit + write HANDOFF-<name>.md (KEEPER nonce). Keep working."
+const wrapUpWarningText = "[KEEPER NOTICE] We use periodic session transitions to keep our work token-efficient. " +
+	"As you continue, shape the work toward a state that a fresh session can resume without losing decisions or repeating work."
 
 // AutomationEnvelopePrefix marks text inserted by Harmonik rather than typed by
 // the operator. Transcript readers use this stable prefix to keep automation
@@ -63,11 +63,24 @@ const restartNowCmdToken = "harmonik keeper restart-now --agent %s"
 func ActionableWarnText(agent string, tokens, warn, act int64) string {
 	cmd := fmt.Sprintf(restartNowCmdToken, agent)
 	return fmt.Sprintf(
-		"[KEEPER WARN] Context at %dk tokens (warn %dk / act %dk). "+
-			"Self-restart now: (a) run /session-handoff, then "+
-			"(b) run `%s`. "+
-			"Only at a clean stop; if mid-task, finish first — the keeper auto-restarts at %dk.",
-		tokens/1000, warn/1000, act/1000, cmd, act/1000)
+		"[KEEPER NOTICE] We use periodic session transitions to keep our work token-efficient. "+
+			"This session is at %dk tokens. We generally aim to continue in a fresh session before %dk. "+
+			"As you continue, shape the work toward a state that a fresh session can resume without losing decisions or repeating work. "+
+			"When ready, run /session-handoff, then run `%s` so we can continue in the fresh session. "+
+			"The notice band is %dk.",
+		tokens/1000, act/1000, cmd, warn/1000)
+}
+
+// SettleWarnText renders the stronger warning at the second checkpoint band.
+// It still leaves the checkpoint with the agent. The hard band owns any
+// automatic handoff request.
+func SettleWarnText(agent string, tokens, hard int64) string {
+	cmd := fmt.Sprintf(restartNowCmdToken, agent)
+	return fmt.Sprintf(
+		"[KEEPER WARN] This session is at %dk tokens. We want to continue in a fresh session before the %dk hard band. "+
+			"As you continue, bring the current unit to a durable checkpoint. "+
+			"When ready, run /session-handoff, then run `%s` so we can continue in the fresh session.",
+		tokens/1000, hard/1000, cmd)
 }
 
 // InjectOnDemandRestartWarning delivers the on-demand-restart actionable warn text

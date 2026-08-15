@@ -440,3 +440,186 @@ func equalStringSlices(a, b []string) bool {
 	}
 	return true
 }
+
+// TestCommitMessagePathIsWritableWhateverTmpdirTheRunHas defends the clause
+// that tells an implementer WHERE to put its commit-message file.
+//
+// The section has to name a path, and every launch does not agree on what a
+// temp directory is. Under the srt sandbox srt sets TMPDIR at the per-run
+// scratch directory the profile grants. On three other live paths nothing sets
+// it at all — a non-srt backend, a harness absent from sandbox.harnesses, and
+// every remote run, where handler.go assigns cmd.Env = spec.Env outright and
+// RemoteExecArgv rebuilds that same explicit slice over a non-login shell. On
+// those, a bare "$TMPDIR/commit-msg.txt" expands to "/commit-msg.txt" and the
+// agent is told to write at the filesystem root.
+//
+// So the claim is not "the section mentions TMPDIR". It is that the path the
+// section prints, put through a real shell, lands somewhere writable whether or
+// not the run has a TMPDIR. Both cases are executed here, because the failing
+// one is the case a reader is least likely to picture.
+//
+// Bead: hk-sandbox-no-writable-tmpdir-7484h.
+func TestCommitMessagePathIsWritableWhateverTmpdirTheRunHas(t *testing.T) {
+	t.Parallel()
+
+	workspacePath := t.TempDir()
+	payload := AgentTaskPayload{
+		BeadID:        "hk-abc12",
+		Title:         "Task",
+		Phase:         "implementer-initial",
+		Iteration:     1,
+		RunID:         "018e1234-0000-7000-8000-00000000000d",
+		WorkspacePath: workspacePath,
+		Body:          "Do the work.",
+	}
+	if err := WriteAgentTask(workspacePath, payload); err != nil {
+		t.Fatalf("WriteAgentTask: %v", err)
+	}
+	pathExpr := extractCommitMessagePathExpr(t, string(mustReadFile(t, AgentTaskPath(workspacePath))))
+
+	sandboxScratch := t.TempDir()
+	for _, tc := range []struct {
+		name   string
+		tmpdir string
+		setEnv bool
+	}{
+		// A wrapped run: srt injects TMPDIR at the granted scratch directory.
+		{"srt_wrapped_run_has_a_tmpdir", sandboxScratch, true},
+		// The gate declined to wrap, or the run is remote. Nothing in harmonik
+		// sets TMPDIR, so the shell sees it unset. This is the case the first
+		// version of this instruction got wrong.
+		{"unwrapped_or_remote_run_has_no_tmpdir", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// #nosec G204 -- pathExpr is read out of this package's own rendered
+			// task file, not from anything outside the test binary.
+			cmd := exec.CommandContext(t.Context(), "sh", "-c", `printf %s "`+pathExpr+`"`)
+			cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
+			if tc.setEnv {
+				cmd.Env = append(cmd.Env, "TMPDIR="+tc.tmpdir)
+			}
+			out, cmdErr := cmd.Output()
+			if cmdErr != nil {
+				t.Fatalf("expanding %q in a shell failed: %v", pathExpr, cmdErr)
+			}
+			got := string(out)
+
+			if !filepath.IsAbs(got) {
+				t.Fatalf("the task file tells the implementer to write %q, which expands to the relative path %q", pathExpr, got)
+			}
+			dir := filepath.Dir(got)
+			if dir == string(filepath.Separator) {
+				t.Fatalf("the task file tells the implementer to write %q, which expands to %q — a write at the FILESYSTEM ROOT. "+
+					"Name a default (${TMPDIR:-/tmp}); a bare $TMPDIR is empty on every launch harmonik does not sandbox.", pathExpr, got)
+			}
+
+			// Writable is the whole promise, so write. A path that exists and
+			// refuses the write is the failure this section was rewritten for.
+			probe := filepath.Join(dir, "harmonik-commit-msg-writable-probe-"+tc.name)
+			if err := os.WriteFile(probe, []byte("probe"), 0o600); err != nil {
+				t.Fatalf("the implementer is told to write its commit message to %q, and %q is not writable: %v", got, dir, err)
+			}
+			if err := os.Remove(probe); err != nil {
+				t.Errorf("remove write probe %s: %v", probe, err)
+			}
+		})
+	}
+}
+
+// commitMessagePathRE captures the path expression inside the `git commit -F`
+// instruction the task file gives every implementer.
+var commitMessagePathRE = regexp.MustCompile("git commit -F \"([^\"]+)\"")
+
+// extractCommitMessagePathExpr returns that path expression, unexpanded, exactly
+// as the agent reads it. It fails the test when the instruction is missing or
+// has changed shape, so a rename cannot quietly turn the caller into a check of
+// an empty string.
+func extractCommitMessagePathExpr(t *testing.T, content string) string {
+	t.Helper()
+	m := commitMessagePathRE.FindStringSubmatch(content)
+	if m == nil {
+		t.Fatalf("the rendered task file carries no quoted `git commit -F \"<path>\"` instruction — "+
+			"either the commit section is gone or it stopped naming where the message file belongs.\n%s", content)
+	}
+	return m[1]
+}
+
+// TestEveryTempDirectoryTheTaskFileNamesCarriesADefault pins the SHAPE of every
+// temp-directory reference the implementer reads, not just the one inside the
+// `git commit -F` argument.
+//
+// TestCommitMessagePathIsWritableWhateverTmpdirTheRunHas above expands one
+// expression and proves it lands somewhere writable. That is the strongest
+// assertion available for one path, and it reaches exactly one of the three
+// mentions the section prints: the section also names `${TMPDIR:-/tmp}` twice in
+// prose, and both of those could be regressed to a bare `$TMPDIR` with the
+// package still green.
+//
+// The regression matters because a bare `$TMPDIR` is EMPTY on every launch
+// harmonik does not sandbox — a non-srt backend, a harness absent from
+// sandbox.harnesses, and every remote run — so the prose then tells the agent
+// that the filesystem root is where it may write. A previous review already
+// caught this exact regression once, which is the reason to hold it with a test
+// rather than with care.
+//
+// Bead: hk-sandbox-no-writable-tmpdir-7484h.
+func TestEveryTempDirectoryTheTaskFileNamesCarriesADefault(t *testing.T) {
+	t.Parallel()
+
+	workspacePath := t.TempDir()
+	payload := AgentTaskPayload{
+		BeadID:        "hk-abc13",
+		Title:         "Task",
+		Phase:         "implementer-initial",
+		Iteration:     1,
+		RunID:         "018e1234-0000-7000-8000-00000000000e",
+		WorkspacePath: workspacePath,
+		Body:          "Do the work.",
+	}
+	if err := WriteAgentTask(workspacePath, payload); err != nil {
+		t.Fatalf("WriteAgentTask: %v", err)
+	}
+	content := string(mustReadFile(t, AgentTaskPath(workspacePath)))
+
+	const wantForm = "${TMPDIR:-/tmp}"
+	found := tmpDirReferenceRE.FindAllString(content, -1)
+
+	// The paired positive. "No bare $TMPDIR" is satisfied for free by a file that
+	// stopped naming a temp directory at all — which is itself a regression, since
+	// the section's job is to tell the implementer where it may write.
+	const wantAtLeast = 3
+	if len(found) < wantAtLeast {
+		t.Fatalf("the rendered task file names a temp directory %d time(s), want at least %d "+
+			"(one in the `git commit -F` argument and two in the prose around it). "+
+			"The section has stopped telling the implementer where it may write.\n%s", len(found), wantAtLeast, content)
+	}
+
+	// The spelling being right does not make the sentence right. This guidance
+	// exists because a run that was refused a write RETRIED IT WITH sudo and then
+	// threw its finished commit away, so the one instruction that must survive
+	// intact is that escalating does not help. Prose saying the opposite keeps
+	// all three ${TMPDIR:-/tmp} spellings and passes every check above.
+	if !strings.Contains(content, "`sudo` does not lift that refusal") {
+		t.Errorf("the rendered task file no longer says that `sudo` does not lift a sandbox write refusal.\n"+
+			"An implementer that does not read it does what the reported failure did: retries the refused "+
+			"write with sudo, is refused again, and abandons work it had already finished "+
+			"(hk-sandbox-no-writable-tmpdir-7484h).\n%s", content)
+	}
+
+	for _, ref := range found {
+		if ref != wantForm {
+			t.Errorf("the task file names the temp directory as %q, want %q.\n"+
+				"A bare $TMPDIR is EMPTY on every launch harmonik does not sandbox — a non-srt backend, "+
+				"a harness not in sandbox.harnesses, and every remote run — so this line tells the "+
+				"implementer to write at the filesystem root.", ref, wantForm)
+		}
+	}
+}
+
+// tmpDirReferenceRE matches one shell reference to the temp directory: the
+// braced form with whatever default it carries, or a bare $TMPDIR. It stops at
+// the closing brace, so the path appended after it is not part of the match and
+// the caller compares against one fixed spelling.
+var tmpDirReferenceRE = regexp.MustCompile(`\$\{TMPDIR[^}]*\}|\$TMPDIR`)

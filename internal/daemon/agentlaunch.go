@@ -654,7 +654,7 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 		// These harnesses receive their task via argv, not via pane paste.
 		pasteTarget = nil
 
-		wrapBin, wrapArgs, wrapErr := sandboxWrapExecArgv(sandboxSpawn, spec.Binary, spec.Args)
+		wrapBin, wrapArgs, wrapEnv, wrapErr := sandboxWrapExecArgv(sandboxSpawn, spec.Binary, spec.Args)
 		if wrapErr != nil {
 			res.Fail = agentLaunchPrelaunchFailed
 			res.FailErr = fmt.Errorf("srt argv-wrap error: %w", wrapErr)
@@ -663,6 +663,11 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 		}
 		spec.Binary = wrapBin
 		spec.Args = wrapArgs
+		// The wrap's env is not optional decoration: it is what points the
+		// sandboxed child's TMPDIR at the scratch directory the profile grants.
+		// Empty when the gate declined to wrap, so this line is a no-op on an
+		// unsandboxed launch (hk-sandbox-no-writable-tmpdir-7484h).
+		spec.Env = append(spec.Env, wrapEnv...)
 
 		if sandboxSpawn != nil {
 			// hk-cdpxu: the sandbox denies writes to the default Go cache

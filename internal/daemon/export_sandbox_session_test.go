@@ -32,8 +32,23 @@ func ExportedSandboxSpawnForRun(cfg projectconfig.SandboxConfig, agentType core.
 // ExportedSandboxWrapExecArgv exposes sandboxWrapExecArgv for tests in package
 // daemon_test — the EXEC-path srt argv-wrap applied to a SessionIDCaptured
 // (pi) run's LaunchSpec (spec.Substrate==nil). Returns (binary, args) unchanged
-// when spawn is nil (strict no-op). See sandboxgate.go (hk-r4p0l part 2).
-func ExportedSandboxWrapExecArgv(spawn *SrtSpawnConfig, binary string, args []string) (wrappedBinary string, wrappedArgs []string, err error) {
+// and a nil env when spawn is nil (strict no-op). extraEnv holds the entries the
+// launch appends to spec.Env — the sandboxed child's TMPDIR among them. See
+// sandboxgate.go (hk-r4p0l part 2, hk-sandbox-no-writable-tmpdir-7484h).
+//
+// WHY THE SEAM GREW A THIRD RESULT. It did not grow past production: it tracks
+// it. sandboxWrapExecArgv itself now returns the env, and a seam that returned
+// less would let a test go green while the launch it claims to reproduce
+// carried an environment the test never saw — which is the shape of the defect
+// this bead exists to close, where the profile and the child's TMPDIR were
+// produced by different code and nothing compared them. A narrower alternative
+// (a second export that returns only the env) is worse for the same reason:
+// two seams can disagree, and argv and env are one decision. Three tests need
+// this result and none can be written without it — the cross-check that the
+// TMPDIR value is inside the profile's write grant, the real-srt spawn that
+// must apply the env to reproduce a live launch, and the gate-declines case
+// that asserts its ABSENCE.
+func ExportedSandboxWrapExecArgv(spawn *SrtSpawnConfig, binary string, args []string) (wrappedBinary string, wrappedArgs, extraEnv []string, err error) {
 	return sandboxWrapExecArgv(spawn, binary, args)
 }
 

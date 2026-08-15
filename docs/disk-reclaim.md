@@ -699,6 +699,7 @@ A reclaim that checks one convention finds almost nothing:
 | `$TMPDIR/go-build*` | the Go toolchain's own temp dirs |
 | `~/.cache/h-*-gocache`, `/tmp/h-*/gocache` | long-lived named caches (assessor campaigns, isolated lanes) |
 | `<worktree>/.harmonik/go-cache` | the daemon's merge gate (`internal/daemon/workloop.go`) |
+| `<worktree>/.harmonik/tmp` | the sandboxed agent's `TMPDIR` (`internal/daemon.SandboxScratchDir`) — whatever the agent spools, one directory per run. It goes when the run worktree goes, which is **not** always soon: a run that failed after capturing agent output keeps its worktree on purpose (`runlease` RetainEvidence). That worktree is still time-bounded. Every daemon boot sweeps `.harmonik/worktrees/`: it force-removes one whose lease lock names a dead PID, and prunes one with no lock once it is older than 7 days (`HARMONIK_WORKTREE_MAX_AGE_DAYS`). So the scratch directory can outlive its run by about a week. Reclaim it with the run worktrees in §4, not on its own. |
 | scratchpad `gc-*`, `*-gocache`, `lintcache-*` | per-agent-session caches (§1) |
 
 ## 3. `.beads/` history tiers — the historical 25 GiB root cause

@@ -438,7 +438,33 @@ func buildAgentTaskContent(p AgentTaskPayload) string {
 		// in the validator. The audience is a small literal model, and it copies
 		// what it sees before it reads a negation placed after it.
 		sb.WriteString("\n## Commit Message (a gate refuses any other shape)\n\n")
-		sb.WriteString("Write the commit message into a file OUTSIDE the worktree — `/tmp/commit-msg.txt` will do — so the file itself never becomes part of your change. Commit with `git commit -F /tmp/commit-msg.txt`. Do NOT use `git commit -m`.\n\n")
+		// WHERE the agent may write, stated in the one place that tells it to
+		// write a file at all (hk-sandbox-no-writable-tmpdir-7484h). This used to
+		// name `/tmp/commit-msg.txt`. A sandboxed run has no write grant on /tmp,
+		// so an implementer that did as it was told got EPERM, tried `sudo`, got
+		// refused again, and abandoned a finished edit at the last step.
+		//
+		// The default is what makes the line safe, and it is NOT decoration.
+		// Harmonik sets TMPDIR nowhere. Under the srt sandbox srt sets it, as an
+		// `env` prefix on the child, at the per-run scratch directory the profile
+		// grants (internal/daemon.SandboxScratchDir) — and that prefix wins over
+		// anything spec.Env carries. But sandboxSpawnForRun declines to wrap on a
+		// non-srt backend, on a harness absent from sandbox.harnesses, and on
+		// EVERY remote run, and on those three paths nothing sets TMPDIR at all:
+		// handler.go assigns cmd.Env = spec.Env outright, pi's buildPiEnv emits no
+		// TMPDIR, and RemoteExecArgv builds the remote `env K=V …` prefix from that
+		// same explicit slice over a non-login shell. A bare "$TMPDIR/commit-msg.txt"
+		// there expands to "/commit-msg.txt" — a write at the filesystem root,
+		// strictly worse than the /tmp path it replaced. With the default it is
+		// /tmp, which those three paths can write because no sandbox is denying it.
+		//
+		// The line says git IGNORES the directory, not that it sits outside the
+		// worktree. Under srt it does not: TMPDIR is <worktree>/.harmonik/tmp,
+		// which is inside the checkout and gitignored, so the file never joins the
+		// change. A small model reads "outside your change" as "outside the
+		// worktree", and those two stopped agreeing when TMPDIR moved.
+		sb.WriteString("Write the commit message into a file under `${TMPDIR:-/tmp}` — a scratch directory git ignores — so the file itself never becomes part of your change. Commit with `git commit -F \"${TMPDIR:-/tmp}/commit-msg.txt\"`. Do NOT use `git commit -m`.\n\n")
+		sb.WriteString("`${TMPDIR:-/tmp}` and this worktree are the only places you can count on being able to write. A sandboxed run refuses every other path, and `sudo` does not lift that refusal.\n\n")
 		sb.WriteString("The subject is the first line. It MUST have this shape:\n\n")
 		sb.WriteString("```\n")
 		sb.WriteString("<type>(<scope>): <description>\n")

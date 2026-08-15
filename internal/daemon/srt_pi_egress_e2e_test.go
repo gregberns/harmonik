@@ -165,7 +165,7 @@ func runWrappedCurl(t *testing.T, allowLocalBinding bool, url string) (ranClean 
 	// (interleaved-option collision). Pi's real argv (pi --mode json --provider
 	// … --model … <seed>) is all long flags, so it has no such collision — the
 	// long-flag curl faithfully mirrors that argv shape through the SAME wrap.
-	bin, args, err := daemon.ExportedSandboxWrapExecArgv(
+	bin, args, _, err := daemon.ExportedSandboxWrapExecArgv(
 		spawn, "curl",
 		[]string{"--silent", "--max-time", "6", "--output", "/dev/null", "--write-out", "%{http_code}", url},
 	)

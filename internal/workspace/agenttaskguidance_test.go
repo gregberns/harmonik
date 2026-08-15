@@ -194,6 +194,9 @@ func TestCommitTemplatePassesTheCommitMessageGate(t *testing.T) {
 		t.Fatalf("write commit message: %v", err)
 	}
 
+	// #nosec G204 -- validateScript is derived from runtime.Caller(0), so it is
+	// this repository's own checked-in script, and msgPath is a t.TempDir() path.
+	// Neither is reachable by anything outside the test binary.
 	cmd := exec.CommandContext(t.Context(), "bash", validateScript, msgPath)
 	cmd.Dir = repoRoot
 	out, cmdErr := cmd.CombinedOutput()
@@ -332,7 +335,7 @@ var ccPatternRE = regexp.MustCompile(`(?m)^CC_PATTERN='\^\(([a-z|]+)\)`)
 
 // subjectCeilingRE lifts the number out of the validator's subject-length
 // comparison, `(( SUBJECT_LEN > 72 ))`.
-var subjectCeilingRE = regexp.MustCompile(`\(\(\s*SUBJECT_LEN\s*>\s*([0-9]+)\s*\)\)`)
+var subjectCeilingRE = regexp.MustCompile(`\(\(\s*SUBJECT_LEN\s*>\s*(\d+)\s*\)\)`)
 
 // trailingPeriodRE matches the validator's trailing-period test,
 // `grep -qE '\.$' <<<"$SUBJECT"`.
@@ -391,15 +394,16 @@ func requireValidatorRefusesTrailingPeriod(t *testing.T, script string) {
 
 // renderedTypeSet returns the count word and the sorted list of types the
 // rendered task file tells an implementer it may use.
-func renderedTypeSet(t *testing.T, content string) (string, []string) {
+func renderedTypeSet(t *testing.T, content string) (word string, types []string) {
 	t.Helper()
 
 	m := renderedTypesRE.FindStringSubmatch(content)
 	if m == nil {
 		t.Fatalf("cannot find the type sentence in the rendered agent-task.md with %v — the sentence was reworded; update the pattern so this check keeps reading the real prose", renderedTypesRE)
 	}
-	var types []string
-	for _, tok := range backtickedWordRE.FindAllStringSubmatch(m[2], -1) {
+	matches := backtickedWordRE.FindAllStringSubmatch(m[2], -1)
+	types = make([]string, 0, len(matches))
+	for _, tok := range matches {
 		types = append(types, tok[1])
 	}
 	if len(types) == 0 {

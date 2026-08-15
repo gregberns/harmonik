@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 
 	"github.com/google/uuid"
 
@@ -317,9 +318,21 @@ func buildCodexRoutedLaunchSpec(
 	// documents. Creating it is the workspace manager's job (WM-025) and would be
 	// wrong here: for a REMOTE run the worktree lives on the worker, not on this
 	// host, so a local MkdirAll would build the directory in the wrong place.
+	//
+	// pi is an exception: it is a SessionIDCaptured harness (hk-ium95), so its
+	// real session id does not exist yet when this pre-exec message is built —
+	// handlerSessionID is a daemon-minted id pi never learns about, and pi never
+	// writes to workspace.SessionLogDirPath(handlerSessionID). pi writes under
+	// its own PI_CODING_AGENT_DIR instead (<workspace>/.harmonik/pi-agent/, set
+	// up by pi.BuildLaunchSpec and captured to pi-stdout.log by the daemon's
+	// process runner). Naming the directory pi actually writes to keeps the
+	// event true instead of advertising a path nothing ever creates.
 	nodeID := "bead/" + rc.BeadID
 	runIDStr := core.RunID(rc.RunID).String()
 	sessionLogPath := workspace.SessionLogDirPath(rc.WorkspacePath, handlerSessionID)
+	if agentType == core.AgentTypePi {
+		sessionLogPath = filepath.Join(rc.WorkspacePath, ".harmonik", "pi-agent")
+	}
 	rawMsgs, err := handler.PreExecMessages(
 		runIDStr,
 		handlerSessionID,

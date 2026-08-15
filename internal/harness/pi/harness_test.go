@@ -403,3 +403,117 @@ func TestPiSessionIDInterceptor_NilAgentEndCb_Safe(t *testing.T) {
 		t.Fatalf("ReadAll: %v (nil agentEndCb must not panic)", err)
 	}
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PI-014 retry guard: agent_end with willRetry is NOT terminal (hk-z9nli)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Pi stamps willRetry on every agent_end and emits one before each retry:
+//
+//	{"type":"agent_end", ..., "willRetry":true}
+//	{"type":"auto_retry_start","attempt":1,"maxAttempts":3,"delayMs":2000}
+//
+// Ending the session there kills pi during the backoff, and the daemon then
+// scores the SIGTERM as a clean exit. The flag is the whole signal, so these
+// tests pin both halves: quiet while a retry is coming, still fired on the
+// event that really ends the run.
+//
+// The assertions run through the interceptor rather than a parse seam, because
+// what matters is whether the callback fires, not whether a struct field
+// decoded. Fixtures follow the wire: pi 0.80.3 declares willRetry non-optional
+// and emits auto_retry_end after the last attempt.
+
+// TestPiSessionIDInterceptor_AgentEndCb_WillRetry covers the flag in all three
+// spellings pi can produce, plus the absent case an older build might send.
+func TestPiSessionIDInterceptor_AgentEndCb_WillRetry(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		agentEnd  string
+		wantFired int
+	}{
+		{
+			name:      "retry coming, stay quiet",
+			agentEnd:  `{"type":"agent_end","messages":[],"willRetry":true}`,
+			wantFired: 0,
+		},
+		{
+			name:      "run over, fire",
+			agentEnd:  `{"type":"agent_end","messages":[],"willRetry":false}`,
+			wantFired: 1,
+		},
+		{
+			name:      "flag absent means the run is over",
+			agentEnd:  `{"type":"agent_end","messages":[]}`,
+			wantFired: 1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			ndjson := `{"type":"session","id":"s1"}` + "\n" + tt.agentEnd + "\n"
+
+			var fired int
+			interceptor := pi.ExportedNewPiSessionIDInterceptor(
+				strings.NewReader(ndjson), func(string) {}, func() { fired++ })
+			if _, err := io.ReadAll(interceptor); err != nil {
+				t.Fatalf("ReadAll: %v", err)
+			}
+			if fired != tt.wantFired {
+				t.Errorf("agentEndCb fired %d times; want %d", fired, tt.wantFired)
+			}
+		})
+	}
+}
+
+// TestPiSessionIDInterceptor_AgentEndCb_SuppressedThroughBackoff verifies the
+// callback stays quiet across a retry announcement and its backoff. This is the
+// six-second-death defect: the daemon killed pi two seconds into its own
+// 3-attempt retry and wrote the kill down as a clean finish.
+func TestPiSessionIDInterceptor_AgentEndCb_SuppressedThroughBackoff(t *testing.T) {
+	t.Parallel()
+
+	ndjson := `{"type":"session","id":"s1"}` + "\n" +
+		`{"type":"agent_end","messages":[],"willRetry":true}` + "\n" +
+		`{"type":"auto_retry_start","attempt":1,"maxAttempts":3,"delayMs":2000}` + "\n"
+
+	var fired int
+	interceptor := pi.ExportedNewPiSessionIDInterceptor(strings.NewReader(ndjson), func(string) {}, func() { fired++ })
+	if _, err := io.ReadAll(interceptor); err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if fired != 0 {
+		t.Errorf("agentEndCb fired %d times mid-backoff; want 0 (the kill lands before attempt 1)", fired)
+	}
+}
+
+// TestPiSessionIDInterceptor_AgentEndCb_FiresAfterRetriesExhausted verifies the
+// watcher survives suppression: once pi stops retrying it emits an agent_end
+// with willRetry false, and the callback fires exactly once. Suppression must
+// not consume the fire-once budget, or a retried run would never be torn down
+// and would burn the 90m ceiling instead.
+//
+// The shape is pi's own: N attempts, each announced by its own agent_end, then
+// a final agent_end with the flag false, then auto_retry_end.
+func TestPiSessionIDInterceptor_AgentEndCb_FiresAfterRetriesExhausted(t *testing.T) {
+	t.Parallel()
+
+	ndjson := `{"type":"session","id":"s1"}` + "\n" +
+		`{"type":"agent_end","messages":[],"willRetry":true}` + "\n" +
+		`{"type":"auto_retry_start","attempt":1,"maxAttempts":3,"delayMs":2000}` + "\n" +
+		`{"type":"agent_end","messages":[],"willRetry":true}` + "\n" +
+		`{"type":"auto_retry_start","attempt":2,"maxAttempts":3,"delayMs":4000}` + "\n" +
+		`{"type":"agent_end","messages":[],"willRetry":false}` + "\n" +
+		`{"type":"auto_retry_end","success":false}` + "\n"
+
+	var fired int
+	interceptor := pi.ExportedNewPiSessionIDInterceptor(strings.NewReader(ndjson), func(string) {}, func() { fired++ })
+	if _, err := io.ReadAll(interceptor); err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if fired != 1 {
+		t.Errorf("agentEndCb fired %d times; want 1 (the agent_end after the last attempt)", fired)
+	}
+}

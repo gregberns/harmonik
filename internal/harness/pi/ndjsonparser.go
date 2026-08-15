@@ -7,9 +7,11 @@ package pi
 //
 //	{"type":"session","version":3,"id":"<uuid>","cwd":"..."}
 //
-// The terminal event is agent_end:
+// agent_end ends a turn, but not always the run. Pi emits one before each
+// retry attempt too, and stamps every one with a willRetry flag:
 //
-//	{"type":"agent_end","messages":[...]}
+//	{"type":"agent_end","messages":[...],"willRetry":false}   // run over
+//	{"type":"agent_end","messages":[...],"willRetry":true}    // retry coming
 //
 // Usage events arrive as message_start and message_end lines:
 //
@@ -23,14 +25,17 @@ package pi
 //     token usage, updated from message_start/message_end events in a NDJSON stream.
 //  3. newPiSessionIDInterceptor — an io.Reader wrapper that:
 //       - fires sessionIDCb once on the first {"type":"session",...} line (PI-012).
-//       - fires agentEndCb once on {"type":"agent_end",...} (PI-014).
+//       - fires agentEndCb once on {"type":"agent_end",...} (PI-014), except
+//         when that line carries "willRetry":true, which means pi is retrying
+//         and the run has not ended (hk-z9nli).
 //     All bytes are passed through unchanged.
 //
 // The session id is the Pi analog of codex's thread_id. SessionIDPolicy() ==
 // SessionIDCaptured; the captured id is passed as --session <id> on the next
-// turn (resume argv, BuildLaunchSpec). agentEndCb invokes Teardown→Kill because
-// Pi's process exit is unreliable (#4303/#161/#4942); the 90m ceiling is backstop
-// only (PI-014).
+// turn (resume argv, BuildLaunchSpec). agentEndCb is wired in
+// internal/daemon/agentlaunch.go, where it records the announcement and kills
+// the session, because Pi's process exit is unreliable (#4303/#161/#4942); the
+// 90m ceiling is backstop only (PI-014).
 //
 // Spec: specs/pi-harness.md §1 PI-012/PI-014.
 // Design: ~/.kerf/projects/gregberns-harmonik/pilot/04-design/pi-harness-design.md §3.3/§3.4.
@@ -60,11 +65,12 @@ const (
 	// the resume turn.
 	piEventKindSession
 
-	// piEventKindAgentEnd is the terminal Pi NDJSON event:
-	// `{"type":"agent_end","messages":[...]}`. PI-014 (agent_end watcher, a
-	// later bead) observes this to invoke Teardown because Pi's process exit is
-	// unreliable (#4303/#161/#4942). Usage carries token totals summed across all
-	// messages in the payload (WS1d).
+	// piEventKindAgentEnd is the Pi NDJSON event that ends a turn:
+	// `{"type":"agent_end","messages":[...],"willRetry":false}`. PI-014 (the
+	// agent_end watcher) observes it and ends the session, because Pi's process
+	// exit is unreliable (#4303/#161/#4942) — but only when WillRetry is false,
+	// since Pi emits one of these before each retry attempt as well. Usage
+	// carries token totals summed across all messages in the payload (WS1d).
 	piEventKindAgentEnd
 
 	// piEventKindMessageStart is the Pi NDJSON event emitted at the start of an
@@ -105,6 +111,11 @@ type piEvent struct {
 	// piEventKindMessageStart (input_tokens), piEventKindMessageEnd (output_tokens),
 	// and piEventKindAgentEnd (totals summed across all messages). Zero otherwise.
 	Usage piTokenUsage
+
+	// WillRetry reports that Pi announced this agent_end only to start its own
+	// retry, so the event is not terminal. Populated for piEventKindAgentEnd;
+	// false for every other kind and for an agent_end that ends the run.
+	WillRetry bool
 }
 
 // piUsageField is the on-wire JSON shape of a Pi usage object.
@@ -135,6 +146,8 @@ type piNDJSONLine struct {
 	Usage *piUsageField `json:"usage"`
 	// agent_end: array of all conversation messages, each may carry usage
 	Messages []piAgentMessage `json:"messages"`
+	// agent_end: true when pi is about to retry, so this line is not terminal
+	WillRetry bool `json:"willRetry"`
 }
 
 // parsePiNDJSONEvent decodes one Pi NDJSON line into a piEvent.
@@ -160,6 +173,7 @@ func parsePiNDJSONEvent(line []byte) (piEvent, error) {
 		ev.SessionID = raw.SessionID
 	case "agent_end":
 		ev.Kind = piEventKindAgentEnd
+		ev.WillRetry = raw.WillRetry
 		// Sum usage across all messages in the agent_end payload so callers get
 		// a single run-level total from the terminal event.
 		for _, msg := range raw.Messages {
@@ -241,9 +255,11 @@ func capturePiUsage(arts *piRunArtifacts, ev piEvent) bool {
 //
 //   - sessionIDCb fires at most once on the first {"type":"session",...} line
 //     that carries a non-empty "id" field (PI-012). May be nil.
-//   - agentEndCb fires at most once on the first {"type":"agent_end",...} line
-//     (PI-014). Invokes Teardown→Kill so a hung Pi does not burn the 90m ceiling.
-//     May be nil.
+//   - agentEndCb fires at most once on the first TERMINAL {"type":"agent_end",...}
+//     line (PI-014). It ends the session so a hung Pi does not burn the 90m
+//     ceiling. An agent_end carrying "willRetry":true is skipped: pi emits one
+//     before each retry attempt, and tearing down there kills pi mid-backoff
+//     (hk-z9nli). May be nil.
 //
 // This is the Pi analog of codexThreadIDInterceptor (which only captures a
 // thread_id; codex self-exits reliably and has no agent_end event to watch).
@@ -253,7 +269,7 @@ func capturePiUsage(arts *piRunArtifacts, ev piEvent) bool {
 // Usage:
 //
 //	sessionIDCh := make(chan string, 1)
-//	agentEndCb := func() { _ = harness.Teardown(sess) }
+//	agentEndCb := func() { agentAnnouncedEnd.Store(true); sess.killOrLatch() }
 //	implSpec.StdoutWrapper = func(r io.Reader) io.Reader {
 //	    return newPiSessionIDInterceptor(r, func(id string) { sessionIDCh <- id }, agentEndCb)
 //	}
@@ -272,8 +288,8 @@ type piSessionIDInterceptor struct {
 
 // newPiSessionIDInterceptor wraps inner and wires both callbacks.
 // sessionIDCb fires on the first {"type":"session",...} line with a non-empty id.
-// agentEndCb fires on the first {"type":"agent_end",...} line (PI-014).
-// Either callback may be nil.
+// agentEndCb fires on the first {"type":"agent_end",...} line that does NOT
+// carry willRetry (PI-014, hk-z9nli). Either callback may be nil.
 func newPiSessionIDInterceptor(inner io.Reader, sessionIDCb func(string), agentEndCb func()) *piSessionIDInterceptor {
 	return &piSessionIDInterceptor{
 		inner:       inner,
@@ -298,7 +314,8 @@ func (p *piSessionIDInterceptor) Read(b []byte) (int, error) {
 // checkBuffer scans p.buf for complete NDJSON lines and fires callbacks.
 // Called with p.mu held.
 //
-// Scanning continues after sessionIDCb fires because agentEndCb fires later.
+// Scanning continues after sessionIDCb fires because agentEndCb fires later,
+// and continues past a willRetry agent_end because the run is not over.
 // Stops when both have fired or no more complete lines are available.
 func (p *piSessionIDInterceptor) checkBuffer() {
 	if p.sessionIDFiredOnce && p.agentEndFiredOnce {
@@ -328,7 +345,12 @@ func (p *piSessionIDInterceptor) checkBuffer() {
 				p.sessionIDCb(ev.SessionID)
 			}
 		}
-		if !p.agentEndFiredOnce && ev.Kind == piEventKindAgentEnd {
+		// An agent_end that carries willRetry is pi announcing its own retry,
+		// not the end of the run. Firing here tears the session down during the
+		// backoff, and the daemon then scores the SIGTERM as a clean exit
+		// (hk-z9nli). Leave agentEndFiredOnce alone so the real terminal
+		// agent_end still fires and the teardown backstop survives.
+		if !p.agentEndFiredOnce && ev.Kind == piEventKindAgentEnd && !ev.WillRetry {
 			p.agentEndFiredOnce = true
 			if p.agentEndCb != nil {
 				p.agentEndCb()

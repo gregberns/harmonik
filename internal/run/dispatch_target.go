@@ -13,7 +13,7 @@ import (
 	"github.com/gregberns/harmonik/internal/core"
 )
 
-const dispatchTargetVersion = "harmonik-dispatch-target-v1"
+const dispatchTargetVersion = "harmonik-dispatch-target-v2"
 
 // DispatchTargetNames are the durable tmux target names for one dispatch.
 type DispatchTargetNames struct {
@@ -50,6 +50,9 @@ func BuildDispatchTargetNames(
 		claimTransitionID.String(),
 		string(location.Kind),
 		location.WorkerName,
+		location.Transport,
+		location.Host,
+		location.RepositoryPath,
 	} {
 		preimage, err = appendDispatchTargetField(preimage, value)
 		if err != nil {

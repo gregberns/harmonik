@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,7 +17,7 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-const dispatchRecordSchemaVersion = 3
+const dispatchRecordSchemaVersion = 4
 
 // ExecutionKind identifies where one run executes.
 type ExecutionKind string
@@ -29,8 +30,11 @@ const (
 
 // ExecutionLocation binds a run to the selected local host or remote worker.
 type ExecutionLocation struct {
-	Kind       ExecutionKind `json:"kind"`
-	WorkerName string        `json:"worker_name,omitempty"`
+	Kind           ExecutionKind `json:"kind"`
+	WorkerName     string        `json:"worker_name,omitempty"`
+	Transport      string        `json:"transport,omitempty"`
+	Host           string        `json:"host,omitempty"`
+	RepositoryPath string        `json:"repository_path"`
 }
 
 // DispatchRecord is the durable identity for every claimed queue run.
@@ -44,6 +48,7 @@ type DispatchRecord struct {
 	ItemIndex         int                `json:"item_index"`
 	ClaimTransitionID core.TransitionID  `json:"claim_transition_id"`
 	ParentCommit      string             `json:"parent_commit"`
+	RepositoryPath    string             `json:"repository_path"`
 	Location          *ExecutionLocation `json:"execution_location,omitempty"`
 	SessionName       string             `json:"session_name,omitempty"`
 	WindowName        string             `json:"window_name,omitempty"`
@@ -62,6 +67,7 @@ func NewDispatchRecord(binding dispatch.Binding, startedAt time.Time) (DispatchR
 		ItemIndex:         binding.ItemIndex,
 		ClaimTransitionID: binding.ClaimTransitionID,
 		ParentCommit:      binding.ParentCommit,
+		RepositoryPath:    binding.RepositoryPath,
 		StartedAt:         startedAt.UTC().Truncate(time.Millisecond),
 	}
 	if err := record.Validate(); err != nil {
@@ -97,8 +103,14 @@ func (r DispatchRecord) Validate() error {
 	if err := dispatch.ValidateParentCommit(r.ParentCommit); err != nil {
 		return fmt.Errorf("run: %w", err)
 	}
+	if r.RepositoryPath == "" || !filepath.IsAbs(r.RepositoryPath) || filepath.Clean(r.RepositoryPath) != r.RepositoryPath {
+		return errors.New("run: dispatch record repository_path must be a clean absolute path")
+	}
 	if r.Location != nil {
 		if err := r.Location.validate(); err != nil {
+			return err
+		}
+		if err := r.Location.validateRepository(r.RepositoryPath); err != nil {
 			return err
 		}
 	}
@@ -126,6 +138,9 @@ func (r DispatchRecord) BindLocation(location ExecutionLocation) (DispatchRecord
 		return DispatchRecord{}, err
 	}
 	if err := location.validate(); err != nil {
+		return DispatchRecord{}, err
+	}
+	if err := location.validateRepository(r.RepositoryPath); err != nil {
 		return DispatchRecord{}, err
 	}
 	if r.Location != nil && *r.Location != location {
@@ -165,15 +180,25 @@ func (r DispatchRecord) BindSession(sessionName, windowName string) (DispatchRec
 func (l ExecutionLocation) validate() error {
 	switch l.Kind {
 	case ExecutionLocalIndependent, ExecutionLocalShared:
-		if l.WorkerName != "" {
+		if l.WorkerName != "" || l.Transport != "" || l.Host != "" {
 			return errors.New("run: local execution cannot name a worker")
 		}
 	case ExecutionRemote:
-		if l.WorkerName == "" {
-			return errors.New("run: remote execution requires worker_name")
+		if l.WorkerName == "" || l.Transport == "" || l.Host == "" {
+			return errors.New("run: remote execution requires worker_name, transport, and host")
 		}
 	default:
 		return fmt.Errorf("run: invalid execution kind %q", l.Kind)
+	}
+	if l.RepositoryPath == "" || !filepath.IsAbs(l.RepositoryPath) || filepath.Clean(l.RepositoryPath) != l.RepositoryPath {
+		return errors.New("run: execution repository_path must be a clean absolute path")
+	}
+	return nil
+}
+
+func (l ExecutionLocation) validateRepository(activeRepositoryPath string) error {
+	if (l.Kind == ExecutionLocalIndependent || l.Kind == ExecutionLocalShared) && l.RepositoryPath != activeRepositoryPath {
+		return errors.New("run: local execution repository_path must match the dispatch record")
 	}
 	return nil
 }
@@ -203,6 +228,7 @@ func (r DispatchRecord) MarshalJSON() ([]byte, error) {
 		ItemIndex:         &r.ItemIndex,
 		ClaimTransitionID: r.ClaimTransitionID.String(),
 		ParentCommit:      r.ParentCommit,
+		RepositoryPath:    r.RepositoryPath,
 		Location:          r.Location,
 		SessionName:       r.SessionName,
 		WindowName:        r.WindowName,
@@ -244,6 +270,7 @@ type dispatchRecordWire struct {
 	ItemIndex         *int               `json:"item_index"`
 	ClaimTransitionID string             `json:"claim_transition_id"`
 	ParentCommit      string             `json:"parent_commit"`
+	RepositoryPath    string             `json:"repository_path"`
 	Location          *ExecutionLocation `json:"execution_location,omitempty"`
 	SessionName       string             `json:"session_name,omitempty"`
 	WindowName        string             `json:"window_name,omitempty"`
@@ -276,6 +303,7 @@ func (w dispatchRecordWire) record() (DispatchRecord, error) {
 		ItemIndex:         *w.ItemIndex,
 		ClaimTransitionID: core.TransitionID(transitionID),
 		ParentCommit:      w.ParentCommit,
+		RepositoryPath:    w.RepositoryPath,
 		Location:          w.Location,
 		SessionName:       w.SessionName,
 		WindowName:        w.WindowName,

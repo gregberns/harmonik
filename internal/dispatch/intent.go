@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 
 	"github.com/google/uuid"
 
@@ -14,7 +15,7 @@ import (
 	"github.com/gregberns/harmonik/internal/queue"
 )
 
-const intentSchemaVersion = 2
+const intentSchemaVersion = 3
 
 // Phase is the last dispatch boundary known to be durable.
 type Phase string
@@ -86,6 +87,7 @@ type Binding struct {
 	RunID             core.RunID        `json:"run_id"`
 	ClaimTransitionID core.TransitionID `json:"claim_transition_id"`
 	ParentCommit      string            `json:"parent_commit"`
+	RepositoryPath    string            `json:"repository_path"`
 }
 
 // RunBinding proves that the durable run record names this dispatch.
@@ -275,6 +277,9 @@ func (b Binding) validate() error {
 	if err := ValidateParentCommit(b.ParentCommit); err != nil {
 		return err
 	}
+	if b.RepositoryPath == "" || !filepath.IsAbs(b.RepositoryPath) || filepath.Clean(b.RepositoryPath) != b.RepositoryPath {
+		return errors.New("dispatch: repository_path must be a clean absolute path")
+	}
 	return nil
 }
 
@@ -305,6 +310,7 @@ func (i Intent) MarshalJSON() ([]byte, error) {
 			RunID:             i.Binding.RunID.String(),
 			ClaimTransitionID: i.Binding.ClaimTransitionID.String(),
 			ParentCommit:      i.Binding.ParentCommit,
+			RepositoryPath:    i.Binding.RepositoryPath,
 		},
 	}
 	if i.Run != nil {
@@ -370,6 +376,7 @@ type bindingWire struct {
 	RunID             string `json:"run_id"`
 	ClaimTransitionID string `json:"claim_transition_id"`
 	ParentCommit      string `json:"parent_commit"`
+	RepositoryPath    string `json:"repository_path"`
 }
 
 type runBindingWire struct {
@@ -433,6 +440,7 @@ func (w bindingWire) binding() (Binding, error) {
 		BeadID: core.BeadID(w.BeadID), RunID: core.RunID(uuid.MustParse(w.RunID)),
 		ClaimTransitionID: core.TransitionID(uuid.MustParse(w.ClaimTransitionID)),
 		ParentCommit:      w.ParentCommit,
+		RepositoryPath:    w.RepositoryPath,
 	}, nil
 }
 

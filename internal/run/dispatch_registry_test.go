@@ -19,7 +19,7 @@ func TestDispatchRegistryCreateAdvanceScanRemove(t *testing.T) {
 	if err := CreateDispatchRecord(projectDir, base); err != nil {
 		t.Fatalf("exact create replay: %v", err)
 	}
-	located, err := base.BindLocation(ExecutionLocation{Kind: ExecutionRemote, WorkerName: "worker-a"})
+	located, err := base.BindLocation(testRemoteLocation())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestScanRegistryRejectsSymlinkParent(t *testing.T) {
 
 func TestDispatchRegistryRejectsInvalidAdvanceMatrix(t *testing.T) {
 	base := testDispatchRecord()
-	located, err := base.BindLocation(ExecutionLocation{Kind: ExecutionLocalIndependent})
+	located, err := base.BindLocation(testLocalLocation())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestDispatchRegistryRejectsInvalidAdvanceMatrix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherLocation, err := base.BindLocation(ExecutionLocation{Kind: ExecutionLocalShared})
+	otherLocation, err := base.BindLocation(ExecutionLocation{Kind: ExecutionLocalShared, RepositoryPath: base.RepositoryPath})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestDispatchRegistryConvergesSideEffectThenError(t *testing.T) {
 		t.Fatalf("create did not converge: %v", err)
 	}
 	ops.link = realLink
-	located, err := base.BindLocation(ExecutionLocation{Kind: ExecutionLocalIndependent})
+	located, err := base.BindLocation(testLocalLocation())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func TestDispatchRegistryConvergenceSyncFailuresStayTyped(t *testing.T) {
 		}
 	}
 	assertAmbiguous("exact create", createDispatchRecord(projectDir, base, ops))
-	located, err := base.BindLocation(ExecutionLocation{Kind: ExecutionLocalIndependent})
+	located, err := base.BindLocation(testLocalLocation())
 	if err != nil {
 		t.Fatal(err)
 	}

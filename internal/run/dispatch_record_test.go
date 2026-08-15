@@ -24,6 +24,7 @@ func TestNewDispatchRecordBindsPreparedIntent(t *testing.T) {
 		RunID:             base.RunID,
 		ClaimTransitionID: base.ClaimTransitionID,
 		ParentCommit:      base.ParentCommit,
+		RepositoryPath:    base.RepositoryPath,
 	}
 	startedAt := base.StartedAt.Add(456 * time.Microsecond).In(time.FixedZone("offset", 3600))
 	record, err := NewDispatchRecord(binding, startedAt)
@@ -55,7 +56,7 @@ const (
 
 func testDispatchRecord() DispatchRecord {
 	return DispatchRecord{
-		SchemaVersion:     3,
+		SchemaVersion:     4,
 		RunID:             core.RunID(uuid.MustParse(dispatchTestRunID)),
 		BeadID:            "hk-run-record",
 		QueueName:         "main",
@@ -64,21 +65,33 @@ func testDispatchRecord() DispatchRecord {
 		ItemIndex:         0,
 		ClaimTransitionID: core.TransitionID(uuid.MustParse(dispatchTestTransitionID)),
 		ParentCommit:      dispatchTestParentCommit,
+		RepositoryPath:    "/srv/harmonik/project",
 		StartedAt:         time.Date(2026, 8, 11, 12, 13, 14, 567000000, time.UTC),
+	}
+}
+
+func testLocalLocation() ExecutionLocation {
+	return ExecutionLocation{Kind: ExecutionLocalIndependent, RepositoryPath: "/srv/harmonik/project"}
+}
+
+func testRemoteLocation() ExecutionLocation {
+	return ExecutionLocation{
+		Kind: ExecutionRemote, WorkerName: "worker-a", Transport: "ssh",
+		Host: "worker.example", RepositoryPath: "/srv/worker/project",
 	}
 }
 
 func TestDispatchRecordValidLocalRemoteAndHandoffShapes(t *testing.T) {
 	base := testDispatchRecord()
-	localIndependent, err := base.BindLocation(ExecutionLocation{Kind: ExecutionLocalIndependent})
+	localIndependent, err := base.BindLocation(testLocalLocation())
 	if err != nil {
 		t.Fatal(err)
 	}
-	localShared, err := base.BindLocation(ExecutionLocation{Kind: ExecutionLocalShared})
+	localShared, err := base.BindLocation(ExecutionLocation{Kind: ExecutionLocalShared, RepositoryPath: base.RepositoryPath})
 	if err != nil {
 		t.Fatal(err)
 	}
-	remote, err := base.BindLocation(ExecutionLocation{Kind: ExecutionRemote, WorkerName: "worker-a"})
+	remote, err := base.BindLocation(testRemoteLocation())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,6 +137,44 @@ func TestDispatchRecordRejectsInvalidShapes(t *testing.T) {
 		{name: "offset time", mutate: func(r *DispatchRecord) { r.StartedAt = r.StartedAt.In(time.FixedZone("offset", 3600)) }},
 		{name: "submillisecond time", mutate: func(r *DispatchRecord) { r.StartedAt = r.StartedAt.Add(time.Nanosecond) }},
 		{name: "parent commit", mutate: func(r *DispatchRecord) { r.ParentCommit = strings.ToUpper(r.ParentCommit) }},
+		{name: "missing repository", mutate: func(r *DispatchRecord) { r.RepositoryPath = "" }},
+		{name: "relative repository", mutate: func(r *DispatchRecord) { r.RepositoryPath = "project" }},
+		{name: "unclean repository", mutate: func(r *DispatchRecord) { r.RepositoryPath = "/srv/project/../other" }},
+		{name: "local transport", mutate: func(r *DispatchRecord) {
+			location := testLocalLocation()
+			location.Transport = "ssh"
+			r.Location = &location
+		}},
+		{name: "local host", mutate: func(r *DispatchRecord) {
+			location := testLocalLocation()
+			location.Host = "worker.example"
+			r.Location = &location
+		}},
+		{name: "local other repository", mutate: func(r *DispatchRecord) {
+			location := testLocalLocation()
+			location.RepositoryPath = "/srv/harmonik/other"
+			r.Location = &location
+		}},
+		{name: "remote missing name", mutate: func(r *DispatchRecord) {
+			location := testRemoteLocation()
+			location.WorkerName = ""
+			r.Location = &location
+		}},
+		{name: "remote missing transport", mutate: func(r *DispatchRecord) {
+			location := testRemoteLocation()
+			location.Transport = ""
+			r.Location = &location
+		}},
+		{name: "remote missing host", mutate: func(r *DispatchRecord) {
+			location := testRemoteLocation()
+			location.Host = ""
+			r.Location = &location
+		}},
+		{name: "remote missing repository", mutate: func(r *DispatchRecord) {
+			location := testRemoteLocation()
+			location.RepositoryPath = ""
+			r.Location = &location
+		}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -151,8 +202,8 @@ func TestDispatchRecordStrictCanonicalJSON(t *testing.T) {
 	}
 	valid := string(data)
 	bad := map[string]string{
-		"pre-activation schema": strings.Replace(valid, `"schema_version":3`, `"schema_version":2`, 1),
-		"unknown":               strings.Replace(valid, `"schema_version":3`, `"schema_version":3,"extra":true`, 1),
+		"pre-activation schema": strings.Replace(valid, `"schema_version":4`, `"schema_version":3`, 1),
+		"unknown":               strings.Replace(valid, `"schema_version":4`, `"schema_version":4,"extra":true`, 1),
 		"missing group":         strings.Replace(valid, `"group_index":0,`, "", 1),
 		"missing item":          strings.Replace(valid, `"item_index":0,`, "", 1),
 		"uppercase":             strings.Replace(valid, dispatchTestRunID, strings.ToUpper(dispatchTestRunID), 1),
@@ -170,7 +221,7 @@ func TestDispatchRecordStrictCanonicalJSON(t *testing.T) {
 
 func TestDispatchRecordHandoffAddsExactTarget(t *testing.T) {
 	base := testDispatchRecord()
-	located, err := base.BindLocation(ExecutionLocation{Kind: ExecutionLocalIndependent})
+	located, err := base.BindLocation(testLocalLocation())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +266,7 @@ func TestDispatchRecordHandoffAddsExactTarget(t *testing.T) {
 
 func TestDispatchRecordLocationBindingIsMonotonic(t *testing.T) {
 	base := testDispatchRecord()
-	location := ExecutionLocation{Kind: ExecutionLocalShared}
+	location := ExecutionLocation{Kind: ExecutionLocalShared, RepositoryPath: base.RepositoryPath}
 	bound, err := base.BindLocation(location)
 	if err != nil {
 		t.Fatal(err)
@@ -231,7 +282,16 @@ func TestDispatchRecordLocationBindingIsMonotonic(t *testing.T) {
 	if bound.Location.Kind != ExecutionLocalShared {
 		t.Fatal("BindLocation replay aliases the prior location")
 	}
-	if _, err := bound.BindLocation(ExecutionLocation{Kind: ExecutionLocalIndependent}); err == nil {
+	if _, err := bound.BindLocation(testLocalLocation()); err == nil {
 		t.Fatal("changed location BindLocation() = nil")
+	}
+}
+
+func TestDispatchRecordBindLocationRejectsDifferentLocalRepository(t *testing.T) {
+	base := testDispatchRecord()
+	location := testLocalLocation()
+	location.RepositoryPath = "/srv/harmonik/other"
+	if _, err := base.BindLocation(location); err == nil {
+		t.Fatal("BindLocation() with a different local repository = nil")
 	}
 }

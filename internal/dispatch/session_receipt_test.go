@@ -16,9 +16,9 @@ func TestSessionStartReceiptStrictRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantJSON := `{"schema_version":2,"binding":{"queue_id":"` + testQueueID +
+	wantJSON := `{"schema_version":3,"binding":{"queue_id":"` + testQueueID +
 		`","queue_name":"main","group_index":2,"item_index":3,"bead_id":"hk-dispatch","run_id":"` + testRunID +
-		`","claim_transition_id":"` + testTransitionID + `","parent_commit":"` + testParentCommit +
+		`","claim_transition_id":"` + testTransitionID + `","parent_commit":"` + testParentCommit + `","repository_path":"/srv/harmonik/project` +
 		`"},"session_name":"harmonik-run-0197d100","window_name":"run-0197d100"}`
 	if string(data) != wantJSON {
 		t.Fatalf("receipt bytes = %s, want %s", data, wantJSON)
@@ -33,8 +33,8 @@ func TestSessionStartReceiptStrictRoundTrip(t *testing.T) {
 
 	valid := string(data)
 	for name, raw := range map[string]string{
-		"pre-activation schema": strings.Replace(valid, `"schema_version":2`, `"schema_version":1`, 1),
-		"unknown field":         strings.Replace(valid, `"schema_version":2`, `"schema_version":2,"extra":true`, 1),
+		"pre-activation schema": strings.Replace(valid, `"schema_version":3`, `"schema_version":2`, 1),
+		"unknown field":         strings.Replace(valid, `"schema_version":3`, `"schema_version":3,"extra":true`, 1),
 		"missing window":        strings.Replace(valid, `,"window_name":"run-0197d100"`, "", 1),
 		"uppercase run":         strings.Replace(valid, testRunID, strings.ToUpper(testRunID), 1),
 		"trailing value":        valid + `{}`,

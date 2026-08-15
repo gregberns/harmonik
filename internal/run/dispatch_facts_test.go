@@ -12,7 +12,8 @@ import (
 func TestClassifyDispatchRecordPhases(t *testing.T) {
 	base := testDispatchRecord()
 	located := base
-	located.Location = &ExecutionLocation{Kind: ExecutionLocalIndependent}
+	location := testLocalLocation()
+	located.Location = &location
 	session := located
 	session.SessionName = "harmonik-run-test"
 	session.WindowName = "run-test"
@@ -51,6 +52,7 @@ func TestClassifyDispatchRecordRejectsEveryBindingMismatch(t *testing.T) {
 			record.ClaimTransitionID = core.TransitionID(uuid.MustParse("0197d200-0000-7000-8000-000000000004"))
 		},
 		func(record *DispatchRecord) { record.ParentCommit = "abcdef0123456789abcdef0123456789abcdef01" },
+		func(record *DispatchRecord) { record.RepositoryPath = "/srv/harmonik/other" },
 	}
 	for index, mutate := range mutations {
 		record := testDispatchRecord()
@@ -64,7 +66,8 @@ func TestClassifyDispatchRecordRejectsEveryBindingMismatch(t *testing.T) {
 func TestClassifyDispatchRecordRejectsInvalidAndMismatchedSession(t *testing.T) {
 	intent := runFactIntent(t, dispatch.PhaseHandoffDurable)
 	record := testDispatchRecord()
-	record.Location = &ExecutionLocation{Kind: ExecutionLocalIndependent}
+	location := testLocalLocation()
+	record.Location = &location
 	record.SessionName = "other-session"
 	record.WindowName = "run-test"
 	if got := ClassifyDispatchRecord(intent, &record); got != dispatch.RunRecordConflict {
@@ -88,7 +91,7 @@ func runFactIntent(t *testing.T, phase dispatch.Phase) dispatch.Intent {
 	intent, err := dispatch.NewPrepared(dispatch.Binding{
 		QueueID: base.QueueID, QueueName: base.QueueName, GroupIndex: base.GroupIndex, ItemIndex: base.ItemIndex,
 		BeadID: base.BeadID, RunID: base.RunID, ClaimTransitionID: base.ClaimTransitionID,
-		ParentCommit: base.ParentCommit,
+		ParentCommit: base.ParentCommit, RepositoryPath: base.RepositoryPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -123,7 +126,8 @@ func runFactIntent(t *testing.T, phase dispatch.Phase) dispatch.Intent {
 func TestClassifySessionStartReceipt(t *testing.T) {
 	intent := runFactIntent(t, dispatch.PhaseHandoffDurable)
 	record := testDispatchRecord()
-	record.Location = &ExecutionLocation{Kind: ExecutionLocalIndependent}
+	location := testLocalLocation()
+	record.Location = &location
 	record.SessionName = intent.Handoff.SessionName
 	record.WindowName = intent.Handoff.WindowName
 	receipt, err := dispatch.NewSessionStartReceipt(intent)
@@ -149,7 +153,8 @@ func TestClassifySessionStartReceipt(t *testing.T) {
 func TestClassifySessionStartReceiptRejectsEveryAuthorityMismatch(t *testing.T) {
 	intent := runFactIntent(t, dispatch.PhaseHandoffDurable)
 	record := testDispatchRecord()
-	record.Location = &ExecutionLocation{Kind: ExecutionLocalIndependent}
+	location := testLocalLocation()
+	record.Location = &location
 	record.SessionName = intent.Handoff.SessionName
 	record.WindowName = intent.Handoff.WindowName
 	receipt, err := dispatch.NewSessionStartReceipt(intent)

@@ -31,6 +31,7 @@ func testIntent(phase Phase) Intent {
 			RunID:             runID,
 			ClaimTransitionID: core.TransitionID(uuid.MustParse(testTransitionID)),
 			ParentCommit:      testParentCommit,
+			RepositoryPath:    "/srv/harmonik/project",
 		},
 	}
 	if phase == PhaseRunDurable || phase == PhaseHandoffDurable {
@@ -145,6 +146,9 @@ func TestIntentRejectsInvalidBaseBinding(t *testing.T) {
 		{name: "run ID", mutate: func(b *Binding) { b.RunID = core.RunID{} }},
 		{name: "claim transition ID", mutate: func(b *Binding) { b.ClaimTransitionID = core.TransitionID{} }},
 		{name: "parent commit", mutate: func(b *Binding) { b.ParentCommit = "ABC" }},
+		{name: "missing repository path", mutate: func(b *Binding) { b.RepositoryPath = "" }},
+		{name: "relative repository path", mutate: func(b *Binding) { b.RepositoryPath = "project" }},
+		{name: "unclean repository path", mutate: func(b *Binding) { b.RepositoryPath = "/srv/project/../other" }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -173,10 +177,10 @@ func TestIntentJSONRoundTripAndStrictDecode(t *testing.T) {
 
 	valid := string(data)
 	tests := map[string]string{
-		"pre-activation schema": strings.Replace(valid, `"schema_version":2`, `"schema_version":1`, 1),
-		"unknown top field":     strings.Replace(valid, `"schema_version":2`, `"schema_version":2,"extra":true`, 1),
+		"pre-activation schema": strings.Replace(valid, `"schema_version":3`, `"schema_version":2`, 1),
+		"unknown top field":     strings.Replace(valid, `"schema_version":3`, `"schema_version":3,"extra":true`, 1),
 		"unknown nested field":  strings.Replace(valid, `"queue_id"`, `"extra":true,"queue_id"`, 1),
-		"partial binding":       `{"schema_version":2,"phase":"prepared","binding":{"queue_id":"` + testQueueID + `"}}`,
+		"partial binding":       `{"schema_version":3,"phase":"prepared","binding":{"queue_id":"` + testQueueID + `"}}`,
 		"missing group index":   strings.Replace(valid, `"group_index":2,`, "", 1),
 		"missing item index":    strings.Replace(valid, `"item_index":3,`, "", 1),
 		"uppercase run ID":      strings.Replace(valid, testRunID, strings.ToUpper(testRunID), 1),

@@ -259,18 +259,22 @@ One canonical naming function owns both target names. It uses this versioned
 preimage:
 
 ```text
-"harmonik-dispatch-target-v1" ||
+"harmonik-dispatch-target-v2" ||
 len(project-real-path) || project-real-path ||
 len(run-id) || run-id ||
 len(claim-transition-id) || claim-transition-id ||
 len(execution-kind) || execution-kind ||
-len(worker-name) || worker-name
+len(worker-name) || worker-name ||
+len(transport) || transport ||
+len(host) || host ||
+len(repository-path) || repository-path
 ```
 
 Each length is an unsigned 32-bit big-endian byte count. Each value uses UTF-8.
 The project path is the cleaned, symlink-resolved absolute project root. The
-UUID values use canonical lowercase text. The worker name is empty for a local
-run.
+UUID values use canonical lowercase text. The worker name, transport, and host
+are empty for a local run. The repository path is the durable path at the
+execution location. It equals the project path for a local run.
 
 The function computes SHA-256 over the preimage. It uses the first 16 digest
 bytes as 32 lowercase hexadecimal characters. The session name is

@@ -183,6 +183,69 @@ func dotNodeTerminalFailure(
 	}
 }
 
+// dotNoHeadAdvanceReason says WHY an implementer node that left HEAD where it
+// found it failed. It decides nothing — the caller's HEAD-advance guard has
+// already decided — it only writes the reason down.
+//
+// The reason used to be one sentence for every case: "exited without advancing
+// HEAD past <sha>". That sentence accuses the implementer's EXIT, so it sends
+// the next reader to the worktree and the merge path. Two live runs on
+// 2026-08-15 were reported with it. In one the model endpoint refused three
+// times; in the other the agent's final turn carried no tool call at all — it
+// typed the characters of a JSON tool call into its message. Neither has
+// anything to do with the worktree, and recovering the second one took a read
+// of a 188 MB log.
+//
+// In both runs the agent had ANNOUNCED the end of its own turn, and that
+// announcement is a fact the run already holds: runloop.ExitInfo.AgentAnnouncedEnd,
+// recorded at the kill site and read by dotNodeTerminalFailure above. An agent
+// that announced stopped ITSELF, so saying so points the reader at the agent's
+// last turn, which is where both failures are visible. An agent that announced
+// nothing was ended by something else, and the old sentence still describes it.
+//
+// WHAT THE SENTENCE STILL DOES NOT NAME, and where that thing is. "The
+// endpoint refused three times" and "the final turn contained no tool call" are
+// facts of the HARNESS's own event stream, and neither reaches this function as
+// an IN-MEMORY VALUE. The announcement arrives as a bare callback with no
+// arguments (handlercontract.Harness.NewSessionIDInterceptor's agentEndCb
+// func()), and the pi NDJSON parser that fires it keeps the willRetry flag and
+// the token counts and throws the message content away.
+//
+// They are not LOST, and an earlier draft of this comment said they were. That
+// claim would have sent the next reader away from the one place they sit. The
+// daemon tees pi's stdout to <worktree>/.harmonik/pi-agent/pi-stdout.log and
+// carries the directory back on the launch result (PiCaptureDir, hk-j6wm7), and
+// internal/harness/pi/stdoutlog.go leaves toolCall, args, result, agent_end and
+// turn_end untouched while it shrinks the file (hk-k4jrh). So the absent tool
+// call and the auto_retry lines are both on disk — in a file of roughly 826 KB,
+// not the 188 MB that made the second run expensive to read. That is what the
+// captureDir clause is for: the reason names the directory, so the next reader
+// does not have to find it.
+//
+// Two more facts sit unread at the call site and would sharpen this further.
+// runAgentPostExit computes a shared.RefsOutcome and discards it — RefsNoChange
+// means the agent edited nothing, RefsCommitted means it edited and did not
+// commit, and one sentence for both conflates two failure families.
+// runloop.ExitInfo.StderrTail is already populated for pi and already read
+// elsewhere in this package. Both are follow-up work, deliberately not taken
+// here.
+//
+// captureDir is empty for a non-pi harness and for a launch that died before the
+// capture directory existed, and the sentence has to stay correct then, so the
+// clause is omitted rather than pointing at nothing.
+//
+// Bead: hk-c6v0m.
+func dotNoHeadAdvanceReason(exit runloop.ExitInfo, captureDir, preHeadSHA string) string {
+	reason := fmt.Sprintf("exited without advancing HEAD past %s", preHeadSHA)
+	if exit.AgentAnnouncedEnd {
+		reason = fmt.Sprintf("announced the end of its turn and committed nothing; HEAD is still %s", preHeadSHA)
+	}
+	if captureDir == "" {
+		return reason
+	}
+	return reason + fmt.Sprintf(" — the agent's captured output is under %s/", captureDir)
+}
+
 // outcomeIsAnAgentReport reports whether an outcome_emitted payload actually
 // says what the agent decided. Only the three CHB-020 kinds do.
 //

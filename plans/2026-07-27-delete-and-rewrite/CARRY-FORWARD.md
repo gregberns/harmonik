@@ -283,11 +283,30 @@ place the sandbox's write grants and the host's shared scratch state meet.
    `internal/daemon/sandboxprofile.go` rejects a world-shared root and fails the launch
    with a named error.
 
-3. **srt 1.0.0 sets `TMPDIR=/tmp/claude` for every sandboxed child, whatever the
-   parent's `TMPDIR` holds, and the child's own children inherit it.** So a consumer
-   that honors `TMPDIR` never reaches the host temp root, with or without a grant. Grant
-   `/tmp/claude` on its own merits. Do not widen the profile to the root above it.
-   ⚠ Version-dependent: the value belongs to srt, not to us.
+3. **srt decides the sandboxed child's `TMPDIR`, and it reads that decision from its
+   OWN environment.** Measured, srt **0.0.63**, `dist/sandbox/sandbox-utils.js`
+   `generateProxyEnvVars`: the value is
+   `process.env.CLAUDE_CODE_TMPDIR || process.env.CLAUDE_TMPDIR || '/tmp/claude'`,
+   pushed onto the child as an `env` prefix. So the child's `TMPDIR` never comes from
+   the parent's own `TMPDIR`, and srt's prefix beats anything the launch later puts in
+   `spec.Env`. The variable carries one harness's name; the knob does not, and it works
+   whatever runs inside. Harmonik now sets `CLAUDE_CODE_TMPDIR` at the run's own scratch
+   directory (`internal/daemon.SandboxScratchDir`, `<worktree>/.harmonik/tmp`), so
+   `/tmp/claude` is a fallback no wrapped run should reach. Before that, the child still
+   had a writable `TMPDIR` — `/tmp/claude`, which the profile grants — but not one of its
+   OWN, so every concurrent run on the box wrote into the same directory. The run that
+   lost its work was refused for a different reason: it was told to write the literal
+   path `/tmp/commit-msg.txt`, which nothing granted
+   (hk-sandbox-no-writable-tmpdir-7484h). Still do not widen the profile to the root
+   above the granted directory.
+
+   **Read the srt version from the package, never from the CLI. `srt --version` always
+   prints `1.0.0`.** `dist/cli.js` calls
+   `.version(process.env.npm_package_version || '1.0.0')`, and that variable is set only
+   inside an npm script — so outside one the fallback always wins. `package.json` and
+   `npm ls -g @anthropic-ai/sandbox-runtime` both report the real number. Every "srt
+   1.0.0" claim in this repo came from trusting the CLI, including the one this entry
+   replaces.
 
 4. **Not every consumer honors `TMPDIR`, so a `TMPDIR`-derived grant covers the rest
    only by accident.** C's `tmpfile()` and `P_tmpdir`, and any `mkstemp("/tmp/...")`,

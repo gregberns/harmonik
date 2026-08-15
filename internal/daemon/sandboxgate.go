@@ -84,9 +84,50 @@ func sandboxSpawnForRun(cfg projectconfig.SandboxConfig, agentType core.AgentTyp
 	return &SrtSpawnConfig{ProfileInput: in}
 }
 
-// srtClaudeTmpDir is srt 1.0.0's hardcoded sandboxed-child TMPDIR (hk-cdpxu).
-// See srtWrapArgv and sandboxprofile.go allowWrite step 6a.
-const srtClaudeTmpDir = "/tmp/claude"
+// srtDefaultChildTmpDir is the sandboxed-child TMPDIR srt falls back to when
+// nothing tells it otherwise (hk-cdpxu). See srtWrapArgv and sandboxprofile.go
+// allowWrite step 6b.
+const srtDefaultChildTmpDir = "/tmp/claude"
+
+// srtChildTmpDirEnvVar is the variable srt reads from its OWN environment to
+// decide what TMPDIR the sandboxed child gets. MEASURED, srt 0.0.63,
+// sandbox-utils.js generateProxyEnvVars:
+//
+//	const tmpdir = process.env.CLAUDE_CODE_TMPDIR ||
+//	               process.env.CLAUDE_TMPDIR || '/tmp/claude';
+//	envVars.push(`TMPDIR=${tmpdir}`);
+//
+// The name carries one harness's brand because srt does, but the knob does not:
+// srt sets the child's TMPDIR from it whatever runs inside, so pointing it at
+// the run's own scratch directory is the harness-agnostic fix. It is set on the
+// srt PARENT process, not on the agent — the agent sees only TMPDIR.
+//
+// The push is CONDITIONAL: generateProxyEnvVars takes a skipTmpdir parameter,
+// and macos-sandbox-utils.js passes `writeConfig === undefined` for it, so srt
+// leaves the child's TMPDIR alone when the profile carries no filesystem policy.
+// Harmonik always emits a filesystem block (see GenerateSandboxProfile), so
+// writeConfig is defined and the injection always happens on our runs.
+const srtChildTmpDirEnvVar = "CLAUDE_CODE_TMPDIR"
+
+// srtWrap is what one srt argv-wrap produces: the argv to spawn, and the extra
+// environment the srt PARENT process must carry for the wrap to mean what it
+// says. They are grouped so a caller gets both from one return and does not have
+// to know a second value exists.
+//
+// Grouping does not enforce use. A launch path that keeps the argv and drops the
+// env append still compiles, and the child then falls back to srt's default
+// TMPDIR instead of this run's own directory. The two tests in
+// sandboxscratchtmpdir_wireup_test.go are what catch that drop: they read the
+// environment on the far side of each launch path, not the value this type
+// carries.
+type srtWrap struct {
+	// Argv is [srtBinary, "--settings", profilePath, agentArgv...].
+	Argv []string
+
+	// Env holds "KEY=VALUE" entries to APPEND to the environment of the process
+	// named by Argv[0]. Never a complete environment.
+	Env []string
+}
 
 // srtWrapArgv generates a per-run srt settings profile, writes it to a temp file,
 // and returns the srt-prefixed argv:
@@ -101,46 +142,71 @@ const srtClaudeTmpDir = "/tmp/claude"
 // both paths produce a byte-identical wrapper and reuse the same gate-produced
 // SrtSpawnConfig, so pi and claude/codex share one wrap contract.
 //
+// It also creates the run's scratch directory and returns the environment entry
+// that points the sandboxed child's TMPDIR at it, so a process inside the
+// sandbox can do what any POSIX process may assume it can do: write a temp file.
+//
 // The profile JSON is produced by GenerateSandboxProfile(spawn.ProfileInput) and
 // written to os.TempDir()/harmonik-srt-<RunID>.json (mode 0600). The file is NOT
 // cleaned up here — srt reads it at startup and the OS reclaims it at reboot.
 //
 // Returns an error (NOT wrapped with ErrStructural — the caller wraps) when
-// profile generation or file write fails.
+// scratch-directory creation, profile generation, or the file write fails.
 //
-// Bead: hk-rlxgx (original substrate wrap), hk-r4p0l (extraction + exec-path reuse).
-func srtWrapArgv(spawn *SrtSpawnConfig, agentArgv []string) ([]string, error) {
-	// hk-cdpxu: srt 1.0.0 hardcodes TMPDIR=/tmp/claude for the sandboxed child
-	// (verified empirically — independent of the parent's own TMPDIR and of
-	// anything else in the profile). GenerateSandboxProfile allowlists that path
-	// (see sandboxprofile.go allowWrite step 6a), but allowlisting alone is not
-	// enough: srt's own filesystem check on child startup stats the directory
+// Bead: hk-rlxgx (original substrate wrap), hk-r4p0l (extraction + exec-path
+// reuse), hk-sandbox-no-writable-tmpdir-7484h (scratch dir + child TMPDIR).
+func srtWrapArgv(spawn *SrtSpawnConfig, agentArgv []string) (srtWrap, error) {
+	// hk-sandbox-no-writable-tmpdir-7484h: give the run a temp directory of its
+	// OWN and point the child at it. The child was never without a writable
+	// TMPDIR — srt's default is /tmp/claude, and the profile grants it — but that
+	// is ONE directory for the whole box, so every concurrent run spooled into
+	// it. The run that threw away finished work was refused for a different
+	// reason: it was told to write the literal path /tmp/commit-msg.txt, which
+	// nothing granted, so it got EPERM, retried with sudo, and abandoned a
+	// correct commit message. That instruction is fixed in internal/workspace
+	// buildAgentTaskContent; this gives the run somewhere of its own to put the
+	// file. The directory must EXIST before the child starts — a granted path
+	// that is not on disk still gives ENOENT to the first tool that opens it.
+	//
+	// 0o700 because a temp directory holds whatever the agent spools into it and
+	// nothing else has business reading it. MkdirAll is idempotent, so a rerun
+	// against an existing directory is not an error.
+	scratchDir := SandboxScratchDir(spawn.ProfileInput.WorktreePath)
+	if err := os.MkdirAll(scratchDir, 0o700); err != nil { //dirmode:allow tighter on purpose: the run's sandbox scratch TMPDIR holds agent-spooled files, 0o700 by design
+		return srtWrap{}, fmt.Errorf("create sandbox scratch TMPDIR %s: %w", scratchDir, err)
+	}
+
+	// hk-cdpxu: absent srtChildTmpDirEnvVar, srt injects TMPDIR=/tmp/claude into
+	// the sandboxed child regardless of the parent's own TMPDIR and of anything
+	// else in the profile. That path is granted (sandboxprofile.go allowWrite
+	// step 6b) but a grant is not a directory: srt stats it on child startup
 	// ("stat /tmp/claude: no such file or directory") before any sandboxed
-	// process runs, so it must actually exist on disk first. Any tool the
-	// sandboxed agent invokes that honors TMPDIR for scratch/work-dir creation
-	// (e.g. `go build`'s "creating work dir" step) fails immediately without
-	// this. Best-effort MkdirAll: a pre-existing directory (created by a prior
-	// run, any permissions) is not an error here — os.MkdirAll is idempotent.
-	if err := os.MkdirAll(srtClaudeTmpDir, 0o700); err != nil { //dirmode:allow not a .harmonik state dir: srt's hardcoded /tmp/claude sandbox scratch TMPDIR, 0o700 by design
-		return nil, fmt.Errorf("create srt scratch TMPDIR %s: %w", srtClaudeTmpDir, err)
+	// process runs. The env entry below means no run should reach that fallback
+	// any more; the directory is still created so a host running an srt without
+	// that knob degrades to the old behaviour instead of to ENOENT.
+	if err := os.MkdirAll(srtDefaultChildTmpDir, 0o700); err != nil { //dirmode:allow not a .harmonik state dir: srt's default /tmp/claude sandbox scratch TMPDIR, 0o700 by design
+		return srtWrap{}, fmt.Errorf("create srt fallback TMPDIR %s: %w", srtDefaultChildTmpDir, err)
 	}
 
 	profileBytes, err := GenerateSandboxProfile(spawn.ProfileInput)
 	if err != nil {
-		return nil, fmt.Errorf("generate srt profile: %w", err)
+		return srtWrap{}, fmt.Errorf("generate srt profile: %w", err)
 	}
 	profilePath := filepath.Join(os.TempDir(), "harmonik-srt-"+spawn.ProfileInput.RunID+".json")
 	if err := os.WriteFile(profilePath, profileBytes, 0o600); err != nil {
-		return nil, fmt.Errorf("write srt profile to %s: %w", profilePath, err)
+		return srtWrap{}, fmt.Errorf("write srt profile to %s: %w", profilePath, err)
 	}
 	srtBin := spawn.SrtBinary
 	if srtBin == "" {
 		srtBin = "srt"
 	}
-	result := make([]string, 0, 3+len(agentArgv))
-	result = append(result, srtBin, "--settings", profilePath)
-	result = append(result, agentArgv...)
-	return result, nil
+	argv := make([]string, 0, 3+len(agentArgv))
+	argv = append(argv, srtBin, "--settings", profilePath)
+	argv = append(argv, agentArgv...)
+	return srtWrap{
+		Argv: argv,
+		Env:  []string{srtChildTmpDirEnvVar + "=" + scratchDir},
+	}, nil
 }
 
 // sandboxWrapExecArgv applies the srt argv-wrap to an EXEC-path LaunchSpec
@@ -151,19 +217,23 @@ func srtWrapArgv(spawn *SrtSpawnConfig, agentArgv []string) ([]string, error) {
 //
 //	srt --settings <profilePath> <binary> <args...>
 //
+// plus the environment entries the caller must APPEND to spec.Env — the child's
+// TMPDIR among them.
+//
 // When spawn is nil (the strict no-op gate: backend != "srt", or the harness is
-// not in sandbox.harnesses), it returns (binary, args) UNCHANGED with no error —
-// the exec path is byte-identical to today's behaviour. This shares srtWrapArgv
-// with the substrate path so the two launch paths cannot diverge.
-func sandboxWrapExecArgv(spawn *SrtSpawnConfig, binary string, args []string) (string, []string, error) {
+// not in sandbox.harnesses), it returns (binary, args) UNCHANGED with a nil env
+// and no error — the exec path is byte-identical to an unsandboxed launch. This
+// shares srtWrapArgv with the substrate path so the two launch paths cannot
+// diverge.
+func sandboxWrapExecArgv(spawn *SrtSpawnConfig, binary string, args []string) (wrappedBinary string, wrappedArgs, extraEnv []string, err error) {
 	if spawn == nil {
-		return binary, args, nil
+		return binary, args, nil, nil
 	}
-	wrapped, err := srtWrapArgv(spawn, append([]string{binary}, args...))
-	if err != nil {
-		return "", nil, err
+	wrapped, wrapErr := srtWrapArgv(spawn, append([]string{binary}, args...))
+	if wrapErr != nil {
+		return "", nil, nil, wrapErr
 	}
-	return wrapped[0], wrapped[1:], nil
+	return wrapped.Argv[0], wrapped.Argv[1:], wrapped.Env, nil
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

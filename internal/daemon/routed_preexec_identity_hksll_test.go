@@ -201,3 +201,49 @@ func TestRoutedPreExec_LogPathIsAnnounced_hksllemptylogpath(t *testing.T) {
 		t.Errorf("core.SessionLogLocationPayload.Valid() = false for the payload the daemon publishes: %+v", pl)
 	}
 }
+
+// TestRoutedPreExec_PiLogPathNamesWhatPiWrites_hkium95 is the hk-ium95
+// regression: pi is a SessionIDCaptured harness, so the handler session id
+// minted for this pre-exec message never exists on pi's side, and pi never
+// writes to workspace.SessionLogDirPath(handlerSessionID) — that directory is
+// never created. pi writes under its own PI_CODING_AGENT_DIR
+// (<workspace>/.harmonik/pi-agent/) instead. The announced log_path must name
+// that directory, not the fictional per-session one.
+func TestRoutedPreExec_PiLogPathNamesWhatPiWrites_hkium95(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("OPENROUTER_API_KEY", "sk-test-hkium95")
+	wt := hksllWorktree(t)
+	rc := shared.LaunchCtx{
+		RunID:           hksllRunID(t),
+		BeadID:          "hkium95-pi",
+		WorkspacePath:   wt,
+		Phase:           "implementer-initial",
+		IterationCount:  1,
+		BeadTitle:       "pi log path",
+		BeadDescription: "body",
+		HandlerBinary:   "pi",
+		Provider:        "openrouter",
+		Model:           "openrouter/qwen/qwen3-coder",
+		APIKeyEnv:       "OPENROUTER_API_KEY",
+		BaseURL:         "http://dgx.local:8080/v1",
+		API:             "openai",
+	}
+	h := pi.NewHarness("pi", "openrouter", "openrouter/qwen/qwen3-coder", "OPENROUTER_API_KEY", "", "", "")
+	_, arts, err := buildCodexRoutedLaunchSpec(ctx, rc, h, core.AgentTypePi)
+	if err != nil {
+		t.Fatalf("buildCodexRoutedLaunchSpec (pi): %v", err)
+	}
+
+	msg := hksllSessionLogLocation(t, arts)
+	wantPath := filepath.Join(wt, ".harmonik", "pi-agent")
+	if msg.LogPath != wantPath {
+		t.Errorf("session_log_location.log_path = %q; want the directory pi actually writes to %q (hk-ium95)", msg.LogPath, wantPath)
+	}
+	notWantPath := workspace.SessionLogDirPath(wt, msg.SessionID)
+	if msg.LogPath == notWantPath {
+		t.Errorf("session_log_location.log_path = %q; this is the canonical per-session directory pi never writes to, because pi is SessionIDCaptured (hk-ium95)", msg.LogPath)
+	}
+	if _, statErr := os.Stat(wantPath); statErr != nil {
+		t.Errorf("announced pi-agent dir %q does not exist on disk: %v", wantPath, statErr)
+	}
+}

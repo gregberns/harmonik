@@ -478,13 +478,13 @@ func TestIntegration_TwinClearRestartCycle_E2E(t *testing.T) {
 		t.Errorf("tw: .idle marker missing after cycle: %v", err)
 	}
 
-	// (d) cycle_complete emitted with prev==seed and new==rotated; NO aborted.
+	// (d) cycle_complete emitted with prev==seed and new==rotated; NO park.
 	complete := em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)
 	if len(complete) != 1 {
 		t.Fatalf("tw: want 1 cycle_complete; got %d (events imply the cycle did not finish cleanly)", len(complete))
 	}
-	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleAborted)); n != 0 {
-		t.Errorf("tw: want 0 cycle_aborted on the happy path; got %d", n)
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleParked)); n != 0 {
+		t.Errorf("tw: want 0 cycle_parked on the happy path; got %d", n)
 	}
 	var cp core.SessionKeeperCycleCompletePayload
 	if err := json.Unmarshal(complete[0].Payload, &cp); err != nil {
@@ -715,13 +715,15 @@ func TestIntegration_TwinE2E_OperatorRealEnv(t *testing.T) {
 		t.Errorf("tw: .managed rebound to %q; want the rotated SID %q", boundSID, final.SessionID)
 	}
 
-	// (e) cycle_complete with prev==seed and new==rotated; NO aborted.
+	// (e) cycle_complete with prev==seed and new==rotated; NO park. The idle
+	// remote-control client must not read as a live operator turn, so the
+	// operator_turn_recent park must not fire here either.
 	complete := em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)
 	if len(complete) != 1 {
 		t.Fatalf("tw: want 1 cycle_complete; got %d", len(complete))
 	}
-	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleAborted)); n != 0 {
-		t.Errorf("tw: want 0 cycle_aborted; got %d", n)
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleParked)); n != 0 {
+		t.Errorf("tw: want 0 cycle_parked; got %d", n)
 	}
 	var cp core.SessionKeeperCycleCompletePayload
 	if err := json.Unmarshal(complete[0].Payload, &cp); err != nil {

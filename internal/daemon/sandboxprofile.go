@@ -17,7 +17,9 @@ package daemon
 //     required because git creates <ref>.lock as a sibling during commit.
 //   - <gitDir>/packed-refs and <gitDir>/packed-refs.lock (git pack-refs atomic pair).
 //   - Per-run temp directories (TmpDirs) — never a world-shared root (hk-guapd).
-//   - srt's own hardcoded scratch TMPDIR, /tmp/claude (and /private/tmp/claude);
+//   - The run's own scratch directory, SandboxScratchDir(WorktreePath), which is
+//     what the sandboxed child gets as TMPDIR.
+//   - srt's own default scratch TMPDIR, /tmp/claude (and /private/tmp/claude);
 //     see hk-cdpxu below.
 //   - Per-run private cache areas (PrivateWriteCacheDirs — never shared).
 //
@@ -33,12 +35,18 @@ package daemon
 // the parsed field is honored instead of silently ignored.
 //
 // allowLocalBinding is driven by SandboxProfileInput.AllowLocalBinding
-// (config: sandbox.network.allow_local_binding). It is REQUIRED to reach a
-// locally-hosted model endpoint (a LAN vLLM / loopback stub): those addresses
-// fall in srt's no_proxy set, so they are connected to directly and Seatbelt
-// denies the socket ("Operation not permitted") unless local binding is
-// permitted — the allowedDomains proxy path does not cover them. Bead hk-ybuts /
-// hk-u69my (Pi srt egress: sandboxed Pi could not reach the DGX vLLM).
+// (config: sandbox.network.allow_local_binding). It is REQUIRED to reach an
+// endpoint on THIS host — loopback or one of this machine's own interfaces.
+// Those addresses fall in srt's no_proxy set, so they are connected to
+// directly and Seatbelt denies the socket ("Operation not permitted") unless
+// local binding is permitted; the allowedDomains proxy path does not cover
+// them. It does NOT open a remote host, so it does not on its own reach a
+// model server on another machine — srt_pi_egress_e2e_test.go in this package
+// measures the local half and explains why the remote half cannot be
+// reproduced in-process. The discriminator is remote-host vs local, not
+// loopback vs non-loopback. The model box is reached by tunnelling it to
+// loopback instead. Bead hk-ybuts / hk-u69my (Pi srt egress: sandboxed Pi
+// could not reach the DGX vLLM).
 //
 // Spec: plans/2026-07-02-pi-sandbox/HANDOFF.md §4 (git writable-set),
 // §6 (cache read-only base + private write area), §8.2 (profile shape).
@@ -88,17 +96,21 @@ type SandboxProfileInput struct {
 	// connection to a private-LAN / loopback address: srt's default no_proxy
 	// (localhost, 127.0.0.1, 10/8, 172.16/12, 192.168/16, 169.254/16) makes
 	// those bypass the proxy and connect directly, which macOS Seatbelt denies
-	// unless AllowLocalBinding is set. A locally-hosted model server (vLLM at
-	// e.g. http://192.168.1.86:8551) therefore needs AllowLocalBinding, NOT an
-	// allowedDomains entry. See hk-ybuts / hk-u69my (Pi srt egress).
+	// unless AllowLocalBinding is set. AllowLocalBinding is the answer for an
+	// endpoint on THIS host; it does not open a remote one, so a model server
+	// on another machine stays blocked either way and is reached through a
+	// loopback tunnel (config base_url http://127.0.0.1:8551/v1). See
+	// srt_pi_egress_e2e_test.go and hk-ybuts / hk-u69my (Pi srt egress).
 	AllowedDomains []string
 
 	// AllowLocalBinding, when true, permits the sandboxed process to open direct
-	// sockets to local / private-LAN / loopback network addresses
-	// (network.allowLocalBinding). REQUIRED to reach a locally-hosted, OpenAI-
-	// compatible model endpoint (e.g. a DGX vLLM on the LAN, or an httptest stub
-	// on 127.0.0.1) because those addresses fall in srt's no_proxy set and are
-	// connected to directly rather than through the MITM proxy. Default false
+	// sockets to addresses on THIS host — loopback and this machine's own
+	// interfaces (network.allowLocalBinding). REQUIRED to reach an OpenAI-
+	// compatible model endpoint there (the loopback tunnel entrance for the DGX
+	// vLLM, or an httptest stub on 127.0.0.1) because those addresses fall in
+	// srt's no_proxy set and are connected to directly rather than through the
+	// MITM proxy. A host on the LAN is a different case: the socket stays denied
+	// whatever this is set to. Default false
 	// keeps the tightest posture; the operator opts in via
 	// sandbox.network.allow_local_binding. Bead: hk-ybuts / hk-u69my.
 	AllowLocalBinding bool
@@ -129,7 +141,11 @@ type SandboxProfileInput struct {
 }
 
 // srtNetworkConfig is the network section of the srt settings JSON.
-// Schema: srt v1.0.0 (plans/2026-07-02-pi-sandbox/srt-spike-settings.json).
+// Schema: the srt settings file (plans/2026-07-02-pi-sandbox/srt-spike-settings.json),
+// pinned against srt 0.0.63. Read the version from package.json or `npm ls -g`, never
+// from `srt --version`: dist/cli.js falls back to a hardcoded "1.0.0" whenever
+// npm_package_version is unset, which is every invocation outside an npm script. The
+// "srt v1.0.0" this line used to claim came from that fallback.
 type srtNetworkConfig struct {
 	AllowedDomains    []string `json:"allowedDomains"`
 	DeniedDomains     []string `json:"deniedDomains"`
@@ -170,11 +186,68 @@ type srtSettings struct {
 //     when BranchName is set, or <GitDir>/refs/heads/ as fallback
 //   - <GitDir>/packed-refs and <GitDir>/packed-refs.lock (atomic update pair)
 //   - TmpDirs (per-run temp directories; a world-shared root is rejected)
+//   - SandboxScratchDir(WorktreePath) — the child's TMPDIR
 //   - PrivateWriteCacheDirs (per-run private cache areas)
 //
 // Shared toolchain caches go in allowRead only. enableWeakerNetworkIsolation is
 // always false. Returns an error when any required field is absent or not
 // absolute, or when a TmpDirs entry is a world-shared temp root (hk-guapd).
+
+// SandboxScratchDir returns the per-run scratch directory for a run whose
+// worktree is at worktreePath. It is the directory the sandboxed child gets as
+// TMPDIR, and it is the answer to "where may a normal POSIX process write a
+// scratch file" — a commit message, a compiler intermediate, anything a tool
+// spools.
+//
+// It is DERIVED from the worktree rather than carried as a field so the profile
+// generator and the argv wrapper cannot name two different directories: one
+// function computes it and both call it.
+//
+// The worktree is the location for three reasons that no path under /tmp has:
+//
+//   - It is already inside the profile's write grant (srt expands allowWrite
+//     entries recursively), so granting it widens the sandbox by nothing.
+//
+//   - It needs no second spelling. On macOS /tmp is a symlink to /private/tmp,
+//     so a grant under /tmp has to be written both ways (see the /tmp/claude
+//     pair below); a path under the repo resolves to itself.
+//
+//   - It lives and dies with the worktree, so it adds no new class of
+//     accumulation. It does not follow that it is short-lived. A run that ends
+//     any ordinary way gives the worktree back and the scratch directory goes
+//     with it. A run kept FOR its evidence does not: RetainEvidence.Releases
+//     gives back every resource EXCEPT the worktree.
+//
+//     Read runlease.Decide for what picks that. It reads ONE fact,
+//     Exit.EvidenceWorthKeeping, and Survive pre-empts it when the session runs
+//     independently and the daemon is stopping. The workloop is what fills the
+//     fact in, and it wants three things at once: a run handle exists, the
+//     handle reports captured agent output, and the bridge did not report
+//     success. runAgentLaunch marks the capture on a pi run, but BELOW the
+//     sandbox-engagement gate's early return, so a pi run that fails that gate
+//     is never marked and is reclaimed like any other.
+//
+//     A retained worktree is not given back promptly, but it IS time-bounded.
+//     Every daemon boot runs the orphan sweep over .harmonik/worktrees/, which
+//     reaches a left-behind worktree by one of two routes:
+//     workspace.RemoveStaleWorktrees force-removes one whose lease lock names a
+//     dead PID, and workspace.RemoveAgedNoLockWorktrees prunes one that holds no
+//     lock and is older than DefaultHarmonikWorktreeMaxAgeDays — seven days, or
+//     what HARMONIK_WORKTREE_MAX_AGE_DAYS says. Both routes hold back a worktree
+//     whose run is still working. Two more removers exist: the low-disk path
+//     (reclaimStaleWorktrees in diskcheck_hksxlb.go), which runs only below the
+//     free-space watermark with no run in flight, and the queue-archive reaper
+//     in internal/lifecycle, which removes the worktrees of a cancelled or
+//     failed queue item. So a failed run's scratch directory can outlive its run
+//     by about a week, not for ever. <worktree>/.harmonik/go-cache, set by the
+//     same sandbox path, already lives and dies this way, and it is the larger
+//     of the two.
+//
+// <worktree>/.harmonik/ is gitignored, so scratch files here never appear in
+// `git status` and never become part of the agent's change.
+func SandboxScratchDir(worktreePath string) string {
+	return filepath.Join(worktreePath, ".harmonik", "tmp")
+}
 
 // worldSharedTempRoot reports whether dir is a temp root shared by every user
 // and process on the host. "/var/tmp" is included as the other POSIX shared-temp
@@ -266,19 +339,45 @@ func GenerateSandboxProfile(in SandboxProfileInput) ([]byte, error) {
 	// 6. OS temp directories.
 	allowWrite = append(allowWrite, in.TmpDirs...)
 
-	// 6a. srt's own scratch TMPDIR (hk-cdpxu). Empirically (srt 1.0.0), the
-	// sandboxed child ALWAYS gets TMPDIR=/tmp/claude injected by srt itself,
-	// regardless of the parent process's TMPDIR and regardless of what this
-	// profile's allowWrite otherwise contains — it is not one of in.TmpDirs.
-	// Any tool that honors TMPDIR for scratch/work-dir creation (e.g. `go
-	// build`'s "creating work dir" step) fails with ENOENT inside the sandbox
-	// unless /tmp/claude is both present on disk AND in allowWrite. Both the
-	// /tmp and /private/tmp forms are listed (macOS symlinks /tmp ->
-	// /private/tmp; bwrap/Seatbelt need the literal path used at open time),
-	// mirroring the existing TmpDirs /private/tmp fallback above. Directory
-	// creation is the caller's responsibility (sandboxWrapExecArgv), since this
-	// function is a pure profile generator.
-	allowWrite = append(allowWrite, "/tmp/claude", "/private/tmp/claude")
+	// 6a. The run's own scratch directory — the child's TMPDIR
+	// (hk-sandbox-no-writable-tmpdir-7484h). Before this entry a run could still
+	// write a temp file: srt pointed the child's TMPDIR at its own default,
+	// /tmp/claude, which 6b below grants. What the run did not have was a temp
+	// directory of its OWN, so every concurrent run on the box spooled into the
+	// same one. The run that threw away finished work was refused for a different
+	// reason — it was told to write the literal path /tmp/commit-msg.txt, which
+	// no entry here covers. That instruction is fixed in internal/workspace
+	// buildAgentTaskContent.
+	//
+	// It sits UNDER the worktree, which srt already grants recursively, so this
+	// line widens nothing — it states where TMPDIR points, in the one document
+	// that says what this run may write. See SandboxScratchDir for why the
+	// worktree and not /tmp.
+	//
+	// 6b. srt's own DEFAULT scratch TMPDIR (hk-cdpxu). Absent
+	// CLAUDE_CODE_TMPDIR in srt's own environment, srt injects
+	// TMPDIR=/tmp/claude into the sandboxed child regardless of the parent's
+	// TMPDIR and of what this profile's allowWrite contains. Any tool that
+	// honors TMPDIR for scratch/work-dir creation (e.g. `go build`'s "creating
+	// work dir" step) then fails with ENOENT unless /tmp/claude is both present
+	// on disk AND writable. srtWrapArgv now sets CLAUDE_CODE_TMPDIR, so the
+	// fallback is no longer the path a run takes; these two entries remain as
+	// the belt for a host whose srt is older than that knob.
+	//
+	// MEASURED, srt 0.0.63, sandbox-utils.js getDefaultWritePaths(): srt merges
+	// its OWN default write set — which already contains both /tmp/claude
+	// spellings — into allowOnly ahead of everything this profile says. So on
+	// that version these two entries grant nothing srt was not granting anyway,
+	// and they are a candidate for deletion once the srt floor is pinned. Left
+	// in place deliberately rather than removed on that reading alone.
+	//
+	// Both the /tmp and /private/tmp forms are listed (macOS symlinks /tmp ->
+	// /private/tmp; bwrap/Seatbelt need the literal path used at open time).
+	// Directory creation is the caller's responsibility (srtWrapArgv), since
+	// this function is a pure profile generator.
+	allowWrite = append(allowWrite,
+		SandboxScratchDir(in.WorktreePath),
+		"/tmp/claude", "/private/tmp/claude")
 
 	// 7. Per-run private cache areas (never shared with concurrent runs).
 	allowWrite = append(allowWrite, in.PrivateWriteCacheDirs...)

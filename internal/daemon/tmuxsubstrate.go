@@ -2663,7 +2663,13 @@ func (p *perRunSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateS
 		if wrapErr != nil {
 			return nil, fmt.Errorf("daemon: perRunSubstrate.SpawnWindow: srt argv-wrap: %w: %w", wrapErr, handler.ErrStructural)
 		}
-		in.Argv = wrapped
+		in.Argv = wrapped.Argv
+		// The env travels with the argv. srt reads CLAUDE_CODE_TMPDIR from its
+		// OWN environment to decide the sandboxed child's TMPDIR, so an argv
+		// wrapped here without this append would hand the agent a temp directory
+		// the profile never granted (hk-sandbox-no-writable-tmpdir-7484h).
+		// Appended, not assigned: in.Env is the harness's full environment.
+		in.Env = append(in.Env, wrapped.Env...)
 	}
 
 	// Independent-session path (hk-o85ye): runSessionID non-empty → spawn a
@@ -2729,6 +2735,9 @@ func (p *perRunSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateS
 //
 //	[SrtBinary, "--settings", profilePath, agentArgv...]
 //
+// alongside the environment entries the srt process must carry (the sandboxed
+// child's TMPDIR).
+//
 // The profile JSON is produced by GenerateSandboxProfile(p.sandboxSpawn.ProfileInput)
 // and written to os.TempDir()/harmonik-srt-<RunID>.json (mode 0600). The file is
 // NOT cleaned up here — srt reads it at startup and the OS reclaims it at reboot;
@@ -2738,7 +2747,7 @@ func (p *perRunSubstrate) SpawnWindow(ctx context.Context, in handler.SubstrateS
 // profile generation or file write fails.
 //
 // Bead: hk-rlxgx.
-func (p *perRunSubstrate) buildSrtArgv(agentArgv []string) ([]string, error) {
+func (p *perRunSubstrate) buildSrtArgv(agentArgv []string) (srtWrap, error) {
 	// hk-r4p0l: delegate to the package-level srtWrapArgv so the substrate path
 	// and the exec path (workloop, SessionIDCaptured harnesses) share ONE wrap
 	// implementation and cannot drift.

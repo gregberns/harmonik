@@ -8,10 +8,10 @@ requirement-prefix: PI
 status: draft
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.1.1
+version: 0.1.2
 spec-template-version: 1.1
 owner: pilot-author
-last-updated: 2026-08-01
+last-updated: 2026-08-15
 depends-on:
   - architecture
   - handler-contract
@@ -56,13 +56,24 @@ depends-on:
   ready-state from any non-`agent_ready` signal.
 - **PI-014 (agent_end watcher — load-bearing)** Because Pi's process exit is unreliable
   (upstream #4303/#161/#4942), the Pi run path MUST observe the run's NDJSON event stream and, on the
-  terminal **`agent_end`** event, invoke `Teardown`→Kill. The run's completion MUST NOT depend on Pi
+  terminal **`agent_end`** event, end the session (kill it). **Terminal means `willRetry` is false.**
+  The watcher MUST NOT end the session on an `agent_end` that carries `willRetry: true` — that kills
+  Pi during its own backoff — and MUST stay armed after skipping one, so the terminal event still
+  ends the session. Refs hk-z9nli. The run's completion MUST NOT depend on Pi
   self-exiting; the 90-minute `commitHardCeiling` is a backstop only. The watcher MUST **extend the
   existing per-harness `StdoutWrapper`/`SessionIDInterceptor`** assigned in shared launch code
   (`internal/daemon/agentlaunch.go` `runAgentLaunch`, on its `sessionIDCaptured` branch) — it MUST
   NOT add a *new* shared-loop branch, and MUST NOT be described as "outside the shared loop" (it
   rides the SessionIDCaptured hook
   codex established). Depends on PI-012a.
+  > Why `willRetry` is trustworthy (upstream behavior measured on pi 0.80.3 — evidence, not a
+  > requirement on harmonik): Pi emits an `agent_end` before each retry attempt as well. The flag is
+  > non-optional on the `agent_end` member of the `AgentSessionEvent` union in
+  > `dist/core/agent-session.d.ts`, which is the listener path the NDJSON stream comes off — NOT the
+  > extension-facing `AgentEndEvent` in `dist/core/extensions/types.d.ts`, which drops the field. Pi
+  > computes it false when retry is disabled, OR the attempt count has reached `maxRetries`, OR the
+  > last assistant message is not a retryable error. So a terminal `agent_end` always arrives, and
+  > skipping the retry ones cannot strand the backstop.
 - **PI-015** The harness MUST NOT pass a `--sandbox` flag (Pi is unsandboxed). The seed prompt MUST
   instruct Pi to read `.harmonik/agent-task.md`, implement, and commit with a `Refs: <bead-id>`
   trailer.

@@ -953,7 +953,9 @@ type PiHarnessConfig struct {
 	// Spec: PI-050 (api_key_file). Bead: hk-xmfoi.
 	APIKeyFile string
 	// BaseURL is the OPTIONAL base URL for locally-hosted OpenAI-compatible
-	// endpoints (e.g. http://dgx.local:8551/v1). When set, buildPiLaunchSpec
+	// endpoints (e.g. http://127.0.0.1:8551/v1 — a host name on the LAN does not
+	// work from inside the sandbox, so a remote model box is tunnelled to
+	// loopback). When set, buildPiLaunchSpec
 	// generates a models.json with this baseUrl and injects PI_CODING_AGENT_DIR.
 	// Absent = today's cloud-provider behavior unchanged. Shape-validated by
 	// ResolvePiConfig when present (scheme://host[:port][/path], ≤512 chars).

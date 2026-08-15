@@ -109,9 +109,11 @@ func TestKeeperCycle_FullReactiveCycle(t *testing.T) {
 		t.Errorf("managed-session port binding = %q; want %q (S2)", managedBinding, s2)
 	}
 
-	// (e) NO cycle_aborted on the happy path.
-	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleAborted)); n != 0 {
-		t.Errorf("want 0 cycle_aborted; got %d", n)
+	// (e) The happy path takes no off-path exit: nothing parks the cycle.
+	// A park here would mean the handoff-timeout or operator-turn edge fired
+	// on a run whose nonce landed on the first poll.
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleParked)); n != 0 {
+		t.Errorf("want 0 cycle_parked on the happy path; got %d", n)
 	}
 
 	// (f) CAUSALITY — the SID flip must be CAUSED by /clear, not temporal.
@@ -311,9 +313,10 @@ func TestKeeperCycle_NonceTimeoutButFreshHandoff_Recovers(t *testing.T) {
 		t.Errorf("injection order wrong: clear=%d brief=%d; want clear<brief (%v)", clearIdx, briefIdx, inj)
 	}
 
-	// (c) NOT a blind abort.
-	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleAborted)); n != 0 {
-		t.Errorf("want 0 cycle_aborted on the recovery path; got %d", n)
+	// (c) NOT a bail-out. A fresh handoff body without a nonce is enough to
+	// proceed, so the nonce timeout must not park the cycle either.
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleParked)); n != 0 {
+		t.Errorf("want 0 cycle_parked on the recovery path; got %d", n)
 	}
 	completeEvts := em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)
 	if len(completeEvts) != 1 {

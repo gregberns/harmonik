@@ -7,10 +7,10 @@ spec-id: session-keeper
 requirement-prefix: SK   # reserve in specs/_registry.yaml at landing (same commit as this spec)
 status: draft
 spec-shape: requirements-first
-version: 0.2.1
+version: 0.3.1
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-07-30
+last-updated: 2026-08-15
 depends-on:
   - replay-substrate
   - event-model
@@ -472,6 +472,8 @@ The four payloads are versioned schema v1 with a `PayloadCompatEntry` (`CurrentV
 
 States: `Idle`, `RequestPending`, `AwaitingHandoff`, `AwaitModelDone`, `Clearing`, `Briefing`, and terminals `Complete` / `Aborted`. `RequestPending` owns a durable request that has no restart authority. `State` also carries the in-flight `cycleID`, `injectedAt`, `clearAttempt`, `prevSID`, `handoffMtime`, and the anti-loop/hysteresis fields (all timestamps sourced from event `at`). The timer table:
 
+> INFORMATIVE: `RequestPending` is a state in this spec. The code holds the same meaning in a different shape. `internal/keeper` `CycleState` returns `Phase` to `PhaseIdle` and sets `LastTerminal` to `"pending"`, and the journal phase is `pending`. Read `Phase == Idle` plus `LastTerminal == "pending"` wherever this spec says `RequestPending`. The two agree on meaning. Only the shape differs.
+
 | Timer kind | Duration (default) | Armed on entering | Fired-in-state action |
 |---|---|---|---|
 | `handoff_observation_wake` | implementation policy | synchronous handoff observation | marked ⇒ `AwaitModelDone`; no marker ⇒ park observation while the request remains pending |
@@ -538,7 +540,7 @@ The 200ms detection cadence is a shell poll, distinct from the four reactor time
 
 ## 8. Error and failure taxonomy
 
-The cycle's terminal/abort taxonomy has three named outcomes:
+The cycle's outcome taxonomy has four named outcomes:
 
 ### 8.1 cycle_complete
 
@@ -546,13 +548,48 @@ The success terminal — reached at `Briefing → Complete`. The brief is inject
 
 ### 8.2 cycle_aborted
 
-`cycle_aborted` records a structural or effect failure after restart authority exists. A missing or
-late handoff is not an abort. The retired `handoff_timeout` abort remains readable in old event
-logs, but new keepers MUST NOT emit it.
+`cycle_aborted` is RETIRED for emission. It recorded a structural or effect failure after restart
+authority existed, and the `handoff_timeout` abort was its only live producer. A missing or late
+handoff is pending work and not a failure (SK-025), so that producer is gone and nothing replaced
+it. The type stays registered so old event logs still decode. New keepers MUST NOT emit it. A
+consumer MUST NOT read its absence as a missing terminal.
+
+The journal phase `aborted` is a different thing and it stays live. Crash recovery writes it, with
+reason `crash_before_clear`, when a cycle journal is found at phase `opened`, `handoff_injected`, or
+`confirmed`. That close-out writes the journal and emits no event.
+
+**A gap this retirement exposes, recorded rather than hidden.** SK-015, SK-INV-005 and §8.3 all name
+a `restart_failed`-class emission as the escape hatch for an authorized restart that cannot reach a
+terminal. No code emits such an event, and none ever did — `cycle_aborted` was doing that job in
+practice. So an authorized restart that fails structurally now has no recordable outcome, and the
+only thing that sees it is SR9 reporting an unterminated cycle. Either give the escape hatch a
+producer or take the promise out of SK-015, SK-INV-005 and §8.3. Do not leave the spec naming an
+event the system cannot emit.
 
 ### 8.3 clear_unconfirmed (degraded-completion)
 
 `clear_unconfirmed(c)` is the `Clearing` backstop-exhaustion outcome. It is NOT a terminal by itself: the brief still fires and the cycle still records `cycle_complete(c)`. It is the degraded-completion mode SR6 (SK-INV-003) tracks and aims to reduce; the baseline is 347/427 = 81% degraded-completion, which SK-019 forbids from increasing. A `restart_failed`-class emission is the SR9 escape hatch when even the degraded path cannot complete within the bounded window.
+
+### 8.4 cycle_parked
+
+`cycle_parked(c)` records a cycle that stopped before `/clear`. The payload `reason` field says
+which of two things happened. The two are not the same kind of outcome, so a consumer MUST read
+`reason` before it decides that the cycle ended.
+
+**`handoff_pending` — a suspension.** The synchronous observation window closed before a marked
+handoff arrived. The keeper writes journal phase `pending` and keeps the request. It MUST NOT clear
+the managed session, raise an escalation counter, or call `ForceRestart` (SK-025, SK-INV-005). A
+later marked handoff resumes the SAME request. The cycle keeps its original `cycle_id`, enters
+`AwaitModelDone`, and ends in `cycle_complete(c)` under that same `cycle_id`. So one
+`cycle_parked{handoff_pending}` and one `cycle_complete` with equal `cycle_id` values are one cycle
+and not two.
+
+**`operator_turn_recent` — an end.** A recent real operator turn holds the restart effects back
+(SK-026). The keeper writes journal phase `parked` and leaves the handoff in place. This cycle does
+not resume. The next cycle mints a new `cycle_id`.
+
+The keeper sends no `/clear` on either park, so SK-INV-001 holds in both cases. These two values are
+the complete set. A park that carries any other `reason` is a defect.
 
 ## 9. Cross-references
 
@@ -605,6 +642,7 @@ None blocking.
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-08-15 | 0.3.1 | agent (park taxonomy) | §8 now names four outcomes and not three. `cycle_aborted` is marked RETIRED for emission: the `handoff_timeout` producer is gone and nothing replaced it. New §8.4 describes `cycle_parked` and its two reasons — `handoff_pending` suspends a cycle that keeps its `cycle_id` and can still reach `cycle_complete`, and `operator_turn_recent` ends one. New informative note in §7.1: the code spells `RequestPending` as `Phase=Idle` plus `LastTerminal="pending"`. The header `version` and `last-updated` fields were stale against the 0.3.0 row and are now current. No obligation changed. |
 | 2026-08-12 | 0.3.0 | agent (checkpoint handshake) | Added SK-022 through SK-028. Context pressure now creates a three-band request. Stop is a first-class decision point but never clear authority. A marked handoff plus later Stop and a validated restart-now request are the two normal restart paths. Handoff delay is pending work and cannot cause abort escalation. Operator interaction guards effects without hiding observations. Keeper messages gain configurable prose and typed protocol values. Bounded liveness now starts when restart authority exists. |
 | 2026-07-30 | 0.2.1 | agent (spec citation cleanup) | **Rotted pointers repaired across `specs/`. No obligation changed by this pass.** Deleted files that were cited as implementation evidence now name the symbol that carries the behavior today. Line-number citations became symbol names, per the repo rule to cite symbols and never line numbers. The retired `review-loop` workflow mode was dropped from every list that presented it as a live selectable mode, because `core.WorkflowMode.Valid()` accepts only `single` and `dot`. Rules that name `review-loop` as a RETIRED value to reject are unchanged, and so are the event `review_loop_cycle_complete` and the review-loop-failure budget, whose symbols still exist. Where a spec named a test as its conformance sensor and that test no longer exists, the text now says so instead of claiming cover it does not have. |
 | 2026-07-13 | 0.1.0 | foundation-author | Initial draft — session-restart vertical: five ports (SK-001…SK-007), ClockPort migration (SK-008), pure Step reactor + timers-as-events + gate ladder (SK-009…SK-011), four durable interior events (SK-012…SK-013), model-done signal (SK-014), bounded liveness (SK-015), behavior parity (SK-016…SK-018), baseline anchor (SK-019), verification obligation (SK-020); SR3/SR4/SR6/SR7/SR9 as SK-INV-001…SK-INV-005; Step transition table and model-done detection protocol; terminal/abort taxonomy. |

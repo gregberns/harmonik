@@ -249,7 +249,7 @@ func validatePiBaseURL(field, baseURL string) error {
 	if parseErr != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return &PiConfigError{
 			Field:  field,
-			Reason: fmt.Sprintf("base_url %q is not a valid URL; must be scheme://host[:port][/path] (e.g. http://dgx.local:8551/v1)", baseURL),
+			Reason: fmt.Sprintf("base_url %q is not a valid URL; must be scheme://host[:port][/path] (e.g. http://127.0.0.1:8551/v1)", baseURL),
 		}
 	}
 	return nil
@@ -322,8 +322,10 @@ func piConfigExampleYAML() string {
     # harnesses.pi.base_url: OPTIONAL base URL for locally-hosted OpenAI-compatible endpoints only.
     # When set: buildPiLaunchSpec generates a models.json and sets PI_CODING_AGENT_DIR so Pi uses
     # this endpoint. Must be scheme://host[:port][/path], ≤512 chars. Absent = cloud-provider behavior.
-    # Example: http://dgx.local:8551/v1 (DGX Spark vLLM endpoint)
-    # base_url: http://dgx.local:8551/v1
+    # Example: http://127.0.0.1:8551/v1 (DGX vLLM, reached through a loopback SSH tunnel).
+    # Use the loopback address, not the host name: the agent sandbox blocks egress to the
+    # LAN but permits loopback, so the tunnel entrance is the only address that answers.
+    # base_url: http://127.0.0.1:8551/v1
     # harnesses.pi.api: OPTIONAL Pi wire-format string for the models.json "api" field.
     # Defaults to "openai" when base_url is set and this field is absent.
     # api: openai

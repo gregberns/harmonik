@@ -104,13 +104,25 @@ type CycleState struct {
 	// Seen records the FIRST occurrence of each event type in this cycle.
 	Seen map[core.EventType]core.Event
 	// Terminal is the first terminal event type seen ("" until a terminal
-	// cycle_complete/cycle_aborted arrives).
+	// arrives; see terminalTypes). session_keeper_cycle_parked is NOT a
+	// terminal — a parked cycle can resume and complete under its own id.
 	Terminal core.EventType
 	// LastEventID is the EventID of the most recent event in this cycle.
 	LastEventID core.EventID
 }
 
 // terminalTypes are the events that terminate a restart cycle.
+//
+// session_keeper_cycle_aborted has no live producer: keeper checkpoints became
+// agent-paced and the handoff-timeout edge now parks instead of aborting. It
+// stays in the set because this harness reads RECORDED corpora, and the frozen
+// 507-cycle baseline under testdata/keeper-cycles/ carries 79 of them.
+//
+// session_keeper_cycle_parked is deliberately absent. Park is a return to Idle
+// BEFORE restart authority exists, and its handoff_pending flavor is a
+// SUSPENSION the same cycle_id resumes from (session-keeper.md SK-025, §7.1
+// RequestPending is a state and not a terminal). Admitting park here would let
+// a keeper that silently stopped restarting sessions satisfy SR9.
 var terminalTypes = map[core.EventType]bool{
 	core.EventTypeSessionKeeperCycleComplete: true,
 	core.EventTypeSessionKeeperCycleAborted:  true,
@@ -363,35 +375,22 @@ func checkerMatches(c Checker, evType string) bool {
 	return false
 }
 
-// GetCycleID and GetAgentName are the structural mini-interfaces the harness
-// uses to pull the composite (agent_name, cycle_id) join key off a decoded
-// payload without knowing its concrete type (events-design §4.4). Any payload
-// that implements them is routed by the join key it reports.
-type (
-	// cycleIDer exposes a payload's cycle_id join component.
-	cycleIDer interface{ GetCycleID() string }
-	// agentNamer exposes a payload's agent_name join component.
-	agentNamer interface{ GetAgentName() string }
-)
-
 // cycleKey extracts the composite (agent_name, cycle_id) join key from a decoded
-// payload. It prefers the GetCycleID/GetAgentName mini-interfaces; because
-// internal/core is not modifiable in this task (the interior payloads do not yet
-// declare those methods), it falls back to a type switch over the concrete
-// keeper cycle payloads that carry the join key. ok is false for a payload with
-// no cycle scope (a foreign type or a non-cycle keeper event).
+// payload (events-design §4.4). It is a type switch over the concrete keeper
+// cycle payloads that carry the join key: the four §8.20 interior events, the
+// §8.16 cycle payloads, and session_keeper_cycle_parked. ok is false for a
+// payload with no cycle scope (a foreign type or a non-cycle keeper event).
+//
+// A payload MISSING from this switch is silently dropped — it reaches no
+// CycleState and therefore no checker. That is how park events went unseen by
+// SR7/SR9 until 2026-08-15. Add an arm whenever a cycle-scoped payload is
+// added; the switch is the only thing routing events into a cycle.
+//
+// This used to try a pair of GetCycleID/GetAgentName mini-interfaces first and
+// call the type switch a fallback. No type in internal/core declares either
+// method, so the "preferred" path was unreachable and the fallback was the
+// whole mechanism. Removed rather than documented.
 func cycleKey(p core.EventPayload) (agent, cid string, ok bool) {
-	// Preferred path: a payload that implements the mini-interfaces.
-	if c, isCyc := p.(cycleIDer); isCyc {
-		cid = c.GetCycleID()
-		if a, isAgent := p.(agentNamer); isAgent {
-			agent = a.GetAgentName()
-		}
-		return agent, cid, cid != ""
-	}
-	// Fallback: concrete keeper cycle payloads (all fields exported). Covers the
-	// four §8.20 interior events plus the existing §8.16 cycle payloads, so the
-	// harness sees whole cycles (handoff_started → terminal).
 	switch v := p.(type) {
 	case *core.SessionKeeperHandoffWrittenPayload:
 		return v.AgentName, v.CycleID, v.CycleID != ""
@@ -406,6 +405,8 @@ func cycleKey(p core.EventPayload) (agent, cid string, ok bool) {
 	case *core.SessionKeeperCycleCompletePayload:
 		return v.AgentName, v.CycleID, v.CycleID != ""
 	case *core.SessionKeeperCycleAbortedPayload:
+		return v.AgentName, v.CycleID, v.CycleID != ""
+	case *core.SessionKeeperCycleParkedPayload:
 		return v.AgentName, v.CycleID, v.CycleID != ""
 	case *core.SessionKeeperClearUnconfirmedPayload:
 		return v.AgentName, v.CycleID, v.CycleID != ""

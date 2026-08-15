@@ -556,6 +556,7 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 	// retained. TEE'd, never redirected, so the session-id interceptor below
 	// still sees every byte.
 	var piStdoutFile *os.File
+	var piStdoutLog *pi.StdoutLogWriter
 	if agentType == core.AgentTypePi {
 		// Tell the run that a launch of it captures agent output into the run's
 		// worktree, so a failed run keeps that worktree instead of deleting the
@@ -599,7 +600,22 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 		} else {
 			res.PiCaptureDir = captureDir
 			piStdoutFile = f
+			// hk-k4jrh: tee'd VERBATIM this file is quadratic in the length of the
+			// model's turn — every message_update line repeats the whole assistant
+			// message so far, so one 8.5-minute run wrote 197 MB for 45 KB of
+			// output. Below 10 GiB free the daemon pauses dispatch silently, so a
+			// long run wedges the fleet before its own 90-minute ceiling fires.
+			// The writer drops those accumulated snapshots on the way to disk and
+			// nothing else; what the interceptor and the spawn watcher read is the
+			// child's original bytes, because the tee's other side is untouched.
+			piStdoutLog = pi.NewStdoutLogWriter(f)
 			defer func() {
+				// Flush the trailing fragment BEFORE the file closes. Defers run
+				// last-registered-first, so this one body does both in order rather
+				// than trusting two defers to be registered the right way round.
+				if flushErr := piStdoutLog.Close(); flushErr != nil {
+					logf("hk-k4jrh: flush pi-stdout.log: %v", flushErr)
+				}
 				if closeErr := piStdoutFile.Close(); closeErr != nil {
 					logf("hk-j6wm7: close pi-stdout.log: %v", closeErr)
 				}
@@ -638,7 +654,7 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 		// These harnesses receive their task via argv, not via pane paste.
 		pasteTarget = nil
 
-		wrapBin, wrapArgs, wrapErr := sandboxWrapExecArgv(sandboxSpawn, spec.Binary, spec.Args)
+		wrapBin, wrapArgs, wrapEnv, wrapErr := sandboxWrapExecArgv(sandboxSpawn, spec.Binary, spec.Args)
 		if wrapErr != nil {
 			res.Fail = agentLaunchPrelaunchFailed
 			res.FailErr = fmt.Errorf("srt argv-wrap error: %w", wrapErr)
@@ -647,6 +663,11 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 		}
 		spec.Binary = wrapBin
 		spec.Args = wrapArgs
+		// The wrap's env is not optional decoration: it is what points the
+		// sandboxed child's TMPDIR at the scratch directory the profile grants.
+		// Empty when the gate declined to wrap, so this line is a no-op on an
+		// unsandboxed launch (hk-sandbox-no-writable-tmpdir-7484h).
+		spec.Env = append(spec.Env, wrapEnv...)
 
 		if sandboxSpawn != nil {
 			// hk-cdpxu: the sandbox denies writes to the default Go cache
@@ -698,8 +719,8 @@ func runAgentLaunch(ctx context.Context, in agentLaunchInput) agentLaunchResult 
 		}
 		spec.StdoutWrapper = func(r io.Reader) io.Reader {
 			src := r
-			if piStdoutFile != nil {
-				src = io.TeeReader(r, piStdoutFile)
+			if piStdoutLog != nil {
+				src = io.TeeReader(r, piStdoutLog)
 			}
 			return capturedH.NewSessionIDInterceptor(src, func(id string) {
 				// NORMALIZED (was: DOT cascade only). Capturing a session id off

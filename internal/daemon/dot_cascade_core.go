@@ -1814,8 +1814,10 @@ func dispatchDotAgenticNode(
 			return core.Outcome{}, errDotNoChangeSubsumed
 		}
 		if iterationCount < 2 {
-			// First iteration: HEAD MUST advance. Hard-fail.
-			return core.Outcome{}, fmt.Errorf("node %q (implementer) exited without advancing HEAD past %s", node.ID, preHeadSHA)
+			// First iteration: HEAD MUST advance. Hard-fail — with the reason
+			// the run holds, not a sentence about the exit. See
+			// dotNoHeadAdvanceReason (hk-c6v0m).
+			return core.Outcome{}, fmt.Errorf("node %q (implementer) %s", node.ID, dotNoHeadAdvanceReason(launch.Exit, launch.PiCaptureDir, preHeadSHA))
 		}
 		// Iteration ≥ 2: return SUCCESS; driveDotWorkflow's diff-hash check at
 		// the next reviewer dispatch will detect no-progress and terminate.

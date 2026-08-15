@@ -13,6 +13,20 @@ disk therefore manufactures fake test failures and fake hangs fleet-wide, and
 the event log makes them look like real regressions. Check `df` before blaming
 a timing-out daemon or scenario test.
 
+**That is not hypothetical. On 2026-08-15 it cost two days.** A full-gate run
+went red on two scenario tests that timed out. The line above the timeout in
+its own log read:
+
+```
+daemon: disk-check: available=9135MiB watermark=10240MiB path=… — dispatch paused
+```
+
+The daemon had stopped dispatching on purpose. It told the test nothing, so the
+tests waited for work that was never going to start. Three consecutive red
+gates had been read as a race-detector fault. Nobody ran `df`. Run it first. It
+is one command, and it rules out the cheapest explanation before you hunt a
+deadlock that is not there.
+
 ## FIRST ACTION — reap the Go build cache (measured #1, 2026-08-11)
 
 This is the first ACTION in this runbook. It is not the first MEASUREMENT: when
@@ -502,6 +516,44 @@ document deserves a `du` before it is believed.
 
 ## 1. Agent session scratchpads
 
+### Background job scratch — `~/.claude/jobs/<job>/tmp/`
+
+This is a different path family from the session scratchpad below, and on
+2026-08-15 it, not the Go build cache, held the disk. The "FIRST ACTION" reap at
+the top of this runbook found the shared cache at 6.5 GiB. That is already
+inside its limit, so there was nothing to do. One background job's scratch
+directory held **10 GiB**.
+
+So the ordering at the top of this file is the ordering of what USUALLY grows.
+It is not a promise about today. **Run the dry run first. It costs nothing, and
+it tells you whether the usual answer applies.** When it says the cache is
+already small, come here next and measure before you read further.
+
+```bash
+du -sh ~/.claude/jobs/* | sort -rh | head
+du -sh ~/.claude/jobs/<job>/tmp/*/ | sort -rh | head
+```
+
+Two kinds of directory live under a job's `tmp/`, and only one is worth keeping.
+The bulk on 2026-08-15 was **throwaway repo clones and compiled `.test`
+binaries** from earlier sessions of the same job. That was eleven directories
+and about 9.8 GiB, none newer than two days, none referenced by any bead or
+tracked doc. Removing them took the box from 12.2 to 22 GiB free. The rest was
+evidence a handoff pointed at, measured in megabytes.
+
+**Check for references before you delete, rather than sweeping the whole tree.**
+Pass `-a` and `--limit 0` or the count is a false zero: `br list` returns 50 rows
+by default and hides closed issues, against a ledger that holds hundreds.
+
+```bash
+br --db <db> list -a --limit 0 --json | grep -c "jobs/<job>/tmp/<dir>"
+```
+
+Some clones carry read-only baseline snapshots under `.harmonik/events/`, so
+`rm -rf` alone leaves the directory behind. That failure mode and its fix are
+below, under §"`rm -rf` alone does not delete a Go module cache" — the same
+`chmod -R u+w` first, then delete, then confirm with `du`.
+
 `/private/tmp/claude-502/-Users-gb-github-harmonik/<session-uuid>/scratchpad/`
 
 One directory per Claude Code session, **never swept by anything**. Observed at
@@ -647,6 +699,7 @@ A reclaim that checks one convention finds almost nothing:
 | `$TMPDIR/go-build*` | the Go toolchain's own temp dirs |
 | `~/.cache/h-*-gocache`, `/tmp/h-*/gocache` | long-lived named caches (assessor campaigns, isolated lanes) |
 | `<worktree>/.harmonik/go-cache` | the daemon's merge gate (`internal/daemon/workloop.go`) |
+| `<worktree>/.harmonik/tmp` | the sandboxed agent's `TMPDIR` (`internal/daemon.SandboxScratchDir`) — whatever the agent spools, one directory per run. It goes when the run worktree goes, which is **not** always soon: a run that failed after capturing agent output keeps its worktree on purpose (`runlease` RetainEvidence). That worktree is still time-bounded. Every daemon boot sweeps `.harmonik/worktrees/`: it force-removes one whose lease lock names a dead PID, and prunes one with no lock once it is older than 7 days (`HARMONIK_WORKTREE_MAX_AGE_DAYS`). So the scratch directory can outlive its run by about a week. Reclaim it with the run worktrees in §4, not on its own. |
 | scratchpad `gc-*`, `*-gocache`, `lintcache-*` | per-agent-session caches (§1) |
 
 ## 3. `.beads/` history tiers — the historical 25 GiB root cause

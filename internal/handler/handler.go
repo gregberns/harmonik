@@ -111,7 +111,7 @@ type LaunchSpec struct {
 	// non-terminal sessions. Only meaningful when Substrate is non-nil.
 	// See SubstrateSpawn.Terminal for semantics.
 	//
-	// Beads: hk-x882o (DOT consolidate), hk-wnqos (single-mode).
+	// Beads: hk-x882o (DOT consolidate).
 	Terminal bool
 
 	// Substrate, when non-nil, indicates the subprocess MUST be hosted inside

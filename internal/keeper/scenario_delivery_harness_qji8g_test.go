@@ -82,8 +82,11 @@ func TestScenario_HandoffObservationWake_ParksWithoutClear(t *testing.T) {
 	if pp.Reason != "handoff_pending" {
 		t.Errorf("cycle_parked.reason = %q; want handoff_pending", pp.Reason)
 	}
-	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleAborted)); n != 0 {
-		t.Errorf("want 0 cycle_aborted; got %d", n)
+	// The park is a SUSPENSION, not a terminal. It carries the SAME cycle id,
+	// and that is what lets a later handoff resume THIS request instead of
+	// opening a new one.
+	if pp.CycleID != cycleID {
+		t.Errorf("cycle_parked.cycle_id = %q; want %q (a park must keep the request id)", pp.CycleID, cycleID)
 	}
 	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)); n != 0 {
 		t.Errorf("want 0 cycle_complete while pending; got %d", n)
@@ -118,11 +121,32 @@ func TestScenario_LateMarkedHandoff_ResumesOriginalRequest(t *testing.T) {
 	if !rs.sawClear() || rs.liveSID() != s2 {
 		t.Fatalf("late handoff did not complete clear: clear=%v sid=%q", rs.sawClear(), rs.liveSID())
 	}
-	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)); n != 1 {
-		t.Fatalf("cycle_complete count = %d; want 1", n)
+	completed := em.EventsOfType(core.EventTypeSessionKeeperCycleComplete)
+	if len(completed) != 1 {
+		t.Fatalf("cycle_complete count = %d; want 1", len(completed))
 	}
-	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleAborted)); n != 0 {
-		t.Fatalf("cycle_aborted count = %d; want 0", n)
+
+	// ONE request was suspended and then resumed, not two requests. The first
+	// pass parks with the resumable reason, and the completion carries the same
+	// cycle id the park carried.
+	parked := em.EventsOfType(core.EventTypeSessionKeeperCycleParked)
+	if len(parked) != 1 {
+		t.Fatalf("cycle_parked count = %d; want 1 (the first pass must suspend)", len(parked))
+	}
+	var pp core.SessionKeeperCycleParkedPayload
+	if err := json.Unmarshal(parked[0].Payload, &pp); err != nil {
+		t.Fatalf("unmarshal cycle_parked: %v", err)
+	}
+	if pp.Reason != "handoff_pending" {
+		t.Errorf("cycle_parked.reason = %q; want handoff_pending (the resumable flavor)", pp.Reason)
+	}
+	var cp core.SessionKeeperCycleCompletePayload
+	if err := json.Unmarshal(completed[0].Payload, &cp); err != nil {
+		t.Fatalf("unmarshal cycle_complete: %v", err)
+	}
+	if pp.CycleID != cycleID || cp.CycleID != cycleID {
+		t.Errorf("parked id = %q, complete id = %q; want both %q (one request, suspended then resumed)",
+			pp.CycleID, cp.CycleID, cycleID)
 	}
 	if got := jc.lastJournal(); got == nil || got.Phase != "complete" || got.CycleID != cycleID {
 		t.Fatalf("last journal = %+v; want complete original request", got)

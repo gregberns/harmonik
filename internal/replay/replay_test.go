@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -135,6 +136,12 @@ func cc(agent, cid string) core.EventPayload {
 
 func cu(agent, cid string) core.EventPayload {
 	return core.SessionKeeperClearUnconfirmedPayload{AgentName: agent, CycleID: cid}
+}
+
+// cp is a park. reason selects the flavor: "handoff_pending" (a suspension the
+// same cycle_id resumes from) or "operator_turn_recent" (final for the cycle).
+func cp(agent, cid, reason string) core.EventPayload {
+	return core.SessionKeeperCycleParkedPayload{AgentName: agent, CycleID: cid, Reason: reason}
 }
 
 // --- the acceptance test ---------------------------------------------------
@@ -280,6 +287,114 @@ func TestReplay_SR7_OverlappingRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertExactly(t, rep, []string{"SR7/c-B", "SR9/c-A", "SR9/c-B"})
+}
+
+// --- park: suspension vs. final, and the authority anchor ------------------
+//
+// These five defend the model in session-keeper.md SK-INV-005 / SK-025: park is
+// not a terminal, restart authority begins at handoff_written, and liveness is
+// owed only by a cycle that reached authority.
+
+// TestReplay_ParkPendingThenResume_IsClean: the SK-025 resume path. One
+// cycle_id parks with reason handoff_pending, then resumes under the SAME id
+// and completes. Nothing about that is a violation — not the park, not the
+// complete-after-park pair.
+func TestReplay_ParkPendingThenResume_IsClean(t *testing.T) {
+	lines := []line{
+		{1, core.EventTypeSessionKeeperHandoffStarted, hs("paul", "c")},
+		{2, core.EventTypeSessionKeeperCycleParked, cp("paul", "c", "handoff_pending")},
+		{3, core.EventTypeSessionKeeperHandoffWritten, hw("paul", "c")},
+		{4, core.EventTypeSessionKeeperModelDone, md("paul", "c")},
+		{5, core.EventTypeSessionKeeperClearSent, cs("paul", "c")},
+		{6, core.EventTypeSessionKeeperNewSessionUp, nsu("paul", "c")},
+		{7, core.EventTypeSessionKeeperCycleComplete, cc("paul", "c")},
+	}
+	rep, err := replay.Replay(writeLog(t, lines), core.EventID{}, false, replay.DefaultCheckers())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertExactly(t, rep, nil)
+}
+
+// TestReplay_ParkPendingNeverResumed_IsNotUnterminated: a context request that
+// stays pending is not a liveness breach. The cycle never reached
+// handoff_written, so it never held restart authority and owes no terminal.
+func TestReplay_ParkPendingNeverResumed_IsNotUnterminated(t *testing.T) {
+	lines := []line{
+		{1, core.EventTypeSessionKeeperHandoffStarted, hs("leto", "c")},
+		{2, core.EventTypeSessionKeeperCycleParked, cp("leto", "c", "handoff_pending")},
+	}
+	rep, err := replay.Replay(writeLog(t, lines), core.EventID{}, false, replay.DefaultCheckers())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertExactly(t, rep, nil)
+}
+
+// TestReplay_ParkForOperator_ThenFreshCycle_IsNotOverlap: after an
+// operator_turn_recent park the keeper returns to Idle and mints a NEW cycle
+// id on the next tick. That second cycle is a legitimate restart, not an
+// overlapping one, and the parked first cycle owes no terminal.
+//
+// This is also the routing test: park carries the (agent_name, cycle_id) join
+// key, so if cycleKey drops the payload the park never reaches a CycleState and
+// this corpus reports SR7 on c-B plus SR9 on c-A.
+func TestReplay_ParkForOperator_ThenFreshCycle_IsNotOverlap(t *testing.T) {
+	lines := []line{
+		{1, core.EventTypeSessionKeeperHandoffStarted, hs("paul", "c-A")},
+		{2, core.EventTypeSessionKeeperCycleParked, cp("paul", "c-A", "operator_turn_recent")},
+		{3, core.EventTypeSessionKeeperHandoffStarted, hs("paul", "c-B")},
+		{4, core.EventTypeSessionKeeperHandoffWritten, hw("paul", "c-B")},
+		{5, core.EventTypeSessionKeeperModelDone, md("paul", "c-B")},
+		{6, core.EventTypeSessionKeeperClearSent, cs("paul", "c-B")},
+		{7, core.EventTypeSessionKeeperNewSessionUp, nsu("paul", "c-B")},
+		{8, core.EventTypeSessionKeeperCycleComplete, cc("paul", "c-B")},
+	}
+	rep, err := replay.Replay(writeLog(t, lines), core.EventID{}, false, replay.DefaultCheckers())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertExactly(t, rep, nil)
+}
+
+// TestReplay_ParkDoesNotExcuseAnAuthorizedRestart: a cycle that parked, resumed
+// to handoff_written, and then went silent still owes a terminal. Park is the
+// reason the FIRST half is forgiven; it is not a blanket excuse.
+func TestReplay_ParkDoesNotExcuseAnAuthorizedRestart(t *testing.T) {
+	lines := []line{
+		{1, core.EventTypeSessionKeeperHandoffStarted, hs("paul", "c")},
+		{2, core.EventTypeSessionKeeperCycleParked, cp("paul", "c", "handoff_pending")},
+		{3, core.EventTypeSessionKeeperHandoffWritten, hw("paul", "c")},
+		{4, core.EventTypeSessionKeeperModelDone, md("paul", "c")},
+		{5, core.EventTypeSessionKeeperClearSent, cs("paul", "c")},
+	}
+	rep, err := replay.Replay(writeLog(t, lines), core.EventID{}, false, replay.DefaultCheckers())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertExactly(t, rep, []string{"SR9/c"})
+	if got := rep.Violations[0].Detail; !strings.Contains(got, "restart authorized") {
+		t.Errorf("SR9 detail = %q, want the authorized-restart case named", got)
+	}
+}
+
+// TestReplay_OpenedAndAbandoned_IsStillUnterminated: handoff_started with no
+// authority, no terminal, and no park recorded nothing about why the cycle
+// stopped. This is the wedge shape the frozen 507-cycle baseline anchors on —
+// that corpus predates handoff_written entirely, so anchoring SR9 on authority
+// alone would report zero unterminated cycles across all 507.
+func TestReplay_OpenedAndAbandoned_IsStillUnterminated(t *testing.T) {
+	lines := []line{
+		{1, core.EventTypeSessionKeeperHandoffStarted, hs("paul", "c")},
+	}
+	rep, err := replay.Replay(writeLog(t, lines), core.EventID{}, false, replay.DefaultCheckers())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertExactly(t, rep, []string{"SR9/c"})
+	if got := rep.Violations[0].Detail; !strings.Contains(got, "nor a park") {
+		t.Errorf("SR9 detail = %q, want the abandoned case named", got)
+	}
 }
 
 func TestReplay_HistoricalCorpus_NoFalseSR6(t *testing.T) {

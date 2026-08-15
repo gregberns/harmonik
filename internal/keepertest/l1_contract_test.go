@@ -14,10 +14,13 @@ package keepertest_test
 //
 //  2. TestL1_GoldenOutcomes — every cycle's synthesized INPUT schedule
 //     replayed through Twin → reactor → FakeEffector reproduces its golden
-//     summary.json outcome + clear_unconfirmed flag. The ONE recorded
-//     unterminated cycle asserts the FIXED behavior (SR9: terminal within
-//     bound — complete + clear_unconfirmed), never the old wedge
-//     (measurement-design §4 required-divergence).
+//     summary.json outcome. Two strata assert a FIXED behavior instead of the
+//     recorded one (measurement-design §4 required-divergence): the ONE
+//     unterminated cycle must terminate within bound (SR9 — complete +
+//     clear_unconfirmed) rather than wedge, and the 79 handoff-timeout aborts
+//     must SUSPEND (cycle_parked{handoff_pending}, same cycle id still
+//     eligible) rather than fail, because a late handoff is pending work and
+//     not a failure (SK-025, session-keeper.md §8.2/§8.4).
 //
 //  3. TestL1_ReplayedStreamInvariants — the full replayed emitted-event
 //     stream, re-enveloped and written to an events.jsonl, passes
@@ -101,10 +104,10 @@ func TestL1_RecordedCorpusDecodesStrict(t *testing.T) {
 }
 
 // wantReplayOutcome maps a golden summary onto the outcome the NEW reactor
-// must produce. Identity for the three terminal strata; the ONE unterminated
-// cycle maps onto the SR9 FIX: the clear backstop converts the old wedge into
-// a bounded degraded completion.
-func wantReplayOutcome(t *testing.T, sum keepertwin.CycleSummary) (wantComplete, wantUnconfirmed bool) {
+// must produce. Identity for the two completion strata; the other two are
+// REQUIRED DIVERGENCES from what the corpus recorded (measurement-design §4),
+// and reproducing the recorded behavior would be a failure in both.
+func wantReplayOutcome(t *testing.T, sum keepertwin.CycleSummary) cycleOutcome {
 	t.Helper()
 	stratum, err := keepertwin.Classify(sum)
 	if err != nil {
@@ -112,22 +115,28 @@ func wantReplayOutcome(t *testing.T, sum keepertwin.CycleSummary) (wantComplete,
 	}
 	switch stratum {
 	case keepertwin.StratumCleanComplete:
-		return true, false
+		return outcomeComplete
 	case keepertwin.StratumDegradedComplete:
-		return true, true
+		return outcomeDegradedComplete
 	case keepertwin.StratumAbortHandoffTimeout:
-		return false, false
+		// Required divergence: the recorded cycle ABORTED when the marked
+		// handoff did not arrive in the window. A late handoff is pending
+		// work and not a failure (SK-025), so the new reactor SUSPENDS the
+		// same request instead — cycle_parked{handoff_pending}, no /clear, and
+		// the same cycle id stays eligible to resume. A cycle_aborted here
+		// would mean the retired producer came back (§8.2).
+		return outcomeParkedPending
 	case keepertwin.StratumUnterminated:
-		// Required divergence (measurement-design §4): NEW terminates within
-		// bound. Matching the old unterminated behavior would be a FAILURE.
+		// Required divergence: NEW terminates within bound. Matching the old
+		// unterminated behavior would be a FAILURE.
 		if sum.CKey != knownUnterminatedCKey {
 			t.Fatalf("unexpected unterminated cycle %s (baseline pins exactly one: %s)",
 				sum.CKey, knownUnterminatedCKey)
 		}
-		return true, true
+		return outcomeDegradedComplete
 	default:
 		t.Fatalf("unknown stratum %q", stratum)
-		return false, false
+		return ""
 	}
 }
 
@@ -139,37 +148,47 @@ func TestL1_GoldenOutcomes(t *testing.T) {
 		t.Fatalf("corpus has %d cycles, want 507 (D7 frozen anchor)", len(sums))
 	}
 
-	gotComplete, gotAborted, gotUnconfirmed := 0, 0, 0
+	// The population is counted from what the reactor ACTUALLY emitted, never
+	// from the per-cycle expectation just checked, so the aggregate stays an
+	// independent anchor rather than a restatement of the strata.
+	got := map[cycleOutcome]int{}
 	for _, sum := range sums {
-		wantComplete, wantUnconfirmed := wantReplayOutcome(t, sum)
-		types := emittedTypes(flatReplayCycle(t, sum))
-
-		complete := countType(types, core.EventTypeSessionKeeperCycleComplete)
-		aborted := countType(types, core.EventTypeSessionKeeperCycleAborted)
-		unconfirmed := countType(types, core.EventTypeSessionKeeperClearUnconfirmed)
-
-		if complete+aborted != 1 {
-			t.Fatalf("%s: want exactly 1 terminal, got complete=%d aborted=%d", sum.CKey, complete, aborted)
+		actions := flatReplayCycle(t, sum)
+		outcome := soleOutcome(t, actions, sum.CKey)
+		if want := wantReplayOutcome(t, sum); outcome != want {
+			t.Errorf("%s: outcome = %s, want %s (emitted %v)",
+				sum.CKey, outcome, want, emittedTypes(actions))
 		}
-		if wantComplete != (complete == 1) {
-			t.Errorf("%s: terminal = complete:%v, want complete:%v", sum.CKey, complete == 1, wantComplete)
-		}
-		if wantUnconfirmed != (unconfirmed == 1) {
-			t.Errorf("%s: clear_unconfirmed = %d, want present:%v", sum.CKey, unconfirmed, wantUnconfirmed)
-		}
-		gotComplete += complete
-		gotAborted += aborted
-		if unconfirmed > 0 {
-			gotUnconfirmed++
-		}
+		got[outcome]++
 	}
 
-	// Aggregate goldens = the frozen anchors shifted by the SR9 fix:
-	// 427 recorded completes + the 1 fixed unterminated cycle; 347 recorded
-	// degraded + the same fixed cycle (its bounded terminal is degraded).
-	if gotComplete != 428 || gotAborted != 79 || gotUnconfirmed != 348 {
-		t.Fatalf("aggregate replay = complete:%d aborted:%d degraded:%d, want 428/79/348",
-			gotComplete, gotAborted, gotUnconfirmed)
+	// Aggregate goldens, derived from the frozen manifest anchors (canary_test
+	// frozenAnchors: 507 cycles = 80 clean + 347 degraded + 79 handoff-timeout
+	// aborts + 1 unterminated) and the two required divergences:
+	//
+	//	clean completes           80 = 80 recorded clean
+	//	degraded completes       348 = 347 recorded degraded + the 1 fixed
+	//	                               unterminated cycle, whose bounded
+	//	                               terminal is a degraded completion (SR9)
+	//	parked{handoff_pending}   79 = the 79 recorded aborts, which now
+	//	                               suspend instead of failing (SK-025)
+	//
+	// The old anchor read 428 completes / 79 aborted / 348 degraded. 428 was
+	// 80+348 counted as one bucket, and the 79 moved from aborted to parked;
+	// no cycle changed which PATH it takes, only what the tail of that path
+	// is named.
+	want := map[cycleOutcome]int{
+		outcomeComplete:         80,
+		outcomeDegradedComplete: 348,
+		outcomeParkedPending:    79,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("aggregate replay produced outcomes %v, want exactly %v", got, want)
+	}
+	for outcome, n := range want {
+		if got[outcome] != n {
+			t.Fatalf("aggregate replay = %v, want %v", got, want)
+		}
 	}
 }
 

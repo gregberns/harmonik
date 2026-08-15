@@ -129,8 +129,13 @@ const (
 //	degraded_complete      | GaugeTick@0 → NonceObserved@5s → ModelDone@5s       | cycle_complete WITH
 //	                       |   → SessionChanged never →                          |   clear_unconfirmed
 //	                       |   TimerFired(clear_backstop)@5s+150s                |
-//	abort_handoff_timeout  | GaugeTick@0 → nonce NEVER, no HandoffFreshSeen →    | cycle_aborted{handoff_timeout};
-//	                       |   TimerFired(handoff_timeout)@300s                  |   /clear never sent
+//	abort_handoff_timeout  | GaugeTick@0 → nonce NEVER, no HandoffFreshSeen →    | KNOWN-DIVERGENCE (required FIX):
+//	                       |   TimerFired(handoff_timeout)@300s                  |   OLD terminated the cycle with
+//	                       |                                                     |   cycle_aborted{handoff_timeout};
+//	                       |                                                     |   NEW SUSPENDS it with
+//	                       |                                                     |   cycle_parked{handoff_pending},
+//	                       |                                                     |   same cycle id, resumable later.
+//	                       |                                                     |   /clear never sent either way.
 //	unterminated           | the recorded SR9 hang: nonce+model-done land,       | KNOWN-DIVERGENCE (required FIX):
 //	                       |   /clear sent, SessionChanged never →               |   OLD wedged (no terminal); NEW
 //	                       |   TimerFired(clear_backstop)@5s+150s                |   MUST terminate within bound →

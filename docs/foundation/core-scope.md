@@ -246,7 +246,7 @@ Full recommendation at `docs/foundation/project-level/testing.md`. Key alignment
 | Handler adapters (real) | 90% | recorded fixtures |
 | Handler adapters (twin) | 100% | — |
 | Utility / glue | 85% | — |
-| Overall floor | 90% | CI fails on >0.3% drop vs main |
+| Overall floor | 90% | 0.3pp regression cap, reported by `make coverage-gates` |
 
 Coverage-gaming rule: a line marked `// unreachable: <why>` covered by an assert-panic test counts as covered.
 
@@ -258,7 +258,7 @@ Coverage-gaming rule: a line marked `// unreachable: <why>` covered by an assert
 
 **Crash-recovery via a `faultpoint` package.** Named injection sites (`mid-checkpoint-commit`, `after-commit-before-beads-write`, `mid-jsonl-fsync`, etc.), a fast 3-site subset per push and the full set nightly. This entry described the package as compile-tagged behind `//go:build crash` and dead-code-eliminated in production. `testing.md §"Crash-recovery testing approach"` reversed that and owns the design: the package is always compiled in, no env-var arms a site in production, and the build tag stays on the tests. Neither shape is in the tree yet — no `internal/faultpoint` package exists — so read `testing.md` before writing one.
 
-**CI gates (2026-04-24 record):** `go vet`, `staticcheck`, `gofmt -l` empty, unit+property <3min, integration <5min, scenario <10min, crash fast subset <2min, coverage gate, import-allowlist linter, no `t.Skip()` in committed tests. **Two of those never shipped as gates.** The coverage gate reports a trend from `make coverage-gates` and does not block. Nothing has ever rejected a `t.Skip()`, and the tree holds 233 of them — `tools/testreport` lists every skipped test in its NOT RUN section instead. `testing.md §CI gates` carries the current set.
+**CI gates (2026-04-24 record):** `go vet`, `staticcheck`, `gofmt -l` empty, unit+property <3min, integration <5min, scenario <10min, crash fast subset <2min, import-allowlist linter, no `t.Skip()` in committed tests. **One of those never shipped as a gate.** Nothing has ever rejected a `t.Skip()`, and the tree holds 233 of them — `tools/testreport` lists every skipped test in its NOT RUN section instead. `testing.md §CI gates` carries the current set.
 
 ### Deferred / follow-up
 

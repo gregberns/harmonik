@@ -157,8 +157,8 @@ func TestIntegration_TwinSidRebind_AntiLoopGateHolds(t *testing.T) {
 	if len(completeEvents) != 1 {
 		t.Fatalf("tw-sid: want 1 cycle_complete after first cycle; got %d", len(completeEvents))
 	}
-	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleAborted)); n != 0 {
-		t.Fatalf("tw-sid: want 0 cycle_aborted on the first cycle; got %d", n)
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleParked)); n != 0 {
+		t.Fatalf("tw-sid: want 0 cycle_parked on the first cycle; got %d", n)
 	}
 	var cp1 core.SessionKeeperCycleCompletePayload
 	if err := json.Unmarshal(completeEvents[0].Payload, &cp1); err != nil {
@@ -265,8 +265,8 @@ func TestIntegration_TwinSidRebind_AntiLoopGateHolds(t *testing.T) {
 		t.Fatalf("tw-sid: want 2 cycle_complete events (two cycles on the same lane); got %d "+
 			"(did the anti-loop gate not re-arm after the post-/clear below-warn reading?)", len(completeEvents2))
 	}
-	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleAborted)); n != 0 {
-		t.Errorf("tw-sid: want 0 cycle_aborted events; got %d", n)
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleParked)); n != 0 {
+		t.Errorf("tw-sid: want 0 cycle_parked events across the two cycles; got %d", n)
 	}
 
 	// Verify the second cycle also rotated the session_id (same-lane identity

@@ -102,8 +102,8 @@ about.**
 
 - "`AGENTS.md` still has no assessor row." It has one. The per-role load map names
   `roles/assessor/operating.md` as the contract.
-- "The fleet config still says `model: ornith`." It says `nemotron`, and `base_url` is the 8553
-  tunnel.
+- "The fleet config still says `model: ornith`." It says `nemotron`, and `base_url` is
+  `http://127.0.0.1:8551/v1` — the local entrance of the tunnel to the box, whose own port is 8553.
 - The pi endpoint was never wedged. `a08fa9de3` made the probe read `base_url` and `model` from the
   overlay. Twelve days of "restart vLLM on the DGX" were a written-down copy of two values another
   component owns.

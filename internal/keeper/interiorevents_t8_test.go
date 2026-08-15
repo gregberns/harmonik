@@ -239,8 +239,8 @@ func TestCycler_InteriorEvents_ModelDoneTimeout_FailOpen(t *testing.T) {
 	if !rs.sawClear() {
 		t.Error("fail-open path never injected /clear (SR9: must proceed)")
 	}
-	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleAborted)); n != 0 {
-		t.Errorf("want 0 cycle_aborted on the fail-open path; got %d", n)
+	if n := len(em.EventsOfType(core.EventTypeSessionKeeperCycleParked)); n != 0 {
+		t.Errorf("want 0 cycle_parked on the fail-open path; got %d", n)
 	}
 }
 

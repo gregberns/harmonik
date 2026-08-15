@@ -12,21 +12,38 @@ package daemon_test
 // `agent_failed class=structural sub_reason=claude_crashed exit=-1`, its bead
 // was reopened and its commit was thrown away.
 //
-// Two tests, and they are deliberately different in kind:
+// Four tests in two kinds, and the two kinds are deliberately different:
 //
-//   - the run test drives the real sequence end to end — a real /bin/sh child
+//   - two run tests drive the real sequence end to end — a real /bin/sh child
 //     on the exec path, the real Pi stdout interceptor, the real announcement
-//     kill, the real signal death — and asserts on what the run DID to the
-//     bead. Nothing in it names the exemption, so it stays true whatever
+//     kill, the real signal death — and assert on what the run DID to the
+//     bead. One announces an end that is real; the other announces an end it is
+//     about to retry. Neither names the exemption, so both stay true whatever
 //     mechanism carries it.
-//   - the table holds the classifier FAIL-CLOSED. The exemption withdraws a
+//   - two tables hold the classifier FAIL-CLOSED. The exemption withdraws a
 //     claim about how the process died and nothing more, so an unannounced
 //     signal death, a watcher that could not read the stream, and a reported
 //     FAILURE_SIGNAL must all still fail — and only a direct call can put those
 //     three inputs beside the announcement.
+//
+// WHAT THE RUN TESTS DO NOT COVER. The fixture runs /bin/sh in place of Pi, so
+// real argv, the env strip, models.json, PI_CODING_AGENT_DIR and the billing
+// guard never execute here. The commit that added the retry test said the three
+// pi launch e2e files cover them. That is wrong. A reviewer disabled the
+// billing guard and deleted the PI_CODING_AGENT_DIR env append in
+// internal/harness/pi/launchspec.go, and all three of
+// hk_pkugu_pi_launch_e2e_test.go, hk_lfrub_dot_pi_launch_e2e_test.go and
+// hk_6atjk_pi_path_e2e_test.go stayed green — they assert the --model argv
+// token, the models.json body and PATH, and nothing more. The cover for the
+// rest is internal/harness/pi/launchspec_test.go,
+// internal/harness/pi/billingguard_test.go and
+// harnessregistry_pi_remote_runner_m4c4_test.go. Only the citation was wrong:
+// nothing in this file touches any of that behaviour.
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 
@@ -63,6 +80,119 @@ func dotFixtureAgentEndThenLingerHandler(t *testing.T, bead core.BeadID) string 
 			`printf '{"type":"session","version":3,"id":"pi-fixture-session"}\n'`+"\n"+
 			`printf '{"type":"agent_end","messages":[]}\n'`+"\n"+
 			"while :; do sleep 1; done\n")
+}
+
+// dotFixtureAgentEndWillRetryHandler writes an implementer that behaves the way
+// a real Pi turn behaves when the model endpoint refuses a connection: it
+// commits, announces the end of a turn it is about to RETRY, waits out its own
+// backoff, and only then announces the end that is real.
+//
+// Pi stamps willRetry on every agent_end and emits one before each attempt. The
+// daemon used to end the session on the first announcement whatever the flag
+// said, so the SIGTERM landed inside the backoff — two seconds before Pi would
+// have tried again. The marker write after the sleep is the thing the kill used
+// to prevent, so its presence is the whole assertion.
+//
+// The TERM trap costs nothing and turns the failure from an absent file into a
+// file that says what happened, which is worth more to whoever reads a red test
+// than a bare "marker missing".
+//
+// The path enters the script once, as a single-quoted assignment, and every use
+// after that reads the variable in double quotes. A $TMPDIR that holds a space
+// would otherwise split the redirect targets, and the test would report a
+// missing marker for the wrong reason — a real failure made hard to read.
+func dotFixtureAgentEndWillRetryHandler(t *testing.T, bead core.BeadID, markerPath string) string {
+	t.Helper()
+	return dotFixtureHandlerScript(t, "dot-fixture-agent-end-willretry.sh",
+		"marker='"+markerPath+"'\n"+
+			"trap 'echo killed-during-backoff > \"${marker}.bad\"; exit 143' TERM\n"+
+			dotFixtureCommitLines(bead)+
+			`printf '{"type":"session","version":3,"id":"pi-fixture-session"}\n'`+"\n"+
+			// Not terminal. Pi is announcing a retry, not an ending.
+			`printf '{"type":"agent_end","messages":[],"willRetry":true}\n'`+"\n"+
+			`printf '{"type":"auto_retry_start","attempt":1,"maxAttempts":3,"delayMs":2000}\n'`+"\n"+
+			// Pi's real backoff. Kill latency is sub-millisecond against this,
+			// so the buggy and the fixed outcomes are three orders of magnitude
+			// apart and the test is decided by causal order, not by a race.
+			"sleep 2\n"+
+			"echo survived > \"${marker}\"\n"+
+			// Terminal: no flag, so the watcher must end the session here.
+			`printf '{"type":"agent_end","messages":[]}\n'`+"\n"+
+			"while :; do sleep 1; done\n")
+}
+
+// TestDotNode_PiAgentEndWithWillRetryDoesNotKillDuringTheBackoff is the
+// end-to-end statement of the retry fix, and it is the half a unit test on the
+// parser cannot make: the marker file can only exist if the real daemon, on the
+// real exec path, through the real Pi stdout interceptor, declined to kill a
+// real child process during a real two-second wait.
+//
+// It also asserts the other half — that the run still ENDS. A watcher that
+// suppressed the retry announcement and then failed to re-arm would leave Pi
+// lingering until the 90-minute ceiling, and the bead would never close. So the
+// same test that proves the kill was withheld proves it was only deferred.
+//
+// Read this beside TestDotNode_PiAgentEndKillAfterACommitClosesTheBead above,
+// which is the same path with no flag on the announcement. The pair states the
+// whole contract: end the session on the announcement that is real, and not on
+// the one that is not.
+func TestDotNode_PiAgentEndWithWillRetryDoesNotKillDuringTheBackoff(t *testing.T) {
+	t.Parallel()
+
+	const beadID = core.BeadID("hk-pi-agentend-willretry-survives")
+
+	// Outside the worktree on purpose: the marker is evidence about the child's
+	// lifetime and must not become part of what the run merges.
+	markerPath := filepath.Join(t.TempDir(), "survived-the-backoff")
+
+	opts := dotFixtureProcessExitOpts(t, core.AgentTypePi,
+		dotFixtureAgentEndWillRetryHandler(t, beadID, markerPath))
+	opts.HookOutcome = ""
+	opts.WaitForRunTerminal = true
+
+	res := runDotFixtureBead(t, beadID, opts)
+
+	events := res.Bus.eventTypes()
+
+	// This is the only assertion here that fires on the regression. A reviewer
+	// removed the fix and ran the test: the buggy daemon still emits bead_closed
+	// and run_completed, so the reopened, closed and run_failed checks below all
+	// pass on broken code. Delete this block to "simplify" the test and the test
+	// stays green while the regression it guards walks free. The three checks
+	// below state the other half of the contract — the run must still END — and
+	// they are worth keeping for that. They are not a second detector.
+	if _, err := os.Stat(markerPath); err != nil {
+		detail := "the marker was never written"
+		if _, bad := os.Stat(markerPath + ".bad"); bad == nil {
+			detail = "the child caught SIGTERM during its backoff"
+		}
+		t.Errorf("pi was killed while it was retrying (%s; events=%v).\n"+
+			"Pi emits an agent_end carrying willRetry before each attempt and only then retries.\n"+
+			"Ending the session on that line kills pi inside its own backoff, and the daemon then\n"+
+			"records the kill as a clean exit — so a refused endpoint reads as an agent that did nothing.",
+			detail, events)
+	}
+
+	if reopened := res.Ledger.reopenedIDs(); len(reopened) > 0 {
+		t.Errorf("bead %s was REOPENED although its agent retried and then finished (reopened=%v, events=%v)",
+			beadID, reopened, events)
+	}
+	// The message below cannot print. A watcher that suppressed the retry
+	// announcement and then never re-armed leaves the run with no terminal
+	// transition at all, so runDotFixtureBead fails first, on its own 50-second
+	// deadline, with generic text about a bead that reached no terminal
+	// transition. Read that failure as this one: the retry announcement was
+	// swallowed and the real announcement never ended the session.
+	if closed := res.Ledger.closedIDs(); !slices.Contains(closed, beadID) {
+		t.Errorf("bead %s was not closed after the terminal agent_end (closed=%v, events=%v).\n"+
+			"Suppressing a retry announcement must not disarm the watcher: the real announcement still has to end the session,\n"+
+			"or a retried run lingers to the 90-minute ceiling instead.",
+			beadID, closed, events)
+	}
+	if slices.Contains(events, string(core.EventTypeRunFailed)) {
+		t.Errorf("run for bead %s emitted run_failed although its agent committed, retried once and announced a clean end; events=%v",
+			beadID, events)
+	}
 }
 
 // TestDotNode_PiAgentEndKillAfterACommitClosesTheBead is the regression.

@@ -25,8 +25,9 @@
 # default — buildCodexRoutedLaunchSpec fail-louds without it). It is appended below.
 #
 # The harnesses.pi block MIRRORS the fleet's live ornith/DGX pass (the operator's
-# forced-local matrix environment: DGX reachable via the `ssh -f -N -L 8553:localhost:8553
-# dgx` loopback tunnel, key at ~/.config/harmonik/ornith.key). `ornith` is the PROVIDER
+# forced-local matrix environment: DGX reachable via the
+# `ssh -f -N -L 127.0.0.1:8551:127.0.0.1:8553 gb@192.168.1.86` loopback tunnel, key at
+# ~/.config/harmonik/ornith.key). 8551 is the local entrance, 8553 is the port on the box. `ornith` is the PROVIDER
 # alias. The SERVED MODEL NAME is `nemotron`, and it is written once, in harnesses.pi.model
 # below. cells.json names no model: it says "@resolved" and reads the value from here, so
 # this block is the only place to change it. If DGX is down, swap in the parked OpenRouter
@@ -114,9 +115,12 @@ harnesses:
     # answers to, NOT the provider -- `ornith` is the provider alias and asking for it
     # 404s. pi puts this straight into the request body, so a stale value here returns
     # 404 "The model `X` does not exist", never a timeout.
-    # Read the live name from `curl http://127.0.0.1:8553/v1/models` before changing it.
+    # Read the live name from `curl http://127.0.0.1:8551/v1/models` before changing it.
     model: nemotron
-    base_url: http://127.0.0.1:8553/v1   # loopback tunnel -> DGX vLLM (srt permits loopback; LAN IP blocked)
+    # 8551 is the LOCAL tunnel entrance; 8553 is the port on the box. The tunnel is
+    # `-L 127.0.0.1:8551:127.0.0.1:8553`, so nothing listens on local 8553 and a value
+    # of 8553 here gets connection-refused at preflight and skips the pi cell.
+    base_url: http://127.0.0.1:8551/v1   # loopback tunnel -> DGX vLLM (srt permits loopback; LAN IP blocked)
     api: openai-completions              # ornith needs "openai-completions", NOT bare "openai"
     api_key_env: ORNITH_API_KEY
     api_key_file: ~/.config/harmonik/ornith.key

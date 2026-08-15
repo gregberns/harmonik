@@ -318,6 +318,9 @@ func EnsureWorktreeTrustVia(ctx context.Context, runner tmux.CommandRunner, work
 		if workerConfigLockTimedOut(err) {
 			return fmt.Errorf("%w\nremote: %s", ErrTrustLockTimeout, out)
 		}
+		if workerConfigUnparseable(err) {
+			return fmt.Errorf("%w\nremote: %s", ErrTrustConfigUnparseable, out)
+		}
 		return fmt.Errorf("workspace: EnsureWorktreeTrustVia %s: %w\nremote: %s", worktreePath, err, out)
 	}
 	return nil
@@ -334,11 +337,42 @@ func EnsureWorktreeTrustVia(ctx context.Context, runner tmux.CommandRunner, work
 // status through unchanged, so the code survives the round trip.
 const workerConfigLockTimeoutExit = 75
 
+// workerConfigUnparseableExit is the exit status the worker programs use when
+// the config on disk is not JSON, or is JSON but not an object. The Go caller
+// turns it into ErrTrustConfigUnparseable.
+//
+// It exists because the alternative the program used to take was to treat an
+// unreadable config as an absent one and write a fresh file over it, which
+// discards every other project entry and every other top-level key on that
+// worker. The in-process path has always refused that (readClaudeConfigMap
+// returns a parse error and ensureWorktreeTrustAt reports it rather than
+// overwriting), and the two paths write the same shape of file, so the remote
+// one refuses too.
+//
+// A torn read is the expected way to reach this, not a corrupt disk: the writer
+// this whole subsystem defends against rewrites the shared config wholesale and
+// does not take our lock, so a reader can land mid-rewrite and see truncated
+// JSON. The in-process path retries such a read within its budget before giving
+// up. The remote program has no retry loop to hang that on, so it fails and
+// says why — a launch that stops is recoverable, and a worker whose config was
+// silently rebuilt is not.
+//
+// 65 is EX_DATAERR from sysexits.h — the input data was incorrect. Like 75 it
+// cannot be confused with ssh's own 255, and ssh passes it through unchanged.
+const workerConfigUnparseableExit = 65
+
 // workerConfigLockTimedOut reports whether err is a worker program exiting with
 // the lock-timeout status.
 func workerConfigLockTimedOut(err error) bool {
 	var exitErr *exec.ExitError
 	return errors.As(err, &exitErr) && exitErr.ExitCode() == workerConfigLockTimeoutExit
+}
+
+// workerConfigUnparseable reports whether err is a worker program exiting with
+// the unparseable-config status.
+func workerConfigUnparseable(err error) bool {
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr) && exitErr.ExitCode() == workerConfigUnparseableExit
 }
 
 // workerConfigProgramPrelude returns the head of the worker program that writes
@@ -394,6 +428,7 @@ func workerConfigProgramPrelude(cfgPathForWorker string, lockTimeout time.Durati
 		cfgPathForWorker,
 		lockTimeout.Seconds(),
 		trustLockRetryInterval.Seconds(),
+		workerConfigUnparseableExit,
 		workerConfigLockTimeoutExit,
 	)
 }
@@ -404,7 +439,7 @@ import errno, fcntl, json, os, sys, tempfile, time
 # Step 1 of the config-path precedence, decided by the caller and baked in as a
 # value. "" means the caller had nothing to send, so this machine — the one that
 # owns the file — resolves steps 2 and 3 from its own environment.
-cfg_path = %q
+cfg_path = %[1]q
 if not cfg_path:
     cfg_home = os.environ.get("CLAUDE_CONFIG_HOME", "")
     if cfg_home:
@@ -412,18 +447,46 @@ if not cfg_path:
     else:
         cfg_path = os.path.join(os.path.expanduser("~"), ".claude.json")
 lock_path = cfg_path + ".lock"
-lock_timeout = %v
-lock_interval = %v
+lock_timeout = %[2]v
+lock_interval = %[3]v
 
 def load_cfg():
+    # Two cases legitimately mean "start fresh", and both hold nothing worth
+    # keeping: a MISSING file, and a literal "null" body. Every other way this
+    # read can fail means a file exists with content we cannot understand, and
+    # the only safe move is to leave it alone. Returning {} for those would send
+    # the caller on to write a fresh config over the top, discarding every other
+    # project entry and every other key on this machine. The in-process sibling
+    # draws the line in the same place; see readClaudeConfigMap and
+    # ErrTrustConfigUnparseable.
     try:
         with open(cfg_path) as f:
             cfg = json.load(f)
     except FileNotFoundError:
         return {}
     except ValueError:
+        sys.stderr.write(
+            f"harmonik: {cfg_path} is not valid JSON, so the trust entry was not "
+            f"written and the file was left exactly as it is. A partial read of "
+            f"another writer's rewrite looks like this and clears on its own; a "
+            f"file that stays unreadable needs a look.\n"
+        )
+        sys.exit(%[4]d)
+    if cfg is None:
+        # A literal "null" body parses without error and holds nothing, so there
+        # is nothing to lose by treating it as empty. The in-process sibling
+        # makes the same exception for the same reason; see readClaudeConfigMap.
+        # Every OTHER non-object -- an array, a string, a number -- is a file
+        # with content we do not understand, and overwriting it would discard it.
         return {}
-    return cfg if isinstance(cfg, dict) else {}
+    if not isinstance(cfg, dict):
+        sys.stderr.write(
+            f"harmonik: {cfg_path} holds a JSON {type(cfg).__name__} where an "
+            f"object is required, so the trust entry was not written and the file "
+            f"was left exactly as it is.\n"
+        )
+        sys.exit(%[4]d)
+    return cfg
 
 def acquire_bounded(fd):
     # Same shape as internal/workspace acquireExclusiveBounded: retry the
@@ -450,7 +513,7 @@ def acquire_bounded(fd):
                     f"lock file: {lock_path}\n"
                     f"another process still holds this lock. Find it with: lsof {lock_path}\n"
                     f"a stale claude, harmonik daemon or go test binary is the usual holder.\n")
-                sys.exit(%d)
+                sys.exit(%[5]d)
             time.sleep(lock_interval)
 
 def write_cfg(cfg):

@@ -114,6 +114,23 @@ var trustPostWriteHook func(cfgPath string)
 // own message, which names the exact config file and lock file it waited on.
 var ErrTrustLockTimeout = fmt.Errorf("workspace: %w: write-lock acquire timed out on the Claude config", handlercontract.ErrStructural)
 
+// ErrTrustConfigUnparseable is returned when the Claude config on disk cannot be
+// parsed as a JSON object and so cannot be safely updated in place. Structural,
+// for the same reason ErrTrustLockTimeout is: the launch must stop rather than
+// exec claude into a folder whose trust entry was never written.
+//
+// The alternative is worse than a failed launch. Treating an unreadable config
+// as an absent one means writing a fresh file over it, which discards every
+// other project entry and every other top-level key. Failing here keeps the
+// file intact for whoever looks at it next.
+//
+// Only the remote path returns this today. The in-process path can retry a
+// decode failure within its write budget — a torn read of a foreign writer's
+// non-atomic rewrite usually resolves on the next read — and returns the decode
+// error itself when it does not. The worker program has no such loop, so it
+// reports the condition instead of guessing at it.
+var ErrTrustConfigUnparseable = fmt.Errorf("workspace: %w: the Claude config is not a JSON object and was left untouched", handlercontract.ErrStructural)
+
 // trustWriteMu serializes in-process write operations on the global trust config
 // (hk-z16). At -c8 all 8 implementers start simultaneously with NEW worktree
 // paths; without this mutex all 8 spin on the LOCK_EX flock concurrently. Under

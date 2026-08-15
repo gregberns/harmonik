@@ -28,6 +28,11 @@ func (f replayWorktreeObserverFunc) Observe(
 	return f(ctx, record)
 }
 
+func (f replayWorktreeObserverFunc) PrepareBase(context.Context, runpkg.DispatchRecord) error {
+	return nil
+}
+func (f replayWorktreeObserverFunc) Create(context.Context, runpkg.DispatchRecord) error { return nil }
+
 func (r *replayReaderBeads) ShowBead(context.Context, core.BeadID) (core.BeadRecord, error) {
 	r.calls++
 	return r.record, nil
@@ -208,7 +213,7 @@ func TestFilesystemDispatchReplayReaderUsesScannedRemoteLocationForTarget(t *tes
 			}
 			return remote, nil
 		},
-		worktrees: func(record runpkg.DispatchRecord) (dispatchWorktreeObserver, error) {
+		worktrees: func(record runpkg.DispatchRecord) (dispatchWorktreeProvisioner, error) {
 			if record.Location == nil || *record.Location != remoteLocation {
 				t.Fatalf("worktree location = %+v", record.Location)
 			}

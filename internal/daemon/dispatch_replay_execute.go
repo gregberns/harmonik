@@ -15,6 +15,8 @@ import (
 	"github.com/gregberns/harmonik/internal/workers"
 )
 
+var errDispatchReplayPending = errors.New("daemon: dispatch replay is pending")
+
 type dispatchReplayClaimLedger interface {
 	ClaimBead(context.Context, string, brcli.TimeoutConfig, core.RunID, core.TransitionID, core.BeadID) error
 }
@@ -27,6 +29,7 @@ type dispatchReplayExecutor struct {
 	workers      *workers.Registry
 	localKind    runpkg.ExecutionKind
 	advanceRun   func(string, runpkg.DispatchRecord, runpkg.DispatchRecord) error
+	worktrees    dispatchWorktreeObserverResolver
 }
 
 func (e dispatchReplayExecutor) execute(ctx context.Context, step dispatchReplayStep) error {
@@ -40,13 +43,13 @@ func (e dispatchReplayExecutor) execute(ctx context.Context, step dispatchReplay
 	case dispatch.AdvanceRunPhase:
 		return e.advanceRunPhase(step.Intent)
 	case dispatch.ResumeProvision:
-		return e.bindReplayLocation(ctx, step.Intent)
+		return e.resumeReplayProvision(ctx, step.Intent)
 	default:
 		return fmt.Errorf("daemon: dispatch replay executor does not support action %q for run %s", step.Action, step.Intent.Binding.RunID)
 	}
 }
 
-func (e dispatchReplayExecutor) bindReplayLocation(ctx context.Context, intent dispatch.Intent) error {
+func (e dispatchReplayExecutor) resumeReplayProvision(ctx context.Context, intent dispatch.Intent) error {
 	if intent.Phase != dispatch.PhaseRunDurable {
 		return fmt.Errorf("daemon: replay location requires run_durable intent, got %q", intent.Phase)
 	}
@@ -69,9 +72,21 @@ func (e dispatchReplayExecutor) bindReplayLocation(ctx context.Context, intent d
 	if err != nil {
 		return err
 	}
-	if runpkg.ClassifyDispatchRecord(intent, record) != dispatch.RunRecordBase {
-		return errors.New("daemon: replay location requires one exact base run record")
+	switch runpkg.ClassifyDispatchRecord(intent, record) {
+	case dispatch.RunRecordBase:
+		return e.bindReplayLocation(intent, snapshot, *record)
+	case dispatch.RunRecordLocated:
+		return e.prepareReplayWorktree(ctx, intent, *record)
+	default:
+		return errors.New("daemon: replay provision requires one exact base or located run record")
 	}
+}
+
+func (e dispatchReplayExecutor) bindReplayLocation(
+	intent dispatch.Intent,
+	snapshot *queue.Queue,
+	record runpkg.DispatchRecord,
+) error {
 	location, selectedRemote, err := e.selectReplayLocation(intent, snapshot)
 	if err != nil {
 		return err
@@ -87,13 +102,94 @@ func (e dispatchReplayExecutor) bindReplayLocation(ctx context.Context, intent d
 	if advance == nil {
 		advance = runpkg.AdvanceDispatchRecord
 	}
-	if err := advance(e.projectDir, *record, located); err != nil {
+	if err := advance(e.projectDir, record, located); err != nil {
 		if selectedRemote && releaseSelectedWorkerAfterAdvanceError(err) {
 			e.workers.ReleaseBoundWorker(intent.Binding.RunID)
 		}
 		return fmt.Errorf("daemon: bind replay execution location: %w", err)
 	}
 	return nil
+}
+
+func (e dispatchReplayExecutor) prepareReplayWorktree(
+	ctx context.Context,
+	intent dispatch.Intent,
+	record runpkg.DispatchRecord,
+) error {
+	if record.Location == nil || e.worktrees == nil {
+		return errors.New("daemon: dispatch replay worktree provisioner is not configured")
+	}
+	if err := e.acquireReplayWorker(intent, record); err != nil {
+		return err
+	}
+	provisioner, err := e.worktrees(record)
+	if err != nil {
+		return fmt.Errorf("daemon: resolve replay worktree provisioner: %w", err)
+	}
+	fact, err := observeReplayWorktree(ctx, provisioner, intent, record)
+	if err != nil {
+		return err
+	}
+	if fact == dispatch.WorktreePrepared {
+		return nil
+	}
+	if fact != dispatch.WorktreeAbsent {
+		return fmt.Errorf("daemon: replay worktree requires repair before create: %s", fact)
+	}
+	if err := provisioner.PrepareBase(ctx, record); err != nil {
+		return fmt.Errorf("daemon: prepare replay worktree base: %w", err)
+	}
+	createErr := provisioner.Create(ctx, record)
+	fact, observeErr := observeReplayWorktree(ctx, provisioner, intent, record)
+	if observeErr != nil {
+		return errors.Join(createErr, observeErr)
+	}
+	if fact == dispatch.WorktreePrepared {
+		return nil
+	}
+	if fact == dispatch.WorktreeAbsent {
+		if createErr != nil {
+			return fmt.Errorf("%w: replay worktree create left no authority: %w", errDispatchReplayPending, createErr)
+		}
+		return fmt.Errorf("%w: replay worktree create left no authority", errDispatchReplayPending)
+	}
+	if createErr != nil {
+		return fmt.Errorf("daemon: replay worktree create requires repair with fact %q: %w", fact, createErr)
+	}
+	return fmt.Errorf("daemon: replay worktree create requires repair with fact %q", fact)
+}
+
+func (e dispatchReplayExecutor) acquireReplayWorker(intent dispatch.Intent, record runpkg.DispatchRecord) error {
+	if record.Location.Kind != runpkg.ExecutionRemote {
+		return nil
+	}
+	if e.workers == nil {
+		return errors.New("daemon: dispatch replay worker registry is not configured")
+	}
+	worker, err := e.workers.AcquireBoundWorker(intent.Binding.RunID, workers.BoundWorker{
+		Name: record.Location.WorkerName, Transport: record.Location.Transport,
+		Host: record.Location.Host, RepositoryPath: record.Location.RepositoryPath,
+	})
+	if err != nil {
+		return fmt.Errorf("daemon: acquire bound replay worker: %w", err)
+	}
+	if worker == nil {
+		return fmt.Errorf("%w: exact worker is disabled or full", errDispatchReplayPending)
+	}
+	return nil
+}
+
+func observeReplayWorktree(
+	ctx context.Context,
+	provisioner dispatchWorktreeProvisioner,
+	intent dispatch.Intent,
+	record runpkg.DispatchRecord,
+) (dispatch.WorktreeFact, error) {
+	values, err := provisioner.Observe(ctx, record)
+	if err != nil {
+		return dispatch.WorktreeConflict, fmt.Errorf("daemon: observe replay worktree: %w", err)
+	}
+	return dispatch.ClassifyWorktreeObservations(intent, mapDiscoveredWorktrees(values)), nil
 }
 
 func releaseSelectedWorkerAfterAdvanceError(err error) bool {

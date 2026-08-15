@@ -122,6 +122,7 @@ func (bs *bootState) preflightDispatchReplay(
 		now:          time.Now,
 		workers:      bs.workerRegistry,
 		localKind:    replayLocalExecutionKind(bs.cfg.Substrate),
+		worktrees:    newDispatchWorktreeObserverResolver(bs.cfg.Workers),
 	}); err != nil {
 		return err
 	}

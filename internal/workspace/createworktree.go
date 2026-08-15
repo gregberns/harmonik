@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
@@ -275,6 +277,84 @@ func CreateWorktree(ctx context.Context, repoRoot, runID, parentCommit string, c
 		fmt.Errorf("%w: git worktree add -b %q %q %q: %w\ngit output: %s",
 			ErrWorktreeCreationFailed, branch, worktreePath, parentCommit, err, out),
 		cleanupErrs)
+}
+
+// CreateDispatchWorktree makes one non-destructive attempt to create the exact
+// intent-owned worktree. It never removes a path, prunes Git metadata, or
+// deletes a branch after an uncertain result. Replay must observe the resulting
+// authority before it tries again.
+func CreateDispatchWorktree(
+	ctx context.Context,
+	repoRoot string,
+	runID string,
+	parentCommit string,
+	cfg WorktreeRootConfig,
+) error {
+	if err := validateDispatchWorktreeCreate(repoRoot, runID, parentCommit); err != nil {
+		return err
+	}
+	if cfg.createMu != nil {
+		cfg.createMu.Lock()
+		defer cfg.createMu.Unlock()
+	}
+
+	worktreePath := WorktreePath(repoRoot, runID, cfg)
+	parentDir := filepath.Dir(worktreePath)
+	runner := cfg.commandRunner()
+	if err := createDispatchWorktreeRoot(ctx, runner, cfg.runner != nil, parentDir); err != nil {
+		return err
+	}
+
+	branch := TaskBranchName(runID)
+	out, err := runner.Command(
+		ctx, "git", "-C", repoRoot, "worktree", "add", "-b", branch, worktreePath, parentCommit,
+	).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("workspace: CreateDispatchWorktree: git worktree add: %w\noutput: %s", err, out)
+	}
+	if cfg.runner != nil {
+		head, headErr := resolveWorktreeHEADViaRunner(ctx, runner, worktreePath)
+		if headErr != nil {
+			return fmt.Errorf("workspace: CreateDispatchWorktree: read HEAD after create: %w", headErr)
+		}
+		if head != parentCommit {
+			return fmt.Errorf("workspace: CreateDispatchWorktree: HEAD after create is %q, want %q", head, parentCommit)
+		}
+	}
+	return nil
+}
+
+func validateDispatchWorktreeCreate(repoRoot, runID, parentCommit string) error {
+	id, idErr := uuid.Parse(runID)
+	if idErr != nil || id.Version() != 7 || id.String() != runID {
+		return fmt.Errorf("workspace: CreateDispatchWorktree: invalid run_id %q", runID)
+	}
+	if repoRoot == "" || !filepath.IsAbs(repoRoot) || filepath.Clean(repoRoot) != repoRoot {
+		return fmt.Errorf("workspace: CreateDispatchWorktree: repo root must be a clean absolute path")
+	}
+	if !isFullGitObjectID(parentCommit) || strings.ToLower(parentCommit) != parentCommit {
+		return fmt.Errorf("workspace: CreateDispatchWorktree: parent commit must be a full lowercase Git object ID")
+	}
+	return nil
+}
+
+func createDispatchWorktreeRoot(
+	ctx context.Context,
+	runner tmux.CommandRunner,
+	remote bool,
+	parentDir string,
+) error {
+	if !remote {
+		if err := os.MkdirAll(parentDir, core.HarmonikDirMode); err != nil {
+			return fmt.Errorf("workspace: CreateDispatchWorktree: create owning root %q: %w", parentDir, err)
+		}
+		return nil
+	}
+	out, err := runner.Command(ctx, "mkdir", "-p", parentDir).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("workspace: CreateDispatchWorktree: create owning root %q: %w\noutput: %s", parentDir, err, out)
+	}
+	return nil
 }
 
 // cleanupPartialWorktreeState removes any partial worktree dir, stale worktree

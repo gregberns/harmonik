@@ -17,6 +17,7 @@ import (
 	"github.com/gregberns/harmonik/internal/digest"
 	"github.com/gregberns/harmonik/internal/eventbus"
 	"github.com/gregberns/harmonik/internal/handlercontract"
+	"github.com/gregberns/harmonik/internal/harness/pi"
 	"github.com/gregberns/harmonik/internal/lifecycle"
 	ltmux "github.com/gregberns/harmonik/internal/lifecycle/tmux"
 	"github.com/gregberns/harmonik/internal/projectconfig"
@@ -54,6 +55,16 @@ func (bs *bootState) launchWorkLoop(ctx context.Context, daemonStartTime time.Ti
 	harnessRegistry, harnessErr := newHarnessRegistry(cfg.ProjectCfg.Harnesses.Pi)
 	if harnessErr != nil {
 		return fmt.Errorf("daemon.Start: work loop deps: newHarnessRegistry: %w", harnessErr)
+	}
+	// hk-p06sq: a dead pi tunnel used to surface only as a failed implementer
+	// run, hours after the config went stale. One dial at boot turns that into
+	// a loud, named line in the daemon log instead. Non-fatal: pi is one of
+	// three harnesses, and refusing daemon boot over an unreachable pi tunnel
+	// would also block claude and codex dispatch for no reason.
+	if baseURL := cfg.ProjectCfg.Harnesses.Pi.BaseURL; baseURL != "" {
+		if probeErr := pi.ProbeBaseURL(ctx, baseURL, 3*time.Second); probeErr != nil {
+			log.Printf("warn: daemon.Start: %v", probeErr)
+		}
 	}
 	var workerEmit workers.EmitFunc
 	if bs.bus != nil {

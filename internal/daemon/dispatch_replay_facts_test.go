@@ -185,7 +185,10 @@ func replayFactRunRecord(t *testing.T, intent dispatch.Intent) runpkg.DispatchRe
 	if err != nil {
 		t.Fatal(err)
 	}
-	location := runpkg.ExecutionLocation{Kind: runpkg.ExecutionLocalIndependent}
+	location := runpkg.ExecutionLocation{
+		Kind:           runpkg.ExecutionLocalIndependent,
+		RepositoryPath: intent.Binding.RepositoryPath,
+	}
 	record, err = record.BindLocation(location)
 	if err != nil {
 		t.Fatal(err)

@@ -108,6 +108,7 @@ func (bs *bootState) preflightDispatchReplay(
 		projectDir: bs.cfg.ProjectDir,
 		beads:      st.orphanStatusReader,
 		resolve:    newSessionStartAdapterResolver(st.sweepTmuxAdapter, bs.cfg.Workers),
+		worktrees:  newDispatchWorktreeObserverResolver(bs.cfg.Workers),
 	}
 	steps, err := preflightDispatchReplayWithReader(ctx, intents, reader)
 	if err != nil {

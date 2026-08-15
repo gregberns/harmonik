@@ -25,6 +25,7 @@ type filesystemDispatchReplayReader struct {
 	projectDir string
 	beads      dispatchReplayBeadReader
 	resolve    sessionStartAdapterResolver
+	worktrees  dispatchWorktreeObserverResolver
 }
 
 func (r filesystemDispatchReplayReader) ReadDispatchReplayFacts(
@@ -64,9 +65,19 @@ func (r filesystemDispatchReplayReader) readObservations(
 	if err != nil {
 		return dispatchReplayObservations{}, err
 	}
-	worktrees, err := workspace.DiscoverWorktrees(ctx, r.projectDir, workspace.NoWorktreeRootOverride())
-	if err != nil {
-		return dispatchReplayObservations{}, fmt.Errorf("discover worktrees: %w", err)
+	var discovered []workspace.DiscoveredWorktree
+	if record != nil && record.Location != nil {
+		if r.worktrees == nil {
+			return dispatchReplayObservations{}, errors.New("daemon: dispatch replay worktree observer is not configured")
+		}
+		observer, resolveErr := r.worktrees(*record)
+		if resolveErr != nil {
+			return dispatchReplayObservations{}, fmt.Errorf("resolve dispatch worktree owner: %w", resolveErr)
+		}
+		discovered, err = observer.Observe(ctx, *record)
+		if err != nil {
+			return dispatchReplayObservations{}, fmt.Errorf("observe dispatch worktree: %w", err)
+		}
 	}
 	receipt, err := exactSessionReceipt(r.projectDir, intent.Binding.RunID)
 	if err != nil {
@@ -74,7 +85,7 @@ func (r filesystemDispatchReplayReader) readObservations(
 	}
 	return dispatchReplayObservations{
 		Queue: q, Bead: &bead, RunRecord: record,
-		Worktrees: mapDiscoveredWorktrees(worktrees),
+		Worktrees: mapDiscoveredWorktrees(discovered),
 		Session:   readDispatchTargetObservation(ctx, r.resolve, intent, record),
 		Receipt:   receipt,
 		Claim:     dispatch.ClaimNone, Git: dispatch.GitAbsent,

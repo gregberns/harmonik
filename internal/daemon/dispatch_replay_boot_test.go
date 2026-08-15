@@ -63,7 +63,10 @@ if [ "$1" = "--version" ]; then
 fi
 printf '%s\n' '[{"id":"hk-replay-owner","title":"replay","issue_type":"task","status":"open"}]'
 `
-	if err := os.WriteFile(brPath, []byte(script), 0o700); err != nil {
+	if err := os.WriteFile(brPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(brPath, 0o700); err != nil { //nolint:gosec // The test fixture must be executable.
 		t.Fatal(err)
 	}
 	bs := &bootState{cfg: Config{ProjectDir: projectDir, BrPath: brPath}}
@@ -78,6 +81,50 @@ printf '%s\n' '[{"id":"hk-replay-owner","title":"replay","issue_type":"task","st
 	}
 	if strings.Contains(string(calls), " list ") || strings.Contains(string(calls), "list --") {
 		t.Fatalf("orphan sweep reached Beads list before replay refusal:\n%s", calls)
+	}
+}
+
+func TestStartupReconcileInstallsLocationOwnedWorktreeObserver(t *testing.T) {
+	projectDir := t.TempDir()
+	intent := replayOwnershipIntent(t, dispatch.PhaseRunDurable)
+	writeReplayReaderIntent(t, projectDir, intent)
+	writeReplayReaderQueue(t, projectDir, intent, true)
+	record, err := runpkg.NewDispatchRecord(intent.Binding, time.Date(2026, 8, 15, 1, 2, 3, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runpkg.CreateDispatchRecord(projectDir, record); err != nil {
+		t.Fatal(err)
+	}
+	location := runpkg.ExecutionLocation{
+		Kind: runpkg.ExecutionLocalIndependent, RepositoryPath: intent.Binding.RepositoryPath,
+	}
+	located, err := record.BindLocation(location)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runpkg.AdvanceDispatchRecord(projectDir, record, located); err != nil {
+		t.Fatal(err)
+	}
+	brPath := filepath.Join(t.TempDir(), "br")
+	script := `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "br test"; exit 0; fi
+if [ "$1" = "show" ]; then printf '%s\n' '[{"id":"hk-replay-owner","title":"replay","issue_type":"task","status":"in_progress"}]'; fi
+exit 0
+`
+	if err := os.WriteFile(brPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(brPath, 0o700); err != nil { //nolint:gosec // The test fixture must be executable.
+		t.Fatal(err)
+	}
+	bs := &bootState{cfg: Config{ProjectDir: projectDir, BrPath: brPath}}
+	err = bs.runStartupReconcile(t.Context(), time.Now(), "main")
+	if err == nil || !strings.Contains(err.Error(), "observe dispatch worktree") {
+		t.Fatalf("runStartupReconcile() error = %v", err)
+	}
+	if strings.Contains(err.Error(), "observer is not configured") {
+		t.Fatalf("production worktree observer was not installed: %v", err)
 	}
 }
 

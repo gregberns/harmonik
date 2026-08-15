@@ -19,6 +19,15 @@ type replayReaderBeads struct {
 	record core.BeadRecord
 }
 
+type replayWorktreeObserverFunc func(context.Context, runpkg.DispatchRecord) ([]workspace.DiscoveredWorktree, error)
+
+func (f replayWorktreeObserverFunc) Observe(
+	ctx context.Context,
+	record runpkg.DispatchRecord,
+) ([]workspace.DiscoveredWorktree, error) {
+	return f(ctx, record)
+}
+
 func (r *replayReaderBeads) ShowBead(context.Context, core.BeadID) (core.BeadRecord, error) {
 	r.calls++
 	return r.record, nil
@@ -174,7 +183,10 @@ func TestFilesystemDispatchReplayReaderUsesScannedRemoteLocationForTarget(t *tes
 	writeReplayReaderIntent(t, projectDir, intent)
 	writeReplayReaderQueue(t, projectDir, intent, true)
 	record := replayFactRunRecord(t, intent)
-	remoteLocation := runpkg.ExecutionLocation{Kind: runpkg.ExecutionRemote, WorkerName: "worker-a"}
+	remoteLocation := runpkg.ExecutionLocation{
+		Kind: runpkg.ExecutionRemote, WorkerName: "worker-a", Transport: "ssh",
+		Host: "worker.example", RepositoryPath: "/srv/worker/project",
+	}
 	record.Location = &remoteLocation
 	writeReplayReaderRecord(t, projectDir, intent, record)
 	receipt, err := dispatch.NewSessionStartReceipt(intent)
@@ -195,6 +207,14 @@ func TestFilesystemDispatchReplayReaderUsesScannedRemoteLocationForTarget(t *tes
 				t.Fatalf("resolved location = %+v", location)
 			}
 			return remote, nil
+		},
+		worktrees: func(record runpkg.DispatchRecord) (dispatchWorktreeObserver, error) {
+			if record.Location == nil || *record.Location != remoteLocation {
+				t.Fatalf("worktree location = %+v", record.Location)
+			}
+			return replayWorktreeObserverFunc(func(context.Context, runpkg.DispatchRecord) ([]workspace.DiscoveredWorktree, error) {
+				return nil, nil
+			}), nil
 		},
 	}
 	facts, err := reader.ReadDispatchReplayFacts(t.Context(), intent)

@@ -80,6 +80,35 @@ func (r *Registry) AcquireBoundWorker(runID core.RunID, bound BoundWorker) (*Wor
 	return &worker, nil
 }
 
+// SelectBoundWorker selects one enabled worker and binds its process-local slot
+// to runID in the same lock-held operation. An empty target permits the primary
+// worker. A nonempty target permits only that worker. A repeat call for the
+// same run returns the same worker without consuming another slot.
+func (r *Registry) SelectBoundWorker(runID core.RunID, target string) (*Worker, error) {
+	if !runID.IsUUIDv7() {
+		return nil, errInvalidBoundWorker
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.hasWorker || target != "" && r.worker.Name != target {
+		return nil, nil
+	}
+	if r.worker.Name == "" || r.worker.Transport != "ssh" || r.worker.Host == "" || r.worker.RepoPath == "" {
+		return nil, fmt.Errorf("workers: selected worker has no supported durable route")
+	}
+	if _, held := r.boundRuns[runID]; held {
+		worker := r.worker
+		return &worker, nil
+	}
+	if !r.worker.Enabled || (r.worker.MaxSlots > 0 && r.inFlight >= r.worker.MaxSlots) {
+		return nil, nil
+	}
+	r.inFlight++
+	r.boundRuns[runID] = struct{}{}
+	worker := r.worker
+	return &worker, nil
+}
+
 // ReleaseBoundWorker releases the slot held for one durable remote run.
 // It returns false when this process does not own that run's slot.
 func (r *Registry) ReleaseBoundWorker(runID core.RunID) bool {

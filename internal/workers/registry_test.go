@@ -248,3 +248,144 @@ func TestRegistry_AcquireBoundWorkerRejectsInvalidRunID(t *testing.T) {
 		t.Fatalf("invalid acquire = (%+v, %v), in-flight %d", worker, err, r.InFlight())
 	}
 }
+
+func TestRegistry_SelectBoundWorkerOwnsOneSlotPerRun(t *testing.T) {
+	r := workers.NewRegistry(workers.Config{Workers: []workers.Worker{{
+		Name: "worker-a", Transport: "ssh", Host: "worker.example", RepoPath: "/srv/project",
+		Enabled: true, MaxSlots: 1,
+	}}})
+	runID := boundRunID(t, "0197d200-0000-7000-8000-000000000001")
+	first, err := r.SelectBoundWorker(runID, "")
+	if err != nil || first == nil || first.Name != "worker-a" || r.InFlight() != 1 {
+		t.Fatalf("first selection = (%+v, %v), in-flight %d", first, err, r.InFlight())
+	}
+	replay, err := r.SelectBoundWorker(runID, "worker-a")
+	if err != nil || replay == nil || replay.Name != first.Name || r.InFlight() != 1 {
+		t.Fatalf("repeat selection = (%+v, %v), in-flight %d", replay, err, r.InFlight())
+	}
+	other, err := r.SelectBoundWorker(boundRunID(t, "0197d200-0000-7000-8000-000000000002"), "")
+	if err != nil || other != nil || r.InFlight() != 1 {
+		t.Fatalf("full selection = (%+v, %v), in-flight %d", other, err, r.InFlight())
+	}
+}
+
+func TestRegistry_SelectBoundWorkerPreservesTargetAndFallbackRules(t *testing.T) {
+	newRegistry := func(enabled bool) *workers.Registry {
+		return workers.NewRegistry(workers.Config{Workers: []workers.Worker{{
+			Name: "worker-a", Transport: "ssh", Host: "worker.example", RepoPath: "/srv/project",
+			Enabled: enabled, MaxSlots: 1,
+		}}})
+	}
+	tests := []struct {
+		name    string
+		target  string
+		enabled bool
+		want    bool
+	}{
+		{name: "default worker", enabled: true, want: true},
+		{name: "named worker", target: "worker-a", enabled: true, want: true},
+		{name: "unknown target falls back", target: "worker-b", enabled: true},
+		{name: "disabled worker falls back", enabled: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRegistry(tc.enabled)
+			got, err := r.SelectBoundWorker(boundRunID(t, "0197d200-0000-7000-8000-000000000003"), tc.target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (got != nil) != tc.want {
+				t.Fatalf("SelectBoundWorker() = %+v, want selected %v", got, tc.want)
+			}
+			wantInFlight := 0
+			if tc.want {
+				wantInFlight = 1
+			}
+			if r.InFlight() != wantInFlight {
+				t.Fatalf("in-flight = %d, want %d", r.InFlight(), wantInFlight)
+			}
+		})
+	}
+}
+
+func TestRegistry_SelectBoundWorkerRejectsInvalidRunBeforeSlot(t *testing.T) {
+	r := workers.NewRegistry(workers.Config{Workers: []workers.Worker{{Name: "worker-a", Enabled: true, MaxSlots: 1}}})
+	if got, err := r.SelectBoundWorker(core.RunID{}, ""); err == nil || got != nil || r.InFlight() != 0 {
+		t.Fatalf("SelectBoundWorker() = (%+v, %v), in-flight %d", got, err, r.InFlight())
+	}
+}
+
+func TestRegistry_SelectBoundWorkerRejectsInvalidRoutesBeforeSlot(t *testing.T) {
+	base := workers.Worker{
+		Name: "worker-a", Transport: "ssh", Host: "worker.example", RepoPath: "/srv/project",
+		Enabled: true, MaxSlots: 1,
+	}
+	tests := []struct {
+		name   string
+		mutate func(*workers.Worker)
+	}{
+		{name: "name", mutate: func(worker *workers.Worker) { worker.Name = "" }},
+		{name: "transport", mutate: func(worker *workers.Worker) { worker.Transport = "https" }},
+		{name: "host", mutate: func(worker *workers.Worker) { worker.Host = "" }},
+		{name: "repository", mutate: func(worker *workers.Worker) { worker.RepoPath = "" }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			worker := base
+			tc.mutate(&worker)
+			r := workers.NewRegistry(workers.Config{Workers: []workers.Worker{worker}})
+			got, err := r.SelectBoundWorker(boundRunID(t, "0197d200-0000-7000-8000-000000000004"), "")
+			if err == nil || got != nil || r.InFlight() != 0 {
+				t.Fatalf("SelectBoundWorker() = (%+v, %v), in-flight %d", got, err, r.InFlight())
+			}
+		})
+	}
+}
+
+func TestRegistry_BoundSelectionAndAcquisitionShareOneOwnership(t *testing.T) {
+	newRegistry := func() *workers.Registry {
+		return workers.NewRegistry(workers.Config{Workers: []workers.Worker{{
+			Name: "worker-a", Transport: "ssh", Host: "worker.example", RepoPath: "/srv/project",
+			Enabled: true, MaxSlots: 1,
+		}}})
+	}
+	route := workers.BoundWorker{
+		Name: "worker-a", Transport: "ssh", Host: "worker.example", RepositoryPath: "/srv/project",
+	}
+	runID := boundRunID(t, "0197d200-0000-7000-8000-000000000005")
+	for _, tc := range []struct {
+		name  string
+		first func(*workers.Registry) (*workers.Worker, error)
+		next  func(*workers.Registry) (*workers.Worker, error)
+	}{
+		{
+			name:  "select then acquire",
+			first: func(r *workers.Registry) (*workers.Worker, error) { return r.SelectBoundWorker(runID, "") },
+			next:  func(r *workers.Registry) (*workers.Worker, error) { return r.AcquireBoundWorker(runID, route) },
+		},
+		{
+			name:  "acquire then select",
+			first: func(r *workers.Registry) (*workers.Worker, error) { return r.AcquireBoundWorker(runID, route) },
+			next:  func(r *workers.Registry) (*workers.Worker, error) { return r.SelectBoundWorker(runID, "worker-a") },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRegistry()
+			first, err := tc.first(r)
+			if err != nil || first == nil || r.InFlight() != 1 {
+				t.Fatalf("first = (%+v, %v), in-flight %d", first, err, r.InFlight())
+			}
+			next, err := tc.next(r)
+			if err != nil || next == nil || r.InFlight() != 1 {
+				t.Fatalf("next = (%+v, %v), in-flight %d", next, err, r.InFlight())
+			}
+			if !r.ReleaseBoundWorker(runID) || r.InFlight() != 0 {
+				t.Fatalf("release left in-flight %d", r.InFlight())
+			}
+			reused, err := r.SelectBoundWorker(boundRunID(t, "0197d200-0000-7000-8000-000000000006"), "")
+			if err != nil || reused == nil || r.InFlight() != 1 {
+				t.Fatalf("capacity reuse = (%+v, %v), in-flight %d", reused, err, r.InFlight())
+			}
+		})
+	}
+}

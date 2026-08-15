@@ -20,7 +20,7 @@ import (
 
 // ProbeBaseURL dials the host:port encoded in baseURL and returns a
 // descriptive error if nothing answers within timeout. baseURL is the raw
-// harnesses.pi.base_url config value (e.g. "http://127.0.0.1:8553/v1"); an
+// harnesses.pi.base_url config value (e.g. "http://127.0.0.1:8551/v1"); an
 // empty baseURL is the caller's responsibility to skip (today's cloud-provider
 // behavior — no base_url configured — has nothing to probe). ctx is the
 // caller's context; ProbeBaseURL derives its own timeout from it and does not

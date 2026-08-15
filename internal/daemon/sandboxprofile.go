@@ -33,12 +33,18 @@ package daemon
 // the parsed field is honored instead of silently ignored.
 //
 // allowLocalBinding is driven by SandboxProfileInput.AllowLocalBinding
-// (config: sandbox.network.allow_local_binding). It is REQUIRED to reach a
-// locally-hosted model endpoint (a LAN vLLM / loopback stub): those addresses
-// fall in srt's no_proxy set, so they are connected to directly and Seatbelt
-// denies the socket ("Operation not permitted") unless local binding is
-// permitted — the allowedDomains proxy path does not cover them. Bead hk-ybuts /
-// hk-u69my (Pi srt egress: sandboxed Pi could not reach the DGX vLLM).
+// (config: sandbox.network.allow_local_binding). It is REQUIRED to reach an
+// endpoint on THIS host — loopback or one of this machine's own interfaces.
+// Those addresses fall in srt's no_proxy set, so they are connected to
+// directly and Seatbelt denies the socket ("Operation not permitted") unless
+// local binding is permitted; the allowedDomains proxy path does not cover
+// them. It does NOT open a remote host, so it does not on its own reach a
+// model server on another machine — srt_pi_egress_e2e_test.go in this package
+// measures the local half and explains why the remote half cannot be
+// reproduced in-process. The discriminator is remote-host vs local, not
+// loopback vs non-loopback. The model box is reached by tunnelling it to
+// loopback instead. Bead hk-ybuts / hk-u69my (Pi srt egress: sandboxed Pi
+// could not reach the DGX vLLM).
 //
 // Spec: plans/2026-07-02-pi-sandbox/HANDOFF.md §4 (git writable-set),
 // §6 (cache read-only base + private write area), §8.2 (profile shape).
@@ -88,17 +94,21 @@ type SandboxProfileInput struct {
 	// connection to a private-LAN / loopback address: srt's default no_proxy
 	// (localhost, 127.0.0.1, 10/8, 172.16/12, 192.168/16, 169.254/16) makes
 	// those bypass the proxy and connect directly, which macOS Seatbelt denies
-	// unless AllowLocalBinding is set. A locally-hosted model server (vLLM at
-	// e.g. http://192.168.1.86:8551) therefore needs AllowLocalBinding, NOT an
-	// allowedDomains entry. See hk-ybuts / hk-u69my (Pi srt egress).
+	// unless AllowLocalBinding is set. AllowLocalBinding is the answer for an
+	// endpoint on THIS host; it does not open a remote one, so a model server
+	// on another machine stays blocked either way and is reached through a
+	// loopback tunnel (config base_url http://127.0.0.1:8551/v1). See
+	// srt_pi_egress_e2e_test.go and hk-ybuts / hk-u69my (Pi srt egress).
 	AllowedDomains []string
 
 	// AllowLocalBinding, when true, permits the sandboxed process to open direct
-	// sockets to local / private-LAN / loopback network addresses
-	// (network.allowLocalBinding). REQUIRED to reach a locally-hosted, OpenAI-
-	// compatible model endpoint (e.g. a DGX vLLM on the LAN, or an httptest stub
-	// on 127.0.0.1) because those addresses fall in srt's no_proxy set and are
-	// connected to directly rather than through the MITM proxy. Default false
+	// sockets to addresses on THIS host — loopback and this machine's own
+	// interfaces (network.allowLocalBinding). REQUIRED to reach an OpenAI-
+	// compatible model endpoint there (the loopback tunnel entrance for the DGX
+	// vLLM, or an httptest stub on 127.0.0.1) because those addresses fall in
+	// srt's no_proxy set and are connected to directly rather than through the
+	// MITM proxy. A host on the LAN is a different case: the socket stays denied
+	// whatever this is set to. Default false
 	// keeps the tightest posture; the operator opts in via
 	// sandbox.network.allow_local_binding. Bead: hk-ybuts / hk-u69my.
 	AllowLocalBinding bool

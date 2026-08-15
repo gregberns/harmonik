@@ -46,7 +46,7 @@ harnesses:
     model: openrouter/qwen/qwen3-coder
     api_key_env: OPENROUTER_API_KEY
     # api_key_file: ~/.config/harmonik/openrouter.key
-    # base_url: http://dgx.local:8551/v1
+    # base_url: http://127.0.0.1:8551/v1
 YAML
 
 # scratch-daemon.sh runs `main "$@"` at the bottom; neuter it so we can source the

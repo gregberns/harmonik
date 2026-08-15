@@ -41,7 +41,7 @@ func TestCreateDispatchWorktreeLocalIsImmediatelyDiscoverable(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	discovered, err := DiscoverWorktrees(t.Context(), repo, NoWorktreeRootOverride())
+	discovered, err := ObserveDispatchWorktree(t.Context(), repo, dispatchCreateRunID, NoWorktreeRootOverride())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,13 +4,14 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/gregberns/harmonik/internal/lifecycle/tmux"
 )
 
 // runIDRegexProduction is the canonical filesystem-safety regex for run_id values
@@ -339,31 +340,60 @@ type porcelainWorktreeRegistration struct {
 }
 
 func porcelainWorktreeRegistrations(ctx context.Context, repoRoot string) (map[string]porcelainWorktreeRegistration, error) {
-	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "worktree", "list", "--porcelain")
+	return porcelainWorktreeRegistrationsVia(ctx, tmux.LocalRunner{}, repoRoot)
+}
+
+func porcelainWorktreeRegistrationsVia(
+	ctx context.Context,
+	runner tmux.CommandRunner,
+	repoRoot string,
+) (map[string]porcelainWorktreeRegistration, error) {
+	cmd := runner.Command(ctx, "git", "-C", repoRoot, "worktree", "list", "--porcelain")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("workspace: porcelainWorktreePaths: git worktree list: %w", err)
 	}
+	if strings.TrimSpace(string(out)) == "" {
+		return nil, fmt.Errorf("workspace: porcelainWorktreePaths: git returned empty authority")
+	}
+	return parsePorcelainWorktreeRegistrations(string(out))
+}
 
+func parsePorcelainWorktreeRegistrations(output string) (map[string]porcelainWorktreeRegistration, error) {
 	registered := make(map[string]porcelainWorktreeRegistration)
-	for _, block := range strings.Split(strings.TrimSpace(string(out)), "\n\n") {
-		var path string
-		var registration porcelainWorktreeRegistration
-		for _, line := range strings.Split(block, "\n") {
-			switch {
-			case strings.HasPrefix(line, "worktree "):
-				path = strings.TrimSpace(strings.TrimPrefix(line, "worktree "))
-			case strings.HasPrefix(line, "HEAD "):
-				registration.Head = strings.TrimSpace(strings.TrimPrefix(line, "HEAD "))
-			case strings.HasPrefix(line, "branch "):
-				registration.Branch = strings.TrimPrefix(strings.TrimSpace(strings.TrimPrefix(line, "branch ")), "refs/heads/")
-			}
+	for _, block := range strings.Split(strings.TrimSpace(output), "\n\n") {
+		path, registration, validShape := parsePorcelainWorktreeBlock(block)
+		if !validShape || path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path ||
+			!isFullGitObjectID(registration.Head) {
+			return nil, fmt.Errorf("workspace: porcelainWorktreePaths: malformed authority block %q", block)
 		}
-		if path != "" {
-			registered[path] = registration
+		if _, duplicate := registered[path]; duplicate {
+			return nil, fmt.Errorf("workspace: porcelainWorktreePaths: duplicate worktree path %q", path)
 		}
+		registered[path] = registration
 	}
 	return registered, nil
+}
+
+func parsePorcelainWorktreeBlock(block string) (string, porcelainWorktreeRegistration, bool) {
+	var path string
+	var registration porcelainWorktreeRegistration
+	valid := true
+	for _, line := range strings.Split(block, "\n") {
+		switch {
+		case strings.HasPrefix(line, "worktree "):
+			path = strings.TrimSpace(strings.TrimPrefix(line, "worktree "))
+		case strings.HasPrefix(line, "HEAD "):
+			registration.Head = strings.TrimSpace(strings.TrimPrefix(line, "HEAD "))
+		case strings.HasPrefix(line, "branch "):
+			registration.Branch = strings.TrimPrefix(strings.TrimSpace(strings.TrimPrefix(line, "branch ")), "refs/heads/")
+		case line == "bare", line == "detached", line == "locked", line == "prunable":
+		case strings.HasPrefix(line, "locked "), strings.HasPrefix(line, "prunable "):
+		default:
+			valid = false
+		}
+	}
+	return path, registration, valid
 }
 
 // readDiscoveredLeaseLock reads the lease-lock fields required by WM-013c step

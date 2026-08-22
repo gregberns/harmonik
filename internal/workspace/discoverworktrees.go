@@ -175,79 +175,115 @@ func DiscoverWorktrees(ctx context.Context, repoRoot string, cfg WorktreeRootCon
 			continue
 		}
 
-		// Resolve symlinks before checking the git-registered set: on macOS,
-		// t.TempDir() paths under /var/folders are symlinks to /private/var/folders,
-		// and git --version 2.34+ resolves to the realpath in its output.
-		resolvedPath := worktreePath
-		if rp, err := filepath.EvalSymlinks(worktreePath); err == nil {
-			resolvedPath = rp
-		}
-
-		registration, registered := registeredPaths[worktreePath]
-		if !registered {
-			registration, registered = registeredPaths[resolvedPath]
-		}
-		dw := DiscoveredWorktree{
-			RunID:           name,
-			WorktreePath:    worktreePath,
-			RegisteredInGit: registered,
-			GitBranch:       registration.Branch,
-			HeadCommit:      registration.Head,
-			GitRegistrationConflict: conflictingWorktreeRegistration(
-				registeredPaths, worktreePath, resolvedPath, name,
-			),
-		}
-
-		// Step (c): read the lease-lock file if present.
-		leaseLockPath := LeaseLockPath(worktreePath)
-		var ll *discoveredLeaseLock
-		var llErr error
-		leaseInfo, leaseStatErr := os.Lstat(leaseLockPath)
-		switch {
-		case os.IsNotExist(leaseStatErr):
-		case leaseStatErr != nil:
-			llErr = leaseStatErr
-		case !leaseInfo.Mode().IsRegular():
-			llErr = fmt.Errorf("unsupported lease-lock type %s", leaseInfo.Mode().Type())
-		default:
-			ll, llErr = readDiscoveredLeaseLock(leaseLockPath)
-		}
-		switch {
-		case llErr != nil:
-			// A read/parse error means the lock file EXISTS but its content
-			// cannot be recovered (corrupt/truncated). Fail safe: mark the lock
-			// present-but-unknown so downstream reapers treat the worktree as
-			// possibly-live and NEVER as absent (which would route it to
-			// force-removal). A cleanly-absent lock returns (nil, nil), NOT an
-			// error, so this branch is reached only for genuine corruption.
-			dw.LeaseLockUnreadable = true
-		case ll != nil:
-			dw.LeaseLock = ll
-		}
-		// A missing lease-lock leaves both LeaseLock nil and LeaseLockUnreadable
-		// false — the caller classifies it as NoLock.
-
-		// Step (d): stat the sessions root directory.
-		sessionsRoot := SessionLogRootPath(worktreePath)
-		if info, statErr := os.Lstat(sessionsRoot); statErr == nil {
-			if info.IsDir() {
-				dw.HasSessionsDir = true
-				dw.HasExactSidecar, statErr = discoverExactRunSidecar(sessionsRoot, name)
-				if statErr != nil {
-					dw.SessionsPathConflict = true
-				}
-			} else {
-				dw.SessionsPathConflict = true
-			}
-		} else if !os.IsNotExist(statErr) {
-			dw.SessionsPathConflict = true
-		}
-
-		results = append(results, dw)
+		results = append(results, discoverWorktree(name, worktreePath, registeredPaths))
 	}
 
-	for path, registration := range registeredPaths {
-		const taskBranchPrefix = "run/"
+	results = append(results, registeredOnlyWorktrees(repoRoot, cfg, registeredPaths, seenRunIDs)...)
+
+	return results, nil
+}
+
+// discoverWorktree performs WM-013c steps (b) to (d) against one candidate
+// directory that exists below the worktree root: the git registration, the
+// lease-lock, and the sessions root.
+func discoverWorktree(
+	runID, worktreePath string,
+	registrations map[string]porcelainWorktreeRegistration,
+) DiscoveredWorktree {
+	// Resolve symlinks before checking the git-registered set: on macOS,
+	// t.TempDir() paths under /var/folders are symlinks to /private/var/folders,
+	// and git --version 2.34+ resolves to the realpath in its output.
+	resolvedPath := worktreePath
+	if rp, err := filepath.EvalSymlinks(worktreePath); err == nil {
+		resolvedPath = rp
+	}
+
+	registration, registered := registrations[worktreePath]
+	if !registered {
+		registration, registered = registrations[resolvedPath]
+	}
+	dw := DiscoveredWorktree{
+		RunID:           runID,
+		WorktreePath:    worktreePath,
+		RegisteredInGit: registered,
+		GitBranch:       registration.Branch,
+		HeadCommit:      registration.Head,
+		GitRegistrationConflict: conflictingWorktreeRegistration(
+			registrations, worktreePath, resolvedPath, runID,
+		),
+	}
+
+	// Step (c): read the lease-lock file if present. A missing lease-lock leaves
+	// both LeaseLock nil and LeaseLockUnreadable false — the caller classifies
+	// it as NoLock.
+	dw.LeaseLock, dw.LeaseLockUnreadable = discoverLeaseLock(worktreePath)
+
+	// Step (d): stat the sessions root directory.
+	dw.HasSessionsDir, dw.HasExactSidecar, dw.SessionsPathConflict = discoverSessions(worktreePath, runID)
+
+	return dw
+}
+
+// discoverLeaseLock performs WM-013c step (c) for one worktree. It returns the
+// parsed lock when the file is present and readable, and (nil, false) when no
+// lock file exists — the caller reads that as "not leased" per WM-013a.
+//
+// A read or parse error means the lock file EXISTS but its content cannot be
+// recovered (corrupt/truncated). That returns (nil, true). Fail safe: the lock
+// is present-but-unknown, so downstream reapers treat the worktree as
+// possibly-live and NEVER as absent, which would route it to force-removal.
+func discoverLeaseLock(worktreePath string) (*discoveredLeaseLock, bool) {
+	leaseLockPath := LeaseLockPath(worktreePath)
+	var lock *discoveredLeaseLock
+	var llErr error
+	leaseInfo, leaseStatErr := os.Lstat(leaseLockPath)
+	switch {
+	case os.IsNotExist(leaseStatErr):
+	case leaseStatErr != nil:
+		llErr = leaseStatErr
+	case !leaseInfo.Mode().IsRegular():
+		llErr = fmt.Errorf("unsupported lease-lock type %s", leaseInfo.Mode().Type())
+	default:
+		lock, llErr = readDiscoveredLeaseLock(leaseLockPath)
+	}
+	if llErr != nil {
+		return nil, true
+	}
+	return lock, false
+}
+
+// discoverSessions performs WM-013c step (d) for one worktree. It stats the
+// sessions root and, when that root is a directory, looks for the sidecar of the
+// exact run. conflict reports a sessions path that cannot be read or that holds
+// an unsupported entry.
+func discoverSessions(worktreePath, runID string) (hasSessionsDir, hasExactSidecar, conflict bool) {
+	sessionsRoot := SessionLogRootPath(worktreePath)
+	info, statErr := os.Lstat(sessionsRoot)
+	if statErr != nil {
+		return false, false, !os.IsNotExist(statErr)
+	}
+	if !info.IsDir() {
+		return false, false, true
+	}
+	sidecar, sidecarErr := discoverExactRunSidecar(sessionsRoot, runID)
+	return true, sidecar, sidecarErr != nil
+}
+
+// registeredOnlyWorktrees reports the worktrees that git still registers and
+// that the directory walk did not reach — a registration whose run directory is
+// gone, or one that sits outside the canonical worktree root. Each is a
+// registration conflict, because the canonical path holds no matching directory.
+// It records every run_id it reports in seenRunIDs, so one registration never
+// produces two results.
+func registeredOnlyWorktrees(
+	repoRoot string,
+	cfg WorktreeRootConfig,
+	registrations map[string]porcelainWorktreeRegistration,
+	seenRunIDs map[string]bool,
+) []DiscoveredWorktree {
+	const taskBranchPrefix = "run/"
+	var extra []DiscoveredWorktree
+	for path, registration := range registrations {
 		candidateRunIDs := []string{filepath.Base(path)}
 		if strings.HasPrefix(registration.Branch, taskBranchPrefix) {
 			candidateRunIDs = append(candidateRunIDs, strings.TrimPrefix(registration.Branch, taskBranchPrefix))
@@ -256,7 +292,7 @@ func DiscoverWorktrees(ctx context.Context, repoRoot string, cfg WorktreeRootCon
 			if !canonicalDispatchRunID(runID) || seenRunIDs[runID] {
 				continue
 			}
-			results = append(results, DiscoveredWorktree{
+			extra = append(extra, DiscoveredWorktree{
 				RunID: runID, WorktreePath: WorktreePath(repoRoot, runID, cfg),
 				GitBranch: registration.Branch, HeadCommit: registration.Head,
 				GitRegistrationConflict: true,
@@ -264,8 +300,7 @@ func DiscoverWorktrees(ctx context.Context, repoRoot string, cfg WorktreeRootCon
 			seenRunIDs[runID] = true
 		}
 	}
-
-	return results, nil
+	return extra
 }
 
 func canonicalDispatchRunID(value string) bool {
@@ -273,7 +308,7 @@ func canonicalDispatchRunID(value string) bool {
 	return err == nil && id.Version() == 7 && id.String() == value
 }
 
-func discoverExactRunSidecar(sessionsRoot string, runID string) (bool, error) {
+func discoverExactRunSidecar(sessionsRoot, runID string) (bool, error) {
 	entries, err := os.ReadDir(sessionsRoot)
 	if err != nil {
 		return false, err

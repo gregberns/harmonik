@@ -198,6 +198,7 @@ func probeTargetCommand(results []probeTargetResult) func(context.Context, strin
 		if result.fail {
 			return exec.CommandContext(ctx, "sh", "-c", "exit 1")
 		}
+		//nolint:gosec // G204: printf and its arguments are literals from this file's result table.
 		return exec.CommandContext(ctx, "printf", "%s", result.output)
 	}
 }

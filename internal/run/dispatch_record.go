@@ -22,6 +22,8 @@ const dispatchRecordSchemaVersion = 4
 // ExecutionKind identifies where one run executes.
 type ExecutionKind string
 
+// The three execution kinds. A run is independent of every other run on this
+// host, shares this host with other runs, or executes on a remote worker.
 const (
 	ExecutionLocalIndependent ExecutionKind = "local_independent"
 	ExecutionLocalShared      ExecutionKind = "local_shared"
@@ -76,8 +78,29 @@ func NewDispatchRecord(binding dispatch.Binding, startedAt time.Time) (DispatchR
 	return record, nil
 }
 
-// Validate rejects partial records and non-canonical durable identity.
+// Validate rejects partial records and non-canonical durable identity. The
+// checks run in one fixed order — identity, then the claim, then the execution
+// location, then the bound target, then the start time — so a partial record
+// always reports the same first fault.
 func (r DispatchRecord) Validate() error {
+	if err := r.validateIdentity(); err != nil {
+		return err
+	}
+	if err := r.validateClaim(); err != nil {
+		return err
+	}
+	if err := r.validateExecutionLocation(); err != nil {
+		return err
+	}
+	if err := r.validateTargetBinding(); err != nil {
+		return err
+	}
+	return validateStartedAt(r.StartedAt)
+}
+
+// validateIdentity checks the facts that name the run: the record schema, the
+// run and queue identifiers, the bead, and the queue name.
+func (r DispatchRecord) validateIdentity() error {
 	if r.SchemaVersion != dispatchRecordSchemaVersion {
 		return fmt.Errorf("run: dispatch record schema_version must be %d", dispatchRecordSchemaVersion)
 	}
@@ -94,6 +117,13 @@ func (r DispatchRecord) Validate() error {
 	if err != nil || queueID.Version() != 7 || queueID.String() != r.QueueID {
 		return errors.New("run: dispatch record queue_id must be canonical UUIDv7")
 	}
+	return nil
+}
+
+// validateClaim checks the facts the claim wrote: the position in the queue, the
+// transition that took the item, the commit the run starts from, and the
+// repository the run works in.
+func (r DispatchRecord) validateClaim() error {
 	if r.GroupIndex < 0 || r.ItemIndex < 0 {
 		return errors.New("run: dispatch record indexes must be non-negative")
 	}
@@ -106,14 +136,25 @@ func (r DispatchRecord) Validate() error {
 	if r.RepositoryPath == "" || !filepath.IsAbs(r.RepositoryPath) || filepath.Clean(r.RepositoryPath) != r.RepositoryPath {
 		return errors.New("run: dispatch record repository_path must be a clean absolute path")
 	}
-	if r.Location != nil {
-		if err := r.Location.validate(); err != nil {
-			return err
-		}
-		if err := r.Location.validateRepository(r.RepositoryPath); err != nil {
-			return err
-		}
+	return nil
+}
+
+// validateExecutionLocation accepts a record that names no location yet, and
+// holds a named location to its own rules and to this record's repository.
+func (r DispatchRecord) validateExecutionLocation() error {
+	if r.Location == nil {
+		return nil
 	}
+	if err := r.Location.validate(); err != nil {
+		return err
+	}
+	return r.Location.validateRepository(r.RepositoryPath)
+}
+
+// validateTargetBinding checks the tmux session and window. The two names are
+// bound together, they come after the execution location, and neither may carry
+// surrounding space or a control character.
+func (r DispatchRecord) validateTargetBinding() error {
 	if (r.SessionName != "" || r.WindowName != "") && r.Location == nil {
 		return errors.New("run: dispatch record cannot bind a target before execution location")
 	}
@@ -129,7 +170,7 @@ func (r DispatchRecord) Validate() error {
 			return fmt.Errorf("run: dispatch record %s is invalid", target.field)
 		}
 	}
-	return validateStartedAt(r.StartedAt)
+	return nil
 }
 
 // BindLocation returns the placement candidate without changing base facts.

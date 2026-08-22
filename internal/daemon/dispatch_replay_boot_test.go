@@ -77,7 +77,7 @@ printf '%s\n' '[{"id":"hk-replay-owner","title":"replay","issue_type":"task","st
 		t.Fatalf("runStartupReconcile() error = %v", err)
 	}
 	assertReplayReservationQueue(t, projectDir, intent, 1)
-	calls, readErr := os.ReadFile(callsPath)
+	calls, readErr := os.ReadFile(callsPath) //nolint:gosec // Test-owned path below t.TempDir.
 	if readErr != nil {
 		t.Fatal(readErr)
 	}

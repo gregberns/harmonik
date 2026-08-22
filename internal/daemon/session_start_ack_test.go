@@ -48,7 +48,7 @@ func TestSessionStartAcknowledgementHandlerInstallsExactReceipt(t *testing.T) {
 	handler := sessionStartAcknowledgementHandler{
 		projectDir: projectDir,
 		resolveAdapter: func(runpkg.ExecutionLocation) (ltmux.Adapter, error) {
-			return &dispatchTargetProbeAdapter{probe: sessionStartAckProbe(intent, ltmux.TargetProbeExact)}, nil
+			return &dispatchTargetProbeAdapter{probe: sessionStartAckProbe(intent)}, nil
 		},
 	}
 	payload, err := json.Marshal(receipt)
@@ -102,7 +102,7 @@ func TestSessionStartAcknowledgementResolvesRemoteWorkerAdapterFromDurableLocati
 	persistSessionStartAuthority(t, projectDir, intent, record)
 
 	local := &dispatchTargetProbeAdapter{probe: ltmux.TargetProbe{Status: ltmux.TargetProbeSessionAbsent}}
-	remote := &dispatchTargetProbeAdapter{probe: sessionStartAckProbe(intent, ltmux.TargetProbeExact)}
+	remote := &dispatchTargetProbeAdapter{probe: sessionStartAckProbe(intent)}
 	remoteFactoryCalls := 0
 	resolver := newSessionStartAdapterResolverWithFactory(local, workers.Config{Workers: []workers.Worker{{
 		Name: "worker-a", Transport: "ssh", Host: "worker.example",
@@ -130,7 +130,7 @@ func TestAcknowledgeSessionStartInstallsReceiptAfterExactLiveProof(t *testing.T)
 	projectDir := t.TempDir()
 	intent, record, receipt := sessionStartAckFixture(t)
 	persistSessionStartAuthority(t, projectDir, intent, record)
-	adapter := &dispatchTargetProbeAdapter{probe: sessionStartAckProbe(intent, ltmux.TargetProbeExact)}
+	adapter := &dispatchTargetProbeAdapter{probe: sessionStartAckProbe(intent)}
 	if err := acknowledgeSessionStartLocally(t, projectDir, adapter, receipt); err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestAcknowledgeSessionStartRejectsBeforeReceiptIO(t *testing.T) {
 			projectDir := t.TempDir()
 			intent, record, receipt := sessionStartAckFixture(t)
 			persistSessionStartAuthority(t, projectDir, intent, record)
-			probe := sessionStartAckProbe(intent, ltmux.TargetProbeExact)
+			probe := sessionStartAckProbe(intent)
 			tc.mutate(&receipt, &probe)
 			adapter := &dispatchTargetProbeAdapter{probe: probe}
 			if err := acknowledgeSessionStartLocally(t, projectDir, adapter, receipt); err == nil {
@@ -213,7 +213,7 @@ func TestAcknowledgeSessionStartRequiresDurableAuthority(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			projectDir := t.TempDir()
 			tc.prepare(t, projectDir)
-			adapter := &dispatchTargetProbeAdapter{probe: sessionStartAckProbe(intent, ltmux.TargetProbeExact)}
+			adapter := &dispatchTargetProbeAdapter{probe: sessionStartAckProbe(intent)}
 			if err := acknowledgeSessionStartLocally(t, projectDir, adapter, receipt); err == nil {
 				t.Fatal("acknowledgeSessionStartWithResolver() = nil error")
 			}
@@ -293,9 +293,12 @@ func sessionStartAckFixture(t *testing.T) (dispatch.Intent, runpkg.DispatchRecor
 	return intent, record, receipt
 }
 
-func sessionStartAckProbe(intent dispatch.Intent, status ltmux.TargetProbeStatus) ltmux.TargetProbe {
+// sessionStartAckProbe returns the probe an exact live target reports for one
+// intent. A test that needs a different target state changes a field of the
+// result, or replaces the whole probe.
+func sessionStartAckProbe(intent dispatch.Intent) ltmux.TargetProbe {
 	return ltmux.TargetProbe{
-		Status: status, RunID: intent.Binding.RunID.String(),
+		Status: ltmux.TargetProbeExact, RunID: intent.Binding.RunID.String(),
 		ClaimTransitionID: intent.Binding.ClaimTransitionID.String(),
 		SessionName:       intent.Handoff.SessionName, WindowName: intent.Handoff.WindowName,
 		PanePID: "1234", PaneDead: "0",

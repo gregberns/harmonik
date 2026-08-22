@@ -406,19 +406,48 @@ func decideRunReplay(f ReplayFacts) ReplayAction {
 	return ReplayRepairRequired
 }
 
+// decideHandoffReplay classifies a run whose durable intent reached the handoff
+// phase. The start receipt selects the group of outcomes: a run with no receipt
+// never started, and a run with an exact receipt did.
 func decideHandoffReplay(f ReplayFacts) ReplayAction {
 	if f.Queue != QueueReserved || f.Bead != BeadInProgress || f.RunRecord != RunRecordSession {
 		return ReplayRepairRequired
 	}
+	switch f.SessionReceipt {
+	case SessionReceiptAbsent:
+		return decideUnstartedHandoffReplay(f)
+	case SessionReceiptExact:
+		return decideStartedHandoffReplay(f)
+	default:
+		return ReplayRepairRequired
+	}
+}
+
+// decideUnstartedHandoffReplay classifies a handoff run that holds no start
+// receipt. Start the session against the prepared or leased worktree, or remove
+// the target that died before it ever started.
+func decideUnstartedHandoffReplay(f ReplayFacts) ReplayAction {
 	switch {
-	case (f.Worktree == WorktreePrepared || f.Worktree == WorktreeLeased) &&
-		f.SessionReceipt == SessionReceiptAbsent && f.Session == SessionAbsent:
+	case (f.Worktree == WorktreePrepared || f.Worktree == WorktreeLeased) && f.Session == SessionAbsent:
 		return ReplaySessionStart
-	case f.Worktree == WorktreeLeased && f.SessionReceipt == SessionReceiptAbsent && f.Session == SessionDead:
+	case f.Worktree == WorktreeLeased && f.Session == SessionDead:
 		return RemoveDeadUnstartedTarget
-	case f.Worktree == WorktreeLeased && f.SessionReceipt == SessionReceiptExact && f.Session == SessionLive:
+	default:
+		return ReplayRepairRequired
+	}
+}
+
+// decideStartedHandoffReplay classifies a handoff run whose start receipt is
+// exact. Adopt the live session, or recover the run the dead session left, which
+// is an advance when the outcome is already durable and a resume when it is not.
+func decideStartedHandoffReplay(f ReplayFacts) ReplayAction {
+	if f.Worktree != WorktreeLeased {
+		return ReplayRepairRequired
+	}
+	switch f.Session {
+	case SessionLive:
 		return AdoptLive
-	case f.Worktree == WorktreeLeased && f.SessionReceipt == SessionReceiptExact && (f.Session == SessionAbsent || f.Session == SessionDead):
+	case SessionAbsent, SessionDead:
 		if f.RunOutcomeDurable {
 			return AdvanceRunOutcome
 		}

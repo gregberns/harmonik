@@ -64,7 +64,9 @@ func writeUniversalRunRecord(t *testing.T, projectDir string, beadID core.BeadID
 	if sessionName == "" {
 		return record
 	}
-	located, err := record.BindLocation(runpkg.ExecutionLocation{Kind: runpkg.ExecutionLocalIndependent})
+	located, err := record.BindLocation(runpkg.ExecutionLocation{
+		Kind: runpkg.ExecutionLocalIndependent, RepositoryPath: binding.RepositoryPath,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

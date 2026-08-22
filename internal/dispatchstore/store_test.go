@@ -18,12 +18,13 @@ const (
 	testRunID        = "0197d100-0000-7000-8000-000000000002"
 	testTransitionID = "0197d100-0000-7000-8000-000000000003"
 	testParentCommit = "0123456789abcdef0123456789abcdef01234567"
+	testRepository   = "/repo"
 )
 
 func testIntent(phase dispatch.Phase) dispatch.Intent {
 	runID := core.RunID(uuid.MustParse(testRunID))
 	intent := dispatch.Intent{
-		SchemaVersion: 2,
+		SchemaVersion: 3,
 		Phase:         phase,
 		Binding: dispatch.Binding{
 			QueueID:           testQueueID,
@@ -34,6 +35,7 @@ func testIntent(phase dispatch.Phase) dispatch.Intent {
 			RunID:             runID,
 			ClaimTransitionID: core.TransitionID(uuid.MustParse(testTransitionID)),
 			ParentCommit:      testParentCommit,
+			RepositoryPath:    testRepository,
 		},
 	}
 	if phase == dispatch.PhaseRunDurable || phase == dispatch.PhaseHandoffDurable {

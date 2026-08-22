@@ -449,22 +449,45 @@ func (bs *bootState) orphanSweepConfig(daemonStartTime time.Time, st *reconcileS
 // run_started but no terminal event, emit run_failed (hk-r73qr). Orphans are also
 // sourced from the live dispatch-tracker (queueDispatched) so a bead crashed-on
 // before any run_started still clears its dispatch-lock (hk-iwu8a); genuinely-live
-// runs (in .harmonik/runs/) are excluded. Skipped when no JSONL log is configured.
+// runs (in .harmonik/runs/) are excluded. Skipped when no JSONL log is configured,
+// and skipped whole when the run registry cannot be read (see below).
 func (bs *bootState) reconcileInFlightRuns(ctx context.Context, daemonStartTime time.Time, st *reconcileState) {
 	cfg := bs.cfg
 	if cfg.JSONLLogPath == "" {
 		return
 	}
+	// The registry is the only statement that an agent is still working a bead.
+	// runpkg.ScanRegistry is all-or-nothing: one torn write under .harmonik/runs/
+	// and it answers with an error rather than the records it could parse. The
+	// empty set that error leaves behind reads exactly like "no run survived the
+	// restart", and every use of liveRunBeadIDs below is an EXCLUSION — so an
+	// empty set excludes nothing and the reconcile reports a live run failed and
+	// puts its bead back on the queue. A second agent is then dispatched onto
+	// work that is already in hand.
+	//
+	// So the reconcile stands down for this boot. It emits no run_failed and it
+	// resets no bead, because both effects need a live run to be excluded and
+	// this boot cannot name one. The cost is a wedged queue item that waits for
+	// the next boot, which any later boot can still clear.
+	registry, liveErr := runpkg.ScanRegistry(cfg.ProjectDir)
+	if liveErr != nil {
+		// The daemon injects no logger here, so this goes to the standard one.
+		// A message routed anywhere else is silent in the deployment that needs it.
+		log.Printf("daemon: reconcileInFlightRuns: THE RUN REGISTRY COULD NOT BE READ (%v). "+
+			"This boot cannot tell a live run from one the crash left behind, so it will mark no "+
+			"run failed and reset no bead. A queue item held by a crashed run stays dispatched "+
+			"until the registry reads again. Repair or move the unreadable file under "+
+			".harmonik/runs/ and restart the daemon.", liveErr)
+		return
+	}
 	liveRunBeadIDs := make(map[core.BeadID]struct{})
-	if registry, liveErr := runpkg.ScanRegistry(cfg.ProjectDir); liveErr == nil {
-		for _, rec := range registry.Legacy {
-			if rec.BeadID != "" {
-				liveRunBeadIDs[core.BeadID(rec.BeadID)] = struct{}{}
-			}
+	for _, rec := range registry.Legacy {
+		if rec.BeadID != "" {
+			liveRunBeadIDs[core.BeadID(rec.BeadID)] = struct{}{}
 		}
-		for _, rec := range registry.Dispatch {
-			liveRunBeadIDs[rec.BeadID] = struct{}{}
-		}
+	}
+	for _, rec := range registry.Dispatch {
+		liveRunBeadIDs[rec.BeadID] = struct{}{}
 	}
 	// hk-hju8n: snapshot the resettable-bead set in two bulk `br list` calls so the
 	// reconcile does an O(1) map lookup per bead. On any bulk-list error the cache

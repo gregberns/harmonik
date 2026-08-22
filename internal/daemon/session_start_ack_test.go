@@ -88,7 +88,10 @@ func TestSessionStartAcknowledgementResolvesRemoteWorkerAdapterFromDurableLocati
 	if err != nil {
 		t.Fatal(err)
 	}
-	located, err := base.BindLocation(runpkg.ExecutionLocation{Kind: runpkg.ExecutionRemote, WorkerName: "worker-a"})
+	located, err := base.BindLocation(runpkg.ExecutionLocation{
+		Kind: runpkg.ExecutionRemote, WorkerName: "worker-a", Transport: "ssh",
+		Host: "worker.example", RepositoryPath: "/srv/harmonik/worker-a/project",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,6 +106,7 @@ func TestSessionStartAcknowledgementResolvesRemoteWorkerAdapterFromDurableLocati
 	remoteFactoryCalls := 0
 	resolver := newSessionStartAdapterResolverWithFactory(local, workers.Config{Workers: []workers.Worker{{
 		Name: "worker-a", Transport: "ssh", Host: "worker.example",
+		RepoPath: "/srv/harmonik/worker-a/project",
 	}}}, func(worker workers.Worker) ltmux.Adapter {
 		remoteFactoryCalls++
 		if worker.Name != "worker-a" || worker.Host != "worker.example" {
@@ -253,7 +257,9 @@ func sessionStartAckFixture(t *testing.T) (dispatch.Intent, runpkg.DispatchRecor
 	if err != nil {
 		t.Fatal(err)
 	}
-	located, err := base.BindLocation(runpkg.ExecutionLocation{Kind: runpkg.ExecutionLocalIndependent})
+	located, err := base.BindLocation(runpkg.ExecutionLocation{
+		Kind: runpkg.ExecutionLocalIndependent, RepositoryPath: intent.Binding.RepositoryPath,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

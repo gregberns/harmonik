@@ -656,6 +656,17 @@ func pidIsLive(pid int) bool {
 // record is not a cold-registry case — it is a session nothing can ever adopt or
 // attribute to a bead. Killing it costs a re-dispatch; keeping it leaks a tmux
 // session and an agent for ever.
+//
+// The second return value is what the caller acts on when the registry cannot be
+// read at all. runpkg.ScanRegistry is all-or-nothing on purpose: one torn write,
+// one file that is not a record, and it answers with an error rather than a
+// partial list. An empty exemption set is then not the truth — the truth is that
+// this boot does not know which runs are live, and the two sets read the same.
+// Returning false says so, and the caller must not destroy anything it cannot
+// prove is dead.
+//
+// A nil adapter is NOT that case: there is no tmux, so the probe has nothing to
+// ask about and no session can be live. That answer is known and empty.
 func probeRunRegistrySessions(
 	ctx context.Context,
 	projectDir string,
@@ -663,17 +674,31 @@ func probeRunRegistrySessions(
 	logger *log.Logger,
 	sessionSnapshot map[string]struct{},
 	excludeSessions map[string]struct{},
-) map[string]struct{} {
-	liveRunIDs := map[string]struct{}{}
+) (liveRunIDs map[string]struct{}, registryRead bool) {
+	liveRunIDs = map[string]struct{}{}
 	if adapter == nil {
-		return liveRunIDs
+		return liveRunIDs, true
 	}
 	registry, err := runpkg.ScanRegistry(projectDir)
 	if err != nil {
+		// Never silent, whatever the caller wired: this is the boot saying it is
+		// blind, and every destructive step below it stands down because of it.
+		msg := fmt.Sprintf("daemon: probeRunRegistrySessions: THE RUN REGISTRY COULD NOT BE READ (%v). "+
+			"This boot cannot tell a live run from an orphan, so the sweep will kill no agent session "+
+			"and remove no worktree directory. The narrower steps still run: the coordinator reap "+
+			"above this point, which reaps the flywheel session only when the supervisor is dead or "+
+			"its sentinel is gone, and below it the window sweep, the lease-lock file sweep, the "+
+			"subprocess sweeps, the intent GC and the stale-bead passes. One of those is not safe by "+
+			"design. The handler sweep kills every parentless process that carries this project hash "+
+			"and asks nothing about live runs, so on a platform where it can read process "+
+			"environments it can still kill a live agent. Repair or move the unreadable file under "+
+			".harmonik/runs/ and restart the daemon to let the full sweep run again.", err)
 		if logger != nil {
-			logger.Printf("daemon: probeRunRegistrySessions: run registry list error (%v); no run session is exempt this boot", err)
+			logger.Print(msg)
+		} else {
+			log.Print(msg)
 		}
-		return liveRunIDs
+		return liveRunIDs, false
 	}
 
 	probe := func(runID, beadID, sessionName string) {
@@ -703,7 +728,40 @@ func probeRunRegistrySessions(
 		}
 		probe(rec.RunID.String(), string(rec.BeadID), rec.SessionName)
 	}
-	return liveRunIDs
+	return liveRunIDs, true
+}
+
+// logRegistryStandDown says which destructive pass the sweep is not running
+// because it cannot tell a live run from an orphan.
+//
+// It names the pass rather than the whole sweep. The sweep does not stop: the
+// coordinator reap, the window sweep, the lease-lock file sweep, the subprocess
+// kills, the intent GC, the reconciliation-lock sweep and the stale-bead pass
+// all still run. None of those removes a worktree, and none of them kills an
+// agent tmux session, which is what the passes this function names could do.
+//
+// Their safety is not uniform, and the differences are worth knowing. The
+// window sweep reaches no live run only because ltmux.WindowName has no
+// production caller. The stale-bead pass is held off by the queue-dispatched
+// exclusion, not by the registry. The handler sweep is the real gap: it kills
+// every parentless process that carries this project hash and consults no
+// live-run set, so it is safe here only because ReadProcessEnviron reads
+// /proc, which darwin does not have. The window sweep and the handler sweep
+// each carry a bead; the stale-bead point does not, because the exclusion it
+// relies on is a designed one.
+//
+// It writes to the standard logger when no logger is injected. The daemon wires
+// no logger into the sweep, so a message that only went to the injected one
+// would be silent in exactly the deployment where it matters.
+func logRegistryStandDown(logger *log.Logger, pass string) {
+	const format = "daemon: RunOrphanSweep: SKIPPING THE %s — the run registry is unreadable, so this " +
+		"boot cannot prove any run is dead. Orphans leak until the next boot; that is recoverable and " +
+		"deleting a live agent's session or worktree is not."
+	if logger != nil {
+		logger.Printf(format, pass)
+		return
+	}
+	log.Printf(format, pass)
 }
 
 // worktreesNotHeldByALiveRun drops from paths every worktree that belongs to a
@@ -877,6 +935,18 @@ func RunOrphanSweep(
 	// session kill pass, which must not kill their tmux sessions, and the worktree
 	// force-removal, which must not delete the directories they are working in.
 	liveRunIDs := map[string]struct{}{}
+
+	// Whether the boot knows what liveRunIDs holds. It stays true until the run
+	// registry refuses to be read, and every step that DESTROYS something reads
+	// it before acting. An unreadable registry gives an empty exemption set that
+	// is indistinguishable from "no run survived", and acting on it kills the
+	// session and force-removes the checkout of an agent that is still working.
+	//
+	// Standing down costs an orphaned session or directory that lives until the
+	// next boot, and that is recoverable by anyone at any later time. A deleted
+	// worktree is uncommitted work that no later boot can give back.
+	liveRunsKnown := true
+
 	for runID := range cfg.DispatchOwnership.Runs {
 		liveRunIDs[runID.String()] = struct{}{}
 	}
@@ -982,34 +1052,54 @@ func RunOrphanSweep(
 		// still working. It runs HERE, before the kill pass below, because the
 		// adoption pass that looks for these runs comes after the sweep — a session
 		// killed here is already gone by the time anything asks whether to adopt it.
-		registryRunIDs := probeRunRegistrySessions(
+		registryRunIDs, registryRead := probeRunRegistrySessions(
 			ctx, projectDir, cfg.TmuxAdapter, cfg.Logger,
 			sessionSnapshot, excludedTmuxSessions,
 		)
+		if !registryRead {
+			liveRunsKnown = false
+			errs = append(errs, "run-registry: unreadable; destructive sweep passes stood down")
+		}
 		for runID := range registryRunIDs {
 			liveRunIDs[runID] = struct{}{}
 		}
 	}
 
-	// (a) Tmux sessions — two passes:
-	//   (a1) Kill orphan harmonik-owned sessions via the legacy TmuxLister/TmuxKiller path.
-	tmuxKilled, err := lifecycle.SweepOrphanTmuxSessions(ctx, projectHash, cfg.TmuxLister, cfg.TmuxKiller, cfg.Logger, excludedTmuxSessions)
-	if err != nil {
-		errs = append(errs, fmt.Sprintf("tmux: %v", err))
-	}
-	// hk-9vp51: accumulate (+=) rather than assign so the dead-supervisor
-	// coordinator reaper's contribution above is not overwritten.
-	result.TmuxSessionsKilled += tmuxKilled
+	// (a) Tmux sessions — two passes, and the exclusion set is the only thing that
+	// holds either of them back. A surviving run's session was written into that
+	// set a few lines above, so with an unreadable registry the set is empty and
+	// both passes reach the terminal of every agent that outlived the last daemon.
+	// Neither runs until the boot knows what is live.
+	//
+	// The two do not agree on what they kill, and the weaker one is not a second
+	// line of defence. lifecycle.SweepOrphanTmuxSessions kills EVERY session that
+	// carries this project's hash and is not in the exclusion set — it asks nothing
+	// else. ltmux.SweepOrphanTmuxSessions asks one more question through
+	// sessionIsOrphaned and spares a session whose first pane reports a live PID
+	// and holds a non-shell window. That spares a live agent only where the pane
+	// PID reads, and the unconditional pass has already run by then.
+	if liveRunsKnown {
+		//   (a1) Kill orphan harmonik-owned sessions via the legacy TmuxLister/TmuxKiller path.
+		tmuxKilled, tmuxErr := lifecycle.SweepOrphanTmuxSessions(ctx, projectHash, cfg.TmuxLister, cfg.TmuxKiller, cfg.Logger, excludedTmuxSessions)
+		if tmuxErr != nil {
+			errs = append(errs, fmt.Sprintf("tmux: %v", tmuxErr))
+		}
+		// hk-9vp51: accumulate (+=) rather than assign so the dead-supervisor
+		// coordinator reaper's contribution above is not overwritten.
+		result.TmuxSessionsKilled += tmuxKilled
 
-	//   (a1b) Kill orphan harmonik-owned sessions via the Adapter path (hk-kqdpf.3):
-	//   enumerates sessions matching harmonik-<12-char-hash>- prefix, kills those
-	//   with dead PIDs or zero non-zsh windows. Must run BEFORE the window sweep
-	//   so dead sessions are removed before we attempt to sweep their windows.
-	adapterSessionsKilled, err := ltmux.SweepOrphanTmuxSessions(ctx, projectHash, cfg.TmuxAdapter, cfg.Logger, excludedTmuxSessions)
-	if err != nil {
-		errs = append(errs, fmt.Sprintf("tmux-sessions-adapter: %v", err))
+		//   (a1b) Kill orphan harmonik-owned sessions via the Adapter path (hk-kqdpf.3):
+		//   enumerates sessions matching harmonik-<12-char-hash>- prefix, kills those
+		//   with dead PIDs or zero non-zsh windows. Must run BEFORE the window sweep
+		//   so dead sessions are removed before we attempt to sweep their windows.
+		adapterSessionsKilled, adapterErr := ltmux.SweepOrphanTmuxSessions(ctx, projectHash, cfg.TmuxAdapter, cfg.Logger, excludedTmuxSessions)
+		if adapterErr != nil {
+			errs = append(errs, fmt.Sprintf("tmux-sessions-adapter: %v", adapterErr))
+		}
+		result.TmuxSessionsKilled += adapterSessionsKilled
+	} else {
+		logRegistryStandDown(cfg.Logger, "session-kill passes")
 	}
-	result.TmuxSessionsKilled += adapterSessionsKilled
 
 	// (a2) Tmux windows (PL-021c): kill orphan windows inside operator-owned
 	// sessions whose name matches the hk-<hash6>- sentinel prefix.
@@ -1036,7 +1126,14 @@ func RunOrphanSweep(
 	// does NOT mean a dead run: the lease names the daemon that wrote it, and that
 	// daemon is gone while the agent is not. Its worktree is held out of this
 	// removal, or the force-remove takes the live agent's uncommitted work.
-	if removable := worktreesNotHeldByALiveRun(sweepResult.Removed, liveRunIDs, cfg.Logger); len(removable) > 0 {
+	//
+	// The same holds for a boot that could not read the registry at all: the
+	// exemption below has nothing to work from, so every dead-lease worktree —
+	// including the ones live agents are writing into — reads as reclaimable.
+	if !liveRunsKnown {
+		logRegistryStandDown(cfg.Logger, "worktree force-removal and age-prune")
+	}
+	if removable := worktreesNotHeldByALiveRun(sweepResult.Removed, liveRunIDs, cfg.Logger); liveRunsKnown && len(removable) > 0 {
 		gcResult := workspace.RemoveStaleWorktrees(ctx, projectDir, removable, cfg.Logger)
 		result.WorktreeDirsRemoved = len(gcResult.Removed)
 		if len(gcResult.Failed) > 0 {
@@ -1059,7 +1156,7 @@ func RunOrphanSweep(
 	// because the checkout is old, not because the agent stopped. Guarding only
 	// the force-removal would spare a live agent for exactly one restart.
 	agedCandidates := worktreesNotHeldByALiveRun(sweepResult.NoLock, liveRunIDs, cfg.Logger)
-	if len(agedCandidates) > 0 {
+	if liveRunsKnown && len(agedCandidates) > 0 {
 		agedResult := workspace.RemoveAgedNoLockWorktrees(ctx, projectDir, agedCandidates, harmonikWorktreeMaxAge(), cfg.Logger)
 		result.WorktreeDirsRemoved += len(agedResult.Removed)
 		if len(agedResult.Failed) > 0 {

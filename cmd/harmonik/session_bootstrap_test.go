@@ -14,7 +14,7 @@ import (
 	"github.com/gregberns/harmonik/internal/daemon"
 )
 
-const sessionBootstrapReceipt = `{"schema_version":1,"binding":{"queue_id":"0197d100-0000-7000-8000-000000000001","queue_name":"main","group_index":0,"item_index":1,"bead_id":"hk-bootstrap","run_id":"0197d100-0000-7000-8000-000000000002","claim_transition_id":"0197d100-0000-7000-8000-000000000003"},"session_name":"harmonik-project-run","window_name":"run-window"}`
+const sessionBootstrapReceipt = `{"schema_version":3,"binding":{"queue_id":"0197d100-0000-7000-8000-000000000001","queue_name":"main","group_index":0,"item_index":1,"bead_id":"hk-bootstrap","run_id":"0197d100-0000-7000-8000-000000000002","claim_transition_id":"0197d100-0000-7000-8000-000000000003","parent_commit":"0123456789abcdef0123456789abcdef01234567","repository_path":"/repo"},"session_name":"harmonik-project-run","window_name":"run-window"}`
 
 func TestSessionBootstrapAcknowledgesBeforeStartingHandler(t *testing.T) {
 	server, client := net.Pipe()

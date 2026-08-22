@@ -101,6 +101,7 @@ func completionFixture(t *testing.T) (projectDir string, store *queuewiring.Queu
 	} {
 		reserved := reserveQueueItem(context.Background(), store, projectDir, queueReservation{
 			QueueName:  completionQueueName,
+			QueueID:    queueID,
 			GroupIndex: completionGroupIndex,
 			ItemIndex:  target.index,
 			BeadID:     target.bead,
@@ -298,6 +299,7 @@ func finalCompletionFixture(t *testing.T) (projectDir string, store *queuewiring
 	})
 	reserved := reserveQueueItem(context.Background(), store, projectDir, queueReservation{
 		QueueName:  completionQueueName,
+		QueueID:    queueID,
 		GroupIndex: 0,
 		ItemIndex:  0,
 		BeadID:     completionFirstBead,
@@ -507,6 +509,7 @@ func strandedCompletionFixture(t *testing.T) (projectDir string, store *queuewir
 	})
 	reserved := reserveQueueItem(context.Background(), store, projectDir, queueReservation{
 		QueueName:  completionQueueName,
+		QueueID:    queueID,
 		GroupIndex: 0,
 		ItemIndex:  1,
 		BeadID:     completionFirstBead,

@@ -171,7 +171,7 @@ func TestBootSweep_DoesNotRemoveTheWorktreeOfARunThatOutlivedTheDaemon(t *testin
 	}
 
 	// The run whose agent kept working after the daemon died.
-	const liveRun = "0f0e0d0c-0b0a-0908-0706-05040302aa01"
+	const liveRun = "0f0e0d0c-0b0a-4908-8706-05040302aa01"
 	liveWT, liveCleanup, err := productionWorktreeFactory(t.Context(), repo, liveRun, headSHA)
 	if err != nil {
 		t.Fatalf("wtLease: create the live run's worktree: %v", err)
@@ -182,7 +182,7 @@ func TestBootSweep_DoesNotRemoveTheWorktreeOfARunThatOutlivedTheDaemon(t *testin
 	wtLeaseOverwriteHolderDead(t, liveWT)
 
 	// The run whose agent went with the daemon. Nothing is working in here.
-	const abandonedRun = "0f0e0d0c-0b0a-0908-0706-05040302aa02"
+	const abandonedRun = "0f0e0d0c-0b0a-4908-8706-05040302aa02"
 	abandonedWT, abandonedCleanup, err := productionWorktreeFactory(t.Context(), repo, abandonedRun, headSHA)
 	if err != nil {
 		t.Fatalf("wtLease: create the abandoned run's worktree: %v", err)
@@ -196,6 +196,7 @@ func TestBootSweep_DoesNotRemoveTheWorktreeOfARunThatOutlivedTheDaemon(t *testin
 		RunID:         liveRun,
 		BeadID:        "hk-still-being-worked",
 		SessionName:   liveSession,
+		StartedAt:     time.Date(2026, 8, 11, 13, 0, 0, 0, time.UTC),
 	}); writeErr != nil {
 		t.Fatalf("wtLease: write the live run's record: %v", writeErr)
 	}
@@ -312,7 +313,7 @@ func TestBootSweep_ASessionAnotherPassAlreadySparedStillProtectsItsWorktree(t *t
 	}
 
 	// The run whose agent kept working after the daemon died.
-	const liveRun = "0f0e0d0c-0b0a-0908-0706-05040302cc01"
+	const liveRun = "0f0e0d0c-0b0a-4908-8706-05040302cc01"
 	liveWT, liveCleanup, err := productionWorktreeFactory(t.Context(), repo, liveRun, headSHA)
 	if err != nil {
 		t.Fatalf("wtLease: create the live run's worktree: %v", err)
@@ -323,7 +324,7 @@ func TestBootSweep_ASessionAnotherPassAlreadySparedStillProtectsItsWorktree(t *t
 	wtLeaseOverwriteHolderDead(t, liveWT)
 
 	// The run whose agent went with the daemon. Nothing is working in here.
-	const abandonedRun = "0f0e0d0c-0b0a-0908-0706-05040302cc02"
+	const abandonedRun = "0f0e0d0c-0b0a-4908-8706-05040302cc02"
 	abandonedWT, abandonedCleanup, err := productionWorktreeFactory(t.Context(), repo, abandonedRun, headSHA)
 	if err != nil {
 		t.Fatalf("wtLease: create the abandoned run's worktree: %v", err)
@@ -337,6 +338,7 @@ func TestBootSweep_ASessionAnotherPassAlreadySparedStillProtectsItsWorktree(t *t
 		RunID:         liveRun,
 		BeadID:        "hk-still-being-worked",
 		SessionName:   liveSession,
+		StartedAt:     time.Date(2026, 8, 11, 13, 0, 0, 0, time.UTC),
 	}); writeErr != nil {
 		t.Fatalf("wtLease: write the live run's record: %v", writeErr)
 	}
@@ -401,8 +403,8 @@ func TestBootSweep_TheAgePruneAlsoSparesARunThatOutlivedTheDaemon(t *testing.T) 
 		t.Fatalf("wtLease: resolve HEAD: %v", headErr)
 	}
 
-	const liveRun = "0f0e0d0c-0b0a-0908-0706-05040302bb01"
-	const abandonedRun = "0f0e0d0c-0b0a-0908-0706-05040302bb02"
+	const liveRun = "0f0e0d0c-0b0a-4908-8706-05040302bb01"
+	const abandonedRun = "0f0e0d0c-0b0a-4908-8706-05040302bb02"
 	liveWT := wtLeaseAgedUnleasedWorktree(t, repo, headSHA, liveRun)
 	abandonedWT := wtLeaseAgedUnleasedWorktree(t, repo, headSHA, abandonedRun)
 
@@ -412,6 +414,7 @@ func TestBootSweep_TheAgePruneAlsoSparesARunThatOutlivedTheDaemon(t *testing.T) 
 		RunID:         liveRun,
 		BeadID:        "hk-still-being-worked",
 		SessionName:   liveSession,
+		StartedAt:     time.Date(2026, 8, 11, 13, 0, 0, 0, time.UTC),
 	}); writeErr != nil {
 		t.Fatalf("wtLease: write the live run's record: %v", writeErr)
 	}

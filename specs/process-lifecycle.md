@@ -8,10 +8,10 @@ requirement-prefix: PL
 status: draft
 spec-shape: requirements-first
 spec-category: runtime-subsystem
-version: 0.7.9
+version: 0.7.10
 spec-template-version: 1.1
 owner: foundation-author
-last-updated: 2026-08-14
+last-updated: 2026-08-21
 depends-on:
   - architecture
   - execution-model
@@ -22,6 +22,7 @@ depends-on:
   - beads-integration
   - workspace-model
   - queue-model
+  - live-bead-state
 ---
 ```
 
@@ -115,6 +116,7 @@ Envelope for the process-lifecycle subsystem (daemon core / `internal/daemon`) p
   - Unix socket at `.harmonik/daemon.sock` (mode `0600`; HC-044 authentication model).
   - `.harmonik/daemon.instance-id` file (atomic write per PL-005 step 0).
   - `.harmonik/daemon.upgrading` marker (atomic write per PL-027(iv); content owned by [operator-nfr.md §4.6 ON-020a]).
+  - `.harmonik/dispatch-intents/` and `.harmonik/dispatch-session-starts/` (read and repaired at PL-005 step 2a per PL-006i; record shape owned by [live-bead-state.md §7 LB-007]).
   - `workflow_mode_default` (in-memory `dot` default. Historic `single` remains readable only. Loaded once at PL-005 step 0 per PL-004a and observable via `harmonik status`).
   - Project-hash derived tmux-session namespace.
   - Composition-root-resident registries (event bus, handler registry, skill registry, control-point registry, policy registry) per AR-INV-007 (PL-020a).
@@ -138,6 +140,8 @@ Envelope for the process-lifecycle subsystem (daemon core / `internal/daemon`) p
   | `bind_socket` (§4.1 PL-003) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=non-idempotent` |
   | `bootstrap_registries` (§4.2 PL-005 step 0) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
   | `mint_daemon_instance_id` (§4.2 PL-005 step 0) | mechanism | `llm-freedom=none; io-determinism=non-deterministic; replay-safety=safe; idempotency=non-idempotent` |
+  | `build_worker_registry` (§4.2 PL-005 step 2a) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
+  | `dispatch_replay_preflight` (§4.2 PL-006i) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
   | `read_startup_markers` (§4.2 PL-005 step 8a) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
   | `orphan_sweep` (§4.2 PL-006) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
   | `cat_0_precheck` (§4.2 PL-005 step 3) | mechanism | `llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent` |
@@ -359,6 +363,7 @@ The daemon's startup sequence MUST execute the following steps in order, and eac
 0. **Composition-root bootstrap.** Instantiate the event bus ([event-model.md §4.3]), the control-point registry ([control-points.md §4.1]), the handler registry, the skill registry ([handler-contract.md §4.11]), and the policy registry — all in-process per [architecture.md AR-INV-007] and PL-020a. Register each subsystem's consumers and providers. Start the JSONL writer ([event-model.md §6.2]). The daemon MUST also load the `workflow_mode_default` value per §PL-004a from the project-config surface and cache it for the daemon's lifetime; absence defaults it to `dot` and the embedded `standard-bead.dot` canonical graph. Graph-load failure is a loud run failure. It is not a fallback to another mode. The daemon MUST also mint a `daemon_instance_id` (UUIDv7 per [event-model.md §4.1] ID-generation discipline) and MUST write it to `.harmonik/daemon.instance-id` via the temp+rename+fsync(parent_dir) atomic discipline of [workspace-model.md §4.7 WM-026]: write content to a sibling temp file `.harmonik/daemon.instance-id.tmp-<pid>`; `fsync(temp_fd)`; `rename(2)` to the canonical name; `fsync(parent_directory_fd)`. The `daemon_instance_id` is the per-process correlation key used by every lifecycle event payload, the pidfile (PL-002b line 3), and external attach/audit consumers per [operator-nfr.md §4.10 ON-041]. A new instance MUST mint a fresh UUIDv7; reuse across exec-replacement (PL-027) is FORBIDDEN — the new daemon binary mints its own UUIDv7 even when adopting the listener fd from the outgoing instance. No external state is read in this step.
 1. Acquire the pidfile lock (§PL-002). Exit on lock-contention failure with exit code `5` per [operator-nfr.md §8].
 2. Emit `daemon_started` (per [event-model.md §8.7.1]) with `{started_at, pid, binary_commit_hash}`.
+2a. **Dispatch-intent recovery.** Run the preflight of §PL-006i. The daemon builds the worker registry, prepares the queue namespace, reads the durable dispatch intents and session-start receipts, and replays them. This step MUST complete before the orphan sweep of step 3, because the sweep needs the set of beads, runs, sessions, and worktrees that a durable dispatch holds. A failure in any of the five passes of §PL-006i is fatal, and the daemon MUST abort startup before it binds the socket at step 3a. The adapter build that runs inside this step is not one of those passes, and it has non-fatal paths of its own; §PL-006i names the one failure there that is fatal.
 3. Execute the orphan sweep per §PL-006, and then the dispatched-bead reconcile per §PL-006h. Both MUST complete before the queue load of step 8a, because the queue cross-check of [queue-model.md §3.2a QM-002a] reads bead statuses that the reconcile produces.
 3a. **Bind Unix socket** at `.harmonik/daemon.sock` per PL-003. Begin accepting connections.
 4. Cat 0 pre-check per [reconciliation/spec.md §4.3 RC-012]; on prerequisite failure, enter `degraded` state per §PL-010 and do not proceed to the next step until prerequisites clear.
@@ -399,7 +404,7 @@ Marker semantics:
 The sequence (steps 0–9) is deterministic; no cognition participates. Investigator-workflow execution triggered by step 8 runs in parallel with `ready` and has its own per-workflow budget.
 
 **Rationale note — step ordering versus prior-generation pidfile content (non-normative).** Step 1
-acquires the pidfile lock, which truncates the pidfile per PL-002b; step 3 runs the orphan sweep.
+acquires the pidfile lock, which truncates the pidfile per PL-002b. Step 3 runs the orphan sweep.
 The prior generation's recorded PID, PGID, and `daemon_instance_id` are therefore zeroed two steps
 before the sweep runs. No requirement in this specification reads prior-generation pidfile content
 at sweep time, so the ordering is sound as written and is deliberately left unchanged. Any future
@@ -412,6 +417,8 @@ Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 
 #### PL-006 — Orphan sweep precedes reconciliation
+
+The dispatch-intent recovery of §PL-006i runs before this sweep, and it hands the sweep the identities that a durable dispatch holds. The sweep MUST NOT kill, remove, or reset any of them.
 
 Before the daemon executes the Cat 0 pre-check (§PL-005 step 4), the daemon MUST enumerate and clean up residual resources from any prior daemon instance. Every candidate for removal MUST carry a project-scoped provenance marker (per §4.2a PL-006e) identifying it as this project's orphan; candidates without a valid marker MUST NOT be touched, and a marker that cannot be read is not a valid marker (PL-006f(3)).
 
@@ -430,7 +437,7 @@ Before the daemon executes the Cat 0 pre-check (§PL-005 step 4), the daemon MUS
 - **Stale reconciliation locks.** The daemon MUST enumerate `.harmonik/reconciliation-locks/*.lock` (the per-target-run reconciliation locks introduced by [reconciliation/spec.md §4.1 RC-002a]). For each lock file, the daemon MUST attempt `flock(LOCK_EX|LOCK_NB)` to determine liveness (kernel auto-releases the advisory lock on the prior lock-holder's termination per PL-002a discipline); a successful acquisition followed by `flock(LOCK_UN)` confirms no live process holds the lock. Stale lock files (acquirable + the recorded creator-PID does NOT respond to `kill(pid, 0)`) MUST be removed via `unlink` followed by `fsync(parent_directory_fd)`. The sweep MUST NOT racily unlink a lock file currently being acquired by another daemon process — the `flock(LOCK_EX|LOCK_NB)` probe is the serialization point; if `EWOULDBLOCK` is observed the lock is in active use and MUST NOT be removed. Note: a stale lock file whose investigator task branch carries a `Harmonik-Verdict-Executed: true` commit per [reconciliation/spec.md §4.1 RC-002b] is also unlinked here (the lock outlived its useful purpose); a stale lock file without the executed-commit trailer routes the target run through Cat 3b per RC-002b — the orphan sweep removes the lock either way and the trailer-discriminator question is RC's, not PL's.
 - **Stale `in_progress` bead markers.** The daemon MUST enumerate beads in coarse status `in_progress` via `br list --status in_progress --format json` (existing surface; see BI adapter `ListInFlightBeads`) and filter to those whose audit trail's most recent `in_progress` transition was authored by this project's daemon (provenance match via the `actor` field carrying this project's `project_hash` per PL-006a; OR — if Beads's audit `actor` field is unsuitable — by cross-referencing `claim` op entries in the daemon's own intent-log at `.harmonik/beads-intents/*.json`). For each such bead the daemon MUST apply the following exclusion conditions in order; a bead that satisfies ANY exclusion is NOT reset:
   - (a) **Live run reattached.** The in-memory model rebuilt at PL-005 step 7 re-attaches a live in-flight run to this bead (run survived as a re-parented subprocess and was reaped by the subprocess sweep, OR a `claim` intent file is still present and the BI adapter's BI-031 recovery will re-drive it).
-  - (a-queue) **A queue records an active dispatch.** A canonical named queue of [queue-model.md §3.1 QM-001] holds an item for this bead with status `dispatched`. The sweep MUST NOT reset the bead. The dispatched-bead reconcile of §PL-006h owns it. The sweep cannot tell a live run from a dead one, and a reset here would release a bead that a live agent still holds. The queue load of PL-005 step 8a would then revert the item to `pending` per [queue-model.md §3.2a QM-002a] and dispatch the same bead a second time. The daemon MUST build this set from EVERY canonical named queue, and not from `main` alone, because dispatch happens from every named queue. Implemented by `lifecycle.SweepStaleInProgressBeads` over the dispatched-bead set that `daemon.loadQueueProvenance` reads. Refs: hk-2ty0g, hk-nddg1.
+  - (a-queue) **A queue records an active dispatch.** A canonical named queue of [queue-model.md §3.1 QM-001] holds an item for this bead with status `dispatched`. The sweep MUST NOT reset the bead. The dispatched-bead reconcile of §PL-006h owns it. The sweep cannot tell a live run from a dead one, and a reset here would release a bead that a live agent still holds. The queue load of PL-005 step 8a would then revert the item to `pending` per [queue-model.md §3.2a QM-002a] and dispatch the same bead a second time. The daemon MUST build this set from EVERY canonical named queue, and not from `main` alone, because dispatch happens from every named queue. Implemented by `lifecycle.SweepStaleInProgressBeads` over the dispatched-bead set that `daemon.loadQueueProvenance` reads. The dispatch-ownership set of §PL-006i widens that set: a bead that a durable dispatch intent binds counts as dispatched here, even when no queue records it. `daemon.queueOwnershipWithDispatch` performs the union. Refs: hk-2ty0g, hk-nddg1.
   - (b) **Pending intent file.** A `close` or `reopen` intent file at `.harmonik/beads-intents/<key>.json` references this bead (Cat 3a handles it; the orphan sweep MUST NOT preempt the Cat 3a detector).
   - (c) **Merged commit present.** A merge commit on the target branch bears `Harmonik-Bead-ID: <bead_id>` (Cat 3c condition); the Cat 3c auto-resolver owns the close and the orphan sweep MUST NOT reset preemptively.
   - If none of the exclusions apply, the daemon MUST issue a `reset` write via the §4.8 BI adapter (BI-010d op: `in_progress → open`). The reset write MUST be idempotency-keyed as `<project_hash>:<bead_id>:reset:<daemon_start_ns>` and MUST be intent-logged identically to claim/close/reopen writes per [beads-integration.md §4.10 BI-030].
@@ -577,6 +584,8 @@ Every reset above MUST use the same intent-logged `reset` write as the sixth bul
 
 A failed reset write is not fatal. The daemon MUST leave the run record and the queue item in place, and MUST retry on the next start. The daemon MUST NOT abort startup on a reconcile failure, consistent with §PL-006.
 
+**An unreadable run registry stands the reconcile down.** Rules 2, 3 and 4 each require the daemon to establish that no live run record names the bead. A read of `.harmonik/runs/` is all-or-nothing: one unparseable record fails the whole read, and the daemon then holds no live-run set at all. It cannot satisfy that condition for any bead. When the read fails the daemon MUST NOT reset a bead and MUST NOT emit `run_failed` under rules 2, 3 or 4, MUST log the failure and name the directory, and MUST retry on the next start. This is the same direction as §4.2a PL-006f(3): an exclusion input that cannot be read leaves the exclusion unproven, and an unproven exclusion is treated as protective. The cost is a queue item that stays `dispatched` until the registry reads again, which any later start repairs. The other direction reports a working agent's run failed and dispatches a second agent onto its bead and its branch. The orphan sweep of §PL-006 stands its destructive passes down on the same read, for the same reason. Implemented by `daemon.bootState.reconcileInFlightRuns` and, for the sweep, by `daemon.probeRunRegistrySessions` and the `liveRunsKnown` gate in `daemon.RunOrphanSweep`.
+
 **Implementation, named on purpose.** `daemon.runStartupReconcile` calls `daemon.runOrphanSweepAndAdopt`, which runs `lifecycle.SweepStaleInProgressBeads`, then `daemon.adoptDeadRunSessions` (rule 1), then `daemon.reconcileOrphanedRunsOnResume` (rules 2, 3 and 4). `daemon.resetGuardedBead` carries the landed-bead guard for rules 2, 3 and 4. `daemon.loadStartupQueues` calls `lifecycle.LoadQueueAtStartup` after all of them. These symbols are written into the requirement because the passes carried no requirement number until this revision. A reader who met them as bead-numbered code comments could delete or reorder them without contradicting the specs.
 
 > DECLARED IMPLEMENTATION GAP (2026-08-11). `daemon.reconcileInFlightRuns` returns early when the daemon has no JSONL event-log path configured. Rules 2, 3 and 4 do not run in that configuration, so a bead in the crash window of rule 3 stays dispatched. The production wiring in `cmd/harmonik` always sets the path, so this is a configuration-shaped hole rather than a live one. It is recorded here, not fixed. Refs: hk-reconcile-needs-jsonl-path-zeo2n.
@@ -592,15 +601,70 @@ A failed reset write is not fatal. The daemon MUST leave the run record and the 
 > an empty session name as dead, and no rule above covers that case. Recorded
 > here, not fixed. Refs: hk-adopt-reopens-closed-bead-xlz4c.
 
-> A DRAFT PROPOSES THE OPPOSITE REPAIR. `specs/live-bead-state.md` models this
-> same cut and prescribes forward replay. It writes the run record and lets the
-> dispatch finish, where the rules above reset the bead and revert the item.
-> That draft describes the dispatch-intent work, which is not built. PL-006h
-> governs until that work lands. Neither document is wrong today.
+> A SECOND MODEL PROPOSES THE OPPOSITE REPAIR. `specs/live-bead-state.md` models
+> this same cut and prescribes forward replay. It writes the run record and lets
+> the dispatch finish, where the rules above reset the bead and revert the item.
+> The boot half of that work is now built, and §PL-006i states it. That half is
+> inert. Nothing writes a dispatch intent yet, so the intent list is empty on
+> every real boot and the preflight returns at once. The rules above still decide
+> every live case, and PL-006h governs until a producer lands. Neither document is
+> wrong today. (Corrected 2026-08-21. The prior wording said the dispatch-intent
+> work "is not built", which is no longer true of the boot half.)
 
 Tags: mechanism
 Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
 Refs: hk-k0a9w (the ordering existed only as call order and code comments), hk-o85ye, hk-mdus1, hk-iwu8a, hk-hjvl4.
+
+#### PL-006i — Dispatch-intent recovery precedes the orphan sweep
+
+A dispatch intent is the durable record of one dispatch that a crash cut in half. [live-bead-state.md §7 LB-007] owns the record shape. [live-bead-state.md §7 LB-009] owns the classification of each record. This requirement owns the two things neither of them states: where the recovery sits in the startup order, and what the daemon does when it cannot prove a fact.
+
+At §PL-005 step 2a, and BEFORE the orphan sweep of §PL-006, the daemon MUST run these passes in this order.
+
+1. **Build the worker registry.** The registry is one boot singleton. Pass 5 reads it to resolve the worktree observer for a remote run. The work loop MUST reuse the same value. It MUST NOT build a second registry. A failure here is fatal.
+2. **Prepare the queue namespace.** Migrate the legacy `.harmonik/queue.json` and settle every queue-namespace transaction. Pass 5 then reads the canonical named queues of [queue-model.md §3.1 QM-001]. A failure here is fatal.
+3. **Read the durable dispatch authority.** Read every intent under `.harmonik/dispatch-intents/`. Read every session-start receipt under `.harmonik/dispatch-session-starts/`.
+4. **Build the ownership set.** Join the intents and the receipts into the beads, the runs, the tmux sessions, and the worktrees that a durable dispatch holds. Hand that set to the orphan sweep of §PL-006.
+5. **Plan, then act.** Read the durable facts for every intent. Decide an action for every intent. Only then perform the first action. A corrupt later intent MUST NOT find that an earlier intent has already changed durable state.
+
+**The order is the requirement.** The orphan sweep is origin-agnostic. It kills every project-scoped tmux session it finds, and it resets every `in_progress` bead it can attribute to this project. A dispatch that outlived the last daemon looks exactly like an orphan to it. The ownership set of pass 4 is the only thing that tells the two apart, and the sweep cannot build that set for itself. A daemon that runs the sweep first breaks no other rule in this section on its face. It then kills the work it started up to recover.
+
+**Fail closed, and fail before the socket.** Each condition below MUST abort startup with a fatal error. The daemon MUST NOT bind the socket of §PL-003 first, and MUST NOT reach `ready`.
+
+- `.harmonik` or `.harmonik/dispatch-intents` is a symbolic link, or is not a directory.
+- An intent file is a symbolic link, or is not a regular file.
+- An intent basename is not a canonical UUIDv7 run identity.
+- An intent file does not hold the exact canonical encoding of a valid intent.
+- Two intents claim one bead, one queue item, or one session target.
+- A session-start receipt has no exact matching handoff intent.
+- An entry under `.harmonik/dispatch-session-starts/` is neither a receipt nor a recognized temporary file.
+- The replay of an intent needs repair, or the intent's recorded phase disagrees with the durable facts.
+
+An absent `.harmonik/dispatch-intents/` directory is not a failure. The list is empty and the preflight returns at once.
+
+**One difference between the two directories is not deliberate.** A file under `.harmonik/dispatch-intents/` whose name does not end in `.json` is skipped. The same stray file under `.harmonik/dispatch-session-starts/` aborts startup. `dispatchstore.Store.List` and `dispatchstore.Store.ListSessionStartReceipts` disagree here. The receipt rule is the stricter one, and it is the rule to converge on.
+
+**One durable action per start.** The daemon performs the first planned action. It then aborts startup with a fatal error that asks for a restart. A start that finds any intent therefore never reaches `ready`. Progress is one action per start, and each start re-reads the durable facts before it acts.
+
+**Wired and inert. Do not read the wiring as evidence that the path has run.** No production code path writes a dispatch intent today. `dispatchstore.Store.Create` is called from tests only. So the intent list is empty on every real boot, pass 5 returns at once, and the ownership set of pass 4 is empty. Because the preflight aborts every start that finds an intent, the orphan sweep only ever runs with an empty ownership set. The exclusion this requirement adds to §PL-006 is wired and is equally inert.
+
+**Implementation, named on purpose.** `daemon.bootState.runStartupReconcile` calls `daemon.bootState.ensureWorkerRegistry` (pass 1), `lifecycle.PrepareQueueNamespaceAtStartup` (pass 2), `daemon.loadDispatchReplayAuthority` (passes 3 and 4), and `daemon.bootState.preflightDispatchReplay` (pass 5). Only then does it call `daemon.bootState.runOrphanSweepAndAdopt`. `daemon.loadDispatchReplayAuthority` reads the intents and the session-start receipts, then calls `daemon.dispatchReplayOwnership` to build the ownership set. `daemon.bootState.buildReconcileAdapters` runs between passes 4 and 5. It builds the bead adapter, confirms that `br` is runnable per [beads-integration.md BI-024a], and reads the queue bead-provenance sets. An unrunnable `br` is fatal at that point, with ON §8 code 8 (`beads-unavailable`). `daemon.planDispatchReplay` decides every action before `daemon.executeDispatchReplayPlan` performs one. `dispatchstore.Store` holds the fail-closed reads. `daemon.queueOwnershipWithDispatch` joins the ownership set into the sweep. `daemon.bootState.ensureWorkerRegistry` is idempotent through `bootState.workerRegistryBuilt`, which is what makes the work loop's later call reuse the boot singleton. These symbols are written into the requirement because the passes carried no requirement number until this revision.
+
+> DECLARED IMPLEMENTATION NOTE (2026-08-21). Pass 1 states that a worker-registry
+> failure is fatal, and `daemon.bootState.runStartupReconcile` does treat it that
+> way. `workers.BuildRegistry` cannot fail today, so that path is unreachable. The
+> requirement states the contract the ordering needs. It does not claim the code
+> exercises it.
+
+> DECLARED IMPLEMENTATION NOTE (2026-08-21). The doc comment on
+> `daemon.Config.WorkerRegistryObserver` still says the observer fires "ONCE at
+> work-loop startup". It now fires at startup reconcile, well before the work
+> loop. The observer is still called once per boot, so the contract holds and only
+> the comment is stale.
+
+Tags: mechanism
+Axes: llm-freedom=none; io-determinism=deterministic; replay-safety=safe; idempotency=idempotent
+Refs: the dispatch-intent replay work. The ordering existed only as call order and test names until this revision.
 
 ### 4.2a Process provenance
 
@@ -1634,6 +1698,7 @@ This spec does not own a failure taxonomy. Startup failure modes are cataloged p
 - **[beads-integration.md §4.9 BI-027]** — Beads-CLI skill; §PL-015 references skill-routed agent commands.
 - **[beads-integration.md §4.10 BI-030]** — intent log and idempotency-keyed writes; §PL-004 enumerates the directory.
 - **[beads-integration.md §6.2]** — intent-log on-disk layout; §PL-004 enumerates the file surface.
+- **[live-bead-state.md §7 LB-007, LB-009]** — dispatch-intent record shape and the startup classification of each record; §PL-006i owns only where that recovery sits in the startup order and what it does when a fact cannot be proved.
 - **[workspace-model.md §4.1 WM-002]** — worktree path convention; §PL-006 filesystem scan relies on it.
 - **[workspace-model.md §4.2 WM-005]** — task-branch naming (`run/<run_id>`); §PL-005 step 5 scans via this convention.
 - **[workspace-model.md §4.3 WM-013a, WM-013b]** — lease model and lease-lock; §PL-006 and §PL-011 reference them.
@@ -1685,6 +1750,7 @@ For each requirement, the implementation MUST satisfy at least one test covering
 - **PL-003, PL-003a, PL-INV-004** — a binding test that asserts socket mode `0600`, socket-path exclusivity (second daemon observing `EADDRINUSE` exits with exit code `6`), and NDJSON framing correctness against a JSON-RPC client. The wire-method registry assertion MUST enumerate the queue method names (`queue-submit`, `queue-append`, `queue-status`, `queue-dry-run`, `queue-cancel`) and assert that `enqueue` is NOT a registered method.
 - **PL-005, PL-006, PL-006a, PL-007, PL-INV-003, PL-INV-005** — retain the orphan-sweep scenarios, plus startup fixtures for canonical/legacy migration, receipt-root first-create and wrong-type cuts, valid/corrupt/unsupported/coexisting replace/archive/receipt/release-marker states, delayed cleanup and missing-marker recovery, and startup final cleanup with no final-event synthesis. QueueStore installs only after exact classification or refusal.
 - **PL-006h** — a restart test that drives the boot passes in their real order and asserts that a bead claimed but never launched reads `open`, and its queue item reads `pending`, after the start completes. Two mutations MUST turn that test red: removing the claim-with-no-run pass (rule 3) from `daemon.reconcileOrphanedRunsOnResume`, and moving `daemon.runStartupReconcile` after `daemon.loadStartupQueues`. **No such test exists today.** The helper `runNextDaemonStart` in `internal/daemon/workloop_reservationwindow_test.go` calls `lifecycle.LoadQueueAtStartup` alone, so it exercises the last pass only and assumes this ordering rather than pinning it. Tracked as hk-k0a9w.
+- **PL-006i** — boot tests that pin the ordering and the fail-closed reads. `internal/daemon/dispatch_replay_boot_test.go` `TestStartupReconcileReplaysReservationBeforeOrphanSweep`, `TestStartupReconcileReplaysExactClaimBeforeOrphanSweep`, and `TestStartupReconcileWritesUniversalRunRecordBeforeOrphanSweep` assert that each replay effect lands before the sweep. `TestPreflightDispatchReplayFailsClosedBeforeExecutorOnRepair` asserts that a repair-required intent aborts before any executor write. `TestExecuteDispatchReplayPlanStopsAfterFirstDurableChange` pins the one-durable-action-per-start rule. `internal/daemon/worker_registry_boot_test.go` `TestStartupReconcileBuildsWorkerRegistryBeforeReplay` and `TestEnsureWorkerRegistryBuildsOneBootSingleton` pin pass 1 and the boot singleton. **No test asserts that the ownership set reaches the orphan sweep on a start that also reaches `ready`.** No such start exists while the preflight aborts every start that finds an intent, so that obligation opens only when a producer lands.
 - **PL-008a** — a unit test asserting every exit code consumed by this spec (5–10, 14, 17, 19, 22, 23) maps to a distinct failure, and that `daemon_startup_failed` is emitted on each (where the event bus has been initialized). Code 17 is asserted via a `hk queue *` invocation against a daemon-down project (no `.harmonik/daemon.sock` listener).
 - **PL-009, PL-009a, PL-010** — scenario tests covering (a) `ready` transition only when criteria are met, (b) `degraded` persistence until Cat 0 clears, and (c) auto-resolver failure routing to Cat 3 investigator workflows without blocking `ready`.
 - **PL-011, PL-011a, PL-012** — scenario tests for graceful drain (asserting in-flight runs reach a checkpoint before suspend, that `daemon_shutdown{mode=graceful}` is emitted before bus flush), and immediate abort (asserting subprocess kill + `daemon_shutdown{mode=immediate}` on interceptable path + next-startup recovery on SIGKILL).
@@ -1835,6 +1901,7 @@ Cross-ref: PL-021b §4 (window-naming determinism), PL-021b §8 (window-name in 
 
 | Date | Version | Author | Summary |
 |---|---|---|---|
+| 2026-08-21 | 0.7.10 | agent (Charlie) | **NEW: PL-006i — dispatch-intent recovery is its own startup step, ahead of the orphan sweep. AMENDED: PL-005 gains step 2a, PL-006 gains the dispatch-ownership exclusion, and PL-006h's closing note is corrected.** The daemon already ran this pass and the order was already correct. No spec stated it, so a reader could move or delete the step without contradicting anything, and the orphan sweep would then kill the dispatch the daemon started up to recover. PL-006i states the five passes in order, the fail-closed conditions, the socket-bind boundary, the one-durable-action-per-start rule, and the symbols. Step 2a also records the worker registry: the daemon builds it first, it is one boot singleton that the work loop reuses, and a failure aborts boot. Three honest limits are recorded rather than papered over. Nothing writes a dispatch intent today, so the whole path is wired and inert, and the new PL-006 exclusion is inert with it. The worker-registry fatal path is unreachable because `workers.BuildRegistry` cannot fail. `dispatchstore.Store.List` skips a stray non-`.json` entry where `ListSessionStartReceipts` refuses one, and the stricter rule is the one to converge on. §4.a gains two boundary rows and the two dispatch directories. §9.1 gains the live-bead-state citation. §10.2 gains a PL-006i obligation that names the tests that exist and the one that cannot exist yet. **ALSO AMENDED: PL-006h gains the unreadable-run-registry stand-down.** Rules 2, 3 and 4 each require the daemon to show that no live run record names the bead, and a read of `.harmonik/runs/` is all-or-nothing — one torn record and there is no live-run set to show it with. The daemon read that failure as an empty set, which is what a restart no run survived also looks like, so it reported a working agent's run failed and put its bead back on the queue. The new clause states the fail-closed direction that §4.2a PL-006f(3) already states for reapers, and records that the orphan sweep of §PL-006 stands its destructive passes down on the same read. No requirement IDs changed. |
 | 2026-08-14 | 0.7.9 | agent (Charlie) | **The multi-repo boundary now separates safelist authority from durable execution identity.** The daemon must authorize the original declared string before it resolves the canonical repository path. Durable dispatch binds that canonical path. A remote route binds its worker name, transport, host, and repository path. Replay refuses a route change. Cross-repository remote execution stays disabled until a worker-to-repository mapping is specified. No PL requirement changes. Companion: [operator-nfr.md] v0.5.11. |
 | 2026-08-11 | 0.7.8 | agent (lane alpha, hk-k0a9w) | **NEW: PL-006h — the dispatched-bead reconcile between the orphan sweep and the queue load. AMENDED: PL-005 step 3 and the PL-006 stale-`in_progress` bullet.** The daemon already ran these passes and the order was correct. No spec stated it. The sweep's (a-queue) exclusion — skip any bead a queue records as `dispatched` — was in the code and not in PL-006's exclusion list, and the two passes that pay for it (`daemon.adoptDeadRunSessions` and `daemon.reconcileOrphanedRunsOnResume`) carried bead numbers in comments and no requirement ID. A reader could delete or reorder them without contradicting any spec, and the [queue-model.md §3.2a QM-002a] cross-check would then strand a claimed bead in an active queue. PL-006h states the five rules, the landed-bead guard, the non-fatal retry, and the ordering obligation, and it names the symbols. PL-006 gains exclusion (a-queue) with the double-dispatch reason it prevents. §10.2 gains a PL-006h obligation that records that no test pins the ordering today. Two declared implementation gaps record what the code does not do: the reconcile does not run when no JSONL event-log path is configured, and rule 1 does not hold the landed-bead guard, so a dead run record reopens a bead that already closed (hk-adopt-reopens-closed-bead-xlz4c). A review caught that the guard sentence claimed all five rules held it. It is now scoped to rules 2, 3 and 4. Companion: [queue-model.md] v0.1.11. No requirement IDs renumbered or retired. Refs: hk-k0a9w, hk-2ty0g, hk-o85ye, hk-iwu8a. |
 | 2026-08-05 | 0.7.7 | agent (spec repair, hk-6lt60) | **PL-032's pointer named a retired identifier. No PL obligation changes.** PL-032 said the failed-recovery command reports its result "only after QM-058 commits". QM-058 is retired in [queue-model.md] on 2026-08-05, because it named the same operation as §8.3b QM-052b under a second number, and its number is not reusable. The pointer now names QM-052b. A note records that PL-032 itself is still outstanding: it duplicates the `queue-recover` contract that landed separately as PL-003a and PL-028, and the two disagree on the response receipt and on which rule owns the transaction. Refs: hk-6lt60, hk-7bfqe. |

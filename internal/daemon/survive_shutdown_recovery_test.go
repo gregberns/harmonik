@@ -225,17 +225,19 @@ func TestBootSweep_LeavesALiveRunSessionAloneAndStillReapsADeadOne(t *testing.T)
 		RunID:         surviveRecoveryRunID,
 		BeadID:        "hk-still-being-worked",
 		SessionName:   liveSession,
+		StartedAt:     time.Date(2026, 8, 11, 13, 0, 0, 0, time.UTC),
 	}); err != nil {
 		t.Fatalf("surviveRecovery: write the live run's record: %v", err)
 	}
 
-	const deadRunID = "0f0e0d0c-0b0a-0908-0706-050403020199"
+	const deadRunID = "0f0e0d0c-0b0a-4908-8706-050403020199"
 	deadSession := lifecycle.TmuxSessionName(surviveRecoveryHash, "run-deadbeef0000")
 	if err := runpkg.Write(projectDir, runpkg.Record{
 		SchemaVersion: 1,
 		RunID:         deadRunID,
 		BeadID:        "hk-agent-already-exited",
 		SessionName:   deadSession,
+		StartedAt:     time.Date(2026, 8, 11, 13, 0, 0, 0, time.UTC),
 	}); err != nil {
 		t.Fatalf("surviveRecovery: write the dead run's record: %v", err)
 	}

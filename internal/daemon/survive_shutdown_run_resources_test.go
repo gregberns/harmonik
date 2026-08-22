@@ -321,10 +321,17 @@ type surviveRunOutcome struct {
 	// handed with the worktree.
 	worktreeCleanups int
 	// recordAtSpawn is the run registry record as it stood at the instant the
-	// agent's tmux session was created, which is how this file states "written
-	// before the spawn" as an observation rather than as a reading of the code.
+	// agent's tmux session was created, read the way production reads it, which
+	// is how this file states "written before the spawn" as an observation
+	// rather than as a reading of the code.
 	recordAtSpawn    runpkg.Record
 	recordAtSpawnErr error
+	// rawRecordAtSpawn is the same file at the same instant, decoded without the
+	// production reader's identity rules. recordAtSpawnErr says THAT the record
+	// is unusable; these bytes say WHICH field made it so, and the two together
+	// tell a record that was never written from one written incomplete.
+	rawRecordAtSpawn    runpkg.Record
+	rawRecordAtSpawnErr error
 
 	// startedMode is the workflow_mode the run stamped on its own run_started
 	// event. It is how a test states "this run took the graph path" as something
@@ -342,7 +349,7 @@ func (o *surviveRunOutcome) worktreeSurvived() bool {
 // runRecordSurvived reports whether the registry record is still on disk, which
 // is the only way a later daemon boot learns this run existed.
 func (o *surviveRunOutcome) runRecordSurvived() bool {
-	_, err := runpkg.Load(o.projectDir, o.runID)
+	_, err := legacyRunRecord(o.projectDir, o.runID)
 	return err == nil
 }
 
@@ -490,7 +497,8 @@ func surviveRunDriveWith(t *testing.T, opts surviveRunOpts) *surviveRunOutcome {
 		defer mu.Unlock()
 		// Read the registry from inside the spawn call. If the record is not
 		// there yet, no later boot could find this session by name.
-		out.recordAtSpawn, out.recordAtSpawnErr = runpkg.Load(projectDir, runID.String())
+		out.recordAtSpawn, out.recordAtSpawnErr = legacyRunRecord(projectDir, runID.String())
+		out.rawRecordAtSpawn, out.rawRecordAtSpawnErr = rawRunRecord(projectDir, runID.String())
 	}
 	var adapter *surviveRunAdapter
 	var tmuxAdapter tmux.Adapter

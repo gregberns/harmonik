@@ -344,7 +344,7 @@ func TestLoadDispatchReplayOwnershipClassifiesEveryDurablePhase(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			ownership, err := loadDispatchReplayOwnership(projectDir)
+			_, ownership, err := loadDispatchReplayAuthority(projectDir)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -399,7 +399,7 @@ func TestLoadDispatchReplayOwnershipJoinsExactSessionReceipt(t *testing.T) {
 	if err := store.InstallSessionStartReceipt(receipt); err != nil {
 		t.Fatal(err)
 	}
-	ownership, err := loadDispatchReplayOwnership(projectDir)
+	_, ownership, err := loadDispatchReplayAuthority(projectDir)
 	if err != nil {
 		t.Fatal(err)
 	}

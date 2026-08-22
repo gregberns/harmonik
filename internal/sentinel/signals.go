@@ -150,7 +150,8 @@ const DefaultPresenceTTL = 15 * time.Minute
 // ComputeSnapshot reads events.jsonl and the run registry to compute the
 // per-run last-event-age and phase state, plus lane-level rollups.
 //
-// activeRuns is typically obtained from run.List(projectDir). Events are
+// activeRuns is typically obtained from the Legacy tier of the snapshot that
+// run.ScanRegistry(projectDir) returns. Events are
 // scanned starting from the earliest run start time (or now−presenceTTL
 // when earlier) so the window covers all active runs and all presence beats.
 //

@@ -23,12 +23,13 @@ func TestDispatchWorktreeObserverResolverOwnsExactRemoteRoute(t *testing.T) {
 	record.Location = &location
 	runner := &ltmux.RecordingRunner{CmdFunc: absentDispatchWorktreeCommand}
 	factoryCalls := 0
-	resolver := newDispatchWorktreeObserverResolverWithFactory(workers.Config{Workers: []workers.Worker{{
+	cfg, registry := worktreePortWorkers(workers.Worker{
 		Name: "worker-a", Transport: "ssh", Host: "worker.example", RepoPath: "/srv/worker/project",
-	}}}, func(worker workers.Worker) ltmux.CommandRunner {
+	})
+	resolver := newDispatchWorktreeObserverResolverWithOwnership(cfg, func(worker workers.Worker) ltmux.CommandRunner {
 		factoryCalls++
 		return runner
-	})
+	}, nil, registry)
 	observer, err := resolver(record)
 	if err != nil {
 		t.Fatal(err)
@@ -135,9 +136,11 @@ func TestDispatchWorktreeProvisionerSyncsBeforeOneRemoteCreate(t *testing.T) {
 		}
 		return exec.CommandContext(ctx, "true")
 	}}
-	resolver := newDispatchWorktreeObserverResolverWithFactory(workers.Config{Workers: []workers.Worker{{
+	cfg, registry := worktreePortWorkers(workers.Worker{
 		Name: location.WorkerName, Transport: location.Transport, Host: location.Host, RepoPath: location.RepositoryPath,
-	}}}, func(workers.Worker) ltmux.CommandRunner { return runner })
+	})
+	resolver := newDispatchWorktreeObserverResolverWithOwnership(
+		cfg, func(workers.Worker) ltmux.CommandRunner { return runner }, nil, registry)
 	provisioner, err := resolver(record)
 	if err != nil {
 		t.Fatal(err)
@@ -178,9 +181,11 @@ func TestDispatchWorktreeProvisionerFallbackBindsBothRepositoriesAndRoute(t *tes
 	local := &ltmux.RecordingRunner{CmdFunc: func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
 		return exec.CommandContext(ctx, "true")
 	}}
-	resolver := newDispatchWorktreeObserverResolverWithRunners(workers.Config{Workers: []workers.Worker{{
+	cfg, registry := worktreePortWorkers(workers.Worker{
 		Name: location.WorkerName, Transport: location.Transport, Host: location.Host, RepoPath: location.RepositoryPath,
-	}}}, func(workers.Worker) ltmux.CommandRunner { return remote }, local)
+	})
+	resolver := newDispatchWorktreeObserverResolverWithOwnership(
+		cfg, func(workers.Worker) ltmux.CommandRunner { return remote }, local, registry)
 	provisioner, err := resolver(record)
 	if err != nil {
 		t.Fatal(err)
@@ -214,10 +219,10 @@ func TestDispatchWorktreeProvisionerLocalPrepareRunsNoCommand(t *testing.T) {
 	record.Location = &location
 	remoteFactoryCalls := 0
 	local := &ltmux.RecordingRunner{}
-	resolver := newDispatchWorktreeObserverResolverWithRunners(workers.Config{}, func(workers.Worker) ltmux.CommandRunner {
+	resolver := newDispatchWorktreeObserverResolverWithOwnership(workers.Config{}, func(workers.Worker) ltmux.CommandRunner {
 		remoteFactoryCalls++
 		return &ltmux.RecordingRunner{}
-	}, local)
+	}, local, nil)
 	provisioner, err := resolver(record)
 	if err != nil {
 		t.Fatal(err)
@@ -253,10 +258,11 @@ func TestDispatchWorktreeObserverResolverRejectsEveryRouteDriftBeforeRunner(t *t
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			factoryCalls := 0
-			resolver := newDispatchWorktreeObserverResolverWithFactory(workers.Config{Workers: []workers.Worker{tc.worker}}, func(workers.Worker) ltmux.CommandRunner {
+			cfg, registry := worktreePortWorkers(tc.worker)
+			resolver := newDispatchWorktreeObserverResolverWithOwnership(cfg, func(workers.Worker) ltmux.CommandRunner {
 				factoryCalls++
 				return &ltmux.RecordingRunner{}
-			})
+			}, nil, registry)
 			if _, err := resolver(base); err == nil {
 				t.Fatal("resolver accepted changed worker route")
 			}
@@ -276,18 +282,39 @@ func TestDispatchWorktreeObserverResolverRejectsUnsupportedTransportBeforeRunner
 	}
 	record.Location = &location
 	factoryCalls := 0
-	resolver := newDispatchWorktreeObserverResolverWithFactory(workers.Config{Workers: []workers.Worker{{
+	cfg, registry := worktreePortWorkers(workers.Worker{
 		Name: location.WorkerName, Transport: location.Transport, Host: location.Host, RepoPath: location.RepositoryPath,
-	}}}, func(workers.Worker) ltmux.CommandRunner {
+	})
+	resolver := newDispatchWorktreeObserverResolverWithOwnership(cfg, func(workers.Worker) ltmux.CommandRunner {
 		factoryCalls++
 		return &ltmux.RecordingRunner{}
-	})
+	}, nil, registry)
 	if _, err := resolver(record); err == nil {
 		t.Fatal("resolver accepted unsupported transport")
 	}
 	if factoryCalls != 0 {
 		t.Fatalf("runner factory calls = %d, want zero", factoryCalls)
 	}
+}
+
+// worktreePortWorkers returns the trusted worker configuration and the process
+// registry the daemon builds from it.
+//
+// It takes ONE worker, not a list, because workers.NewRegistry keeps one:
+// workers.PrimaryWorkerIndex returns index 0 or -1, so a second worker in the
+// configuration would be dropped without a word. Give the helper a list and the
+// next writer learns that only after a test asserts on a route the registry
+// never held.
+//
+// The helper overwrites Enabled and MaxSlots. The resolver takes a slot before
+// it hands out a runner, and workers.Registry.AcquireBoundWorker returns no
+// worker and no error when the worker is disabled or has no slot. A caller that
+// wants a disabled worker or a full registry is asking a different question and
+// must build the configuration itself.
+func worktreePortWorkers(worker workers.Worker) (workers.Config, *workers.Registry) {
+	worker.Enabled, worker.MaxSlots = true, 1
+	cfg := workers.Config{Workers: []workers.Worker{worker}}
+	return cfg, workers.NewRegistry(cfg)
 }
 
 func absentDispatchWorktreeCommand(ctx context.Context, name string, args ...string) *exec.Cmd {

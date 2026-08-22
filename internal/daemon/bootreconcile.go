@@ -78,11 +78,6 @@ func (bs *bootState) runStartupReconcile(ctx context.Context, daemonStartTime ti
 	return nil
 }
 
-func loadDispatchReplayOwnership(projectDir string) (DispatchReplayOwnership, error) {
-	_, ownership, err := loadDispatchReplayAuthority(projectDir)
-	return ownership, err
-}
-
 func loadDispatchReplayAuthority(projectDir string) ([]dispatch.Intent, DispatchReplayOwnership, error) {
 	store := dispatchstore.New(projectDir)
 	intents, err := store.List()

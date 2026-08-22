@@ -59,21 +59,6 @@ func newDispatchWorktreeObserverResolver(cfg workers.Config, registry *workers.R
 	}, nil, registry)
 }
 
-func newDispatchWorktreeObserverResolverWithFactory(
-	cfg workers.Config,
-	remoteRunner func(workers.Worker) ltmux.CommandRunner,
-) dispatchWorktreeObserverResolver {
-	return newDispatchWorktreeObserverResolverWithOwnership(cfg, remoteRunner, nil, nil)
-}
-
-func newDispatchWorktreeObserverResolverWithRunners(
-	cfg workers.Config,
-	remoteRunner func(workers.Worker) ltmux.CommandRunner,
-	localRunner ltmux.CommandRunner,
-) dispatchWorktreeObserverResolver {
-	return newDispatchWorktreeObserverResolverWithOwnership(cfg, remoteRunner, localRunner, nil)
-}
-
 func newDispatchWorktreeObserverResolverWithOwnership(
 	cfg workers.Config,
 	remoteRunner func(workers.Worker) ltmux.CommandRunner,

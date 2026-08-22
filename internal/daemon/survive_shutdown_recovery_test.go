@@ -24,6 +24,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -341,8 +342,8 @@ func surviveRecoveryProject(t *testing.T, rec runpkg.Record) string {
 	if err := runpkg.Write(dir, rec); err != nil {
 		t.Fatalf("surviveRecovery: write run record: %v", err)
 	}
-	if _, err := runpkg.Load(dir, rec.RunID); err != nil {
-		t.Fatalf("surviveRecovery: the record did not land, so the test observes nothing: %v", err)
+	if !runRecordFileExists(dir, rec.RunID) {
+		t.Fatal("surviveRecovery: the record did not land, so the test observes nothing")
 	}
 	return dir
 }
@@ -380,8 +381,8 @@ func TestRunSessionAdoption_ASweptSessionIsAdoptedAsDeadAndItsBeadGoesBackOnTheQ
 		t.Fatalf("bead resets = %v, want exactly [hk-survive-recovery].\n"+
 			"The session the run left behind is gone, so nothing is working the bead. Without the reset it stays in progress for ever and is never dispatched again.", resets)
 	}
-	if _, err := runpkg.Load(projectDir, surviveRecoveryRunID); !errors.Is(err, runpkg.ErrNotFound) {
-		t.Errorf("the run record is still present after adoption (Load err = %v, want ErrNotFound).\n"+
+	if _, err := legacyRunRecord(projectDir, surviveRecoveryRunID); !errors.Is(err, runpkg.ErrNotFound) {
+		t.Errorf("the run record is still present after adoption (registry err = %v, want ErrNotFound).\n"+
 			"A record left behind makes every later boot re-adopt a run that is long gone.", err)
 	}
 }
@@ -421,8 +422,8 @@ func TestRunSessionAdoption_ALiveSessionKeepsItsBeadAndItsRecord(t *testing.T) {
 		t.Errorf("bead resets = %v, want none.\n"+
 			"The session is live, so an agent is still working this bead. Resetting it hands the same work to a second agent.", resets)
 	}
-	if _, err := runpkg.Load(projectDir, surviveRecoveryRunID); err != nil {
-		t.Errorf("the run record is gone after adoption (Load err = %v).\n"+
+	if _, err := legacyRunRecord(projectDir, surviveRecoveryRunID); err != nil {
+		t.Errorf("the run record is gone after adoption (registry err = %v).\n"+
 			"The work loop's own adoption reads this record to watch the live session. Dropping it here loses the run.", err)
 	}
 }
@@ -485,8 +486,8 @@ func TestRunSessionAdoption_InvalidLegacyRunIdentityFailsClosed(t *testing.T) {
 	if resets := resetter.resets(); len(resets) != 0 {
 		t.Fatalf("invalid run identity caused bead resets: %v", resets)
 	}
-	if _, err := runpkg.Load(projectDir, invalidRunID); err != nil {
-		t.Fatalf("invalid run identity was removed: %v", err)
+	if !runRecordFileExists(projectDir, invalidRunID) {
+		t.Fatal("invalid run identity was removed")
 	}
 }
 
@@ -515,8 +516,8 @@ func TestRunSessionAdoption_ARecordWithNoSessionNameFailsClosed(t *testing.T) {
 	if resets := resetter.resets(); len(resets) != 0 {
 		t.Errorf("partial record caused bead resets: %v", resets)
 	}
-	if _, err := runpkg.Load(projectDir, surviveRecoveryRunID); err != nil {
-		t.Errorf("partial record was removed: %v", err)
+	if !runRecordFileExists(projectDir, surviveRecoveryRunID) {
+		t.Error("partial record was removed")
 	}
 }
 
@@ -549,11 +550,15 @@ func TestRunRegistry_ARecordIsReadableByNameAndCarriesTheSessionName(t *testing.
 		RunID:         surviveRecoveryRunID,
 		BeadID:        "hk-survive-recovery",
 		SessionName:   runSession,
+		// setUpRunSession stamps this from the run clock on every record it
+		// writes, and runpkg.ScanRegistry refuses a record without it. A fixture
+		// that leaves it zero is a record production can neither write nor read.
+		StartedAt: time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC),
 	}); err != nil {
 		t.Fatalf("write run record: %v", err)
 	}
 
-	got, err := runpkg.Load(projectDir, surviveRecoveryRunID)
+	got, err := legacyRunRecord(projectDir, surviveRecoveryRunID)
 	if err != nil {
 		t.Fatalf("load run record: %v", err)
 	}
@@ -641,10 +646,62 @@ func TestRunSessionAdoption_TheLiveMonitorGivesTheBeadBackWhenTheAgentFinallyExi
 			"Nothing else gives this bead back. The boot sweep, the dead-session pass and the "+
 			"resume reconcile all step over a bead whose run is live, on purpose.", len(reopens), reopens)
 	}
-	if _, err := runpkg.Load(projectDir, surviveRecoveryRunID); !errors.Is(err, runpkg.ErrNotFound) {
+	if _, err := legacyRunRecord(projectDir, surviveRecoveryRunID); !errors.Is(err, runpkg.ErrNotFound) {
 		t.Errorf("the run record is still on disk after the monitor settled the run "+
-			"(Load err = %v, want ErrNotFound).\n"+
+			"(registry err = %v, want ErrNotFound).\n"+
 			"A record left behind keeps the next boot exempting a session that is gone, and the "+
 			"bead is reopened again on every boot after this one.", err)
 	}
+}
+
+// legacyRunRecord reads one schema-v1 run record through runpkg.ScanRegistry,
+// the only reader production has for these bytes. It returns runpkg.ErrNotFound
+// when the registry holds no record for runID, so a caller can tell an absent
+// record from an unreadable registry.
+//
+// ScanRegistry fails closed: an entry it cannot classify makes the whole read an
+// error, not a short list. Adoption sees the same thing, so the tests must too.
+func legacyRunRecord(projectDir, runID string) (runpkg.Record, error) {
+	snapshot, err := runpkg.ScanRegistry(projectDir)
+	if err != nil {
+		return runpkg.Record{}, err
+	}
+	for _, record := range snapshot.Legacy {
+		if record.RunID == runID {
+			return record, nil
+		}
+	}
+	return runpkg.Record{}, runpkg.ErrNotFound
+}
+
+// runRecordFileExists reports whether the registry file for runID is still on
+// disk. Some cases write a run identity that ScanRegistry refuses to classify,
+// and whether that file survives is the fact under test, so these assertions
+// read the path and not the reader.
+func runRecordFileExists(projectDir, runID string) bool {
+	_, err := os.Stat(filepath.Join(projectDir, ".harmonik", "runs", runID+".json"))
+	return err == nil
+}
+
+// rawRunRecord decodes the registry file for runID WITHOUT the identity rules
+// that runpkg.ScanRegistry applies. It exists so a test can say which way a
+// record failed.
+//
+// legacyRunRecord fails closed and returns one error for several different
+// defects: nothing was written, the run id has no UUID version, the session
+// name is empty, the start time is zero. Those need different fixes, and a
+// test that only reports the reader's refusal sends the next reader to the
+// wrong place. Assert readability with legacyRunRecord, then name the broken
+// field from this record.
+func rawRunRecord(projectDir, runID string) (runpkg.Record, error) {
+	//nolint:gosec // G304: the path is t.TempDir()-based and test-controlled.
+	data, err := os.ReadFile(filepath.Join(projectDir, ".harmonik", "runs", runID+".json"))
+	if err != nil {
+		return runpkg.Record{}, err
+	}
+	var record runpkg.Record
+	if err := json.Unmarshal(data, &record); err != nil {
+		return runpkg.Record{}, err
+	}
+	return record, nil
 }

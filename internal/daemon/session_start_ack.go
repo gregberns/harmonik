@@ -99,18 +99,8 @@ func resolveRemoteSessionStartAdapter(
 	return nil, fmt.Errorf("daemon: session start worker %q is not configured", workerName)
 }
 
-// acknowledgeSessionStart installs a receipt only after all durable and live facts agree.
-func acknowledgeSessionStart(
-	ctx context.Context,
-	projectDir string,
-	adapter ltmux.Adapter,
-	receipt dispatch.SessionStartReceipt,
-) error {
-	return acknowledgeSessionStartWithResolver(ctx, projectDir, func(runpkg.ExecutionLocation) (ltmux.Adapter, error) {
-		return adapter, nil
-	}, receipt)
-}
-
+// acknowledgeSessionStartWithResolver installs a receipt only after all durable
+// and live facts agree.
 func acknowledgeSessionStartWithResolver(
 	ctx context.Context,
 	projectDir string,

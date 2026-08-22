@@ -22,7 +22,7 @@ const (
 	schemaVersion = 1
 )
 
-// ErrNotFound is returned by Load and Remove when the record file is absent.
+// ErrNotFound is returned by Remove when the record file is absent.
 var ErrNotFound = errors.New("run: record not found")
 
 var runNamespaceMu sync.Mutex
@@ -88,29 +88,6 @@ func Write(projectDir string, r Record) error {
 	return nil
 }
 
-// Load reads the record for runID from .harmonik/runs/<runID>.json.
-// Returns ErrNotFound when the file is absent.
-func Load(projectDir, runID string) (Record, error) {
-	runNamespaceMu.Lock()
-	defer runNamespaceMu.Unlock()
-	return loadLegacyUnlocked(projectDir, runID)
-}
-
-func loadLegacyUnlocked(projectDir, runID string) (Record, error) {
-	data, err := os.ReadFile(recordPath(projectDir, runID))
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return Record{}, ErrNotFound
-		}
-		return Record{}, fmt.Errorf("run: load %q: %w", runID, err)
-	}
-	var r Record
-	if err := json.Unmarshal(data, &r); err != nil {
-		return Record{}, fmt.Errorf("run: unmarshal %q: %w", runID, err)
-	}
-	return r, nil
-}
-
 // Remove deletes .harmonik/runs/<runID>.json.
 // Returns ErrNotFound when the file is absent.
 func Remove(projectDir, runID string) error {
@@ -124,33 +101,4 @@ func Remove(projectDir, runID string) error {
 		return fmt.Errorf("run: remove %q: %w", runID, err)
 	}
 	return nil
-}
-
-// List returns all run records found in .harmonik/runs/.
-// An empty or missing directory returns a nil slice without error.
-func List(projectDir string) ([]Record, error) {
-	runNamespaceMu.Lock()
-	defer runNamespaceMu.Unlock()
-	dir := runsDir(projectDir)
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("run: list %q: %w", dir, err)
-	}
-	records := make([]Record, 0, len(entries))
-	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
-			continue
-		}
-		name := e.Name()
-		runID := name[:len(name)-len(".json")]
-		r, loadErr := loadLegacyUnlocked(projectDir, runID)
-		if loadErr != nil {
-			continue // skip corrupt or tmp records
-		}
-		records = append(records, r)
-	}
-	return records, nil
 }

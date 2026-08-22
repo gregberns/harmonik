@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/gregberns/harmonik/internal/core"
 	"github.com/gregberns/harmonik/internal/daemon"
@@ -29,6 +30,14 @@ import (
 )
 
 const strandedGuardBead = core.BeadID("hk-stranded-guard")
+
+// strandedGuardRunID names the seeded record. The version nibble is
+// load-bearing: runpkg.ScanRegistry is the only reader production has for the
+// run registry, and it refuses a basename that carries no UUID version. A run
+// id with a zero version makes the seeded record unreadable, the guard then
+// answers yes through its error branch, and the positive control below passes
+// for the wrong reason.
+const strandedGuardRunID = "0f0e0d0c-0b0a-7908-8706-050403020177"
 
 // TestStrandedBeadGuard_AnUnreadableRegistryReportsARunRatherThanNone drives the
 // error branch and both of its neighbours, because the branch only means
@@ -57,11 +66,26 @@ func TestStrandedBeadGuard_AnUnreadableRegistryReportsARunRatherThanNone(t *test
 		projectDir := t.TempDir()
 		if err := runpkg.Write(projectDir, runpkg.Record{
 			SchemaVersion: 1,
-			RunID:         "0f0e0d0c-0b0a-0908-0706-050403020177",
+			RunID:         strandedGuardRunID,
 			BeadID:        string(strandedGuardBead),
 			SessionName:   "harmonik-abcdef012345-run-0f0e0d0c0b0a",
+			StartedAt:     time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC),
 		}); err != nil {
 			t.Fatalf("strandedGuard: write the record: %v", err)
+		}
+		// The guard also answers yes when it cannot read the registry at all, so a
+		// record production refuses would pass the check below through the error
+		// branch and prove nothing about the record. Read the registry with the
+		// production reader first and require the record in it.
+		snapshot, err := runpkg.ScanRegistry(projectDir)
+		if err != nil {
+			t.Fatalf("strandedGuard: the production reader refused the seeded record: %v", err)
+		}
+		if len(snapshot.Legacy) != 1 || snapshot.Legacy[0].BeadID != string(strandedGuardBead) {
+			t.Fatalf("strandedGuard: the registry holds %d legacy and %d dispatch records, want "+
+				"exactly one legacy record for %s.\n"+
+				"The check below would then be measuring the error branch, not the record.",
+				len(snapshot.Legacy), len(snapshot.Dispatch), strandedGuardBead)
 		}
 		if !daemon.ExportedStrandedBeadHasOnDiskRun(projectDir, strandedGuardBead) {
 			t.Error("the guard reports no run for a bead whose record is on disk.\n" +
@@ -84,7 +108,7 @@ func TestStrandedBeadGuard_AnUnreadableRegistryReportsARunRatherThanNone(t *test
 			[]byte("not a directory\n"), 0o600); err != nil {
 			t.Fatalf("strandedGuard: put a file where the registry directory goes: %v", err)
 		}
-		if _, err := runpkg.List(projectDir); err == nil {
+		if _, err := runpkg.ScanRegistry(projectDir); err == nil {
 			t.Fatal("the registry listed cleanly, so this case is not driving the error branch " +
 				"and the assertion below would pass on the ordinary no-record answer")
 		}

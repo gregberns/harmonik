@@ -38,7 +38,12 @@ import (
 
 // sessionCollideRunID is the run every launch below belongs to. Both nodes of a
 // graph run carry the same one, which is why they collide.
-const sessionCollideRunID = "0f0e0d0c-0b0a-0908-0706-050403020100"
+//
+// The version nibble is load-bearing. runpkg.ScanRegistry is the only reader
+// production has for the run registry, and it refuses a record whose basename
+// carries no UUID version. A run id with a zero version makes the record this
+// test writes unreadable by the daemon, so the test would prove nothing.
+const sessionCollideRunID = "0f0e0d0c-0b0a-4908-8706-050403020102"
 
 // sessionCollideAdapter is a tmux server that reports the run's session already
 // exists until something kills it, which is what tmux does while the previous
@@ -275,7 +280,11 @@ func TestBeadRunOne_ARunWithACommandRunnerWritesNoRecord(t *testing.T) {
 				trustCalls++
 			}
 			if projectDir != "" {
-				if recs, err := runpkg.List(projectDir); err == nil && len(recs) > 0 {
+				// The claim is that the run wrote NO record, so both registry tiers
+				// count. A check on the legacy tier alone would pass while the run
+				// wrote a schema-v2 dispatch record.
+				if snapshot, err := runpkg.ScanRegistry(projectDir); err == nil &&
+					len(snapshot.Legacy)+len(snapshot.Dispatch) > 0 {
 					recordSeen = true
 				}
 			}
@@ -362,7 +371,7 @@ func sessionCollideSetUp(t *testing.T, runID core.RunID, hasRunner bool) session
 
 	took := setUpRunSession(&env, ports, handles, &runlease.Scope{}, hasRunner, runID,
 		core.BeadID("hk-one-fact"))
-	_, loadErr := runpkg.Load(env.ProjectDir, runID.String())
+	_, loadErr := legacyRunRecord(env.ProjectDir, runID.String())
 	return sessionCollideSetUpResult{
 		took:      took,
 		recorded:  loadErr == nil,

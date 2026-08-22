@@ -390,11 +390,23 @@ func TestRunRegistry_TheRecordIsOnDiskAndNamesTheSessionBeforeTheAgentIsLaunched
 			"no spawn for the record to come before.")
 	}
 
-	if out.recordAtSpawnErr != nil {
-		t.Errorf("the run registry held no record when the agent was launched: %v\n"+
+	// runpkg.ScanRegistry fails closed, so one error covers "nothing was written"
+	// and "something unusable was written". The raw decode separates them, and
+	// the two need different fixes.
+	if out.recordAtSpawnErr != nil && out.rawRecordAtSpawnErr != nil {
+		t.Errorf("the run registry held no record when the agent was launched "+
+			"(reader: %v; file: %v)\n"+
 			"A daemon killed between the launch and the write leaves a live session that nothing "+
 			"on disk names. The next boot cannot adopt it and cannot even say what it was.",
-			out.recordAtSpawnErr)
+			out.recordAtSpawnErr, out.rawRecordAtSpawnErr)
+	} else if out.recordAtSpawnErr != nil {
+		t.Errorf("a record was on disk when the agent was launched, and production cannot read "+
+			"it: %v\n"+
+			"The bytes are %+v.\n"+
+			"Adoption reads this registry with the same reader, and the reader fails closed: one "+
+			"record it refuses makes the WHOLE registry unreadable, so this record strands every "+
+			"other live run as well as its own.",
+			out.recordAtSpawnErr, out.rawRecordAtSpawn)
 	}
 
 	if len(out.adapter.sessions()) == 0 {
@@ -405,30 +417,42 @@ func TestRunRegistry_TheRecordIsOnDiskAndNamesTheSessionBeforeTheAgentIsLaunched
 			"daemon's own session dies with the daemon, and no record can save it.")
 	}
 
-	// Everything below reads the record, so it means nothing if there was none.
-	if out.recordAtSpawnErr != nil {
+	// Everything below reads the bytes on disk, so it means nothing if there were
+	// none. It reads the RAW record on purpose: production's reader refuses a
+	// record whose session name is empty or whose run id does not match its own
+	// file name, so the field checks below would be unreachable through it and
+	// every one of these defects would report as the single error above.
+	if out.rawRecordAtSpawnErr != nil {
 		return
 	}
 
-	if out.recordAtSpawn.SessionName == "" {
+	if out.rawRecordAtSpawn.SessionName == "" {
 		t.Error("the record was written with no session name.\n" +
 			"Both adoption passes match on that string. A record without it is adopted as dead " +
 			"however healthy the agent is, so the bead is reset and re-dispatched under a working " +
 			"agent — the opposite of what the record is for.")
 	} else if len(out.adapter.sessions()) > 0 {
-		if got, want := out.recordAtSpawn.SessionName, out.adapter.sessions()[0]; got != want {
+		if got, want := out.rawRecordAtSpawn.SessionName, out.adapter.sessions()[0]; got != want {
 			t.Errorf("the record names session %q but the session created is %q.\n"+
 				"The two must be the same string, or the next boot asks tmux about a session that "+
 				"does not exist and reaps a live run.", got, want)
 		}
 	}
 
-	if out.recordAtSpawn.RunID != out.runID {
-		t.Errorf("record RunID = %q, want %q", out.recordAtSpawn.RunID, out.runID)
+	if out.rawRecordAtSpawn.RunID != out.runID {
+		t.Errorf("record RunID = %q, want %q.\n"+
+			"The registry reader takes the run id from the file name and refuses a record whose "+
+			"body disagrees with it, so this record is not adopted and nothing says why.",
+			out.rawRecordAtSpawn.RunID, out.runID)
 	}
-	if out.recordAtSpawn.BeadID != string(surviveRunProbeBead) {
+	if out.rawRecordAtSpawn.BeadID != string(surviveRunProbeBead) {
 		t.Errorf("record BeadID = %q, want %q.\n"+
 			"Without it the adoption pass has a session to check and no bead to reset.",
-			out.recordAtSpawn.BeadID, surviveRunProbeBead)
+			out.rawRecordAtSpawn.BeadID, surviveRunProbeBead)
+	}
+	if out.rawRecordAtSpawn.StartedAt.IsZero() {
+		t.Error("the record was written with no start time.\n" +
+			"The registry reader refuses a record without one, so the whole registry becomes " +
+			"unreadable and every live run on this project is stranded, not just this one.")
 	}
 }

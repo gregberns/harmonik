@@ -131,7 +131,7 @@ func TestAcknowledgeSessionStartInstallsReceiptAfterExactLiveProof(t *testing.T)
 	intent, record, receipt := sessionStartAckFixture(t)
 	persistSessionStartAuthority(t, projectDir, intent, record)
 	adapter := &dispatchTargetProbeAdapter{probe: sessionStartAckProbe(intent, ltmux.TargetProbeExact)}
-	if err := acknowledgeSessionStart(t.Context(), projectDir, adapter, receipt); err != nil {
+	if err := acknowledgeSessionStartLocally(t, projectDir, adapter, receipt); err != nil {
 		t.Fatal(err)
 	}
 	got, err := dispatchstore.New(projectDir).LoadSessionStartReceipt(intent.Binding.RunID)
@@ -165,8 +165,8 @@ func TestAcknowledgeSessionStartRejectsBeforeReceiptIO(t *testing.T) {
 			probe := sessionStartAckProbe(intent, ltmux.TargetProbeExact)
 			tc.mutate(&receipt, &probe)
 			adapter := &dispatchTargetProbeAdapter{probe: probe}
-			if err := acknowledgeSessionStart(t.Context(), projectDir, adapter, receipt); err == nil {
-				t.Fatal("acknowledgeSessionStart() = nil error")
+			if err := acknowledgeSessionStartLocally(t, projectDir, adapter, receipt); err == nil {
+				t.Fatal("acknowledgeSessionStartWithResolver() = nil error")
 			}
 			root := filepath.Join(projectDir, ".harmonik", "dispatch-session-starts")
 			if _, err := os.Lstat(root); !os.IsNotExist(err) {
@@ -214,8 +214,8 @@ func TestAcknowledgeSessionStartRequiresDurableAuthority(t *testing.T) {
 			projectDir := t.TempDir()
 			tc.prepare(t, projectDir)
 			adapter := &dispatchTargetProbeAdapter{probe: sessionStartAckProbe(intent, ltmux.TargetProbeExact)}
-			if err := acknowledgeSessionStart(t.Context(), projectDir, adapter, receipt); err == nil {
-				t.Fatal("acknowledgeSessionStart() = nil error")
+			if err := acknowledgeSessionStartLocally(t, projectDir, adapter, receipt); err == nil {
+				t.Fatal("acknowledgeSessionStartWithResolver() = nil error")
 			}
 			root := filepath.Join(projectDir, ".harmonik", "dispatch-session-starts")
 			if _, err := os.Lstat(root); !os.IsNotExist(err) {
@@ -247,6 +247,25 @@ func persistSessionStartAuthority(t *testing.T, projectDir string, intent dispat
 	if err := runpkg.AdvanceDispatchRecord(projectDir, located, record); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// acknowledgeSessionStartLocally runs the acknowledgement over the production
+// adapter resolver for a local execution location. The resolver is the same one
+// the daemon builds at boot, so the test proves the path production takes rather
+// than a shortcut that hands the adapter straight to the acknowledgement.
+func acknowledgeSessionStartLocally(
+	t *testing.T,
+	projectDir string,
+	adapter ltmux.Adapter,
+	receipt dispatch.SessionStartReceipt,
+) error {
+	t.Helper()
+	resolver := newSessionStartAdapterResolverWithFactory(adapter, workers.Config{},
+		func(worker workers.Worker) ltmux.Adapter {
+			t.Fatalf("remote adapter factory ran for a local location: %+v", worker)
+			return nil
+		})
+	return acknowledgeSessionStartWithResolver(t.Context(), projectDir, resolver, receipt)
 }
 
 func sessionStartAckFixture(t *testing.T) (dispatch.Intent, runpkg.DispatchRecord, dispatch.SessionStartReceipt) {

@@ -119,9 +119,13 @@ func TestDispatchRegistryRejectsLegacySameRunConflict(t *testing.T) {
 	if err := CreateDispatchRecord(projectDir, base); !errors.As(err, &conflict) {
 		t.Fatalf("CreateDispatchRecord() = %v", err)
 	}
-	record, err := Load(projectDir, legacy.RunID)
-	if err != nil || record.SessionName != legacy.SessionName {
-		t.Fatalf("legacy changed: (%+v, %v)", record, err)
+	snapshot, err := ScanRegistry(projectDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Dispatch) != 0 || len(snapshot.Legacy) != 1 ||
+		snapshot.Legacy[0].SessionName != legacy.SessionName {
+		t.Fatalf("legacy changed: %+v", snapshot)
 	}
 }
 

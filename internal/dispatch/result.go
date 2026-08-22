@@ -36,6 +36,35 @@ const (
 )
 
 // Result is the complete value returned by a dispatch transaction operation.
+//
+// No production caller returns one yet, so scripts/reachability.baseline holds
+// Result.Validate as production-unreachable. The reason is not a producer that
+// is still to come. It is that LB-008 in specs/live-bead-state.md is unmet on
+// the path that already runs.
+//
+// dispatchstore.Store.Advance makes the durable phase change that LB-006 gives
+// to the dispatch transaction, and daemon.dispatchReplayExecutor reaches it
+// from advanceRunPhase and replayClaim. Advance returns a plain error, and two
+// of the four classes LB-008 keeps apart do not survive it. A commit and an
+// exact replay both come back as nil, so no caller can tell the write it made
+// from the write it re-observed. A refused predecessor comes back as
+// errors.New("dispatchstore: predecessor bytes changed"), or as
+// errors.New("dispatchstore: predecessor changed before replace") on the
+// re-read-before-rename path. Neither carries a type to match on, so a caller
+// cannot separate a refusal from any other plain failure.
+//
+// Repair-required is the one class that does survive: the paths that lose
+// parent durability return *dispatchstore.AmbiguousError, which is errors.As
+// -able and which the dispatchstore tests already discriminate on. So the gap
+// is narrower than "the error says nothing", and it is still a gap.
+//
+// The chain is reachable in the call graph and unreached at run time.
+// dispatchstore.Store.Create has no production caller, so Store.List answers
+// empty and daemon.preflightDispatchReplay returns before Advance runs. The
+// violation is latent, which argues for closing it before the writer lands.
+//
+// Wiring Store.Advance to this type changes production behavior. It needs its
+// own change, and it must not ride along with a reachability triage.
 type Result struct {
 	Class  ResultClass
 	Intent *Intent

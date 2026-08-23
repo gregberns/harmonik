@@ -18,10 +18,12 @@ trap 'rm -rf "$work"' EXIT
 pass=0
 fail=0
 
-# check <name> <want-exit> — the repo is already staged; run the gate in it.
+# check <name> <want-exit> [baseline] — run the gate in the scratch repo. The
+# default baseline is HEAD, which skips window 2; pass "$BASE" to exercise it.
 check() {
-    local name="$1" want="$2" got
-    ( cd "$work/repo" && COMMENT_ONLY_GATE_BASELINE="$(git rev-list --max-parents=0 HEAD)" "$gate" ) >/dev/null 2>&1
+    local name="$1" want="$2" base="${3:-}" got
+    [ -n "$base" ] || base=$(cd "$work/repo" && git rev-parse HEAD)
+    ( cd "$work/repo" && COMMENT_ONLY_GATE_BASELINE="$base" "$gate" ) >/dev/null 2>&1
     got=$?
     if [ "$got" = "$want" ]; then
         pass=$((pass + 1))
@@ -51,7 +53,11 @@ func Doc() int {
 EOF
     echo "spec" > specs/s.md
     git add -A && git commit -qm base
+    BASE=$(git rev-parse HEAD)
 }
+
+# commit_all — land the pending edit so window 2 has something to judge.
+commit_all() { ( cd "$work/repo" && git add -A && git commit -qm change ); }
 
 echo "comment-only-commit-gate-test:"
 
@@ -95,6 +101,46 @@ check "re-indent passes" 0
 # 8. A clean tree says nothing.
 fresh
 check "clean tree passes" 0
+
+# --- window 2: the committed change, judged against its parent ---------------
+
+# 9. A comment-only change that got committed past window 1 is still caught.
+fresh
+sed -i.bak 's|// Doc is a thing.|// Doc is a thing, reworded.|' a.go && rm -f a.go.bak
+commit_all
+check "window 2 catches a committed comment-only change" 1 "$BASE"
+
+# 10. The same change with real code in it passes window 2.
+fresh
+sed -i.bak -e 's|// Doc is a thing.|// Doc is a better thing.|' -e 's|x := 1|x := 2|' a.go && rm -f a.go.bak
+commit_all
+check "window 2 passes comment plus code" 0 "$BASE"
+
+# 11. A merge authors nothing of its own and is skipped.
+fresh
+( cd "$work/repo" && git checkout -q -b side && sed -i.bak 's|// Doc is a thing.|// Doc on a side branch.|' a.go && rm -f a.go.bak && git add -A && git commit -qm side && git checkout -q - && git merge -q --no-ff side -m merge )
+check "window 2 skips a merge commit" 0 "$BASE"
+
+# 12. Grandfathered history is not judged: HEAD is a comment-only commit, but
+#     the baseline is above it. This is the sticky-red case.
+fresh
+sed -i.bak 's|// Doc is a thing.|// Doc is a thing, reworded.|' a.go && rm -f a.go.bak
+commit_all
+check "a commit at or below the baseline is grandfathered" 0
+
+# 13. An absent baseline reduces scope rather than inventing a verdict, and it
+#     says so on stderr.
+fresh
+sed -i.bak 's|// Doc is a thing.|// Doc is a thing, reworded.|' a.go && rm -f a.go.bak
+commit_all
+check "an unknown baseline skips window 2" 0 "0000000000000000000000000000000000000000"
+said=$( ( cd "$work/repo" && COMMENT_ONLY_GATE_BASELINE=0000000000000000000000000000000000000000 "$gate" ) 2>&1 >/dev/null )
+case "$said" in
+    *REDUCED*)
+        pass=$((pass + 1)); printf '  ok    an unknown baseline is announced on stderr\n' ;;
+    *)
+        fail=$((fail + 1)); printf '  FAIL  an unknown baseline is announced on stderr: no REDUCED line\n' ;;
+esac
 
 printf 'comment-only-commit-gate-test: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ] || exit 1

@@ -38,19 +38,33 @@
 #     build red for a reason that has nothing to do with what is being checked,
 #     and a bisect reports this gate instead of the bug.
 #
+# THE SKILL.md ARM EXISTS ON PURPOSE. Exempting a change that edits a SKILL.md
+# looks wrong next to this project's rule-file-bundled rule, which says a
+# rule-file edit belongs in its own commit. Do not delete the arm to resolve
+# that. Split such a commit and its Go half becomes a comment-only commit that
+# this gate then refuses, which is a deadlock. The arm is the way out of it.
+#
+# WINDOW 2 IS SKIPPED, NOT FAILED, when the baseline is absent or is not an
+# ancestor of HEAD. Only window 1 fails closed. The skip is announced on stderr
+# rather than stdout, because the quiet version of this is how a gate stops
+# running for a month without anyone noticing.
+#
 # WINDOW 1 FIRES MID-WORK, ON PURPOSE. Reword a comment before you write the
 # code and `make fast` goes red. That is the nudge, not a defect. Finish the
 # code, or drop the comment edit. Window 1 cannot see untracked .go files
 # (`git diff HEAD` skips them); window 2 catches those once they are committed.
 #
-# KNOWN BLIND SPOT. A `//`-leading line inside a backtick raw string counts as a
-# comment, so editing only such lines in a fixture can fire. Tracking backtick
-# parity in awk costs more than the case is worth.
+# KNOWN BLIND SPOTS, measured over 1500 commits and judged not worth the code.
+# A `//`-leading line inside a backtick raw string counts as a comment, so
+# editing only such lines in a fixture can fire. A rename whose only textual
+# change is the file's header comment fires (one instance: 0d697de44); a pure
+# rename with no comment edit does not. Re-indenting one line launders any
+# volume of comment, which is inherent to any diff-shaped rule.
 #
 # EXIT CODES
-#   0 — no comment-only Go change.
+#   0 — no comment-only Go change, or window 2 was out of scope (see above).
 #   1 — a comment-only Go change. This is the verdict, and the build stops.
-#   2 — could not reach a verdict. Inconclusive fails closed.
+#   2 — the repository or the diff could not be read at all.
 
 set -uo pipefail
 export LC_ALL=C
@@ -150,9 +164,9 @@ judge "the working tree" git diff HEAD || status=1
 # Grandfathered history is skipped too, so an old checkout is not held red for a
 # commit that predates the rule.
 if ! git cat-file -e "${BASELINE}^{commit}" 2>/dev/null; then
-    echo "comment-only-commit-gate: baseline ${BASELINE} is not in this repository, so only the working tree was judged"
+    printf 'comment-only-commit-gate: REDUCED — baseline %s is not in this repository, so the committed change was NOT judged. Only the working tree was.\n' "$BASELINE" >&2
 elif ! git merge-base --is-ancestor "$BASELINE" HEAD 2>/dev/null; then
-    echo "comment-only-commit-gate: this history does not descend from the baseline ${BASELINE}, so only the working tree was judged"
+    printf 'comment-only-commit-gate: REDUCED — this history does not descend from baseline %s, so the committed change was NOT judged. Only the working tree was. If this is the default branch, the baseline needs moving.\n' "$BASELINE" >&2
 elif [ "$(git rev-parse "${BASELINE}^{commit}")" = "$(git rev-parse HEAD)" ]; then
     echo "comment-only-commit-gate: HEAD is the baseline, so only the working tree was judged"
 else
